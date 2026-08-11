@@ -1,0 +1,18 @@
+# Web API 与数据契约
+fastapi==0.116.1
+pydantic==2.11.7
+python-multipart==0.0.20
+uvicorn[standard]==0.35.0
+
+# PostgreSQL/PostGIS ORM 与迁移
+alembic==1.16.4
+geoalchemy2==0.18.0
+psycopg[binary]==3.2.9
+sqlalchemy==2.0.43
+
+# Excel 导入解析（模板文件由工作区统一制表工具生成）
+openpyxl==3.1.5
+
+# 测试依赖
+httpx==0.28.1
+pytest==8.4.1

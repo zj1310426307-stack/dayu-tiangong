@@ -1,0 +1,73 @@
+# Phase 2 本地水利数据库部署编排；生产环境必须通过密钥管理替换示例数据库口令。
+services:
+  database:
+    image: postgis/postgis:17-3.5
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dayu_tiangong}
+      POSTGRES_USER: ${POSTGRES_USER:-dayu}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dayu_dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - dayu_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    command: ["python", "-m", "alembic", "-c", "../database/alembic.ini", "upgrade", "head"]
+    environment: &backend_environment
+      POSTGRES_HOST: database
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-dayu_tiangong}
+      POSTGRES_USER: ${POSTGRES_USER:-dayu}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dayu_dev}
+    depends_on:
+      database:
+        condition: service_healthy
+
+  seed:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    command: ["python", "../database/seed/demo_data.py"]
+    environment: *backend_environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    environment: *backend_environment
+    ports:
+      - "${BACKEND_PORT:-8001}:8000"
+    volumes:
+      - ../backend/storage:/app/backend/storage
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/gis/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/frontend.Dockerfile
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  dayu_postgres_data:

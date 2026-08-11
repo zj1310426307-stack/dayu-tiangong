@@ -1,0 +1,10 @@
+[tool.pytest.ini_options]
+# 将仓库根目录与后端目录同时加入导入路径，支持接口和预留模块测试。
+pythonpath = [".", ".."]
+testpaths = ["tests", "../tests"]
+addopts = "-q"
+
+[tool.ruff]
+# Phase 1 继续保持 Python 3.11 兼容语法，方便本地与容器运行。
+target-version = "py311"
+line-length = 100
