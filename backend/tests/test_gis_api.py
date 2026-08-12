@@ -133,7 +133,7 @@ def test_database_srid_geometry_types_migration_and_gist_indexes() -> None:
 
     with SessionLocal() as session:
         revision = session.scalar(text("SELECT version_num FROM alembic_version"))
-        assert revision == "20260812_0007"
+        assert revision == "20260813_0008"
 
         geometries = session.execute(
             text(
@@ -149,6 +149,9 @@ def test_database_srid_geometry_types_migration_and_gist_indexes() -> None:
                 UNION ALL
                 SELECT 'cross_section', GeometryType(geometry), ST_SRID(geometry)
                 FROM cross_section WHERE id = (SELECT min(id) FROM cross_section)
+                UNION ALL
+                SELECT 'map_annotation', GeometryType(geometry), ST_SRID(geometry)
+                FROM map_annotation WHERE id = (SELECT min(id) FROM map_annotation)
                 """
             )
         ).all()
@@ -157,6 +160,7 @@ def test_database_srid_geometry_types_migration_and_gist_indexes() -> None:
             ("gate", "POINT", 4490),
             ("pump", "POINT", 4490),
             ("cross_section", "POINT", 4490),
+            ("map_annotation", "POINT", 4490),
         }
 
         gist_indexes = session.execute(
@@ -166,7 +170,8 @@ def test_database_srid_geometry_types_migration_and_gist_indexes() -> None:
                 WHERE schemaname = 'public'
                   AND indexname IN (
                     'ix_river_geometry_gist', 'ix_gate_geometry_gist',
-                    'ix_pump_geometry_gist', 'ix_cross_section_geometry_gist'
+                    'ix_pump_geometry_gist', 'ix_cross_section_geometry_gist',
+                    'ix_map_annotation_geometry_gist'
                   )
                   AND lower(indexdef) LIKE '%using gist%'
                 """
@@ -174,6 +179,7 @@ def test_database_srid_geometry_types_migration_and_gist_indexes() -> None:
         ).scalars().all()
         assert set(gist_indexes) == {
             "ix_river_geometry_gist",
+            "ix_map_annotation_geometry_gist",
             "ix_gate_geometry_gist",
             "ix_pump_geometry_gist",
             "ix_cross_section_geometry_gist",

@@ -28,7 +28,7 @@ def read_geoserver_health() -> GeoServerHealthResponse:
 
 @router.get("/layers", response_model=list[GeoServerLayerRecord], summary="列出 GeoServer 图层")
 def read_geoserver_layers() -> list[GeoServerLayerRecord]:
-    """Return six source-controlled layers without querying administrator APIs."""
+    """Return seven source-controlled layers without querying administrator APIs."""
 
     return service.list_layers()
 

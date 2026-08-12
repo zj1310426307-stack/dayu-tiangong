@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from geoalchemy2.elements import WKTElement
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +21,7 @@ from app.gis.models import (  # noqa: E402
     CrossSection,
     DatasetVersion,
     Gate,
+    MapAnnotation,
     ModelParameter,
     Pump,
     River,
@@ -459,6 +460,38 @@ def seed_demo_data() -> dict[str, int]:
             pump.reverse_flow_protection = True
             pump.head_curve = {"points": [[0.0, pump.head * 1.2], [pump.design_flow, pump.head]]}
 
+        # Phase 1C labels are derived from the same authoritative rows. ON CONFLICT keeps
+        # repeated Compose starts idempotent and never creates a second GIS data source.
+        session.execute(text("""
+            INSERT INTO map_annotation (
+                dataset_version_id, annotation_type, name, text, description,
+                longitude, latitude, rotation, font_size, color,
+                visible_scale_min, visible_scale_max, related_type, related_id, geometry
+            )
+            SELECT dataset_version_id, 'river', 'river-' || id, name,
+                   '河道名称（由权威河道几何派生）', ST_X(ST_LineInterpolatePoint(geometry, 0.5)),
+                   ST_Y(ST_LineInterpolatePoint(geometry, 0.5)),
+                   MOD((DEGREES(ST_Azimuth(ST_StartPoint(geometry), ST_EndPoint(geometry))) + 360)::numeric, 360)::double precision,
+                   18, '#72F1E2', 40000, 500000, 'river', id,
+                   ST_LineInterpolatePoint(geometry, 0.5)
+            FROM river WHERE dataset_version_id = :version_id
+            UNION ALL
+            SELECT dataset_version_id, 'gate', 'gate-' || id, name, '闸门名称',
+                   ST_X(geometry), ST_Y(geometry), 0, 15, '#FFD166', 0, 120000,
+                   'gate', id, geometry FROM gate WHERE dataset_version_id = :version_id
+            UNION ALL
+            SELECT dataset_version_id, 'pump', 'pump-' || id, name, '泵站名称',
+                   ST_X(geometry), ST_Y(geometry), 0, 15, '#6CC7FF', 0, 120000,
+                   'pump', id, geometry FROM pump WHERE dataset_version_id = :version_id
+            UNION ALL
+            SELECT dataset_version_id, 'cross_section', 'cross-section-' || id,
+                   COALESCE(NULLIF(section_name, ''), section_code), '横断面名称',
+                   ST_X(geometry), ST_Y(geometry), 0, 12, '#CBB9FF', 0, 65000,
+                   'cross_section', id, geometry
+            FROM cross_section WHERE dataset_version_id = :version_id
+            ON CONFLICT ON CONSTRAINT uq_map_annotation_version_related_name DO NOTHING
+        """), {"version_id": version.id})
+
     with SessionLocal() as session:
         # Phase 6 内置知识随空库初始化幂等入库，容器无需手工执行第二条命令。
         seed_builtin_knowledge(session)
@@ -468,6 +501,7 @@ def seed_demo_data() -> dict[str, int]:
             "gates": session.scalar(select(func.count(Gate.id))) or 0,
             "pumps": session.scalar(select(func.count(Pump.id))) or 0,
             "cross_sections": session.scalar(select(func.count(CrossSection.id))) or 0,
+            "map_annotations": session.scalar(select(func.count(MapAnnotation.id))) or 0,
             "river_nodes": session.scalar(select(func.count(RiverNode.id))) or 0,
             "simulation_cases": session.scalar(select(func.count(SimulationCase.id))) or 0,
         }

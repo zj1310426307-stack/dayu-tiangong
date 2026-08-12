@@ -14,7 +14,7 @@ import psycopg
 
 GEOSERVER_URL = os.getenv("GEOSERVER_VERIFY_URL", "http://127.0.0.1:8081/geoserver").rstrip("/")
 BACKEND_URL = os.getenv("BACKEND_VERIFY_URL", "http://127.0.0.1:8001").rstrip("/")
-LAYERS = ("river", "river_segment", "river_node", "cross_section", "gate", "pump")
+LAYERS = ("river", "river_segment", "river_node", "cross_section", "gate", "pump", "map_annotation")
 CACHED = ("river", "river_segment", "gate", "pump")
 DATASET_VERSION_ID = int(os.getenv("GIS_VERIFY_DATASET_VERSION_ID", "1"))
 
@@ -136,7 +136,7 @@ def _verify_backend() -> None:
 
     _, payload, _ = _get(f"{BACKEND_URL}/api/v1/gis/geoserver/health")
     health = json.loads(payload)
-    assert health["status"] == "healthy" and health["layers"] == 6
+    assert health["status"] == "healthy" and health["layers"] == 7
     _, payload, _ = _get(f"{BACKEND_URL}/api/v1/gis/geoserver/layers")
     assert len(json.loads(payload)) == 6
     rivers_query = urllib.parse.urlencode(

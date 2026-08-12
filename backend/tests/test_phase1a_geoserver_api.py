@@ -15,6 +15,7 @@ WMS_CAPABILITIES = b"""<?xml version="1.0"?><WMS_Capabilities><Capability><Layer
 <Layer><Name>dayu:river</Name></Layer><Layer><Name>dayu:river_segment</Name></Layer>
 <Layer><Name>dayu:river_node</Name></Layer><Layer><Name>dayu:cross_section</Name></Layer>
 <Layer><Name>dayu:gate</Name></Layer><Layer><Name>dayu:pump</Name></Layer>
+<Layer><Name>dayu:map_annotation</Name></Layer>
 </Layer></Capability></WMS_Capabilities>"""
 WMTS_CAPABILITIES = b"""<?xml version="1.0"?><Capabilities><Contents>
 <Layer><Identifier>dayu:river</Identifier></Layer><Layer><Identifier>dayu:river_segment</Identifier></Layer>
@@ -67,7 +68,7 @@ def test_health_layers_and_config(monkeypatch) -> None:
     assert health.json() == {
         "status": "healthy",
         "workspace": "dayu",
-        "layers": 6,
+        "layers": 7,
         "cached_layers": 4,
         "wms": "online",
         "wmts": "online",
@@ -77,7 +78,7 @@ def test_health_layers_and_config(monkeypatch) -> None:
 
     layers = client.get("/api/v1/gis/geoserver/layers").json()
     assert [layer["name"] for layer in layers] == [
-        "river", "river_segment", "river_node", "cross_section", "gate", "pump"
+        "river", "river_segment", "river_node", "cross_section", "gate", "pump", "map_annotation"
     ]
     assert sum(layer["wmts_cached"] for layer in layers) == 4
     assert all(layer["srid"] == 4490 for layer in layers)

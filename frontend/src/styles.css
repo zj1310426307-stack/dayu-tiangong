@@ -276,6 +276,10 @@ button, input { font: inherit; }
 .simulation-timeline__title { display: flex; align-items: center; gap: 8px; height: 22px; }.simulation-timeline__title .ant-btn { color: var(--cyan); }.simulation-timeline__title strong { color: #bad9e2; font: 9px Consolas, monospace; letter-spacing: 0.08em; }.simulation-timeline__title > span { color: #648397; font-size: 8px; }
 .simulation-timeline .ant-slider { margin: 8px 8px 0; }.simulation-timeline .ant-slider-mark-text { color: #5d7d90; font: 7px Consolas, monospace; }
 .simulation-timeline--empty { display: flex; align-items: center; gap: 12px; color: #648397; font-size: 9px; }.simulation-timeline--empty strong { color: #9fbfc9; }
+.spatial-analysis { position: absolute; top: 82px; right: 16px; z-index: 4; display: grid; width: 270px; max-height: calc(100% - 180px); gap: 8px; padding: 13px; overflow: auto; background: rgba(5, 20, 31, 0.92); border: 1px solid rgba(77, 154, 181, 0.27); border-radius: 8px; backdrop-filter: blur(12px); }
+.spatial-analysis__head { display: flex; align-items: center; justify-content: space-between; padding-bottom: 7px; border-bottom: 1px solid var(--line); }.spatial-analysis__head strong { color: #b8d6df; font: 700 9px Consolas, monospace; letter-spacing: 0.1em; }
+.spatial-analysis__tool { display: grid; gap: 6px; padding: 7px; background: rgba(47, 230, 214, 0.035); border: 1px solid rgba(77, 154, 181, 0.12); border-radius: 5px; }.spatial-analysis__tool > span { color: #718fa1; font-size: 8px; }
+.spatial-analysis__tool--inline { grid-template-columns: 76px 1fr; }.spatial-analysis__tool--grid { grid-template-columns: 1fr 1fr; }.spatial-analysis .ant-btn, .spatial-analysis .ant-input, .spatial-analysis .ant-input-number, .spatial-analysis .ant-select { font-size: 9px; }
 
 /* Phase 2 数据中心：表格与编辑器保持高密度、低干扰的信息呈现。 */
 .data-page { width: min(1560px, 100%); margin: 0 auto; }

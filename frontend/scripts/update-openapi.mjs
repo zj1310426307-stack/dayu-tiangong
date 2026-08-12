@@ -62,6 +62,12 @@ const requiredPaths = [
   '/api/v1/ai/tools/logs',
   '/api/v1/gis/geoserver/health', '/api/v1/gis/geoserver/layers',
   '/api/v1/gis/geoserver/config',
+  '/api/v1/gis-analysis/layers', '/api/v1/gis-analysis/annotations',
+  '/api/v1/gis-analysis/annotations/{annotation_id}', '/api/v1/gis-analysis/trace',
+  '/api/v1/gis-analysis/select', '/api/v1/gis-analysis/buffer',
+  '/api/v1/gis-analysis/nearest', '/api/v1/gis-analysis/comparison-frame',
+  '/api/v1/gis-analysis/thematic-map.pdf',
+  '/api/v1/gis-analysis/vector-tiles/{layer}/{z}/{x}/{y}.mvt',
 ];
 for (const path of requiredPaths) {
   if (!openapi.paths?.[path]) throw new Error(`OpenAPI 缺少接口：${path}`);
@@ -81,6 +87,8 @@ export type ValidationReport = app__validation__schemas__ValidationReport;
 export type DispatchValidationReport = app__dispatch__schemas__ValidationReport;
 export interface GISListQuery { dataset_version_id: number; bbox?: string; limit?: number; offset?: number; }
 export interface GISInteractionQuery { dataset_version_id: number; time_seconds?: number; task_id?: number; dispatch_run_id?: number; }
+export interface GISAnnotationQuery { dataset_version_id: number; scale_denominator?: number; bbox?: string; annotation_type?: string; limit?: number; offset?: number; time_seconds?: number; task_id?: number; dispatch_run_id?: number; }
+export interface GISComparisonQuery { dataset_version_id: number; baseline_task_id: number; comparison_task_id: number; time_seconds?: number; baseline_dispatch_run_id?: number; comparison_dispatch_run_id?: number; }
 export interface DatabaseListQuery { dataset_version_id?: number; river_id?: number; search?: string; limit?: number; offset?: number; }
 export interface DispatchListQuery { dataset_version_id?: number; plan_id?: number; status?: string; limit?: number; offset?: number; }
 export interface PageResult<T> { items: T[]; total: number; limit: number; offset: number; }
@@ -103,6 +111,15 @@ async function requestJson<T>(path: string, options: RequestInit = {}, baseUrl =
   return response.json() as Promise<T>;
 }
 
+async function requestBlob(path: string, options: RequestInit = {}, baseUrl = ''): Promise<Blob> {
+  const response = await fetch(\`\${baseUrl}\${path}\`, options);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { detail?: string } | null;
+    throw new Error(payload?.detail ?? \`API 请求失败：\${response.status}\`);
+  }
+  return response.blob();
+}
+
 function jsonOptions(method: 'POST' | 'PUT' | 'PATCH', body: unknown): RequestInit {
   return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
 }
@@ -123,6 +140,18 @@ export const getPump = (id: number, datasetVersionId: number, baseUrl = '') => r
 export const getCrossSections = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/cross_sections\${toQuery(params)}\`, {}, baseUrl);
 export const getCrossSection = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<GeoJSONFeature>(\`/api/v1/gis/cross_sections/\${id}\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
 export const getGISInteractionFrame = (params: GISInteractionQuery, baseUrl = '') => requestJson<GISInteractionFrame>(\`/api/v1/gis/interaction-frame\${toQuery(params)}\`, {}, baseUrl);
+export const getGISLayerCatalog = (baseUrl = '') => requestJson<Array<LayerCatalogItem>>('/api/v1/gis-analysis/layers', {}, baseUrl);
+export const getGISAnnotations = (params: GISAnnotationQuery, baseUrl = '') => requestJson<AnnotationCollection>(\`/api/v1/gis-analysis/annotations\${toQuery(params)}\`, {}, baseUrl);
+export const createGISAnnotation = (body: AnnotationCreate, baseUrl = '') => requestJson<AnnotationRecord>('/api/v1/gis-analysis/annotations', jsonOptions('POST', body), baseUrl);
+export const updateGISAnnotation = (id: number, datasetVersionId: number, body: AnnotationUpdate, baseUrl = '') => requestJson<AnnotationRecord>(\`/api/v1/gis-analysis/annotations/\${id}\${toQuery({ dataset_version_id: datasetVersionId })}\`, jsonOptions('PUT', body), baseUrl);
+export const deleteGISAnnotation = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<void>(\`/api/v1/gis-analysis/annotations/\${id}\${toQuery({ dataset_version_id: datasetVersionId })}\`, { method: 'DELETE' }, baseUrl);
+export const traceGISRiver = (datasetVersionId: number, riverId: number, baseUrl = '') => requestJson<TraceResponse>(\`/api/v1/gis-analysis/trace\${toQuery({ dataset_version_id: datasetVersionId, river_id: riverId })}\`, {}, baseUrl);
+export const selectGISFeatures = (body: SpatialSelectRequest, baseUrl = '') => requestJson<SpatialSelectResponse>('/api/v1/gis-analysis/select', jsonOptions('POST', body), baseUrl);
+export const bufferGISFeatures = (body: BufferAnalysisRequest, baseUrl = '') => requestJson<BufferAnalysisResponse>('/api/v1/gis-analysis/buffer', jsonOptions('POST', body), baseUrl);
+export const getNearestGISFacilities = (body: NearestFacilityRequest, baseUrl = '') => requestJson<NearestFacilityResponse>('/api/v1/gis-analysis/nearest', jsonOptions('POST', body), baseUrl);
+export const getGISComparisonFrame = (params: GISComparisonQuery, baseUrl = '') => requestJson<GISComparisonFrame>(\`/api/v1/gis-analysis/comparison-frame\${toQuery(params)}\`, {}, baseUrl);
+export const downloadGISThematicMap = (body: ThematicMapRequest, baseUrl = '') => requestBlob('/api/v1/gis-analysis/thematic-map.pdf', jsonOptions('POST', body), baseUrl);
+export const getGISVectorTile = (layer: 'river' | 'gate' | 'pump' | 'cross_section' | 'map_annotation', z: number, x: number, y: number, datasetVersionId: number, baseUrl = '') => requestBlob(\`/api/v1/gis-analysis/vector-tiles/\${layer}/\${z}/\${x}/\${y}.mvt\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
 
 export const listRiverRecords = (params: DatabaseListQuery = {}, baseUrl = '') => requestJson<RiverListResponse>(\`/api/v1/rivers\${toQuery(params)}\`, {}, baseUrl);
 export const createRiverRecord = (body: RiverCreate, baseUrl = '') => requestJson<RiverRecord>('/api/v1/rivers', jsonOptions('POST', body), baseUrl);

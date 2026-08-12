@@ -50,6 +50,72 @@ export interface AlgorithmConfig {
   "constraints"?: ConstraintConfig;
 }
 
+export interface AnnotationCollection {
+  "items": Array<AnnotationRecord>;
+  "total": number;
+  "limit": number;
+  "offset": number;
+  "dataset_version_id": number;
+  "scale_denominator": number;
+  "renderer"?: "Cesium LabelCollection";
+  "demo_data"?: true;
+}
+
+export interface AnnotationCreate {
+  "dataset_version_id": number;
+  "annotation_type": "river" | "gate" | "pump" | "cross_section" | "hydrology_station" | "dispatch_event" | "parameter" | "place";
+  "name": string;
+  "text": string;
+  "description"?: string | null;
+  "longitude": number;
+  "latitude": number;
+  "rotation"?: number;
+  "font_size"?: number;
+  "color"?: string;
+  "visible_scale_min"?: number;
+  "visible_scale_max"?: number;
+  "related_type"?: "river" | "gate" | "pump" | "cross_section" | "hydrology_station" | "dispatch_event" | null;
+  "related_id"?: number | null;
+}
+
+export interface AnnotationRecord {
+  "dataset_version_id": number;
+  "annotation_type": "river" | "gate" | "pump" | "cross_section" | "hydrology_station" | "dispatch_event" | "parameter" | "place";
+  "name": string;
+  "text": string;
+  "description"?: string | null;
+  "longitude": number;
+  "latitude": number;
+  "rotation"?: number;
+  "font_size"?: number;
+  "color"?: string;
+  "visible_scale_min"?: number;
+  "visible_scale_max"?: number;
+  "related_type"?: "river" | "gate" | "pump" | "cross_section" | "hydrology_station" | "dispatch_event" | null;
+  "related_id"?: number | null;
+  "id": number;
+  "display_text": string;
+  "dynamic_lines": Array<string>;
+  "dynamic_source": "static" | "simulation" | "dispatch";
+  "created_time": string;
+}
+
+export interface AnnotationUpdate {
+  "annotation_type"?: "river" | "gate" | "pump" | "cross_section" | "hydrology_station" | "dispatch_event" | "parameter" | "place" | null;
+  "name"?: string | null;
+  "text"?: string | null;
+  "description"?: string | null;
+  "longitude"?: number | null;
+  "latitude"?: number | null;
+  "rotation"?: number | null;
+  "font_size"?: number | null;
+  "color"?: string | null;
+  "visible_scale_min"?: number | null;
+  "visible_scale_max"?: number | null;
+  "related_type"?: "river" | "gate" | "pump" | "cross_section" | "hydrology_station" | "dispatch_event" | null;
+  "related_id"?: number | null;
+}
+
 export interface app__dispatch__schemas__ValidationReport {
   "plan_id": number;
   "valid": boolean;
@@ -116,6 +182,54 @@ export interface BoundaryConditionUpdate {
   "values"?: Record<string, unknown> | null;
   "unit"?: string | null;
   "description"?: string | null;
+}
+
+export interface BufferAnalysisRequest {
+  "dataset_version_id": number;
+  "object_type": "river" | "gate" | "pump" | "cross_section";
+  "object_id": number;
+  "distance_m": number;
+  "include_types"?: Array<"river" | "gate" | "pump" | "cross_section">;
+}
+
+export interface BufferAnalysisResponse {
+  "dataset_version_id": number;
+  "source": SpatialFeature;
+  "distance_m": number;
+  "buffer_geometry": Record<string, unknown>;
+  "impacted": Array<SpatialFeature>;
+  "distance_basis"?: "PostGIS geography metres";
+}
+
+export interface ComparisonStructureSample {
+  "structure_type": "gate" | "pump";
+  "structure_id": number;
+  "name": string;
+  "longitude": number;
+  "latitude": number;
+  "baseline_value": number | null;
+  "comparison_value": number | null;
+  "value_difference": number | null;
+  "baseline_flow": number | null;
+  "comparison_flow": number | null;
+  "flow_difference": number | null;
+}
+
+export interface ComparisonWaterSample {
+  "section_id": number;
+  "section_code": string;
+  "river_id": number;
+  "longitude": number;
+  "latitude": number;
+  "baseline_water_level": number;
+  "comparison_water_level": number;
+  "water_level_difference": number;
+  "baseline_velocity": number;
+  "comparison_velocity": number;
+  "velocity_difference": number;
+  "baseline_flow": number;
+  "comparison_flow": number;
+  "flow_difference": number;
 }
 
 export interface ConstraintConfig {
@@ -474,6 +588,21 @@ export interface GeoServerLayerRecord {
   "srid"?: 4490;
 }
 
+export interface GISComparisonFrame {
+  "dataset_version_id": number;
+  "baseline_task_id": number;
+  "comparison_task_id": number;
+  "baseline_dispatch_run_id"?: number | null;
+  "comparison_dispatch_run_id"?: number | null;
+  "requested_time_seconds": number;
+  "baseline_time_seconds"?: number | null;
+  "comparison_time_seconds"?: number | null;
+  "water_samples": Array<ComparisonWaterSample>;
+  "structure_samples": Array<ComparisonStructureSample>;
+  "execution_authorized"?: false;
+  "demo_data"?: true;
+}
+
 export interface GISHealthResponse {
   "status": "healthy";
   "database": string;
@@ -598,6 +727,17 @@ export interface KnowledgeSearchResponse {
   "items": Array<KnowledgeSearchItem>;
 }
 
+export interface LayerCatalogItem {
+  "key": string;
+  "title": string;
+  "group": "base" | "engineering" | "annotation" | "model" | "dispatch" | "analysis";
+  "source": "WMS" | "WMTS" | "MVT" | "FastAPI" | "PostGIS analysis";
+  "geometry": "raster" | "point" | "line" | "polygon" | "mixed";
+  "version_isolated"?: true;
+  "default_visible": boolean;
+  "dynamic": boolean;
+}
+
 export interface ModelInputSnapshot {
   "schema_version"?: string;
   "generated_time": string;
@@ -637,6 +777,22 @@ export interface ModelParameterUpdate {
   "value"?: number | null;
   "unit"?: string | null;
   "description"?: string | null;
+}
+
+export interface NearestFacilityRequest {
+  "dataset_version_id": number;
+  "longitude": number;
+  "latitude": number;
+  "facility_types"?: Array<"gate" | "pump" | "hydrology_station">;
+  "limit"?: number;
+  "max_distance_m"?: number | null;
+}
+
+export interface NearestFacilityResponse {
+  "dataset_version_id": number;
+  "origin": Record<string, unknown>;
+  "facilities": Array<SpatialFeature>;
+  "distance_basis"?: "PostGIS geography metres";
 }
 
 export interface ObjectiveConfig {
@@ -1042,6 +1198,30 @@ export interface SourceCitation {
   "excerpt"?: string | null;
 }
 
+export interface SpatialFeature {
+  "object_type": "river" | "gate" | "pump" | "cross_section" | "hydrology_station";
+  "object_id": number;
+  "name": string;
+  "geometry": Record<string, unknown>;
+  "properties"?: Record<string, unknown>;
+  "distance_m"?: number | null;
+}
+
+export interface SpatialSelectRequest {
+  "dataset_version_id": number;
+  "bbox": Array<number>;
+  "object_types"?: Array<"river" | "gate" | "pump" | "cross_section">;
+  "limit_per_type"?: number;
+}
+
+export interface SpatialSelectResponse {
+  "dataset_version_id": number;
+  "bbox": Array<number>;
+  "features": Array<SpatialFeature>;
+  "counts": Record<string, number>;
+  "crs"?: "EPSG:4490";
+}
+
 export interface SystemInfoResponse {
   "name": string;
   "version": string;
@@ -1058,6 +1238,16 @@ export interface TaskSnapshotResponse {
   "snapshot": Record<string, unknown>;
 }
 
+export interface ThematicMapRequest {
+  "dataset_version_id": number;
+  "title"?: string;
+  "time_seconds"?: number;
+  "task_id"?: number | null;
+  "dispatch_run_id"?: number | null;
+  "bbox"?: Array<number> | null;
+  "author"?: string;
+}
+
 export interface TopologyGenerateRequest {
   "dataset_version_id": number;
   "tolerance"?: number;
@@ -1068,6 +1258,17 @@ export interface TopologyResponse {
   "nodes": Array<RiverNodeRecord>;
   "segments": Array<RiverSegmentRecord>;
   "connections": Array<RiverConnectionRecord>;
+}
+
+export interface TraceResponse {
+  "dataset_version_id": number;
+  "selected_river": SpatialFeature;
+  "upstream_rivers": Array<SpatialFeature>;
+  "downstream_rivers": Array<SpatialFeature>;
+  "gates": Array<SpatialFeature>;
+  "pumps": Array<SpatialFeature>;
+  "cross_sections": Array<SpatialFeature>;
+  "crs"?: "EPSG:4490";
 }
 
 export interface ValidationError {
@@ -1100,6 +1301,8 @@ export type ValidationReport = app__validation__schemas__ValidationReport;
 export type DispatchValidationReport = app__dispatch__schemas__ValidationReport;
 export interface GISListQuery { dataset_version_id: number; bbox?: string; limit?: number; offset?: number; }
 export interface GISInteractionQuery { dataset_version_id: number; time_seconds?: number; task_id?: number; dispatch_run_id?: number; }
+export interface GISAnnotationQuery { dataset_version_id: number; scale_denominator?: number; bbox?: string; annotation_type?: string; limit?: number; offset?: number; time_seconds?: number; task_id?: number; dispatch_run_id?: number; }
+export interface GISComparisonQuery { dataset_version_id: number; baseline_task_id: number; comparison_task_id: number; time_seconds?: number; baseline_dispatch_run_id?: number; comparison_dispatch_run_id?: number; }
 export interface DatabaseListQuery { dataset_version_id?: number; river_id?: number; search?: string; limit?: number; offset?: number; }
 export interface DispatchListQuery { dataset_version_id?: number; plan_id?: number; status?: string; limit?: number; offset?: number; }
 export interface PageResult<T> { items: T[]; total: number; limit: number; offset: number; }
@@ -1122,6 +1325,15 @@ async function requestJson<T>(path: string, options: RequestInit = {}, baseUrl =
   return response.json() as Promise<T>;
 }
 
+async function requestBlob(path: string, options: RequestInit = {}, baseUrl = ''): Promise<Blob> {
+  const response = await fetch(`${baseUrl}${path}`, options);
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null) as { detail?: string } | null;
+    throw new Error(payload?.detail ?? `API 请求失败：${response.status}`);
+  }
+  return response.blob();
+}
+
 function jsonOptions(method: 'POST' | 'PUT' | 'PATCH', body: unknown): RequestInit {
   return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
 }
@@ -1142,6 +1354,18 @@ export const getPump = (id: number, datasetVersionId: number, baseUrl = '') => r
 export const getCrossSections = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(`/api/v1/gis/cross_sections${toQuery(params)}`, {}, baseUrl);
 export const getCrossSection = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<GeoJSONFeature>(`/api/v1/gis/cross_sections/${id}${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
 export const getGISInteractionFrame = (params: GISInteractionQuery, baseUrl = '') => requestJson<GISInteractionFrame>(`/api/v1/gis/interaction-frame${toQuery(params)}`, {}, baseUrl);
+export const getGISLayerCatalog = (baseUrl = '') => requestJson<Array<LayerCatalogItem>>('/api/v1/gis-analysis/layers', {}, baseUrl);
+export const getGISAnnotations = (params: GISAnnotationQuery, baseUrl = '') => requestJson<AnnotationCollection>(`/api/v1/gis-analysis/annotations${toQuery(params)}`, {}, baseUrl);
+export const createGISAnnotation = (body: AnnotationCreate, baseUrl = '') => requestJson<AnnotationRecord>('/api/v1/gis-analysis/annotations', jsonOptions('POST', body), baseUrl);
+export const updateGISAnnotation = (id: number, datasetVersionId: number, body: AnnotationUpdate, baseUrl = '') => requestJson<AnnotationRecord>(`/api/v1/gis-analysis/annotations/${id}${toQuery({ dataset_version_id: datasetVersionId })}`, jsonOptions('PUT', body), baseUrl);
+export const deleteGISAnnotation = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<void>(`/api/v1/gis-analysis/annotations/${id}${toQuery({ dataset_version_id: datasetVersionId })}`, { method: 'DELETE' }, baseUrl);
+export const traceGISRiver = (datasetVersionId: number, riverId: number, baseUrl = '') => requestJson<TraceResponse>(`/api/v1/gis-analysis/trace${toQuery({ dataset_version_id: datasetVersionId, river_id: riverId })}`, {}, baseUrl);
+export const selectGISFeatures = (body: SpatialSelectRequest, baseUrl = '') => requestJson<SpatialSelectResponse>('/api/v1/gis-analysis/select', jsonOptions('POST', body), baseUrl);
+export const bufferGISFeatures = (body: BufferAnalysisRequest, baseUrl = '') => requestJson<BufferAnalysisResponse>('/api/v1/gis-analysis/buffer', jsonOptions('POST', body), baseUrl);
+export const getNearestGISFacilities = (body: NearestFacilityRequest, baseUrl = '') => requestJson<NearestFacilityResponse>('/api/v1/gis-analysis/nearest', jsonOptions('POST', body), baseUrl);
+export const getGISComparisonFrame = (params: GISComparisonQuery, baseUrl = '') => requestJson<GISComparisonFrame>(`/api/v1/gis-analysis/comparison-frame${toQuery(params)}`, {}, baseUrl);
+export const downloadGISThematicMap = (body: ThematicMapRequest, baseUrl = '') => requestBlob('/api/v1/gis-analysis/thematic-map.pdf', jsonOptions('POST', body), baseUrl);
+export const getGISVectorTile = (layer: 'river' | 'gate' | 'pump' | 'cross_section' | 'map_annotation', z: number, x: number, y: number, datasetVersionId: number, baseUrl = '') => requestBlob(`/api/v1/gis-analysis/vector-tiles/${layer}/${z}/${x}/${y}.mvt${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
 
 export const listRiverRecords = (params: DatabaseListQuery = {}, baseUrl = '') => requestJson<RiverListResponse>(`/api/v1/rivers${toQuery(params)}`, {}, baseUrl);
 export const createRiverRecord = (body: RiverCreate, baseUrl = '') => requestJson<RiverRecord>('/api/v1/rivers', jsonOptions('POST', body), baseUrl);
