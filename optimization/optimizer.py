@@ -1,23 +1,19 @@
-"""PSO、遗传算法与强化学习的 Phase 0 统一优化契约。"""
+"""Compatibility entry point for the Phase 5 particle swarm optimizer."""
 
 from collections.abc import Mapping
 from typing import Any
 
+from optimization.algorithms.particle_swarm import ParticleSwarmOptimizer
+
 
 class SchedulerOptimizer:
-    """提供调度方案优化入口，当前阶段只返回空方案。"""
+    """Retain the Phase 0 placeholder contract while Phase 5 uses typed PSO directly."""
 
     def optimize(self, data: Mapping[str, Any]) -> dict[str, list[Any] | float | None]:
-        """校验输入并返回尚未计算的标准结果。
-
-        Args:
-            data: 未来承载目标函数、约束和设施状态的映射。
-
-        Returns:
-            空方案列表与未计算评分。
-        """
+        """Validate legacy mapping input and return the historical empty result."""
 
         if not isinstance(data, Mapping):
-            raise TypeError("data 必须是映射类型")
-
+            raise TypeError("data must be a mapping")
         return {"scheme": [], "score": None}
+
+__all__ = ["ParticleSwarmOptimizer", "SchedulerOptimizer"]

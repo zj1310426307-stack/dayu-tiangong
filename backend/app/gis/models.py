@@ -755,3 +755,103 @@ class JunctionResult(Base):
     outflow: Mapped[float] = mapped_column(Float, nullable=False)
     source_sink: Mapped[float] = mapped_column(Float, nullable=False)
     balance_residual: Mapped[float] = mapped_column(Float, nullable=False)
+
+
+class OptimizationTask(Base):
+    """Persist a versioned, reproducible multi-objective optimization lifecycle."""
+
+    __tablename__ = "optimization_task"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'running', 'success', 'failed', 'cancelled')",
+            name="ck_optimization_task_status",
+        ),
+        CheckConstraint("progress BETWEEN 0 AND 100", name="ck_optimization_task_progress"),
+        Index("ix_optimization_task_status", "status"),
+        Index("ix_optimization_task_dataset_version_id", "dataset_version_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    algorithm: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pso")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="pending")
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="RESTRICT"), nullable=False
+    )
+    simulation_case_id: Mapped[int] = mapped_column(
+        ForeignKey("simulation_case.id", ondelete="RESTRICT"), nullable=False
+    )
+    objective_config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    algorithm_config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    input_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    input_snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    algorithm_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    current_generation: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    best_score: Mapped[float | None] = mapped_column(Float)
+    queue_job_id: Mapped[str | None] = mapped_column(String(128))
+    worker_id: Mapped[str | None] = mapped_column(String(128))
+    cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    converged: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    start_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class OptimizationCandidate(Base):
+    """Link one generated plan to its score, metrics and Phase 4 simulation task."""
+
+    __tablename__ = "optimization_candidate"
+    __table_args__ = (
+        UniqueConstraint(
+            "task_id", "generation", "candidate_index", name="uq_optimization_candidate_slot"
+        ),
+        Index("ix_optimization_candidate_task_id", "task_id"),
+        Index("ix_optimization_candidate_simulation_task_id", "simulation_task_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("optimization_task.id", ondelete="CASCADE"), nullable=False
+    )
+    generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    candidate_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    dispatch_plan: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    score: Mapped[float | None] = mapped_column(Float)
+    objective_values: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    metrics: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    valid: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    constraint_reasons: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    simulation_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("simulation_task.id", ondelete="SET NULL")
+    )
+    created_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class OptimizationResult(Base):
+    """Persist Pareto level, rank and human-facing recommendation state."""
+
+    __tablename__ = "optimization_result"
+    __table_args__ = (
+        CheckConstraint(
+            "recommendation_status IN ('recommended', 'pareto', 'alternative', 'rejected')",
+            name="ck_optimization_result_recommendation_status",
+        ),
+        Index("ix_optimization_result_task_level", "task_id", "pareto_level"),
+    )
+
+    candidate_id: Mapped[int] = mapped_column(
+        ForeignKey("optimization_candidate.id", ondelete="CASCADE"), primary_key=True
+    )
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("optimization_task.id", ondelete="CASCADE"), nullable=False
+    )
+    pareto_level: Mapped[int] = mapped_column(Integer, nullable=False)
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    recommendation_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    explanation: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)

@@ -40,6 +40,9 @@ const DispatchPlanListPage = lazy(() => import('../pages/dispatch/DispatchPages'
 const DispatchPlanEditorPage = lazy(() => import('../pages/dispatch/DispatchPages').then((module) => ({ default: module.DispatchPlanEditorPage })));
 const DispatchRunListPage = lazy(() => import('../pages/dispatch/DispatchPages').then((module) => ({ default: module.DispatchRunListPage })));
 const DispatchRunDetailPage = lazy(() => import('../pages/dispatch/DispatchPages').then((module) => ({ default: module.DispatchRunDetailPage })));
+const OptimizationHomePage = lazy(() => import('../pages/optimization/OptimizationPages').then((module) => ({ default: module.OptimizationHomePage })));
+const OptimizationTasksPage = lazy(() => import('../pages/optimization/OptimizationPages').then((module) => ({ default: module.OptimizationTasksPage })));
+const OptimizationTaskDetailPage = lazy(() => import('../pages/optimization/OptimizationPages').then((module) => ({ default: module.OptimizationTaskDetailPage })));
 
 // 在动态页面代码到达前提供可感知状态，避免首次进入地图时出现空白区域。
 function RouteLoading({ label }: { label: string }) {
@@ -147,7 +150,7 @@ export const navigationItems: NavigationItem[] = [
     path: '/optimization',
     icon: <ExperimentOutlined />,
     eyebrow: 'OPTIMIZATION',
-    description: '比较 PSO、遗传算法与强化学习调度方案。',
+    description: '运行 PSO 多目标调度、Pareto 分析与人工推荐。',
   },
   {
     key: 'ai',
@@ -198,7 +201,10 @@ export const appRouter = createBrowserRouter([
       { path: 'dispatch/plans/:planId', element: <Suspense fallback={<RouteLoading label="正在加载计划编辑器…" />}><DispatchPlanEditorPage /></Suspense> },
       { path: 'dispatch/runs', element: <Suspense fallback={<RouteLoading label="正在加载运行中心…" />}><DispatchRunListPage /></Suspense> },
       { path: 'dispatch/runs/:runId', element: <Suspense fallback={<RouteLoading label="正在加载运行结果…" />}><DispatchRunDetailPage /></Suspense> },
-      ...navigationItems.filter((item) => ['optimization', 'ai'].includes(item.key)).map((item) => ({
+      { path: 'optimization', element: <Suspense fallback={<RouteLoading label="正在加载优化配置…" />}><OptimizationHomePage /></Suspense> },
+      { path: 'optimization/tasks', element: <Suspense fallback={<RouteLoading label="正在加载优化任务…" />}><OptimizationTasksPage /></Suspense> },
+      { path: 'optimization/tasks/:taskId', element: <Suspense fallback={<RouteLoading label="正在加载 Pareto 结果…" />}><OptimizationTaskDetailPage /></Suspense> },
+      ...navigationItems.filter((item) => ['ai'].includes(item.key)).map((item) => ({
         path: item.path.slice(1),
         element: <FeaturePage item={item} />,
       })),

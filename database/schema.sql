@@ -364,3 +364,43 @@ CREATE TABLE junction_result (
     balance_residual double precision NOT NULL,
     UNIQUE (task_id, node_id, time_seconds)
 );
+
+CREATE TABLE optimization_task (
+    id serial PRIMARY KEY,
+    name varchar(128) NOT NULL,
+    algorithm varchar(32) NOT NULL DEFAULT 'pso',
+    status varchar(16) NOT NULL DEFAULT 'pending',
+    dataset_version_id integer NOT NULL REFERENCES dataset_version(id) ON DELETE RESTRICT,
+    simulation_case_id integer NOT NULL REFERENCES simulation_case(id) ON DELETE RESTRICT,
+    objective_config json NOT NULL,
+    algorithm_config json NOT NULL,
+    input_snapshot json NOT NULL,
+    input_snapshot_hash varchar(64) NOT NULL,
+    algorithm_version varchar(64) NOT NULL,
+    progress integer NOT NULL DEFAULT 0,
+    current_generation integer NOT NULL DEFAULT 0,
+    best_score double precision,
+    queue_job_id varchar(128), worker_id varchar(128),
+    cancel_requested boolean NOT NULL DEFAULT false,
+    converged boolean NOT NULL DEFAULT false,
+    error_message text, created_time timestamptz NOT NULL DEFAULT now(),
+    start_time timestamptz, end_time timestamptz
+);
+
+CREATE TABLE optimization_candidate (
+    id serial PRIMARY KEY,
+    task_id integer NOT NULL REFERENCES optimization_task(id) ON DELETE CASCADE,
+    generation integer NOT NULL, candidate_index integer NOT NULL,
+    dispatch_plan json NOT NULL, score double precision, objective_values json, metrics json,
+    valid boolean NOT NULL DEFAULT true, constraint_reasons json NOT NULL,
+    simulation_task_id integer REFERENCES simulation_task(id) ON DELETE SET NULL,
+    created_time timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (task_id, generation, candidate_index)
+);
+
+CREATE TABLE optimization_result (
+    candidate_id integer PRIMARY KEY REFERENCES optimization_candidate(id) ON DELETE CASCADE,
+    task_id integer NOT NULL REFERENCES optimization_task(id) ON DELETE CASCADE,
+    pareto_level integer NOT NULL, rank integer NOT NULL,
+    recommendation_status varchar(16) NOT NULL, explanation json NOT NULL
+);

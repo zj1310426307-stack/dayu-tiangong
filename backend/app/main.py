@@ -13,7 +13,7 @@ def create_app() -> FastAPI:
     configure_logging()
     application = FastAPI(
         title="大禹·天工 API",
-        version="4.0.0",
+        version="5.0.0",
         description="河网联合水动力、闸泵调度仿真、水利数据库及 GIS 空间接口",
     )
 

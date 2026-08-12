@@ -1,5 +1,20 @@
 /* 本文件由 npm run openapi:update 自动生成，请勿手工修改。 */
 
+export interface AlgorithmConfig {
+  "particle_count"?: number;
+  "max_iterations"?: number;
+  "inertia"?: number;
+  "cognitive"?: number;
+  "social"?: number;
+  "tolerance"?: number;
+  "patience"?: number;
+  "seed"?: number;
+  "duration_seconds"?: number;
+  "time_step_seconds"?: number;
+  "output_interval_seconds"?: number;
+  "constraints"?: ConstraintConfig;
+}
+
 export interface app__dispatch__schemas__ValidationReport {
   "plan_id": number;
   "valid": boolean;
@@ -60,6 +75,13 @@ export interface BoundaryConditionUpdate {
   "values"?: Record<string, unknown> | null;
   "unit"?: string | null;
   "description"?: string | null;
+}
+
+export interface ConstraintConfig {
+  "maximum_actions_per_asset"?: number;
+  "maximum_pump_starts"?: number;
+  "invalid_penalty"?: number;
+  "hydraulic_limits"?: HydraulicLimits;
 }
 
 export interface CrossSectionCreate {
@@ -406,6 +428,12 @@ export interface HTTPValidationError {
   "detail"?: Array<ValidationError>;
 }
 
+export interface HydraulicLimits {
+  "maximum_water_level"?: number | null;
+  "maximum_flow"?: number | null;
+  "maximum_pump_power_kw"?: number | null;
+}
+
 export interface ImportIssue {
   "row": number;
   "message": string;
@@ -461,6 +489,92 @@ export interface ModelParameterUpdate {
   "description"?: string | null;
 }
 
+export interface ObjectiveConfig {
+  "version"?: "dayu.objectives.v1";
+  "weights"?: ObjectiveWeights;
+  "normalization"?: ObjectiveNormalization;
+  "warning_level"?: number | null;
+  "guarantee_level"?: number | null;
+}
+
+export interface ObjectiveNormalization {
+  "maximum_water_level"?: number;
+  "warning_duration"?: number;
+  "guarantee_duration"?: number;
+  "pump_energy_kwh"?: number;
+  "pump_runtime_seconds"?: number;
+  "pump_start_count"?: number;
+  "gate_action_count"?: number;
+  "gate_cumulative_opening_change"?: number;
+  "pump_stop_count"?: number;
+}
+
+export interface ObjectiveWeights {
+  "flood_risk"?: number;
+  "energy_cost"?: number;
+  "operation_cost"?: number;
+}
+
+export interface OptimizationCandidateRecord {
+  "id": number;
+  "task_id": number;
+  "generation": number;
+  "candidate_index": number;
+  "dispatch_plan": Record<string, unknown>;
+  "score": number | null;
+  "objective_values": Record<string, unknown> | null;
+  "metrics": Record<string, unknown> | null;
+  "valid": boolean;
+  "constraint_reasons": Array<string>;
+  "simulation_task_id": number | null;
+  "created_time": string;
+}
+
+export interface OptimizationExplanation {
+  "task_id": number;
+  "candidate_id": number | null;
+  "explanation_type"?: "deterministic_template";
+  "summary": string;
+  "factors": Array<string>;
+  "limitations": Array<string>;
+}
+
+export interface OptimizationTaskCreate {
+  "name": string;
+  "algorithm"?: "pso";
+  "dataset_version_id": number;
+  "simulation_case_id": number;
+  "objective_config"?: ObjectiveConfig;
+  "algorithm_config"?: AlgorithmConfig;
+}
+
+export interface OptimizationTaskRecord {
+  "id": number;
+  "name": string;
+  "algorithm": string;
+  "status": "pending" | "running" | "success" | "failed" | "cancelled";
+  "dataset_version_id": number;
+  "simulation_case_id": number;
+  "objective_config": Record<string, unknown>;
+  "algorithm_config": Record<string, unknown>;
+  "input_snapshot_hash": string;
+  "algorithm_version": string;
+  "progress": number;
+  "current_generation": number;
+  "best_score": number | null;
+  "queue_job_id": string | null;
+  "worker_id": string | null;
+  "cancel_requested": boolean;
+  "converged": boolean;
+  "error_message": string | null;
+  "created_time": string;
+  "start_time": string | null;
+  "end_time": string | null;
+  "candidate_count"?: number;
+  "pareto_count"?: number;
+  "recommended_candidate_id"?: number | null;
+}
+
 export interface Page {
   "items": Array<unknown>;
   "total": number;
@@ -475,6 +589,25 @@ export interface PaginationMeta {
   "bbox"?: Array<number> | null;
   "demo_data"?: true;
   "crs"?: "EPSG:4490";
+}
+
+export interface ParetoCandidateRecord {
+  "id": number;
+  "task_id": number;
+  "generation": number;
+  "candidate_index": number;
+  "dispatch_plan": Record<string, unknown>;
+  "score": number | null;
+  "objective_values": Record<string, unknown> | null;
+  "metrics": Record<string, unknown> | null;
+  "valid": boolean;
+  "constraint_reasons": Array<string>;
+  "simulation_task_id": number | null;
+  "created_time": string;
+  "pareto_level": number;
+  "rank": number;
+  "recommendation_status": string;
+  "explanation": Record<string, unknown>;
 }
 
 export interface PumpCreate {
@@ -564,6 +697,13 @@ export interface PumpUpdate {
   "control_mode"?: string | null;
   "status"?: "online" | "offline" | "maintenance" | "fault" | null;
   "geometry"?: Record<string, unknown> | null;
+}
+
+export interface RecommendationResponse {
+  "task_id": number;
+  "candidate": ParetoCandidateRecord | null;
+  "execution_authorized"?: false;
+  "notice"?: string;
 }
 
 export interface ResultSectionOption {
@@ -886,6 +1026,16 @@ export const getDispatchComparison = (runId: number, baseUrl = '') => requestJso
 export const getDispatchEvents = (runId: number, baseUrl = '') => requestJson<Array<Record<string, unknown>>>(`/api/v1/dispatch/runs/${runId}/events`, {}, baseUrl);
 export const getDispatchStructures = (runId: number, baseUrl = '') => requestJson<Array<Record<string, unknown>>>(`/api/v1/dispatch/runs/${runId}/structures`, {}, baseUrl);
 export const getDispatchNodes = (runId: number, baseUrl = '') => requestJson<Array<Record<string, unknown>>>(`/api/v1/dispatch/runs/${runId}/nodes`, {}, baseUrl);
+
+export const createOptimizationTask = (body: OptimizationTaskCreate, baseUrl = '') => requestJson<OptimizationTaskRecord>('/api/v1/optimization/tasks', jsonOptions('POST', body), baseUrl);
+export const listOptimizationTasks = (baseUrl = '') => requestJson<Array<OptimizationTaskRecord>>('/api/v1/optimization/tasks', {}, baseUrl);
+export const getOptimizationTask = (taskId: number, baseUrl = '') => requestJson<OptimizationTaskRecord>(`/api/v1/optimization/tasks/${taskId}`, {}, baseUrl);
+export const runOptimizationTask = (taskId: number, baseUrl = '') => requestJson<OptimizationTaskRecord>(`/api/v1/optimization/tasks/${taskId}/run`, { method: 'POST' }, baseUrl);
+export const cancelOptimizationTask = (taskId: number, baseUrl = '') => requestJson<OptimizationTaskRecord>(`/api/v1/optimization/tasks/${taskId}/cancel`, { method: 'POST' }, baseUrl);
+export const getOptimizationCandidates = (taskId: number, baseUrl = '') => requestJson<Array<OptimizationCandidateRecord>>(`/api/v1/optimization/tasks/${taskId}/candidates`, {}, baseUrl);
+export const getOptimizationPareto = (taskId: number, baseUrl = '') => requestJson<Array<ParetoCandidateRecord>>(`/api/v1/optimization/tasks/${taskId}/pareto`, {}, baseUrl);
+export const getOptimizationRecommendation = (taskId: number, baseUrl = '') => requestJson<RecommendationResponse>(`/api/v1/optimization/tasks/${taskId}/recommendation`, {}, baseUrl);
+export const explainOptimizationRecommendation = (taskId: number, baseUrl = '') => requestJson<OptimizationExplanation>(`/api/v1/optimization/tasks/${taskId}/explain`, {}, baseUrl);
 
 export async function uploadDataFile(kind: 'excel' | 'csv' | 'geojson', resource: ImportResource, datasetVersionId: number, file: File, baseUrl = ''): Promise<ImportResponse> {
   const body = new FormData();

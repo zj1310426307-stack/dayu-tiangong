@@ -12,6 +12,7 @@ def evaluate_pump_metrics(structure_series: list[dict[str, Any]]) -> dict[str, f
         grouped.setdefault(int(row["structure_id"]), []).append(row)
     runtime = 0.0
     starts = 0
+    stops = 0
     volume = 0.0
     energy = 0.0
     peak_power = 0.0
@@ -26,6 +27,8 @@ def evaluate_pump_metrics(structure_series: list[dict[str, Any]]) -> dict[str, f
                 volume += float(left.get("flow") or 0.0) * dt
             if running and not previous_running:
                 starts += 1
+            if previous_running and not running:
+                stops += 1
             previous_running = running
         if ordered:
             energy += float(ordered[-1].get("energy_kwh") or 0.0)
@@ -33,6 +36,7 @@ def evaluate_pump_metrics(structure_series: list[dict[str, Any]]) -> dict[str, f
     return {
         "pump_runtime_seconds": runtime,
         "pump_start_count": starts,
+        "pump_stop_count": stops,
         "pump_total_volume_m3": volume,
         "pump_total_energy_kwh": energy,
         "pump_peak_power_kw": peak_power,

@@ -1,4 +1,4 @@
-# 大禹·天工 Phase 4 系统架构
+# 大禹·天工 Phase 5 系统架构
 
 ## 总体链路
 
@@ -14,6 +14,14 @@ flowchart LR
   E --> N["河网共同水位 + 连续性"]
   E --> GP["闸门界面通量 / 泵站节点源汇"]
   W --> P
+  UI --> O["优化配置 / Pareto / 人工复核"]
+  O --> C
+  S --> OW["Optimization Worker / PSO"]
+  OW --> T["候选 Dispatch Plan"]
+  T --> W
+  W --> M["目标指标 / 约束"]
+  M --> PF["Pareto 分层"]
+  PF --> O
 ```
 
 ## 边界与所有权
@@ -26,8 +34,13 @@ flowchart LR
 | `backend/app/worker` | 原子认领、心跳、协作取消、重试、僵尸恢复 |
 | `frontend/src/api/generated` | 前后端唯一接口边界 |
 | `frontend/src/pages/dispatch` | 计划、运行、对比、结构/节点/事件 UI |
+| `optimization/` | PSO、目标函数、约束与 Pareto 的框架无关核心 |
+| `backend/app/optimization` | 冻结优化输入、候选仿真编排、持久化与推荐查询 |
+| `frontend/src/pages/optimization` | 配置、任务监控、Pareto 与人工复核 UI |
 
 路由不重复业务逻辑；引擎不读取数据库；模拟控制状态不写回静态 `gate.status`/`pump.status`。
+
+优化层不修改水动力模型。每个有效候选生成独立 Phase 4 `simulation_task`，只有水动力任务成功并通过后置约束后才能进入有效 Pareto 前沿。推荐状态不等于执行授权。
 
 ## 输入、结果与一致性
 

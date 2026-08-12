@@ -52,6 +52,11 @@ const requiredPaths = [
   '/api/v1/dispatch/plans/{plan_id}/actions', '/api/v1/dispatch/plans/{plan_id}/rules',
   '/api/v1/dispatch/plans/{plan_id}/runs', '/api/v1/dispatch/runs',
   '/api/v1/dispatch/runs/{run_id}', '/api/v1/dispatch/runs/{run_id}/comparison',
+  '/api/v1/optimization/tasks', '/api/v1/optimization/tasks/{task_id}',
+  '/api/v1/optimization/tasks/{task_id}/run',
+  '/api/v1/optimization/tasks/{task_id}/candidates',
+  '/api/v1/optimization/tasks/{task_id}/pareto',
+  '/api/v1/optimization/tasks/{task_id}/recommendation',
 ];
 for (const path of requiredPaths) {
   if (!openapi.paths?.[path]) throw new Error(`OpenAPI 缺少接口：${path}`);
@@ -173,6 +178,16 @@ export const getDispatchComparison = (runId: number, baseUrl = '') => requestJso
 export const getDispatchEvents = (runId: number, baseUrl = '') => requestJson<Array<Record<string, unknown>>>(\`/api/v1/dispatch/runs/\${runId}/events\`, {}, baseUrl);
 export const getDispatchStructures = (runId: number, baseUrl = '') => requestJson<Array<Record<string, unknown>>>(\`/api/v1/dispatch/runs/\${runId}/structures\`, {}, baseUrl);
 export const getDispatchNodes = (runId: number, baseUrl = '') => requestJson<Array<Record<string, unknown>>>(\`/api/v1/dispatch/runs/\${runId}/nodes\`, {}, baseUrl);
+
+export const createOptimizationTask = (body: OptimizationTaskCreate, baseUrl = '') => requestJson<OptimizationTaskRecord>('/api/v1/optimization/tasks', jsonOptions('POST', body), baseUrl);
+export const listOptimizationTasks = (baseUrl = '') => requestJson<Array<OptimizationTaskRecord>>('/api/v1/optimization/tasks', {}, baseUrl);
+export const getOptimizationTask = (taskId: number, baseUrl = '') => requestJson<OptimizationTaskRecord>(\`/api/v1/optimization/tasks/\${taskId}\`, {}, baseUrl);
+export const runOptimizationTask = (taskId: number, baseUrl = '') => requestJson<OptimizationTaskRecord>(\`/api/v1/optimization/tasks/\${taskId}/run\`, { method: 'POST' }, baseUrl);
+export const cancelOptimizationTask = (taskId: number, baseUrl = '') => requestJson<OptimizationTaskRecord>(\`/api/v1/optimization/tasks/\${taskId}/cancel\`, { method: 'POST' }, baseUrl);
+export const getOptimizationCandidates = (taskId: number, baseUrl = '') => requestJson<Array<OptimizationCandidateRecord>>(\`/api/v1/optimization/tasks/\${taskId}/candidates\`, {}, baseUrl);
+export const getOptimizationPareto = (taskId: number, baseUrl = '') => requestJson<Array<ParetoCandidateRecord>>(\`/api/v1/optimization/tasks/\${taskId}/pareto\`, {}, baseUrl);
+export const getOptimizationRecommendation = (taskId: number, baseUrl = '') => requestJson<RecommendationResponse>(\`/api/v1/optimization/tasks/\${taskId}/recommendation\`, {}, baseUrl);
+export const explainOptimizationRecommendation = (taskId: number, baseUrl = '') => requestJson<OptimizationExplanation>(\`/api/v1/optimization/tasks/\${taskId}/explain\`, {}, baseUrl);
 
 export async function uploadDataFile(kind: 'excel' | 'csv' | 'geojson', resource: ImportResource, datasetVersionId: number, file: File, baseUrl = ''): Promise<ImportResponse> {
   const body = new FormData();
