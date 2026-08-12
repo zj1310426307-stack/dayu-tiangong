@@ -57,6 +57,9 @@ const requiredPaths = [
   '/api/v1/optimization/tasks/{task_id}/candidates',
   '/api/v1/optimization/tasks/{task_id}/pareto',
   '/api/v1/optimization/tasks/{task_id}/recommendation',
+  '/api/v1/ai/chat', '/api/v1/ai/knowledge/search',
+  '/api/v1/ai/knowledge/documents', '/api/v1/ai/report/generate',
+  '/api/v1/ai/tools/logs',
 ];
 for (const path of requiredPaths) {
   if (!openapi.paths?.[path]) throw new Error(`OpenAPI 缺少接口：${path}`);
@@ -188,6 +191,20 @@ export const getOptimizationCandidates = (taskId: number, baseUrl = '') => reque
 export const getOptimizationPareto = (taskId: number, baseUrl = '') => requestJson<Array<ParetoCandidateRecord>>(\`/api/v1/optimization/tasks/\${taskId}/pareto\`, {}, baseUrl);
 export const getOptimizationRecommendation = (taskId: number, baseUrl = '') => requestJson<RecommendationResponse>(\`/api/v1/optimization/tasks/\${taskId}/recommendation\`, {}, baseUrl);
 export const explainOptimizationRecommendation = (taskId: number, baseUrl = '') => requestJson<OptimizationExplanation>(\`/api/v1/optimization/tasks/\${taskId}/explain\`, {}, baseUrl);
+
+export const chatWithAI = (body: AIChatRequest, baseUrl = '') => requestJson<AIChatResponse>('/api/v1/ai/chat', jsonOptions('POST', body), baseUrl);
+export const searchAIKnowledge = (query: string, limit = 5, baseUrl = '') => requestJson<KnowledgeSearchResponse>(\`/api/v1/ai/knowledge/search\${toQuery({ q: query, limit })}\`, {}, baseUrl);
+export const listAIKnowledgeDocuments = (baseUrl = '') => requestJson<Array<KnowledgeDocumentRecord>>('/api/v1/ai/knowledge/documents', {}, baseUrl);
+export const generateAIReport = (body: ReportGenerateRequest, baseUrl = '') => requestJson<ReportGenerateResponse>('/api/v1/ai/report/generate', jsonOptions('POST', body), baseUrl);
+export const listAIToolLogs = (limit = 20, offset = 0, baseUrl = '') => requestJson<Array<AIToolCallLogRecord>>(\`/api/v1/ai/tools/logs\${toQuery({ limit, offset })}\`, {}, baseUrl);
+
+export async function uploadAIKnowledgeDocument(file: File, category: string, version: string, baseUrl = ''): Promise<KnowledgeDocumentRecord> {
+  const body = new FormData();
+  body.set('file', file);
+  body.set('category', category);
+  body.set('version', version);
+  return requestJson<KnowledgeDocumentRecord>('/api/v1/ai/knowledge/documents', { method: 'POST', body }, baseUrl);
+}
 
 export async function uploadDataFile(kind: 'excel' | 'csv' | 'geojson', resource: ImportResource, datasetVersionId: number, file: File, baseUrl = ''): Promise<ImportResponse> {
   const body = new FormData();

@@ -3,6 +3,7 @@
 from fastapi import APIRouter
 
 from app.api.routes import system
+from app.ai.router import router as ai_router
 from app.cross_section.router import router as cross_section_router
 from app.dataset.router import router as dataset_router
 from app.dispatch.router import router as dispatch_router
@@ -25,6 +26,7 @@ api_router.include_router(structure_router)
 api_router.include_router(model_engine_router)
 api_router.include_router(dispatch_router)
 api_router.include_router(optimization_router)
+api_router.include_router(ai_router)
 api_router.include_router(dataset_router)
 api_router.include_router(import_router)
 api_router.include_router(validation_router)

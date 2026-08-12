@@ -1,9 +1,13 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { viteStaticCopy } from 'vite-plugin-static-copy';
 
 // 将 Cesium Worker、控件和静态资源复制到稳定公共路径。
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  // 允许共享开发机把前端代理指向独立后端端口，默认仍保持 Phase 1 的 8001。
+  const environment = loadEnv(mode, '.', '');
+  const backendTarget = environment.VITE_BACKEND_TARGET || 'http://127.0.0.1:8001';
+  return {
   define: {
     CESIUM_BASE_URL: JSON.stringify('/cesiumStatic'),
   },
@@ -22,7 +26,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       // 本地开发使用同源 `/api`，避免页面持有环境专属后端地址。
-      '/api': 'http://127.0.0.1:8001',
+      '/api': backendTarget,
     },
   },
   preview: {
@@ -44,4 +48,5 @@ export default defineConfig({
       },
     },
   },
+  };
 });

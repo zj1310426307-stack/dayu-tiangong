@@ -15,7 +15,6 @@ import {
 import { lazy, Suspense } from 'react';
 import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { MainLayout } from '../layout/MainLayout';
-import { FeaturePage } from '../pages/FeaturePage';
 import type { NavigationItem } from '../types/navigation';
 import { DatasetVersionProvider } from '../context/DatasetVersionContext';
 
@@ -43,6 +42,7 @@ const DispatchRunDetailPage = lazy(() => import('../pages/dispatch/DispatchPages
 const OptimizationHomePage = lazy(() => import('../pages/optimization/OptimizationPages').then((module) => ({ default: module.OptimizationHomePage })));
 const OptimizationTasksPage = lazy(() => import('../pages/optimization/OptimizationPages').then((module) => ({ default: module.OptimizationTasksPage })));
 const OptimizationTaskDetailPage = lazy(() => import('../pages/optimization/OptimizationPages').then((module) => ({ default: module.OptimizationTaskDetailPage })));
+const AIAssistantPage = lazy(() => import('../pages/ai/AIAssistantPage').then((module) => ({ default: module.AIAssistantPage })));
 
 // 在动态页面代码到达前提供可感知状态，避免首次进入地图时出现空白区域。
 function RouteLoading({ label }: { label: string }) {
@@ -155,7 +155,7 @@ export const navigationItems: NavigationItem[] = [
   {
     key: 'ai',
     label: 'AI 助手',
-    path: '/ai',
+    path: '/ai-assistant',
     icon: <BulbOutlined />,
     eyebrow: 'WATER INTELLIGENCE',
     description: '连接水利知识与调度辅助决策能力。',
@@ -204,10 +204,8 @@ export const appRouter = createBrowserRouter([
       { path: 'optimization', element: <Suspense fallback={<RouteLoading label="正在加载优化配置…" />}><OptimizationHomePage /></Suspense> },
       { path: 'optimization/tasks', element: <Suspense fallback={<RouteLoading label="正在加载优化任务…" />}><OptimizationTasksPage /></Suspense> },
       { path: 'optimization/tasks/:taskId', element: <Suspense fallback={<RouteLoading label="正在加载 Pareto 结果…" />}><OptimizationTaskDetailPage /></Suspense> },
-      ...navigationItems.filter((item) => ['ai'].includes(item.key)).map((item) => ({
-        path: item.path.slice(1),
-        element: <FeaturePage item={item} />,
-      })),
+      { path: 'ai', element: <Navigate to="/ai-assistant" replace /> },
+      { path: 'ai-assistant', element: <Suspense fallback={<RouteLoading label="正在加载 AI 水利助手…" />}><AIAssistantPage /></Suspense> },
     ],
   },
 ]);

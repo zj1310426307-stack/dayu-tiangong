@@ -15,6 +15,7 @@ htmlcov/
 
 # 运行期导入归档
 backend/storage/imports/
+backend/storage/ai-reports/
 
 # 本地环境与编辑器文件
 .env

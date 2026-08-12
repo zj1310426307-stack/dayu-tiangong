@@ -44,6 +44,10 @@ services:
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       ENGINE_COMMIT: ${ENGINE_COMMIT:-local-compose}
       ENABLE_SYNC_MODEL_RUN: ${ENABLE_SYNC_MODEL_RUN:-0}
+      AI_LLM_PROVIDER: ${AI_LLM_PROVIDER:-local}
+      AI_LLM_BASE_URL: ${AI_LLM_BASE_URL:-}
+      AI_LLM_MODEL: ${AI_LLM_MODEL:-}
+      AI_LLM_API_KEY: ${AI_LLM_API_KEY:-}
     depends_on:
       database:
         condition: service_healthy

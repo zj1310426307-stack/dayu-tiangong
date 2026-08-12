@@ -404,3 +404,63 @@ CREATE TABLE optimization_result (
     pareto_level integer NOT NULL, rank integer NOT NULL,
     recommendation_status varchar(16) NOT NULL, explanation json NOT NULL
 );
+
+-- Phase 6 AI 助手仅追加解释、知识、审计和报告数据，不拥有业务结果写权限。
+CREATE TABLE ai_conversation (
+    id SERIAL PRIMARY KEY,
+    "user" VARCHAR(64) NOT NULL,
+    question TEXT NOT NULL,
+    answer TEXT NOT NULL,
+    context JSON NOT NULL,
+    source JSON NOT NULL,
+    tools_used JSON NOT NULL,
+    safety_status VARCHAR(32) NOT NULL,
+    provider VARCHAR(64) NOT NULL,
+    created_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE knowledge_document (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    category VARCHAR(32) NOT NULL,
+    version VARCHAR(64) NOT NULL,
+    source TEXT NOT NULL,
+    source_type VARCHAR(16) NOT NULL,
+    content_hash VARCHAR(64) NOT NULL,
+    upload_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_knowledge_document_source_version UNIQUE (source, version)
+);
+
+CREATE TABLE knowledge_chunk (
+    id SERIAL PRIMARY KEY,
+    document_id INTEGER NOT NULL REFERENCES knowledge_document(id) ON DELETE CASCADE,
+    chunk_index INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    location VARCHAR(128) NOT NULL,
+    embedding JSON NOT NULL,
+    created_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_knowledge_chunk_position UNIQUE (document_id, chunk_index)
+);
+
+CREATE TABLE ai_tool_call_log (
+    id SERIAL PRIMARY KEY,
+    conversation_id INTEGER REFERENCES ai_conversation(id) ON DELETE CASCADE,
+    tool_name VARCHAR(64) NOT NULL,
+    "input" JSON NOT NULL,
+    "output" JSON NOT NULL,
+    duration_ms INTEGER NOT NULL,
+    time TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE ai_report (
+    id SERIAL PRIMARY KEY,
+    conversation_id INTEGER REFERENCES ai_conversation(id) ON DELETE SET NULL,
+    created_by VARCHAR(64) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    report_type VARCHAR(64) NOT NULL,
+    markdown_path TEXT NOT NULL,
+    pdf_path TEXT NOT NULL,
+    source JSON NOT NULL,
+    created_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

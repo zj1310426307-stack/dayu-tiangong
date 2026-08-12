@@ -24,7 +24,9 @@ def test_scheduler_optimizer_returns_uncomputed_result() -> None:
 def test_water_ai_returns_placeholder_contract() -> None:
     """The AI placeholder keeps its stable public contract."""
 
-    assert WaterAI().analyze({}) == {"answer": "AI助手接口"}
+    result = WaterAI().analyze({"question": "解释方案", "evidence": [], "sources": []})
+    assert result["safety_status"] == "insufficient_evidence"
+    assert result["execution_authorized"] is False
 
 
 @pytest.mark.parametrize(

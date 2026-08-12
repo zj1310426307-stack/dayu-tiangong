@@ -1,8 +1,8 @@
 # 大禹·天工（Dayu Tiangong）
 
-面向河网数字孪生的联合水动力、闸泵调度与多目标优化仿真平台。Phase 5 已形成“版本化数据 → 候选调度 → Phase 4 水动力仿真 → 多目标评价 → Pareto → 人工复核”的可追溯闭环。
+面向河网数字孪生的联合水动力、闸泵调度、多目标优化与 AI 辅助解释平台。Phase 6 已形成“模型/优化结果 → 只读工具与 RAG → 来源约束回答/报告 → 人工复核”的可追溯闭环。
 
-> 本仓库内置数据均为 **DEMO DATA**。当前计算未经工程率定，不连接实时监测和真实控制设备；优化结果仅用于仿真与人工复核，不包含 AI 自主决策。
+> 本仓库内置数据均为 **DEMO DATA**。当前计算未经工程率定，不连接实时监测、PLC/SCADA 或真实控制设备；AI 只解释、检索和生成报告，不修改结果，不替代人工审批。
 
 ## 技术栈
 
@@ -12,6 +12,7 @@
 - 数据：PostgreSQL 17、PostGIS 3.5，空间坐标统一为 CGCS2000 / EPSG:4490
 - 异步：Celery 5.5.3、Redis 7.4
 - 优化：种子可复现 PSO、多目标评分、硬约束、Pareto 非支配分层
+- AI：本地来源约束生成 / 可选 OpenAI-compatible LLM、离线 RAG、只读工具、安全护栏、Markdown/PDF
 
 ## 启动
 
@@ -19,7 +20,7 @@
 docker compose -p dayu-tiangong-phase1 -f docker/docker-compose.yml up --build
 ```
 
-编排顺序为 `database + redis → migrate (0001…0006) → seed → backend + worker → frontend`。seed 已避免在存在历史结果时重建稳定的河网节点身份。
+编排顺序为 `database + redis → migrate (0001…0007) → seed → backend + worker → frontend`。seed 会复用稳定河网节点并幂等导入五类内置知识。
 
 - 平台：`http://127.0.0.1:8080/`
 - GIS：`http://127.0.0.1:8080/gis`
@@ -27,9 +28,10 @@ docker compose -p dayu-tiangong-phase1 -f docker/docker-compose.yml up --build
 - 调度运行：`http://127.0.0.1:8080/dispatch/runs`
 - 水动力任务：`http://127.0.0.1:8080/hydraulic/tasks`
 - 多目标优化：`http://127.0.0.1:8080/optimization`
+- AI 水利助手：`http://127.0.0.1:8080/ai-assistant`
 - OpenAPI：`http://127.0.0.1:8001/docs`
 
-## Phase 5 API
+## Phase 6 API
 
 - `/api/v1/dispatch/plans`：计划 CRUD、校验、冻结、克隆、归档
 - `/api/v1/dispatch/plans/{id}/actions|rules|runs`：动作、规则及异步运行
@@ -39,6 +41,10 @@ docker compose -p dayu-tiangong-phase1 -f docker/docker-compose.yml up --build
 - `/api/v1/optimization/tasks`：优化任务创建与列表
 - `/api/v1/optimization/tasks/{id}/run|cancel`：异步运行与协作取消
 - `/api/v1/optimization/tasks/{id}/candidates|pareto|recommendation|explain`：候选、前沿、人工推荐与确定性解释
+- `POST /api/v1/ai/chat`：带来源、工具列表和安全状态的 AI 对话
+- `GET|POST /api/v1/ai/knowledge/*`：知识检索、文档清单与上传
+- `POST /api/v1/ai/report/generate`：生成 Markdown/PDF 调度分析报告
+- `GET /api/v1/ai/tools/logs`：工具调用审计
 
 前端请求只使用 `frontend/src/api/generated/client.ts`。后端启动后用 `cd frontend && npm run openapi:update` 同步契约。
 
@@ -53,7 +59,7 @@ docker compose -p dayu-tiangong-phase1 -f docker/docker-compose.yml build fronte
 docker run --rm -v "${PWD}\frontend:/app:ro" -w /app node:22-alpine npm audit --audit-level=moderate
 ```
 
-本次开启真实 PostGIS 集成后的全量自动测试为 91 passed，其中 Phase 5 新增 8 项专项测试通过；真实 PostgreSQL 迁移与 2 候选端到端优化通过；前端类型检查、生产构建和内置浏览器验收通过。npm audit 本次因 registry endpoint 不可用未返回新结果；Cesium、ECharts、Ant Design 仍是独立大块。
+本次开启真实 PostGIS 集成后的全量自动测试为 102 passed，Phase 6 专项 11 项通过；Alembic 为 `0007 (head)`；前端类型检查、生产构建和内置浏览器验收通过。AI 页面块 8.68 kB（gzip 3.80 kB）；Cesium、ECharts、Ant Design 仍是独立大块。
 
 ## 文档
 
@@ -70,3 +76,5 @@ docker run --rm -v "${PWD}\frontend:/app:ro" -w /app node:22-alpine npm audit --
 - [Phase 4 审查](docs/review/phase4_dispatch_review.md)
 - [优化契约](docs/optimization/optimization_contract.md)
 - [Phase 5 审查](docs/review/phase5_optimization_review.md)
+- [Phase 6 AI 架构](docs/ai/phase6_ai_architecture.md)
+- [Phase 6 审查](docs/review/phase6_ai_review.md)
