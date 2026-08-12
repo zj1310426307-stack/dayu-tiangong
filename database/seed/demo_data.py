@@ -15,6 +15,7 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY_ROOT / "backend"))
 
 from app.database.session import SessionLocal  # noqa: E402
+from app.ai.service import seed_builtin_knowledge  # noqa: E402
 from app.gis.models import (  # noqa: E402
     BoundaryCondition,
     CrossSection,
@@ -459,6 +460,8 @@ def seed_demo_data() -> dict[str, int]:
             pump.head_curve = {"points": [[0.0, pump.head * 1.2], [pump.design_flow, pump.head]]}
 
     with SessionLocal() as session:
+        # Phase 6 内置知识随空库初始化幂等入库，容器无需手工执行第二条命令。
+        seed_builtin_knowledge(session)
         return {
             "dataset_versions": session.scalar(select(func.count(DatasetVersion.id))) or 0,
             "rivers": session.scalar(select(func.count(River.id))) or 0,

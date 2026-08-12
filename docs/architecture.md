@@ -1,4 +1,4 @@
-# 大禹·天工 Phase 5 系统架构
+# 大禹·天工 Phase 6 系统架构
 
 ## 总体链路
 
@@ -22,6 +22,11 @@ flowchart LR
   W --> M["目标指标 / 约束"]
   M --> PF["Pareto 分层"]
   PF --> O
+  UI --> AI["AI 助手 / 来源 / 报告"]
+  AI --> C
+  S --> RAG["知识检索 / 只读工具 / 安全护栏"]
+  RAG --> P
+  RAG --> AI
 ```
 
 ## 边界与所有权
@@ -37,10 +42,15 @@ flowchart LR
 | `optimization/` | PSO、目标函数、约束与 Pareto 的框架无关核心 |
 | `backend/app/optimization` | 冻结优化输入、候选仿真编排、持久化与推荐查询 |
 | `frontend/src/pages/optimization` | 配置、任务监控、Pareto 与人工复核 UI |
+| `ai/` | 助手生成、RAG、知识、工具、提示、报告与安全护栏 |
+| `backend/app/ai` | AI 对话、来源、知识入库、只读工具、工具审计和报告 |
+| `frontend/src/pages/ai` | 对话、来源、知识、报告和工具审计 UI |
 
 路由不重复业务逻辑；引擎不读取数据库；模拟控制状态不写回静态 `gate.status`/`pump.status`。
 
 优化层不修改水动力模型。每个有效候选生成独立 Phase 4 `simulation_task`，只有水动力任务成功并通过后置约束后才能进入有效 Pareto 前沿。推荐状态不等于执行授权。
+
+AI 层只读取权威模型、优化和空间结果；工具固定为白名单，输入/输出均受门禁。回答和报告不具有设备执行权限。
 
 ## 输入、结果与一致性
 

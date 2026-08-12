@@ -306,6 +306,42 @@ button, input { font: inherit; }
 .optimization-pareto-chart { width: 100%; height: 410px; }
 .optimization-comparison-chart { width: 100%; height: 510px; }
 
+/* Phase 6 AI 助手：对话、来源、工具审计和知识检索明确分区。 */
+.ai-page { padding-bottom: 28px; }
+.ai-chat-card { min-height: 690px; }
+.ai-quick-questions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.ai-conversation { height: 450px; padding: 8px 5px; overflow-y: auto; border-block: 1px solid var(--line); }
+.ai-message { display: flex; align-items: flex-start; gap: 11px; margin: 15px 0; }
+.ai-message--user { flex-direction: row-reverse; }
+.ai-message .ant-avatar { flex: none; color: var(--cyan); background: rgba(47, 230, 214, 0.1); border: 1px solid rgba(47, 230, 214, 0.18); }
+.ai-message--user .ant-avatar { color: #9dc5ff; background: rgba(56, 168, 255, 0.11); border-color: rgba(56, 168, 255, 0.18); }
+.ai-message__body { width: min(720px, 86%); padding: 13px 15px; background: rgba(13, 33, 48, 0.58); border: 1px solid rgba(87, 142, 168, 0.14); border-radius: 4px 10px 10px; }
+.ai-message--user .ai-message__body { background: rgba(31, 68, 91, 0.35); border-radius: 10px 4px 10px 10px; }
+.ai-message__meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; color: #b8d6df; font-size: 10px; }
+.ai-message__body .ant-typography { margin-bottom: 6px; color: #bdd3dc; white-space: pre-wrap; line-height: 1.8; }
+.ai-tools-used { color: #638397; font-size: 10px; }
+.ai-citations { display: grid; gap: 8px; }
+.ai-citations > div { display: flex; gap: 9px; padding: 8px; color: #648397; background: rgba(4, 18, 29, 0.44); border-radius: 5px; }
+.ai-citations strong, .ai-citations span, .ai-citations small { display: block; }
+.ai-citations strong { color: #a9cbd6; font-size: 10px; }
+.ai-citations span { margin-top: 3px; font: 8px Consolas, monospace; }
+.ai-citations small { margin-top: 5px; color: #557587; line-height: 1.5; }
+.ai-thinking { display: flex; align-items: center; gap: 8px; color: #648397; font-size: 10px; }
+.ai-thinking span { width: 7px; height: 7px; background: var(--cyan); border-radius: 50%; box-shadow: 0 0 10px var(--cyan); animation: route-loading-pulse 0.8s ease-in-out infinite alternate; }
+.ai-composer { display: flex; align-items: end; gap: 10px; margin-top: 15px; }
+.ai-composer textarea { background: rgba(5, 20, 31, 0.72) !important; }
+.ai-context-card, .ai-report-card { margin-bottom: 16px; }
+.ai-context-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
+.ai-context-grid label { color: #7898aa; font-size: 10px; }
+.ai-context-grid .ant-input-number { display: block; width: 100%; margin-top: 7px; }
+.ai-report-card p { color: #68889a; font-size: 11px; line-height: 1.7; }
+.ai-report-links { margin-top: 12px; }
+.ai-upload-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0; }
+.ai-knowledge-list .ant-list-item-meta-description { display: grid; gap: 7px; color: #648397 !important; font-size: 10px; }
+.ai-knowledge-list .ant-list-item-meta-description span { max-height: 64px; overflow: hidden; line-height: 1.6; }
+.ai-tool-log-list { max-height: 440px; overflow-y: auto; }
+.ai-tool-log-list .ant-list-item { align-items: start; }
+
 /* 窄屏时内容自然堆叠，侧栏收为图标轨道。 */
 @media (max-width: 1100px) {
   .side-rail { width: 82px !important; max-width: 82px !important; min-width: 82px !important; flex: 0 0 82px !important; }
@@ -336,6 +372,8 @@ button, input { font: inherit; }
   .data-page__header { align-items: start; flex-direction: column; }
   .data-split { grid-template-columns: 1fr; }
   .hydraulic-result-chart { height: 590px; }
+  .ai-context-grid { grid-template-columns: 1fr; }
+  .ai-upload-row, .ai-composer { align-items: stretch; flex-direction: column; }
   .feature-hero { min-height: 390px; padding: 35px 27px; }
   .feature-contract { align-self: auto; }
 }

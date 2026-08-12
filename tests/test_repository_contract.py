@@ -37,7 +37,13 @@ def test_required_phase1_files_exist() -> None:
         "model/control/rules.py",
         "frontend/src/pages/hydraulic/HydraulicPages.tsx",
         "optimization/optimizer.py",
-        "ai/assistant.py",
+        "ai/assistant/core.py",
+        "ai/retrieval/engine.py",
+        "ai/guardrails/policy.py",
+        "ai/report/renderer.py",
+        "backend/app/ai/router.py",
+        "backend/app/ai/service.py",
+        "frontend/src/pages/ai/AIAssistantPage.tsx",
         "docs/project_introduction.md",
         "docs/architecture.md",
         "docs/coordinate_system.md",
@@ -67,7 +73,7 @@ def test_frontend_and_database_static_contracts() -> None:
         REPOSITORY_ROOT / "frontend/src/api/generated/client.ts"
     ).read_text(encoding="utf-8")
 
-    for route_path in ["'/'", "'/gis'", "'rivers'", "'/data-center/rivers'", "'/data-center/cross-sections'", "'/data-center/gates'", "'/data-center/pumps'", "'/data-center/imports'", "'/data-center/validation'", "'/data-center/model-data'", "'/dispatch'", "'/hydraulic'", "'hydraulic/config'", "'hydraulic/tasks'", "'hydraulic/results'", "'/optimization'", "'/ai'"]:
+    for route_path in ["'/'", "'/gis'", "'rivers'", "'/data-center/rivers'", "'/data-center/cross-sections'", "'/data-center/gates'", "'/data-center/pumps'", "'/data-center/imports'", "'/data-center/validation'", "'/data-center/model-data'", "'/dispatch'", "'/hydraulic'", "'hydraulic/config'", "'hydraulic/tasks'", "'hydraulic/results'", "'/optimization'", "'/ai-assistant'"]:
         assert route_path in router_source
 
     assert "create extension if not exists postgis" in schema_source
@@ -87,3 +93,5 @@ def test_frontend_and_database_static_contracts() -> None:
     assert "/api/v1/validation/run" in generated_client
     assert "/api/v1/model/tasks" in generated_client
     assert "/api/v1/model/results/" in generated_client
+    assert "/api/v1/ai/chat" in generated_client
+    assert "/api/v1/ai/report/generate" in generated_client

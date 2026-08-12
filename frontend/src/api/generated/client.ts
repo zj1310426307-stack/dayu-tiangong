@@ -1,5 +1,40 @@
 /* 本文件由 npm run openapi:update 自动生成，请勿手工修改。 */
 
+export interface AIChatRequest {
+  "question": string;
+  "user"?: string;
+  "context"?: AIContext;
+}
+
+export interface AIChatResponse {
+  "conversation_id": number;
+  "answer": string;
+  "sources": Array<SourceCitation>;
+  "tools_used": Array<string>;
+  "safety_status": string;
+  "provider": string;
+  "execution_authorized"?: false;
+  "created_time": string;
+}
+
+export interface AIContext {
+  "dataset_version_id"?: number | null;
+  "river_id"?: number | null;
+  "simulation_task_id"?: number | null;
+  "optimization_task_id"?: number | null;
+  "knowledge_document_ids"?: Array<number>;
+}
+
+export interface AIToolCallLogRecord {
+  "id": number;
+  "conversation_id": number | null;
+  "tool_name": string;
+  "input": Record<string, unknown>;
+  "output": Record<string, unknown>;
+  "duration_ms": number;
+  "time": string;
+}
+
 export interface AlgorithmConfig {
   "particle_count"?: number;
   "max_iterations"?: number;
@@ -45,6 +80,12 @@ export interface Body_import_geojson_api_v1_import_geojson_post {
   "resource": "rivers" | "cross_sections" | "gates" | "pumps";
   "dataset_version_id": number;
   "file": string;
+}
+
+export interface Body_upload_document_api_v1_ai_knowledge_documents_post {
+  "file": string;
+  "category": string;
+  "version": string;
 }
 
 export interface BoundaryConditionCreate {
@@ -448,6 +489,36 @@ export interface ImportResponse {
   "warnings": Array<ImportIssue>;
 }
 
+export interface KnowledgeDocumentRecord {
+  "id": number;
+  "name": string;
+  "category": string;
+  "version": string;
+  "source": string;
+  "source_type": string;
+  "content_hash": string;
+  "chunk_count": number;
+  "upload_time": string;
+  "updated_time": string;
+}
+
+export interface KnowledgeSearchItem {
+  "document_id": number;
+  "document_name": string;
+  "category": string;
+  "version": string;
+  "source": string;
+  "location": string;
+  "content": string;
+  "score": number;
+  "updated_time": string;
+}
+
+export interface KnowledgeSearchResponse {
+  "query": string;
+  "items": Array<KnowledgeSearchItem>;
+}
+
 export interface ModelInputSnapshot {
   "schema_version"?: string;
   "generated_time": string;
@@ -706,6 +777,22 @@ export interface RecommendationResponse {
   "notice"?: string;
 }
 
+export interface ReportGenerateRequest {
+  "user"?: string;
+  "context"?: AIContext;
+}
+
+export interface ReportGenerateResponse {
+  "report_id": number;
+  "title": string;
+  "markdown_url": string;
+  "pdf_url": string;
+  "sources": Array<SourceCitation>;
+  "execution_authorized"?: false;
+  "notice": string;
+  "created_time": string;
+}
+
 export interface ResultSectionOption {
   "section_id": number | null;
   "section_code": string;
@@ -864,6 +951,15 @@ export interface SimulationTaskRecord {
   "created_time": string;
   "start_time": string | null;
   "end_time": string | null;
+}
+
+export interface SourceCitation {
+  "source_type": "knowledge" | "database" | "simulation" | "optimization";
+  "title": string;
+  "reference": string;
+  "version": string;
+  "updated_time"?: string | null;
+  "excerpt"?: string | null;
 }
 
 export interface SystemInfoResponse {
@@ -1036,6 +1132,20 @@ export const getOptimizationCandidates = (taskId: number, baseUrl = '') => reque
 export const getOptimizationPareto = (taskId: number, baseUrl = '') => requestJson<Array<ParetoCandidateRecord>>(`/api/v1/optimization/tasks/${taskId}/pareto`, {}, baseUrl);
 export const getOptimizationRecommendation = (taskId: number, baseUrl = '') => requestJson<RecommendationResponse>(`/api/v1/optimization/tasks/${taskId}/recommendation`, {}, baseUrl);
 export const explainOptimizationRecommendation = (taskId: number, baseUrl = '') => requestJson<OptimizationExplanation>(`/api/v1/optimization/tasks/${taskId}/explain`, {}, baseUrl);
+
+export const chatWithAI = (body: AIChatRequest, baseUrl = '') => requestJson<AIChatResponse>('/api/v1/ai/chat', jsonOptions('POST', body), baseUrl);
+export const searchAIKnowledge = (query: string, limit = 5, baseUrl = '') => requestJson<KnowledgeSearchResponse>(`/api/v1/ai/knowledge/search${toQuery({ q: query, limit })}`, {}, baseUrl);
+export const listAIKnowledgeDocuments = (baseUrl = '') => requestJson<Array<KnowledgeDocumentRecord>>('/api/v1/ai/knowledge/documents', {}, baseUrl);
+export const generateAIReport = (body: ReportGenerateRequest, baseUrl = '') => requestJson<ReportGenerateResponse>('/api/v1/ai/report/generate', jsonOptions('POST', body), baseUrl);
+export const listAIToolLogs = (limit = 20, offset = 0, baseUrl = '') => requestJson<Array<AIToolCallLogRecord>>(`/api/v1/ai/tools/logs${toQuery({ limit, offset })}`, {}, baseUrl);
+
+export async function uploadAIKnowledgeDocument(file: File, category: string, version: string, baseUrl = ''): Promise<KnowledgeDocumentRecord> {
+  const body = new FormData();
+  body.set('file', file);
+  body.set('category', category);
+  body.set('version', version);
+  return requestJson<KnowledgeDocumentRecord>('/api/v1/ai/knowledge/documents', { method: 'POST', body }, baseUrl);
+}
 
 export async function uploadDataFile(kind: 'excel' | 'csv' | 'geojson', resource: ImportResource, datasetVersionId: number, file: File, baseUrl = ''): Promise<ImportResponse> {
   const body = new FormData();
