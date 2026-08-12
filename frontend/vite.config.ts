@@ -7,6 +7,7 @@ export default defineConfig(({ mode }) => {
   // 允许共享开发机把前端代理指向独立后端端口，默认仍保持 Phase 1 的 8001。
   const environment = loadEnv(mode, '.', '');
   const backendTarget = environment.VITE_BACKEND_TARGET || 'http://127.0.0.1:8001';
+  const geoServerTarget = environment.VITE_GEOSERVER_TARGET || 'http://127.0.0.1:8081';
   return {
   define: {
     CESIUM_BASE_URL: JSON.stringify('/cesiumStatic'),
@@ -27,6 +28,7 @@ export default defineConfig(({ mode }) => {
     proxy: {
       // 本地开发使用同源 `/api`，避免页面持有环境专属后端地址。
       '/api': backendTarget,
+      '/geoserver': geoServerTarget,
     },
   },
   preview: {

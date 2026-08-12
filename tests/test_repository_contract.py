@@ -18,6 +18,16 @@ def test_required_phase1_files_exist() -> None:
         "backend/app/gis/models.py",
         "backend/app/gis/router.py",
         "backend/app/gis/service.py",
+        "backend/app/geoserver/router.py",
+        "backend/app/geoserver/service.py",
+        "geoserver/bootstrap.py",
+        "geoserver/verify.py",
+        "geoserver/styles/river.sld",
+        "geoserver/styles/river_segment.sld",
+        "geoserver/styles/river_node.sld",
+        "geoserver/styles/cross_section.sld",
+        "geoserver/styles/gate.sld",
+        "geoserver/styles/pump.sld",
         "database/alembic.ini",
         "database/migrations/versions/20260811_0001_phase1_gis.py",
         "database/migrations/versions/20260811_0002_phase2_hydraulic_database.py",
@@ -81,12 +91,15 @@ def test_frontend_and_database_static_contracts() -> None:
         assert f"create table {table_name}" in schema_source
 
     assert "MapPlaceholder" not in cesium_source
-    assert "GeoJsonDataSource" in cesium_source
+    assert "WebMapServiceImageryProvider" in cesium_source
+    assert "WebMapTileServiceImageryProvider" in cesium_source
     assert "ArcGisMapServerImageryProvider.fromUrl" in cesium_source
     assert "World_Imagery/MapServer" in cesium_source
-    assert "getRivers" in cesium_source
-    assert "getCrossSections" in cesium_source
+    assert "getGeoServerConfig" in cesium_source
+    assert "getRiver" in cesium_source
+    assert "getCrossSection" in cesium_source
     assert "/api/v1/gis/rivers" in generated_client
+    assert "/api/v1/gis/geoserver/health" in generated_client
     assert "fetch(" not in cesium_source
     assert "/api/v1/rivers" in generated_client
     assert "/api/v1/import/${kind}" in generated_client

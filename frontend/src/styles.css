@@ -243,6 +243,9 @@ button, input { font: inherit; }
 .gis-page__header h1 { margin: 9px 0 7px; font-size: clamp(25px, 2.5vw, 38px); }
 .gis-page__header p { margin: 0; color: var(--muted); font-size: 12px; }
 .gis-page__badge { padding: 8px 12px; color: var(--cyan); background: rgba(47, 230, 214, 0.07); border: 1px solid rgba(47, 230, 214, 0.2); border-radius: 6px; font: 9px Consolas, monospace; letter-spacing: 0.12em; }
+.spatial-service-strip { display: flex; align-items: center; gap: 16px; margin: -6px 1px 14px; padding: 10px 14px; border: 1px solid rgba(47, 230, 214, 0.16); border-radius: 7px; background: rgba(6, 22, 33, 0.84); }
+.spatial-service-strip strong { color: var(--text); font-size: 12px; }
+.spatial-service-strip > span { margin-left: auto; color: var(--muted); font: 9px Consolas, monospace; letter-spacing: 0.06em; }
 .map-card--workspace { min-height: calc(100vh - 190px); }
 
 /* Phase 2 数据中心：表格与编辑器保持高密度、低干扰的信息呈现。 */
@@ -368,6 +371,8 @@ button, input { font: inherit; }
   .map-toolbar .outline-tag { display: none; }
   .layer-control { top: 58px; right: 10px; }
   .gis-page__header { align-items: start; flex-direction: column; }
+  .spatial-service-strip { align-items: flex-start; flex-direction: column; }
+  .spatial-service-strip > span { margin-left: 0; }
   .feature-page { grid-template-columns: 1fr; margin-top: 2vh; }
   .data-page__header { align-items: start; flex-direction: column; }
   .data-split { grid-template-columns: 1fr; }
