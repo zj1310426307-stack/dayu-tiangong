@@ -264,15 +264,13 @@ def _configure_read_only_wfs() -> None:
 
 
 def _configure_cache(name: str) -> None:
-    """Enable WMTS caching on standard geographic and web-mercator gridsets."""
+    """Enable WMTS and isolate cached tiles by normalized dataset version CQL."""
 
     qualified = f"{WORKSPACE}:{name}"
     resource = f"/gwc/rest/layers/{urllib.parse.quote(qualified, safe='')}.xml"
     if name not in CACHED_LAYERS:
         if _exists(resource):
             _request(resource, method="DELETE")
-        return
-    if _exists(resource):
         return
     body = f"""<GeoServerLayer>
   <enabled>true</enabled>
@@ -283,6 +281,13 @@ def _configure_cache(name: str) -> None:
     <gridSubset><gridSetName>EPSG:900913</gridSetName><zoomStart>0</zoomStart><zoomStop>22</zoomStop></gridSubset>
   </gridSubsets>
   <metaWidthHeight><int>4</int><int>4</int></metaWidthHeight>
+  <parameterFilters>
+    <regexParameterFilter>
+      <key>CQL_FILTER</key>
+      <defaultValue>dataset_version_id=1</defaultValue>
+      <regex>dataset_version_id=[1-9][0-9]*</regex>
+    </regexParameterFilter>
+  </parameterFilters>
   <gutter>16</gutter>
   <autoCacheStyles>true</autoCacheStyles>
 </GeoServerLayer>"""

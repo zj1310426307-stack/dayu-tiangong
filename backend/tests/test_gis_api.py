@@ -27,9 +27,10 @@ def test_postgis_health_and_seed_statistics() -> None:
     assert "POSTGIS=" in health.json()["postgis_version"]
     assert health.json()["srid"] == 4490
 
-    statistics = client.get("/api/v1/gis/stats")
+    statistics = client.get("/api/v1/gis/stats", params={"dataset_version_id": 1})
     assert statistics.status_code == 200
     assert statistics.json() == {
+        "dataset_version_id": 1,
         "rivers": 3,
         "gates": 5,
         "pumps": 3,
@@ -51,7 +52,10 @@ def test_postgis_health_and_seed_statistics() -> None:
 def test_geojson_collections(resource: str, expected_total: int, geometry_type: str) -> None:
     """四类列表都必须返回标准 GeoJSON、稳定属性与分页元数据。"""
 
-    response = client.get(f"/api/v1/gis/{resource}", params={"limit": 100, "offset": 0})
+    response = client.get(
+        f"/api/v1/gis/{resource}",
+        params={"dataset_version_id": 1, "limit": 100, "offset": 0},
+    )
     assert response.status_code == 200
     payload = response.json()
     assert payload["type"] == "FeatureCollection"
@@ -59,6 +63,7 @@ def test_geojson_collections(resource: str, expected_total: int, geometry_type: 
         "total": expected_total,
         "limit": 100,
         "offset": 0,
+        "dataset_version_id": 1,
         "bbox": None,
         "demo_data": True,
         "crs": "EPSG:4490",
@@ -73,21 +78,54 @@ def test_geojson_collections(resource: str, expected_total: int, geometry_type: 
 def test_bbox_pagination_details_and_validation() -> None:
     """有界查询、分页、详情、404 与 bbox 校验均应可观察。"""
 
-    outside = client.get("/api/v1/gis/rivers", params={"bbox": "0,0,1,1"}).json()
+    outside = client.get(
+        "/api/v1/gis/rivers",
+        params={"dataset_version_id": 1, "bbox": "0,0,1,1"},
+    ).json()
     assert outside["meta"]["total"] == 0
     assert outside["features"] == []
 
-    first = client.get("/api/v1/gis/cross_sections", params={"limit": 1, "offset": 0}).json()
-    second = client.get("/api/v1/gis/cross_sections", params={"limit": 1, "offset": 1}).json()
+    first = client.get(
+        "/api/v1/gis/cross_sections",
+        params={"dataset_version_id": 1, "limit": 1, "offset": 0},
+    ).json()
+    second = client.get(
+        "/api/v1/gis/cross_sections",
+        params={"dataset_version_id": 1, "limit": 1, "offset": 1},
+    ).json()
     assert first["meta"]["total"] == 20
     assert first["features"][0]["id"] != second["features"][0]["id"]
 
-    river = client.get("/api/v1/gis/rivers/1")
+    river = client.get("/api/v1/gis/rivers/1", params={"dataset_version_id": 1})
     assert river.status_code == 200
     assert river.json()["properties"]["cross_section_count"] > 0
-    assert client.get("/api/v1/gis/gates/9999").status_code == 404
-    assert client.get("/api/v1/gis/rivers", params={"bbox": "bad"}).status_code == 422
-    assert client.get("/api/v1/gis/rivers", params={"bbox": "2,2,1,1"}).status_code == 422
+    assert client.get(
+        "/api/v1/gis/gates/9999", params={"dataset_version_id": 1}
+    ).status_code == 404
+    assert client.get(
+        "/api/v1/gis/rivers", params={"dataset_version_id": 1, "bbox": "bad"}
+    ).status_code == 422
+    assert client.get(
+        "/api/v1/gis/rivers",
+        params={"dataset_version_id": 1, "bbox": "2,2,1,1"},
+    ).status_code == 422
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/v1/gis/stats",
+        "/api/v1/gis/rivers",
+        "/api/v1/gis/gates",
+        "/api/v1/gis/pumps",
+        "/api/v1/gis/cross_sections",
+        "/api/v1/gis/interaction-frame",
+    ],
+)
+def test_gis_business_reads_require_dataset_version(path: str) -> None:
+    """Every business layer and dynamic frame must reject unversioned reads."""
+
+    assert client.get(path).status_code == 422
 
 
 def test_database_srid_geometry_types_migration_and_gist_indexes() -> None:

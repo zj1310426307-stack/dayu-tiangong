@@ -1,24 +1,42 @@
-import { Alert, Button, Space, Tag } from 'antd';
+import { Alert, Button, Select, Space, Tag } from 'antd';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { getGeoServerHealth, getGISHealth } from '../api/generated/client';
+import {
+  getGeoServerHealth,
+  getGISHealth,
+  getGISInteractionFrame,
+  type GISInteractionFrame,
+} from '../api/generated/client';
 import { CesiumMap } from '../components/gis/CesiumMap';
+import { SimulationTimeline } from '../components/gis/SimulationTimeline';
+import { useDatasetVersion } from '../context/DatasetVersionContext';
 
 type ServiceState = 'checking' | 'online' | 'offline';
 
+/** Render one consistent health label for the three spatial runtime boundaries. */
 function serviceTag(label: string, state: ServiceState) {
   const color = state === 'online' ? 'success' : state === 'offline' ? 'error' : 'processing';
   const text = state === 'online' ? '在线' : state === 'offline' ? '离线' : '检查中';
   return <Tag color={color}>{label}: {text}</Tag>;
 }
 
+/** Coordinate the version, dynamic frame and time axis for the Phase 1B GIS workspace. */
 export function GisPage() {
   const navigate = useNavigate();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
+  const { versions, datasetVersionId, loading: versionsLoading, setDatasetVersionId } = useDatasetVersion();
   const dispatchRunId = Number(params.get('dispatchRunId') || 0);
-  const time = Number(params.get('time') || 0);
+  const taskId = Number(params.get('taskId') || 0);
+  const requestedTime = Number(params.get('time') || 0);
   const selectedAsset = params.get('selectedAsset') ?? undefined;
-  const [services, setServices] = useState<Record<'postgis' | 'geoserver' | 'cesium', ServiceState>>({ postgis: 'checking', geoserver: 'checking', cesium: 'checking' });
+  const [interactionFrame, setInteractionFrame] = useState<GISInteractionFrame | null>(null);
+  const [interactionLoading, setInteractionLoading] = useState(false);
+  const [interactionError, setInteractionError] = useState('');
+  const [services, setServices] = useState<Record<'postgis' | 'geoserver' | 'cesium', ServiceState>>({
+    postgis: 'checking', geoserver: 'checking', cesium: 'checking',
+  });
+  const gateStateCount = interactionFrame?.structure_samples.filter((sample) => sample.structure_type === 'gate').length ?? 0;
+  const pumpStateCount = interactionFrame?.structure_samples.filter((sample) => sample.structure_type === 'pump').length ?? 0;
   const handleCesiumStatusChange = useCallback((online: boolean) => {
     setServices((current) => ({ ...current, cesium: online ? 'online' : 'offline' }));
   }, []);
@@ -35,17 +53,61 @@ export function GisPage() {
     });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (!datasetVersionId) return;
+    let cancelled = false;
+    setInteractionLoading(true);
+    setInteractionError('');
+    void getGISInteractionFrame({
+      dataset_version_id: datasetVersionId,
+      time_seconds: requestedTime,
+      task_id: taskId || undefined,
+      dispatch_run_id: dispatchRunId || undefined,
+    })
+      .then((frame) => {
+        if (!cancelled) setInteractionFrame(frame);
+      })
+      .catch((reason: unknown) => {
+        if (cancelled) return;
+        setInteractionFrame(null);
+        setInteractionError(reason instanceof Error ? reason.message : '动态 GIS 结果读取失败');
+      })
+      .finally(() => { if (!cancelled) setInteractionLoading(false); });
+    return () => { cancelled = true; };
+  }, [datasetVersionId, dispatchRunId, requestedTime, taskId]);
+
+  const setTimelineTime = useCallback((timeSeconds: number) => {
+    const next = new URLSearchParams(params);
+    next.set('time', String(timeSeconds));
+    setParams(next, { replace: true });
+  }, [params, setParams]);
+
+  const changeDatasetVersion = (value: number) => {
+    setInteractionFrame(null);
+    setDatasetVersionId(value);
+  };
+
   return (
     <div className="gis-page">
       <header className="gis-page__header">
         <div>
-          <span className="hero-kicker"><i /> SPATIAL FOUNDATION</span>
-          <h1>GIS 一张图空间底座</h1>
-          <p>PostGIS 唯一数据源、GeoServer WMS/WMTS 制图、FastAPI 业务查询与 Cesium 联动。</p>
+          <span className="hero-kicker"><i /> HYDRAULIC GIS INTERACTION</span>
+          <h1>GIS 业务交互工作台</h1>
+          <p>数据版本、GeoServer 静态制图、FastAPI 动态结果与 Cesium 时间帧保持同源联动。</p>
         </div>
-        <Space>
+        <Space wrap>
+          <label className="gis-version-select">数据版本
+            <Select
+              loading={versionsLoading}
+              value={datasetVersionId}
+              options={versions.map((version) => ({ value: version.id, label: `${version.version} · ${version.name}` }))}
+              onChange={changeDatasetVersion}
+              style={{ minWidth: 220 }}
+            />
+          </label>
           {dispatchRunId > 0 && <Button onClick={() => navigate(`/dispatch/runs/${dispatchRunId}`)}>返回运行 #{dispatchRunId}</Button>}
-          <span className="gis-page__badge">PHASE 1A · DEMO DATA</span>
+          <span className="gis-page__badge">PHASE 1B · DEMO DATA</span>
         </Space>
       </header>
       <div className="spatial-service-strip" aria-label="空间服务状态">
@@ -55,24 +117,45 @@ export function GisPage() {
           {serviceTag('GeoServer', services.geoserver)}
           {serviceTag('Cesium', services.cesium)}
         </Space>
-        <span>静态制图：WMS / WMTS · 精细查询：FastAPI GeoJSON</span>
+        <span>静态制图：WMS / WMTS · 动态业务：FastAPI 原子时间帧</span>
       </div>
-      {dispatchRunId > 0 && (
+      {interactionError && <Alert className="data-alert" type="error" showIcon message="动态结果未加载" description={interactionError} />}
+      {interactionFrame && (
         <Alert
           className="data-alert"
           type="warning"
           showIcon
           message="仿真状态叠加：未下发真实设备"
-          description={<Space wrap><Tag color="cyan">运行 #{dispatchRunId}</Tag><Tag>时刻 {time} s</Tag><Tag>{selectedAsset ?? '未指定设施'}</Tag><span>静态可用性、计划命令与模型状态分别展示；DEMO DATA 不得作为工程审定成果。</span></Space>}
+          description={(
+            <Space wrap>
+              <Tag color="cyan">版本 #{interactionFrame.dataset_version_id}</Tag>
+              <Tag>任务 #{interactionFrame.task_id ?? '无'}</Tag>
+              <Tag>运行 #{interactionFrame.dispatch_run_id ?? '无'}</Tag>
+              <Tag>时刻 {interactionFrame.selected_time_seconds ?? '—'} s</Tag>
+              <Tag color="blue">水动力 {interactionFrame.water_samples.length} 点</Tag>
+              <Tag color="green">闸门状态 {gateStateCount}</Tag>
+              <Tag color="purple">泵站状态 {pumpStateCount}</Tag>
+              <span>水位、流速、流向与闸泵状态均为 DEMO 模拟结果，不得作为工程审定成果。</span>
+            </Space>
+          )}
         />
       )}
-      <CesiumMap
-        variant="workspace"
-        dispatchRunId={dispatchRunId || undefined}
-        timeSeconds={time}
-        selectedAsset={selectedAsset}
-        onCesiumStatusChange={handleCesiumStatusChange}
-      />
+      <div className="gis-workspace-shell">
+        <CesiumMap
+          variant="workspace"
+          datasetVersionId={datasetVersionId}
+          interactionFrame={interactionFrame}
+          dynamicLoading={interactionLoading}
+          selectedAsset={selectedAsset}
+          onCesiumStatusChange={handleCesiumStatusChange}
+        />
+        <SimulationTimeline
+          timeline={interactionFrame?.timeline ?? []}
+          selectedTime={interactionFrame?.selected_time_seconds}
+          loading={interactionLoading}
+          onChange={setTimelineTime}
+        />
+      </div>
     </div>
   );
 }

@@ -16,6 +16,7 @@ GEOSERVER_URL = os.getenv("GEOSERVER_VERIFY_URL", "http://127.0.0.1:8081/geoserv
 BACKEND_URL = os.getenv("BACKEND_VERIFY_URL", "http://127.0.0.1:8001").rstrip("/")
 LAYERS = ("river", "river_segment", "river_node", "cross_section", "gate", "pump")
 CACHED = ("river", "river_segment", "gate", "pump")
+DATASET_VERSION_ID = int(os.getenv("GIS_VERIFY_DATASET_VERSION_ID", "1"))
 
 
 def _get(url: str) -> tuple[str, bytes, dict[str, str]]:
@@ -75,6 +76,9 @@ def _verify_catalog_and_images() -> None:
             "height": 384,
             "format": "image/png",
             "transparent": "true",
+            "CQL_FILTER": ";".join(
+                [f"dataset_version_id={DATASET_VERSION_ID}"] * 3
+            ),
         }
     )
     media_type, wms_png, _ = _get(f"{GEOSERVER_URL}/dayu/wms?{wms_query}")
@@ -93,6 +97,7 @@ def _verify_catalog_and_images() -> None:
             "tilerow": 105,
             "tilecol": 213,
             "format": "image/png",
+            "CQL_FILTER": f"dataset_version_id={DATASET_VERSION_ID}",
         }
     )
     media_type, wmts_png, headers = _get(f"{GEOSERVER_URL}/gwc/service/wmts?{wmts_query}")
@@ -134,7 +139,10 @@ def _verify_backend() -> None:
     assert health["status"] == "healthy" and health["layers"] == 6
     _, payload, _ = _get(f"{BACKEND_URL}/api/v1/gis/geoserver/layers")
     assert len(json.loads(payload)) == 6
-    _, payload, _ = _get(f"{BACKEND_URL}/api/v1/gis/rivers?limit=1")
+    rivers_query = urllib.parse.urlencode(
+        {"dataset_version_id": DATASET_VERSION_ID, "limit": 1}
+    )
+    _, payload, _ = _get(f"{BACKEND_URL}/api/v1/gis/rivers?{rivers_query}")
     assert len(json.loads(payload)["features"]) == 1
 
 
@@ -144,7 +152,10 @@ def main() -> None:
     _verify_catalog_and_images()
     _verify_read_only_role()
     _verify_backend()
-    print("Phase 1A live verification passed: WMS, WMTS, Basic WFS, read-only role, FastAPI")
+    print(
+        "Phase 1B live verification passed: version-filtered WMS/WMTS, "
+        "Basic WFS, read-only role, FastAPI"
+    )
 
 
 if __name__ == "__main__":

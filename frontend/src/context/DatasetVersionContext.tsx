@@ -49,6 +49,11 @@ export function DatasetVersionProvider({ children }: { children: ReactNode }) {
     setValue(value);
     window.localStorage.setItem(STORAGE_KEY, String(value));
     const params = new URLSearchParams(location.search);
+    // Task, dispatch, selected feature and time identities cannot cross dataset versions.
+    params.delete('taskId');
+    params.delete('dispatchRunId');
+    params.delete('selectedAsset');
+    params.set('time', '0');
     params.set('datasetVersionId', String(value));
     navigate(`${location.pathname}?${params.toString()}`, { replace: true });
   };

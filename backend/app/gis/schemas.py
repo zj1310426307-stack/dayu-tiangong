@@ -24,6 +24,7 @@ class PaginationMeta(BaseModel):
     total: int = Field(ge=0)
     limit: int = Field(ge=1, le=1000)
     offset: int = Field(ge=0)
+    dataset_version_id: int = Field(gt=0)
     bbox: list[float] | None = None
     demo_data: Literal[True] = True
     crs: Literal["EPSG:4490"] = "EPSG:4490"
@@ -44,6 +45,7 @@ class GISStatisticsResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    dataset_version_id: int = Field(gt=0)
     rivers: int = Field(ge=0)
     gates: int = Field(ge=0)
     pumps: int = Field(ge=0)
@@ -61,3 +63,62 @@ class GISHealthResponse(BaseModel):
     database: str
     postgis_version: str
     srid: Literal[4490] = 4490
+
+
+class GISWaterSample(BaseModel):
+    """Represent one version-safe hydraulic result at a mapped cross section."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    section_id: int = Field(gt=0)
+    section_code: str
+    river_id: int = Field(gt=0)
+    longitude: float
+    latitude: float
+    water_level: float
+    flow: float
+    velocity: float
+    risk_level: Literal["normal", "warning", "danger"]
+    velocity_level: Literal["low", "medium", "high"]
+    flow_direction: Literal["downstream", "upstream", "stationary"]
+    flow_bearing_degrees: float = Field(ge=0, lt=360)
+
+
+class GISStructureSample(BaseModel):
+    """Expose one simulated gate or pump state without implying real device telemetry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    structure_type: Literal["gate", "pump"]
+    structure_id: int = Field(gt=0)
+    code: str
+    name: str
+    longitude: float
+    latitude: float
+    requested_value: float | None
+    actual_value: float | None
+    flow: float
+    power_kw: float | None
+    state: Literal["open", "closed", "running", "stopped", "unknown"]
+    constraint_flags: list[str]
+
+
+class GISInteractionFrame(BaseModel):
+    """Return one atomic version/time frame for every dynamic GIS overlay."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_version_id: int = Field(gt=0)
+    task_id: int | None = Field(default=None, gt=0)
+    dispatch_run_id: int | None = Field(default=None, gt=0)
+    task_status: str | None = None
+    timeline: list[float]
+    requested_time_seconds: float = Field(ge=0)
+    selected_time_seconds: float | None = Field(default=None, ge=0)
+    warning_level: float
+    danger_level: float
+    threshold_source: Literal["dispatch_plan", "demo_default"]
+    water_samples: list[GISWaterSample]
+    structure_samples: list[GISStructureSample]
+    crs: Literal["EPSG:4490"] = "EPSG:4490"
+    demo_data: Literal[True] = True
