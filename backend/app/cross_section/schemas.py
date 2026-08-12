@@ -53,7 +53,7 @@ class CrossSectionBase(BaseModel):
     @field_validator("geometry")
     @classmethod
     def check_geometry(cls, value: dict[str, Any]) -> dict[str, Any]:
-        """要求断面定位几何为 WGS 84 Point。"""
+        """要求断面定位几何为 CGCS2000 / EPSG:4490 Point。"""
 
         validate_geometry(value, "Point")
         return value

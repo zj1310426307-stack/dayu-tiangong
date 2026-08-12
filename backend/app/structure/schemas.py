@@ -26,7 +26,7 @@ class SpatialStructure(BaseModel):
     @field_validator("geometry")
     @classmethod
     def check_geometry(cls, value: dict[str, Any]) -> dict[str, Any]:
-        """要求水工建筑物定位为 WGS 84 Point。"""
+        """要求水工建筑物定位为 CGCS2000 / EPSG:4490 Point。"""
 
         validate_geometry(value, "Point")
         return value
@@ -42,6 +42,17 @@ class GateCreate(SpatialStructure):
     height: float = Field(gt=0)
     max_flow: float = Field(ge=0)
     bottom_elevation: float
+    river_segment_id: int | None = Field(default=None, gt=0)
+    station: float | None = Field(default=None, ge=0)
+    upstream_node_id: int | None = Field(default=None, gt=0)
+    downstream_node_id: int | None = Field(default=None, gt=0)
+    crest_elevation: float | None = None
+    discharge_coefficient: float | None = Field(default=None, gt=0)
+    minimum_opening: float | None = Field(default=None, ge=0)
+    maximum_opening: float | None = Field(default=None, ge=0)
+    opening_rate_limit: float | None = Field(default=None, ge=0)
+    minimum_hold_seconds: float | None = Field(default=None, ge=0)
+    allow_reverse_flow: bool = False
 
 
 class GateUpdate(BaseModel):
@@ -59,6 +70,17 @@ class GateUpdate(BaseModel):
     height: float | None = Field(default=None, gt=0)
     max_flow: float | None = Field(default=None, ge=0)
     bottom_elevation: float | None = None
+    river_segment_id: int | None = Field(default=None, gt=0)
+    station: float | None = Field(default=None, ge=0)
+    upstream_node_id: int | None = Field(default=None, gt=0)
+    downstream_node_id: int | None = Field(default=None, gt=0)
+    crest_elevation: float | None = None
+    discharge_coefficient: float | None = Field(default=None, gt=0)
+    minimum_opening: float | None = Field(default=None, ge=0)
+    maximum_opening: float | None = Field(default=None, ge=0)
+    opening_rate_limit: float | None = Field(default=None, ge=0)
+    minimum_hold_seconds: float | None = Field(default=None, ge=0)
+    allow_reverse_flow: bool | None = None
     status: StructureStatus | None = None
     geometry: dict[str, Any] | None = None
 
@@ -96,6 +118,19 @@ class PumpCreate(SpatialStructure):
     head: float = Field(ge=0)
     power: float = Field(ge=0)
     efficiency_curve: dict[str, list[list[float]]]
+    head_curve: dict[str, list[list[float]]] | None = None
+    intake_node_id: int | None = Field(default=None, gt=0)
+    outlet_node_id: int | None = Field(default=None, gt=0)
+    transfer_type: Literal["internal_transfer", "external_outflow", "external_inflow"] | None = None
+    unit_count: int | None = Field(default=None, ge=1)
+    minimum_running_units: int | None = Field(default=None, ge=0)
+    maximum_running_units: int | None = Field(default=None, ge=0)
+    minimum_run_seconds: float | None = Field(default=None, ge=0)
+    minimum_stop_seconds: float | None = Field(default=None, ge=0)
+    maximum_starts_per_run: int | None = Field(default=None, ge=0)
+    minimum_operating_head: float | None = Field(default=None, ge=0)
+    maximum_operating_head: float | None = Field(default=None, ge=0)
+    reverse_flow_protection: bool = True
 
     @field_validator("efficiency_curve")
     @classmethod
@@ -124,6 +159,19 @@ class PumpUpdate(BaseModel):
     head: float | None = Field(default=None, ge=0)
     power: float | None = Field(default=None, ge=0)
     efficiency_curve: dict[str, list[list[float]]] | None = None
+    head_curve: dict[str, list[list[float]]] | None = None
+    intake_node_id: int | None = Field(default=None, gt=0)
+    outlet_node_id: int | None = Field(default=None, gt=0)
+    transfer_type: Literal["internal_transfer", "external_outflow", "external_inflow"] | None = None
+    unit_count: int | None = Field(default=None, ge=1)
+    minimum_running_units: int | None = Field(default=None, ge=0)
+    maximum_running_units: int | None = Field(default=None, ge=0)
+    minimum_run_seconds: float | None = Field(default=None, ge=0)
+    minimum_stop_seconds: float | None = Field(default=None, ge=0)
+    maximum_starts_per_run: int | None = Field(default=None, ge=0)
+    minimum_operating_head: float | None = Field(default=None, ge=0)
+    maximum_operating_head: float | None = Field(default=None, ge=0)
+    reverse_flow_protection: bool | None = None
     control_mode: str | None = Field(default=None, min_length=1, max_length=32)
     status: StructureStatus | None = None
     geometry: dict[str, Any] | None = None

@@ -13,8 +13,8 @@ def create_app() -> FastAPI:
     configure_logging()
     application = FastAPI(
         title="大禹·天工 API",
-        version="2.0.0",
-        description="河网智能调度与数字孪生水利数据库及 GIS 空间接口",
+        version="4.0.0",
+        description="河网联合水动力、闸泵调度仿真、水利数据库及 GIS 空间接口",
     )
 
     # 开发阶段仅允许本地前端来源，生产环境应改为显式域名白名单。
@@ -22,7 +22,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
     application.include_router(api_router)

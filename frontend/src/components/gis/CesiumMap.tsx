@@ -34,6 +34,9 @@ type BasemapState = 'loading' | 'imagery' | 'fallback';
 
 interface CesiumMapProps {
   variant?: 'dashboard' | 'workspace';
+  dispatchRunId?: number;
+  timeSeconds?: number;
+  selectedAsset?: string;
 }
 
 interface SelectedFeature {
@@ -65,7 +68,7 @@ function selectedEntity(entity: Entity | undefined): SelectedFeature | null {
 }
 
 // 仅通过 OpenAPI 生成客户端读取空间数据，Cesium 只负责图层与交互渲染。
-export function CesiumMap({ variant = 'dashboard' }: CesiumMapProps) {
+export function CesiumMap({ variant = 'dashboard', dispatchRunId, timeSeconds = 0, selectedAsset }: CesiumMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
   const basemapLayerRef = useRef<ImageryLayer | null>(null);
@@ -171,7 +174,7 @@ export function CesiumMap({ variant = 'dashboard' }: CesiumMapProps) {
     async function loadLayers() {
       try {
         setLoadState('loading');
-        setLoadMessage('正在加载 EPSG:4326 DEMO DATA');
+        setLoadMessage('正在加载 CGCS2000 / EPSG:4490 DEMO DATA');
 
         const [rivers, gates, pumps, crossSections] = await Promise.all([
           getRivers({ bbox: DEMO_BBOX, limit: 100 }),
@@ -194,6 +197,8 @@ export function CesiumMap({ variant = 'dashboard' }: CesiumMapProps) {
           source.name = layerLabels[key];
           source.show = visibility[key];
           for (const entity of source.entities.values) {
+            const properties = entity.properties?.getValue(JulianDate.now()) as Record<string, unknown> | undefined;
+            const assetKey = `${properties?.feature_type}:${entity.id}`;
             if (key === 'rivers' && entity.polyline) {
               entity.polyline.material = new ColorMaterialProperty(Color.fromCssColorString('#2fe6d6'));
               entity.polyline.width = new ConstantProperty(5);
@@ -207,7 +212,7 @@ export function CesiumMap({ variant = 'dashboard' }: CesiumMapProps) {
                   : Color.fromCssColorString('#b49cff');
               entity.point = new PointGraphics({
                 color,
-                pixelSize: key === 'crossSections' ? 7 : 12,
+                pixelSize: selectedAsset === assetKey ? 18 : key === 'crossSections' ? 7 : 12,
                 outlineColor: Color.fromCssColorString('#06101c'),
                 outlineWidth: 2,
                 disableDepthTestDistance: Number.POSITIVE_INFINITY,
@@ -262,7 +267,7 @@ export function CesiumMap({ variant = 'dashboard' }: CesiumMapProps) {
           <h2>GIS 河网空间一张图</h2>
         </div>
         <div className="map-toolbar">
-          <Tag className="outline-tag" icon={<EnvironmentOutlined />}>EPSG:4326 · DEMO DATA</Tag>
+          <Tag className="outline-tag" icon={<EnvironmentOutlined />}>CGCS2000 · EPSG:4490</Tag>
           <Tooltip title="重新读取空间数据">
             <Button type="text" icon={<ReloadOutlined />} onClick={() => setReloadToken((value) => value + 1)} aria-label="重新加载空间数据" />
           </Tooltip>
@@ -279,6 +284,7 @@ export function CesiumMap({ variant = 'dashboard' }: CesiumMapProps) {
         <div className={`map-load-state map-load-state--${loadState}`} role="status">
           <i />{loadMessage}
         </div>
+        {dispatchRunId && <div className="dispatch-map-state"><strong>模拟状态</strong><span>运行 #{dispatchRunId} · {timeSeconds} s</span><small>{selectedAsset ?? '全部设施'} · 计划/模型状态</small></div>}
         <div
           className={`basemap-status basemap-status--${basemapState}`}
           data-imagery-source={basemapState === 'imagery' ? 'arcgis-world-imagery' : basemapState}
@@ -308,9 +314,19 @@ export function CesiumMap({ variant = 'dashboard' }: CesiumMapProps) {
                 <div key={key}><dt>{key}</dt><dd>{displayValue(value)}</dd></div>
               ))}
             </dl>
+            {selected.properties.feature_type === 'cross_section' && (
+              <Button
+                block
+                type="primary"
+                size="small"
+                onClick={() => navigate(`/hydraulic/results?sectionId=${encodeURIComponent(selected.id)}`)}
+              >
+                查看该断面水动力结果
+              </Button>
+            )}
           </aside>
         )}
-        <div className="map-coordinate">120.27°E / 30.27°N · WGS 84</div>
+        <div className="map-coordinate">120.27°E / 30.27°N · CGCS2000</div>
       </div>
     </section>
   );

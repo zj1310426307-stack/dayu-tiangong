@@ -5,6 +5,7 @@ from typing import Any
 
 from geoalchemy2 import Geometry
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
@@ -51,7 +52,7 @@ class DatasetVersion(Base):
 
 
 class River(Base):
-    """河道空间聚合根，几何为 EPSG:4326 LineString。"""
+    """河道空间聚合根，几何为 CGCS2000 / EPSG:4490 LineString。"""
 
     __tablename__ = "river"
     __table_args__ = (
@@ -76,7 +77,7 @@ class River(Base):
     status: Mapped[str] = mapped_column(String(24), nullable=False, server_default="active")
     description: Mapped[str | None] = mapped_column(Text)
     geometry: Mapped[Any] = mapped_column(
-        Geometry(geometry_type="LINESTRING", srid=4326, spatial_index=False),
+        Geometry(geometry_type="LINESTRING", srid=4490, spatial_index=False),
         nullable=False,
     )
     created_time: Mapped[datetime] = mapped_column(
@@ -116,7 +117,7 @@ class RiverNode(Base):
     longitude: Mapped[float] = mapped_column(Float, nullable=False)
     latitude: Mapped[float] = mapped_column(Float, nullable=False)
     geometry: Mapped[Any] = mapped_column(
-        Geometry(geometry_type="POINT", srid=4326, spatial_index=False), nullable=False
+        Geometry(geometry_type="POINT", srid=4490, spatial_index=False), nullable=False
     )
 
 
@@ -147,7 +148,7 @@ class RiverSegment(Base):
     )
     length: Mapped[float] = mapped_column(Float, nullable=False)
     geometry: Mapped[Any] = mapped_column(
-        Geometry(geometry_type="LINESTRING", srid=4326, spatial_index=False), nullable=False
+        Geometry(geometry_type="LINESTRING", srid=4490, spatial_index=False), nullable=False
     )
 
     river: Mapped[River] = relationship(back_populates="segments")
@@ -219,7 +220,7 @@ class CrossSection(Base):
     elevation_min: Mapped[float] = mapped_column(Float, nullable=False)
     survey_date: Mapped[date | None] = mapped_column(Date)
     geometry: Mapped[Any] = mapped_column(
-        Geometry(geometry_type="POINT", srid=4326, spatial_index=False), nullable=False
+        Geometry(geometry_type="POINT", srid=4490, spatial_index=False), nullable=False
     )
     created_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -260,9 +261,28 @@ class Gate(Base):
     height: Mapped[float] = mapped_column(Float, nullable=False)
     max_flow: Mapped[float] = mapped_column(Float, nullable=False)
     bottom_elevation: Mapped[float] = mapped_column(Float, nullable=False)
+    river_segment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("river_segment.id", ondelete="SET NULL")
+    )
+    station: Mapped[float | None] = mapped_column(Float)
+    upstream_node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("river_node.id", ondelete="SET NULL")
+    )
+    downstream_node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("river_node.id", ondelete="SET NULL")
+    )
+    crest_elevation: Mapped[float | None] = mapped_column(Float)
+    discharge_coefficient: Mapped[float | None] = mapped_column(Float)
+    minimum_opening: Mapped[float | None] = mapped_column(Float)
+    maximum_opening: Mapped[float | None] = mapped_column(Float)
+    opening_rate_limit: Mapped[float | None] = mapped_column(Float)
+    minimum_hold_seconds: Mapped[float | None] = mapped_column(Float)
+    allow_reverse_flow: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
     status: Mapped[str] = mapped_column(String(24), nullable=False, server_default="offline")
     geometry: Mapped[Any] = mapped_column(
-        Geometry(geometry_type="POINT", srid=4326, spatial_index=False), nullable=False
+        Geometry(geometry_type="POINT", srid=4490, spatial_index=False), nullable=False
     )
     created_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -300,10 +320,29 @@ class Pump(Base):
     head: Mapped[float] = mapped_column(Float, nullable=False)
     power: Mapped[float] = mapped_column(Float, nullable=False)
     efficiency_curve: Mapped[dict[str, list[list[float]]]] = mapped_column(JSON, nullable=False)
+    head_curve: Mapped[dict[str, list[list[float]]] | None] = mapped_column(JSON)
+    intake_node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("river_node.id", ondelete="SET NULL")
+    )
+    outlet_node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("river_node.id", ondelete="SET NULL")
+    )
+    transfer_type: Mapped[str | None] = mapped_column(String(24))
+    unit_count: Mapped[int | None] = mapped_column(Integer)
+    minimum_running_units: Mapped[int | None] = mapped_column(Integer)
+    maximum_running_units: Mapped[int | None] = mapped_column(Integer)
+    minimum_run_seconds: Mapped[float | None] = mapped_column(Float)
+    minimum_stop_seconds: Mapped[float | None] = mapped_column(Float)
+    maximum_starts_per_run: Mapped[int | None] = mapped_column(Integer)
+    minimum_operating_head: Mapped[float | None] = mapped_column(Float)
+    maximum_operating_head: Mapped[float | None] = mapped_column(Float)
+    reverse_flow_protection: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
     control_mode: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False, server_default="offline")
     geometry: Mapped[Any] = mapped_column(
-        Geometry(geometry_type="POINT", srid=4326, spatial_index=False), nullable=False
+        Geometry(geometry_type="POINT", srid=4490, spatial_index=False), nullable=False
     )
     created_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -389,3 +428,330 @@ class SimulationCase(Base):
     )
 
     dataset_version: Mapped[DatasetVersion] = relationship(back_populates="simulation_cases")
+    tasks: Mapped[list["SimulationTask"]] = relationship(back_populates="simulation_case")
+    boundary_links: Mapped[list["SimulationCaseBoundary"]] = relationship(
+        back_populates="simulation_case", cascade="all, delete-orphan"
+    )
+
+
+class SimulationCaseBoundary(Base):
+    """明确关联一个计算方案使用的边界条件及其角色。"""
+
+    __tablename__ = "simulation_case_boundary"
+    __table_args__ = (
+        UniqueConstraint(
+            "case_id", "boundary_condition_id", name="uq_case_boundary_link"
+        ),
+        Index("ix_simulation_case_boundary_case_id", "case_id"),
+    )
+
+    case_id: Mapped[int] = mapped_column(
+        ForeignKey("simulation_case.id", ondelete="CASCADE"), primary_key=True
+    )
+    boundary_condition_id: Mapped[int] = mapped_column(
+        ForeignKey("boundary_condition.id", ondelete="RESTRICT"), primary_key=True
+    )
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    simulation_case: Mapped[SimulationCase] = relationship(back_populates="boundary_links")
+
+
+class SimulationTask(Base):
+    """Persist one reproducible hydraulic execution and its lifecycle state."""
+
+    __tablename__ = "simulation_task"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'queued', 'running', 'cancel_requested', "
+            "'cancelled', 'success', 'failed')",
+            name="ck_simulation_task_status",
+        ),
+        CheckConstraint(
+            "progress BETWEEN 0 AND 100", name="ck_simulation_task_progress"
+        ),
+        Index("ix_simulation_task_case_id", "case_id"),
+        Index("ix_simulation_task_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(
+        ForeignKey("simulation_case.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="pending"
+    )
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    input_schema_version: Mapped[str | None] = mapped_column(String(48))
+    input_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    input_snapshot_hash: Mapped[str | None] = mapped_column(String(64))
+    engine_version: Mapped[str | None] = mapped_column(String(64))
+    engine_commit: Mapped[str | None] = mapped_column(String(64))
+    queue_job_id: Mapped[str | None] = mapped_column(String(128))
+    worker_id: Mapped[str | None] = mapped_column(String(128))
+    queued_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    heartbeat_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancel_requested: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    retry_reason: Mapped[str | None] = mapped_column(Text)
+    current_simulation_time: Mapped[float | None] = mapped_column(Float)
+    current_cfl: Mapped[float | None] = mapped_column(Float)
+    diagnostics: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    result_path: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    start_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    simulation_case: Mapped[SimulationCase] = relationship(back_populates="tasks")
+    results: Mapped[list["SimulationResult"]] = relationship(
+        back_populates="task", cascade="all, delete-orphan"
+    )
+
+
+class SimulationResult(Base):
+    """Persist one section/time row from a successful hydraulic task."""
+
+    __tablename__ = "simulation_result"
+    __table_args__ = (
+        UniqueConstraint(
+            "task_id",
+            "section_code",
+            "time_seconds",
+            name="uq_simulation_result_task_section_time",
+        ),
+        Index("ix_simulation_result_task_id", "task_id"),
+        Index("ix_simulation_result_section_id", "section_id"),
+        Index("ix_simulation_result_river_id", "river_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("simulation_task.id", ondelete="CASCADE"), nullable=False
+    )
+    section_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cross_section.id", ondelete="SET NULL")
+    )
+    river_id: Mapped[int | None] = mapped_column(
+        ForeignKey("river.id", ondelete="SET NULL")
+    )
+    section_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    station: Mapped[float] = mapped_column(Float, nullable=False)
+    time_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    water_level: Mapped[float] = mapped_column(Float, nullable=False)
+    flow: Mapped[float] = mapped_column(Float, nullable=False)
+    velocity: Mapped[float] = mapped_column(Float, nullable=False)
+
+    task: Mapped[SimulationTask] = relationship(back_populates="results")
+
+
+class DispatchPlan(Base):
+    """保存可校验、冻结、克隆和归档的仿真调度计划版本。"""
+
+    __tablename__ = "dispatch_plan"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'validated', 'frozen', 'archived')",
+            name="ck_dispatch_plan_status",
+        ),
+        UniqueConstraint("name", "version", name="uq_dispatch_plan_name_version"),
+        Index("ix_dispatch_plan_dataset_version_id", "dataset_version_id"),
+        Index("ix_dispatch_plan_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="RESTRICT"), nullable=False
+    )
+    simulation_case_id: Mapped[int] = mapped_column(
+        ForeignKey("simulation_case.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="draft")
+    description: Mapped[str | None] = mapped_column(Text)
+    duration_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    evaluation_config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    storage_level: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="key_sections"
+    )
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    frozen_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    frozen_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    frozen_snapshot_hash: Mapped[str | None] = mapped_column(String(64))
+
+
+class DispatchAction(Base):
+    """保存指定时刻的闸门或泵站人工调度命令。"""
+
+    __tablename__ = "dispatch_action"
+    __table_args__ = (
+        CheckConstraint("structure_type IN ('gate', 'pump')", name="ck_dispatch_action_type"),
+        CheckConstraint(
+            "(gate_id IS NOT NULL AND pump_id IS NULL) OR "
+            "(gate_id IS NULL AND pump_id IS NOT NULL)",
+            name="ck_dispatch_action_single_asset",
+        ),
+        UniqueConstraint(
+            "plan_id", "time_seconds", "structure_type", "gate_id", "pump_id",
+            name="uq_dispatch_action_asset_time",
+        ),
+        Index("ix_dispatch_action_plan_time", "plan_id", "time_seconds"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    plan_id: Mapped[int] = mapped_column(
+        ForeignKey("dispatch_plan.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    time_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    structure_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    gate_id: Mapped[int | None] = mapped_column(ForeignKey("gate.id", ondelete="RESTRICT"))
+    pump_id: Mapped[int | None] = mapped_column(ForeignKey("pump.id", ondelete="RESTRICT"))
+    command_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_value: Mapped[float] = mapped_column(Float, nullable=False)
+    interpolation: Mapped[str] = mapped_column(String(16), nullable=False, server_default="step")
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    note: Mapped[str | None] = mapped_column(Text)
+
+
+class DispatchRule(Base):
+    """保存白名单观测和操作符组成的受控阈值规则。"""
+
+    __tablename__ = "dispatch_rule"
+    __table_args__ = (Index("ix_dispatch_rule_plan_id", "plan_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    plan_id: Mapped[int] = mapped_column(
+        ForeignKey("dispatch_plan.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    observation_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    observation_object_id: Mapped[int | None] = mapped_column(Integer)
+    operator: Mapped[str] = mapped_column(String(4), nullable=False)
+    threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    hysteresis: Mapped[float] = mapped_column(Float, nullable=False, server_default="0")
+    minimum_hold_seconds: Mapped[float] = mapped_column(Float, nullable=False, server_default="0")
+    cooldown_seconds: Mapped[float] = mapped_column(Float, nullable=False, server_default="0")
+    action_template: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+
+
+class DispatchRun(Base):
+    """关联基准与受控任务并保存一次调度仿真的指标和生命周期。"""
+
+    __tablename__ = "dispatch_run"
+    __table_args__ = (
+        Index("ix_dispatch_run_plan_id", "plan_id"),
+        Index("ix_dispatch_run_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    plan_id: Mapped[int] = mapped_column(
+        ForeignKey("dispatch_plan.id", ondelete="RESTRICT"), nullable=False
+    )
+    baseline_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("simulation_task.id", ondelete="SET NULL")
+    )
+    controlled_task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("simulation_task.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, server_default="pending")
+    progress: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    metrics: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    queue_job_id: Mapped[str | None] = mapped_column(String(128))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    start_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DispatchEvent(Base):
+    """记录规则/人工命令的请求值、实际值、结果和原因。"""
+
+    __tablename__ = "dispatch_event"
+    __table_args__ = (Index("ix_dispatch_event_run_time", "run_id", "time_seconds"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("dispatch_run.id", ondelete="CASCADE"))
+    time_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    source_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_id: Mapped[int | None] = mapped_column(Integer)
+    structure_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    structure_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    requested_command: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    applied_command: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class StructureResult(Base):
+    """保存闸泵各时刻的请求/实际状态、流量、能耗和约束。"""
+
+    __tablename__ = "structure_result"
+    __table_args__ = (
+        UniqueConstraint(
+            "task_id", "time_seconds", "structure_type", "structure_id",
+            name="uq_structure_result_task_time_asset",
+        ),
+        Index("ix_structure_result_run_time", "dispatch_run_id", "time_seconds"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("simulation_task.id", ondelete="CASCADE"))
+    dispatch_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dispatch_run.id", ondelete="CASCADE")
+    )
+    time_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    structure_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    structure_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    requested_value: Mapped[float | None] = mapped_column(Float)
+    actual_value: Mapped[float | None] = mapped_column(Float)
+    flow: Mapped[float] = mapped_column(Float, nullable=False)
+    upstream_level: Mapped[float | None] = mapped_column(Float)
+    downstream_level: Mapped[float | None] = mapped_column(Float)
+    head_difference: Mapped[float | None] = mapped_column(Float)
+    transfer_type: Mapped[str | None] = mapped_column(String(24))
+    power_kw: Mapped[float | None] = mapped_column(Float)
+    energy_kwh: Mapped[float | None] = mapped_column(Float)
+    regime: Mapped[str | None] = mapped_column(String(32))
+    constraint_flags: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+
+
+class JunctionResult(Base):
+    """保存河网共同水位、节点收支和连续性残差。"""
+
+    __tablename__ = "junction_result"
+    __table_args__ = (
+        UniqueConstraint("task_id", "node_id", "time_seconds", name="uq_junction_task_node_time"),
+        Index("ix_junction_result_task_time", "task_id", "time_seconds"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(ForeignKey("simulation_task.id", ondelete="CASCADE"))
+    node_id: Mapped[int] = mapped_column(ForeignKey("river_node.id", ondelete="RESTRICT"))
+    time_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    water_level: Mapped[float] = mapped_column(Float, nullable=False)
+    inflow: Mapped[float] = mapped_column(Float, nullable=False)
+    outflow: Mapped[float] = mapped_column(Float, nullable=False)
+    source_sink: Mapped[float] = mapped_column(Float, nullable=False)
+    balance_residual: Mapped[float] = mapped_column(Float, nullable=False)

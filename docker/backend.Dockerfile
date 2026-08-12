@@ -2,7 +2,8 @@
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app:/app/backend
 
 WORKDIR /app
 
@@ -13,6 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 后端运行时镜像包含后端源码、数据库迁移和导入模板，不挂载前端树。
 COPY backend ./backend
 COPY database ./database
+COPY model ./model
 COPY docs/templates ./docs/templates
 
 WORKDIR /app/backend

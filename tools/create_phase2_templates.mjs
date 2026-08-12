@@ -13,7 +13,7 @@ const templates = [
     resource: 'rivers',
     title: '河道导入模板',
     headers: ['code', 'name', 'length', 'level', 'status', 'description', 'coordinates_json'],
-    sample: ['SAMPLE-RIVER-001', '示例河道（导入前请删除）', 12000, 'main', 'active', 'WGS 84 / EPSG:4326', '[[120.0,30.2],[120.1,30.25]]'],
+    sample: ['SAMPLE-RIVER-001', '示例河道（导入前请删除）', 12000, 'main', 'active', 'CGCS2000 / EPSG:4490', '[[120.0,30.2],[120.1,30.25]]'],
     widths: [22, 28, 14, 14, 14, 30, 48],
     validations: [{ range: 'D2:D500', values: ['main', 'tributary', 'channel'] }, { range: 'E2:E500', values: ['active', 'inactive', 'planned'] }],
     notes: [
@@ -101,9 +101,9 @@ for (const definition of templates) {
   notes.getRangeByIndexes(3, 0, definition.notes.length, 4).values = definition.notes;
   notes.getRange('A3:D3').format = { fill: '#0F7A7A', font: { bold: true, color: '#FFFFFF' }, borders: { preset: 'all', style: 'thin', color: '#8FC4C6' } };
   notes.getRangeByIndexes(3, 0, definition.notes.length, 4).format = { borders: { preset: 'all', style: 'thin', color: '#C6DDE0' }, wrapText: true };
-  notes.getRange('A9:D11').merge();
-  notes.getRange('A9').values = [['使用说明：\n1. 导入时由页面选择数据版本，模板内不填写版本 ID。\n2. 第一行字段名不可修改；请删除示例行后填写正式数据。\n3. 坐标统一使用 WGS 84（EPSG:4326）。\n4. 任一行错误时整批不写入，错误会定位到具体行号。']];
-  notes.getRange('A9:D11').format = { fill: '#EEF7F7', font: { color: '#315866' }, wrapText: true, borders: { preset: 'outside', style: 'thin', color: '#9FC9CC' } };
+  notes.getRange('A9:D12').merge();
+  notes.getRange('A9').values = [['使用说明：\n1. 导入时由页面选择数据版本，模板内不填写版本 ID。\n2. 第一行字段名不可修改；请删除示例行后填写正式数据。\n3. 坐标统一使用 CGCS2000（EPSG:4490），坐标顺序为 [经度,纬度]。\n4. 任一行错误时整批不写入，错误会定位到具体行号。']];
+  notes.getRange('A9:D12').format = { fill: '#EEF7F7', font: { color: '#315866' }, wrapText: true, verticalAlignment: 'top', rowHeight: 25, borders: { preset: 'outside', style: 'thin', color: '#9FC9CC' } };
   notes.getRange('A:D').format.columnWidth = 26;
   notes.getRange('B:B').format.columnWidth = 52;
   notes.getRange('D:D').format.columnWidth = 44;
@@ -113,6 +113,8 @@ for (const definition of templates) {
   await fs.writeFile(new URL(`previews/phase2_${definition.resource}_inspect.txt`, outputDir), inspection.ndjson, 'utf8');
   const preview = await workbook.render({ sheetName: '导入数据', autoCrop: 'all', scale: 1.2, format: 'png' });
   await fs.writeFile(new URL(`phase2_${definition.resource}_template.png`, previewDir), new Uint8Array(await preview.arrayBuffer()));
+  const notesPreview = await workbook.render({ sheetName: '填写说明', autoCrop: 'all', scale: 1.2, format: 'png' });
+  await fs.writeFile(new URL(`phase2_${definition.resource}_notes.png`, previewDir), new Uint8Array(await notesPreview.arrayBuffer()));
   const output = await SpreadsheetFile.exportXlsx(workbook);
   await output.save(fileURLToPath(new URL(`phase2_${definition.resource}_template.xlsx`, outputDir)));
 }

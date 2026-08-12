@@ -21,10 +21,21 @@ def test_required_phase1_files_exist() -> None:
         "database/alembic.ini",
         "database/migrations/versions/20260811_0001_phase1_gis.py",
         "database/migrations/versions/20260811_0002_phase2_hydraulic_database.py",
+        "database/migrations/versions/20260812_0003_phase3_hydraulic_engine.py",
+        "database/migrations/versions/20260812_0004_phase4_dispatch.py",
         "database/seed/demo_data.py",
         "database/schema.sql",
         "database/database_design.md",
         "model/hydraulic_model.py",
+        "model/engine.py",
+        "model/solver/saint_venant.py",
+        "backend/app/model_engine/router.py",
+        "backend/app/model_engine/service.py",
+        "backend/app/dispatch/router.py",
+        "backend/app/worker/tasks.py",
+        "model/network/solver.py",
+        "model/control/rules.py",
+        "frontend/src/pages/hydraulic/HydraulicPages.tsx",
         "optimization/optimizer.py",
         "ai/assistant.py",
         "docs/project_introduction.md",
@@ -56,7 +67,7 @@ def test_frontend_and_database_static_contracts() -> None:
         REPOSITORY_ROOT / "frontend/src/api/generated/client.ts"
     ).read_text(encoding="utf-8")
 
-    for route_path in ["'/'", "'/gis'", "'rivers'", "'/data-center/rivers'", "'/data-center/cross-sections'", "'/data-center/gates'", "'/data-center/pumps'", "'/data-center/imports'", "'/data-center/validation'", "'/data-center/model-data'", "'/dispatch'", "'/hydraulic'", "'/optimization'", "'/ai'"]:
+    for route_path in ["'/'", "'/gis'", "'rivers'", "'/data-center/rivers'", "'/data-center/cross-sections'", "'/data-center/gates'", "'/data-center/pumps'", "'/data-center/imports'", "'/data-center/validation'", "'/data-center/model-data'", "'/dispatch'", "'/hydraulic'", "'hydraulic/config'", "'hydraulic/tasks'", "'hydraulic/results'", "'/optimization'", "'/ai'"]:
         assert route_path in router_source
 
     assert "create extension if not exists postgis" in schema_source
@@ -74,3 +85,5 @@ def test_frontend_and_database_static_contracts() -> None:
     assert "/api/v1/rivers" in generated_client
     assert "/api/v1/import/${kind}" in generated_client
     assert "/api/v1/validation/run" in generated_client
+    assert "/api/v1/model/tasks" in generated_client
+    assert "/api/v1/model/results/" in generated_client

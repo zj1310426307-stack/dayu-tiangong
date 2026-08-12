@@ -25,7 +25,7 @@ class RiverBase(BaseModel):
     @field_validator("geometry")
     @classmethod
     def check_geometry(cls, value: dict[str, Any]) -> dict[str, Any]:
-        """要求河道几何为有效 WGS 84 LineString。"""
+        """要求河道几何为有效 CGCS2000 / EPSG:4490 LineString。"""
 
         validate_geometry(value, "LineString")
         return value

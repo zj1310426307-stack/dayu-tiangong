@@ -1,30 +1,28 @@
-"""验证水动力、优化与 AI 预留接口的输入输出契约。"""
+"""Contract tests for hydraulic, optimisation and AI public adapters."""
 
 import pytest
 
 from ai import WaterAI
 from model import HydraulicModel
+from model.core.errors import HydraulicInputError
 from optimization import SchedulerOptimizer
 
 
-def test_hydraulic_model_returns_standard_empty_result() -> None:
-    """水动力适配器应返回三类标准结果序列。"""
+def test_hydraulic_model_requires_a_versioned_snapshot() -> None:
+    """Hydraulic calculation must not silently accept an empty placeholder."""
 
-    assert HydraulicModel().run({}) == {
-        "water_level": [],
-        "flow": [],
-        "velocity": [],
-    }
+    with pytest.raises(HydraulicInputError, match="dayu.model-input.v1"):
+        HydraulicModel().run({})
 
 
 def test_scheduler_optimizer_returns_uncomputed_result() -> None:
-    """优化器在未接算法时应明确返回空方案与未计算评分。"""
+    """The optimisation placeholder keeps its stable public contract."""
 
     assert SchedulerOptimizer().optimize({}) == {"scheme": [], "score": None}
 
 
 def test_water_ai_returns_placeholder_contract() -> None:
-    """AI 助手应返回任务书约定的占位文本。"""
+    """The AI placeholder keeps its stable public contract."""
 
     assert WaterAI().analyze({}) == {"answer": "AI助手接口"}
 
@@ -37,8 +35,8 @@ def test_water_ai_returns_placeholder_contract() -> None:
         (WaterAI().analyze, None),
     ],
 )
-def test_placeholder_interfaces_reject_non_mapping_input(callable_under_test, invalid_input) -> None:
-    """三个适配器统一拒绝非映射输入，避免未来契约悄然漂移。"""
+def test_public_interfaces_reject_non_mapping_input(callable_under_test, invalid_input) -> None:
+    """All public adapters reject non-mapping input consistently."""
 
     with pytest.raises(TypeError):
         callable_under_test(invalid_input)

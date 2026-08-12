@@ -1,5 +1,7 @@
 # Phase 1 GIS 阶段审查
 
+> 历史坐标口径说明：本报告记录 Phase 1 当期验收事实。自 Phase 3 起，现行空间数据标准已统一为 CGCS2000（EPSG:4490），以 `docs/coordinate_system.md` 和 Phase 3 迁移为准。
+
 审查日期：2026-08-11
 版本：V1.1
 

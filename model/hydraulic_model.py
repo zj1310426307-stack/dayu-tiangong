@@ -1,26 +1,30 @@
-"""Saint-Venant 一维水动力模型的 Phase 0 适配器契约。"""
+"""保持早期公共入口兼容的 Phase 3 水动力模型适配器。"""
 
 from collections.abc import Mapping
 from typing import Any
 
+from model.engine import HydraulicEngine
+
 
 class HydraulicModel:
-    """提供稳定的水动力运行入口，后续由真实求解器实现替换。"""
+    """通过历史 `run` 入口调用独立 Saint-Venant 计算引擎。"""
 
     def __init__(self) -> None:
-        """初始化空适配器；Phase 0 不加载外部求解器或参数。"""
+        """初始化无 Web 与数据库依赖的数值引擎。"""
 
-    def run(self, input_data: Mapping[str, Any]) -> dict[str, list[float]]:
-        """接收模型输入并返回标准结果容器。
+        self._engine = HydraulicEngine()
+
+    def run(self, input_data: Mapping[str, Any]) -> dict[str, Any]:
+        """接收 Phase 2 快照并返回可序列化的标准计算结果。
 
         Args:
-            input_data: 未来承载河网、边界条件和模型参数的映射。
+            input_data: `dayu.model-input.v1` 模型输入快照。
 
         Returns:
-            包含水位、流量和流速序列的空结果容器。
+            包含断面时序和稳定性诊断的结果映射。
         """
 
         if not isinstance(input_data, Mapping):
             raise TypeError("input_data 必须是映射类型")
 
-        return {"water_level": [], "flow": [], "velocity": []}
+        return self._engine.run(input_data).to_dict()

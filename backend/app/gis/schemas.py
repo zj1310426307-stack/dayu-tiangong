@@ -26,7 +26,7 @@ class PaginationMeta(BaseModel):
     offset: int = Field(ge=0)
     bbox: list[float] | None = None
     demo_data: Literal[True] = True
-    crs: Literal["EPSG:4326"] = "EPSG:4326"
+    crs: Literal["EPSG:4490"] = "EPSG:4490"
 
 
 class GeoJSONFeatureCollection(BaseModel):
@@ -60,4 +60,4 @@ class GISHealthResponse(BaseModel):
     status: Literal["healthy"]
     database: str
     postgis_version: str
-    srid: Literal[4326] = 4326
+    srid: Literal[4490] = 4490

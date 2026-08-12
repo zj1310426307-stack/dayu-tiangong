@@ -48,6 +48,7 @@ import type {
   RiverRecord,
   ValidationReport,
 } from '../../api/generated/client';
+import { useDatasetVersion } from '../../context/DatasetVersionContext';
 import {
   createCrossSectionRecord,
   createGateRecord,
@@ -130,13 +131,14 @@ interface RiverFormValues {
 }
 
 export function RiversDatabasePage() {
+  const { datasetVersionId } = useDatasetVersion();
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<RiverRecord>();
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm<RiverFormValues>();
   const { data, loading, error, reload } = useRemoteList(
-    () => listRiverRecords({ search, limit: 500 }), [search],
+    () => listRiverRecords({ dataset_version_id: datasetVersionId, search, limit: 500 }), [datasetVersionId, search],
   );
 
   const showEditor = (record?: RiverRecord) => {
@@ -151,7 +153,7 @@ export function RiversDatabasePage() {
       description: record.description ?? undefined,
       coordinates_json: jsonText(coordinatesOf(record.geometry)),
     } : {
-      dataset_version_id: 1,
+      dataset_version_id: datasetVersionId ?? 1,
       level: 'main',
       status: 'active',
       coordinates_json: '[[120.00, 30.25], [120.10, 30.28]]',
@@ -193,9 +195,9 @@ export function RiversDatabasePage() {
 
   return (
     <div className="data-page">
-      <DataPageHeader eyebrow="HYDRAULIC DATABASE / RIVERS" title="河道数据库" description="统一维护河道编码、等级、长度、状态与 WGS 84 空间线。" action={<Button type="primary" icon={<PlusOutlined />} onClick={() => showEditor()}>新增河道</Button>} />
+      <DataPageHeader eyebrow="HYDRAULIC DATABASE / RIVERS" title="河道数据库" description="统一维护河道编码、等级、长度、状态与 CGCS2000 / EPSG:4490 空间线。" action={<Button type="primary" icon={<PlusOutlined />} onClick={() => showEditor()}>新增河道</Button>} />
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}
-      <Card className="data-card" title={`河道清单 · ${data?.total ?? 0} 条`} extra={<Space><Input.Search allowClear placeholder="名称或编码" onSearch={setSearch} /><Button icon={<NodeIndexOutlined />} onClick={async () => { await generateTopology({ dataset_version_id: 1, tolerance: 0.00001 }); message.success('河网拓扑已重新生成'); }}>生成拓扑</Button><Button icon={<ReloadOutlined />} onClick={() => void reload()} /></Space>}>
+      <Card className="data-card" title={`河道清单 · ${data?.total ?? 0} 条`} extra={<Space><Input.Search allowClear placeholder="名称或编码" onSearch={setSearch} /><Button icon={<NodeIndexOutlined />} disabled={!datasetVersionId} onClick={async () => { if (!datasetVersionId) return; await generateTopology({ dataset_version_id: datasetVersionId, tolerance: 0.00001 }); message.success('河网拓扑已重新生成'); }}>生成拓扑</Button><Button icon={<ReloadOutlined />} onClick={() => void reload()} /></Space>}>
         <Table rowKey="id" loading={loading} columns={columns} dataSource={data?.items ?? []} pagination={{ pageSize: 12 }} scroll={{ x: 960 }} />
       </Card>
       <Modal open={open} title={editing ? '编辑河道' : '新增河道'} onCancel={() => setOpen(false)} onOk={() => form.submit()} confirmLoading={submitting} width={720} destroyOnHidden>
@@ -240,11 +242,12 @@ function SectionProfileChart({ section }: { section?: CrossSectionRecord }) {
 }
 
 export function CrossSectionsDatabasePage() {
+  const { datasetVersionId } = useDatasetVersion();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<CrossSectionRecord>();
   const [selected, setSelected] = useState<CrossSectionRecord>();
   const [form] = Form.useForm<SectionFormValues>();
-  const { data, loading, error, reload } = useRemoteList(() => listCrossSectionRecords({ limit: 500 }), []);
+  const { data, loading, error, reload } = useRemoteList(() => listCrossSectionRecords({ dataset_version_id: datasetVersionId, limit: 500 }), [datasetVersionId]);
   const showEditor = (record?: CrossSectionRecord) => {
     setEditing(record);
     const coordinates = record ? coordinatesOf(record.geometry) : [120.1, 30.25];
@@ -254,7 +257,7 @@ export function CrossSectionsDatabasePage() {
       section_name: record.section_name, station: record.station, roughness: record.roughness,
       elevation_min: record.elevation_min, survey_date: record.survey_date ?? undefined,
       longitude: Number(point[0]), latitude: Number(point[1]), points_json: jsonText(record.points.points),
-    } : { dataset_version_id: 1, river_id: 1, roughness: 0.035, longitude: 120.1, latitude: 30.25, points_json: '[[0, 10], [5, 8], [10, 10]]' });
+    } : { dataset_version_id: datasetVersionId ?? 1, river_id: 1, roughness: 0.035, longitude: 120.1, latitude: 30.25, points_json: '[[0, 10], [5, 8], [10, 10]]' });
     setOpen(true);
   };
   const submit = async (values: SectionFormValues) => {
@@ -295,18 +298,19 @@ interface StructureFormValues { dataset_version_id: number; river_id: number; na
 
 function StructureDatabasePage({ kind }: { kind: StructureKind }) {
   const isGate = kind === 'gate';
+  const { datasetVersionId } = useDatasetVersion();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<StructureRecord>();
   const [form] = Form.useForm<StructureFormValues>();
   const { data, loading, error, reload } = useRemoteList(async () => {
-    const response = isGate ? await listGateRecords({ limit: 500 }) : await listPumpRecords({ limit: 500 });
+    const response = isGate ? await listGateRecords({ dataset_version_id: datasetVersionId, limit: 500 }) : await listPumpRecords({ dataset_version_id: datasetVersionId, limit: 500 });
     return { ...response, items: response.items as StructureRecord[] };
-  }, [isGate]);
+  }, [datasetVersionId, isGate]);
   const showEditor = (record?: StructureRecord) => {
     setEditing(record);
     const coords = record ? coordinatesOf(record.geometry) : [120.1, 30.25];
     const point = Array.isArray(coords) ? coords : [120.1, 30.25];
-    const values: Partial<StructureFormValues> = record ? { dataset_version_id: record.dataset_version_id, river_id: record.river_id, name: record.name, code: 'gate_code' in record ? record.gate_code : record.pump_code, status: record.status, control_mode: record.control_mode, longitude: Number(point[0]), latitude: Number(point[1]) } : { dataset_version_id: 1, river_id: 1, status: 'offline', control_mode: 'local', longitude: 120.1, latitude: 30.25 };
+    const values: Partial<StructureFormValues> = record ? { dataset_version_id: record.dataset_version_id, river_id: record.river_id, name: record.name, code: 'gate_code' in record ? record.gate_code : record.pump_code, status: record.status, control_mode: record.control_mode, longitude: Number(point[0]), latitude: Number(point[1]) } : { dataset_version_id: datasetVersionId ?? 1, river_id: 1, status: 'offline', control_mode: 'local', longitude: 120.1, latitude: 30.25 };
     if (record && 'gate_code' in record) Object.assign(values, { gate_type: record.gate_type, opening_direction: record.opening_direction, width: record.width, height: record.height, max_flow: record.max_flow, bottom_elevation: record.bottom_elevation });
     if (record && 'pump_code' in record) Object.assign(values, { design_flow: record.design_flow, head: record.head, power: record.power, efficiency_curve_json: jsonText(record.efficiency_curve.points) });
     if (!record && isGate) Object.assign(values, { gate_type: '节制闸', opening_direction: 'vertical' });
@@ -347,9 +351,9 @@ export const GatesDatabasePage = () => <StructureDatabasePage kind="gate" />;
 export const PumpsDatabasePage = () => <StructureDatabasePage kind="pump" />;
 
 export function DataImportPage() {
+  const { datasetVersionId } = useDatasetVersion();
   const [resource, setResource] = useState<ImportResource>('rivers');
   const [kind, setKind] = useState<'excel' | 'csv' | 'geojson'>('excel');
-  const [versionId, setVersionId] = useState(1);
   const [files, setFiles] = useState<UploadFile[]>([]);
   const [result, setResult] = useState<Awaited<ReturnType<typeof uploadDataFile>>>();
   const [loading, setLoading] = useState(false);
@@ -357,28 +361,30 @@ export function DataImportPage() {
     const origin = files[0]?.originFileObj;
     if (!origin) { message.warning('请先选择文件'); return; }
     setLoading(true);
-    try { const response = await uploadDataFile(kind, resource, versionId, origin); setResult(response); if (response.status === 'success') message.success(`成功导入 ${response.imported_count} 条`); }
+    if (!datasetVersionId) { message.warning('请先选择数据版本'); return; }
+    try { const response = await uploadDataFile(kind, resource, datasetVersionId, origin); setResult(response); if (response.status === 'success') message.success(`成功导入 ${response.imported_count} 条`); }
     catch (reason) { message.error(reason instanceof Error ? reason.message : '导入失败'); }
     finally { setLoading(false); }
   };
-  return <div className="data-page"><DataPageHeader eyebrow="DATA PIPELINE / IMPORT" title="数据导入中心" description="支持 Excel、CSV 与 GeoJSON；文件先整体校验，再在单一事务中写入。" /><Row gutter={18}><Col xs={24} lg={15}><Card className="data-card" title="上传数据文件"><Row gutter={14}><Col span={8}><Text>资源类型</Text><Select value={resource} onChange={setResource} style={{ width: '100%', marginTop: 8 }} options={[{ value: 'rivers', label: '河道' }, { value: 'cross_sections', label: '横断面' }, { value: 'gates', label: '闸门' }, { value: 'pumps', label: '泵站' }]} /></Col><Col span={8}><Text>文件格式</Text><Select value={kind} onChange={setKind} style={{ width: '100%', marginTop: 8 }} options={[{ value: 'excel', label: 'Excel .xlsx' }, { value: 'csv', label: 'CSV UTF-8' }, { value: 'geojson', label: 'GeoJSON' }]} /></Col><Col span={8}><Text>数据版本 ID</Text><InputNumber min={1} value={versionId} onChange={(value) => setVersionId(value ?? 1)} style={{ width: '100%', marginTop: 8 }} /></Col></Row><Upload.Dragger className="data-uploader" beforeUpload={() => false} maxCount={1} fileList={files} onChange={({ fileList }) => setFiles(fileList)}><p className="ant-upload-drag-icon"><CloudUploadOutlined /></p><p className="ant-upload-text">点击或拖拽文件到这里</p><p className="ant-upload-hint">单文件不超过 20 MB；失败批次不会写入部分数据</p></Upload.Dragger><Space wrap><Button type="primary" loading={loading} onClick={() => void upload()}>开始校验并导入</Button><Button icon={<FileExcelOutlined />} href={`/api/v1/import/templates/${resource}`}>下载 Excel 模板</Button></Space></Card></Col><Col xs={24} lg={9}><Card className="data-card" title="最近一次导入结果">{result ? <><Alert type={result.status === 'success' ? 'success' : 'error'} showIcon message={result.status === 'success' ? `已导入 ${result.imported_count} 条` : '导入未写入'} description={`存档：${result.stored_filename}`} /><div className="import-issues">{result.errors.map((issue) => <Alert key={`${issue.row}-${issue.message}`} type="error" message={`第 ${issue.row} 行：${issue.message}`} />)}</div></> : <div className="data-empty">完成一次导入后，这里会显示数量和逐行错误。</div>}</Card></Col></Row></div>;
+  return <div className="data-page"><DataPageHeader eyebrow="DATA PIPELINE / IMPORT" title="数据导入中心" description="支持 Excel、CSV 与 GeoJSON；文件先整体校验，再在单一事务中写入。" /><Row gutter={18}><Col xs={24} lg={15}><Card className="data-card" title="上传数据文件"><Row gutter={14}><Col span={8}><Text>资源类型</Text><Select value={resource} onChange={setResource} style={{ width: '100%', marginTop: 8 }} options={[{ value: 'rivers', label: '河道' }, { value: 'cross_sections', label: '横断面' }, { value: 'gates', label: '闸门' }, { value: 'pumps', label: '泵站' }]} /></Col><Col span={8}><Text>文件格式</Text><Select value={kind} onChange={setKind} style={{ width: '100%', marginTop: 8 }} options={[{ value: 'excel', label: 'Excel .xlsx' }, { value: 'csv', label: 'CSV UTF-8' }, { value: 'geojson', label: 'GeoJSON' }]} /></Col><Col span={8}><Text>当前数据版本</Text><InputNumber min={1} value={datasetVersionId} disabled style={{ width: '100%', marginTop: 8 }} /></Col></Row><Upload.Dragger className="data-uploader" beforeUpload={() => false} maxCount={1} fileList={files} onChange={({ fileList }) => setFiles(fileList)}><p className="ant-upload-drag-icon"><CloudUploadOutlined /></p><p className="ant-upload-text">点击或拖拽文件到这里</p><p className="ant-upload-hint">单文件不超过 20 MB；失败批次不会写入部分数据</p></Upload.Dragger><Space wrap><Button type="primary" loading={loading} onClick={() => void upload()}>开始校验并导入</Button><Button icon={<FileExcelOutlined />} href={`/api/v1/import/templates/${resource}`}>下载 Excel 模板</Button></Space></Card></Col><Col xs={24} lg={9}><Card className="data-card" title="最近一次导入结果">{result ? <><Alert type={result.status === 'success' ? 'success' : 'error'} showIcon message={result.status === 'success' ? `已导入 ${result.imported_count} 条` : '导入未写入'} description={`存档：${result.stored_filename}`} /><div className="import-issues">{result.errors.map((issue) => <Alert key={`${issue.row}-${issue.message}`} type="error" message={`第 ${issue.row} 行：${issue.message}`} />)}</div></> : <div className="data-empty">完成一次导入后，这里会显示数量和逐行错误。</div>}</Card></Col></Row></div>;
 }
 
 export function DataValidationPage() {
-  const [versionId, setVersionId] = useState(1);
+  const { datasetVersionId } = useDatasetVersion();
   const [report, setReport] = useState<ValidationReport>();
   const [loading, setLoading] = useState(false);
-  const execute = async () => { setLoading(true); try { setReport(await runValidation(versionId)); } catch (reason) { message.error(reason instanceof Error ? reason.message : '校验失败'); } finally { setLoading(false); } };
+  const execute = async () => { if (!datasetVersionId) return; setLoading(true); try { setReport(await runValidation(datasetVersionId)); } catch (reason) { message.error(reason instanceof Error ? reason.message : '校验失败'); } finally { setLoading(false); } };
   const columns: ColumnsType<ValidationReport['items'][number]> = [{ title: '规则', dataIndex: 'code', width: 250 }, { title: '类别', dataIndex: 'category', width: 100 }, { title: '结果', dataIndex: 'severity', width: 100, render: (value: string) => <Tag color={value === 'passed' ? 'success' : value === 'warning' ? 'warning' : 'error'}>{value}</Tag> }, { title: '说明', dataIndex: 'message' }, { title: '数量', dataIndex: 'count', width: 80 }];
-  return <div className="data-page"><DataPageHeader eyebrow="QUALITY GATE / VALIDATION" title="数据校验中心" description="在进入水动力模型前，自动检查空间几何、水力断面、建筑物参数、拓扑与模型配置完整性。" action={<Space><InputNumber min={1} value={versionId} onChange={(value) => setVersionId(value ?? 1)} addonBefore="版本 ID" /><Button type="primary" icon={<SafetyCertificateOutlined />} loading={loading} onClick={() => void execute()}>运行校验</Button></Space>} />{report ? <><Row gutter={16} className="quality-stats"><Col span={6}><Card className="data-card"><Statistic title="模型就绪" value={report.summary.is_model_ready ? '是' : '否'} prefix={report.summary.is_model_ready ? <CheckCircleOutlined /> : undefined} /></Card></Col><Col span={6}><Card className="data-card"><Statistic title="错误规则" value={report.summary.errors} valueStyle={{ color: report.summary.errors ? '#ff6b68' : '#2fe6d6' }} /></Card></Col><Col span={6}><Card className="data-card"><Statistic title="警告规则" value={report.summary.warnings} /></Card></Col><Col span={6}><Card className="data-card"><Statistic title="通过规则" value={report.summary.passed} /></Card></Col></Row><Card className="data-card" title={`校验报告 · ${new Date(report.checked_time).toLocaleString()}`}><Progress percent={Math.round((report.summary.passed / Math.max(report.items.length, 1)) * 100)} status={report.summary.errors ? 'exception' : 'success'} /><Table rowKey="code" columns={columns} dataSource={report.items} pagination={false} scroll={{ x: 820 }} /></Card></> : <Card className="data-card"><div className="data-empty">选择数据版本并运行校验，结果将按错误、警告和通过分类展示。</div></Card>}</div>;
+  return <div className="data-page"><DataPageHeader eyebrow="QUALITY GATE / VALIDATION" title="数据校验中心" description="在进入水动力模型前，自动检查空间几何、水力断面、建筑物参数、拓扑与模型配置完整性。" action={<Space><InputNumber min={1} value={datasetVersionId} disabled addonBefore="当前版本 ID" /><Button type="primary" icon={<SafetyCertificateOutlined />} loading={loading} disabled={!datasetVersionId} onClick={() => void execute()}>运行校验</Button></Space>} />{report ? <><Row gutter={16} className="quality-stats"><Col span={6}><Card className="data-card"><Statistic title="模型就绪" value={report.summary.is_model_ready ? '是' : '否'} prefix={report.summary.is_model_ready ? <CheckCircleOutlined /> : undefined} /></Card></Col><Col span={6}><Card className="data-card"><Statistic title="错误规则" value={report.summary.errors} valueStyle={{ color: report.summary.errors ? '#ff6b68' : '#2fe6d6' }} /></Card></Col><Col span={6}><Card className="data-card"><Statistic title="警告规则" value={report.summary.warnings} /></Card></Col><Col span={6}><Card className="data-card"><Statistic title="通过规则" value={report.summary.passed} /></Card></Col></Row><Card className="data-card" title={`校验报告 · ${new Date(report.checked_time).toLocaleString()}`}><Progress percent={Math.round((report.summary.passed / Math.max(report.items.length, 1)) * 100)} status={report.summary.errors ? 'exception' : 'success'} /><Table rowKey="code" columns={columns} dataSource={report.items} pagination={false} scroll={{ x: 820 }} /></Card></> : <Card className="data-card"><div className="data-empty">选择数据版本并运行校验，结果将按错误、警告和通过分类展示。</div></Card>}</div>;
 }
 
 export function ModelDataPage() {
+  const { datasetVersionId } = useDatasetVersion();
   const [snapshot, setSnapshot] = useState<ModelInputSnapshot>();
   const versions = useRemoteList(() => getDatasetVersions(), []);
-  const parameters = useRemoteList(() => getModelParameters(1), []);
-  const boundaries = useRemoteList(() => getBoundaryConditions(1), []);
-  const cases = useRemoteList(() => getSimulationCases(1), []);
+  const parameters = useRemoteList(() => getModelParameters(datasetVersionId), [datasetVersionId]);
+  const boundaries = useRemoteList(() => getBoundaryConditions(datasetVersionId), [datasetVersionId]);
+  const cases = useRemoteList(() => getSimulationCases(datasetVersionId), [datasetVersionId]);
   const tabs = [
     { key: 'versions', label: `数据版本 ${versions.data?.length ?? 0}`, children: <Table rowKey="id" loading={versions.loading} dataSource={versions.data ?? []} pagination={false} columns={[{ title: '版本', dataIndex: 'version' }, { title: '名称', dataIndex: 'name' }, { title: '创建者', dataIndex: 'creator' }, { title: '创建时间', dataIndex: 'created_time', render: (value: string) => new Date(value).toLocaleString() }]} /> },
     { key: 'parameters', label: `模型参数 ${parameters.data?.length ?? 0}`, children: <Table rowKey="id" loading={parameters.loading} dataSource={parameters.data ?? []} pagination={false} columns={[{ title: '类型', dataIndex: 'parameter_type' }, { title: '参数', dataIndex: 'parameter_name' }, { title: '数值', dataIndex: 'value' }, { title: '单位', dataIndex: 'unit' }]} /> },

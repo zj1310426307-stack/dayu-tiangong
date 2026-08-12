@@ -22,7 +22,7 @@ LimitQuery = Annotated[int, Query(ge=1, le=1000, description="单页最多返回
 OffsetQuery = Annotated[int, Query(ge=0, description="从零开始的分页偏移量")]
 BBoxQuery = Annotated[
     str | None,
-    Query(alias="bbox", description="EPSG:4326 范围：minx,miny,maxx,maxy"),
+    Query(alias="bbox", description="CGCS2000 / EPSG:4490 范围：minx,miny,maxx,maxy"),
 ]
 
 

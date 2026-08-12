@@ -119,6 +119,7 @@ button, input { font: inherit; }
 .clock-block strong, .clock-block small { display: block; }
 .clock-block strong { font-size: 11px; }
 .clock-block small { margin-top: 6px; color: #4d6c80; font-size: 7px; letter-spacing: 0.18em; }
+.dataset-version-select { width: 210px; }
 
 .main-content { min-height: calc(100vh - 78px); padding: 28px 30px 36px; overflow: hidden; }
 .dashboard-page { width: min(1560px, 100%); margin: 0 auto; }
@@ -269,6 +270,30 @@ button, input { font: inherit; }
 .model-snapshot { margin-top: 16px; }
 .snapshot-meta { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--line); }
 
+/* Phase 3 水动力模拟：配置、状态与时序结果共用数据中心的高密度视觉语言。 */
+.hydraulic-page { padding-bottom: 20px; }
+.hydraulic-config-card { max-width: 1180px; }
+.hydraulic-form { margin-top: 24px; }
+.hydraulic-select { display: block; width: 100%; margin-top: 8px; }
+.hydraulic-stats .data-card { min-height: 118px; }
+.hydraulic-stats .ant-statistic-content-prefix { color: var(--cyan); }
+.hydraulic-result-chart { width: 100%; height: 680px; }
+.hydraulic-diagnostics { max-height: 420px; margin: 0; padding: 16px; color: #86a8ba; background: rgba(4, 17, 28, 0.72); border: 1px solid var(--line); border-radius: 6px; overflow: auto; font: 11px/1.7 Consolas, monospace; }
+
+/* Phase 4 调度中心：计划、时间轴、异步运行与对比共用审计型信息密度。 */
+.dispatch-page { padding-bottom: 24px; }
+.dispatch-notice { margin-bottom: 16px; border-color: rgba(255, 200, 92, 0.25) !important; }
+.dispatch-timeline { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 12px; margin: 0 0 16px; color: #66869b; font: 10px Consolas, monospace; }
+.dispatch-timeline > div { position: relative; height: 10px; background: linear-gradient(90deg, rgba(56, 168, 255, 0.25), rgba(47, 230, 214, 0.42)); border: 1px solid rgba(47, 230, 214, 0.2); border-radius: 99px; }
+.dispatch-timeline i { position: absolute; top: 50%; width: 11px; height: 11px; background: #ffc85c; border: 2px solid #081522; border-radius: 50%; box-shadow: 0 0 10px rgba(255, 200, 92, 0.7); transform: translate(-50%, -50%); }
+.dispatch-comparison-chart { width: 100%; height: 430px; }
+.dispatch-metrics .data-card { min-height: 120px; }
+.dispatch-metrics .ant-statistic-title { min-height: 38px; font: 9px/1.5 Consolas, monospace; overflow-wrap: anywhere; }
+.dispatch-map-state { position: absolute; bottom: 44px; left: 18px; z-index: 4; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; color: #9fb9c7; background: rgba(5, 20, 31, 0.88); border: 1px solid rgba(47, 230, 214, 0.24); border-radius: 6px; backdrop-filter: blur(9px); }
+.dispatch-map-state strong { color: var(--cyan); font-size: 9px; letter-spacing: 0.12em; }
+.dispatch-map-state span, .dispatch-map-state small { font: 9px Consolas, monospace; }
+.dispatch-map-state small { color: #658399; }
+
 /* 窄屏时内容自然堆叠，侧栏收为图标轨道。 */
 @media (max-width: 1100px) {
   .side-rail { width: 82px !important; max-width: 82px !important; min-width: 82px !important; flex: 0 0 82px !important; }
@@ -284,7 +309,7 @@ button, input { font: inherit; }
   .side-rail { display: none; }
   .workspace { margin-left: 0 !important; }
   .top-bar { height: 68px; padding: 0 16px !important; }
-  .rail-toggle, .clock-block, .env-tag { display: none !important; }
+  .rail-toggle, .clock-block, .env-tag, .dataset-version-select { display: none !important; }
   .main-content { padding: 22px 16px 28px; }
   .hero-strip { align-items: start; flex-direction: column; }
   .hero-meta { display: none; }
@@ -298,6 +323,7 @@ button, input { font: inherit; }
   .feature-page { grid-template-columns: 1fr; margin-top: 2vh; }
   .data-page__header { align-items: start; flex-direction: column; }
   .data-split { grid-template-columns: 1fr; }
+  .hydraulic-result-chart { height: 590px; }
   .feature-hero { min-height: 390px; padding: 35px 27px; }
   .feature-contract { align-self: auto; }
 }

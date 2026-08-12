@@ -1,5 +1,7 @@
 # Phase 2 水利数据库阶段审查
 
+> 历史坐标口径说明：本报告记录 Phase 2 当期验收事实。自 Phase 3 起，现行空间数据标准已统一为 CGCS2000（EPSG:4490），以 `docs/coordinate_system.md` 和 Phase 3 迁移为准。
+
 - 项目：大禹·天工（Dayu Tiangong）
 - 阶段：Phase 2 河道水利数据库与模型数据管理系统
 - 版本：V2.0

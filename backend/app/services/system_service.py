@@ -8,7 +8,7 @@ def get_system_info() -> SystemInfoResponse:
 
     return SystemInfoResponse(
         name="大禹·天工",
-        version="2.0.0",
+        version="3.0.0",
         description="河网智能调度与数字孪生水利平台",
         status="running",
     )
@@ -17,4 +17,4 @@ def get_system_info() -> SystemInfoResponse:
 def get_health_status() -> HealthResponse:
     """返回应用层健康；数据库/PostGIS 健康由 GIS 专用端点表达。"""
 
-    return HealthResponse(status="healthy", service="dayu-tiangong-api", version="2.0.0")
+    return HealthResponse(status="healthy", service="dayu-tiangong-api", version="3.0.0")

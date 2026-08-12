@@ -1,8 +1,8 @@
-# Phase 1 坐标系说明
+# 大禹·天工坐标系统说明
 
-## 统一坐标系
+## 统一口径
 
-Phase 1 所有空间表、GeoJSON 接口、演示底图和 Cesium 数据源统一使用 WGS 84（`EPSG:4326`）。坐标顺序为 `[longitude, latitude]`，即先经度、后纬度。
+Phase 3 起，全部业务空间表、GeoJSON 接口、导入模板和 GIS 页面统一使用中国大地坐标系 2000（CGCS2000，`EPSG:4490`）。坐标顺序为 `[longitude, latitude]`，即先经度、后纬度。
 
 演示数据范围约为：
 
@@ -11,16 +11,26 @@ Phase 1 所有空间表、GeoJSON 接口、演示底图和 Cesium 数据源统�
 
 ## 存储与交换
 
-- PostGIS：`geometry(LineString, 4326)` 或 `geometry(Point, 4326)`。
-- API：标准 GeoJSON，不写入已废弃的顶层 `crs` 成员；响应 `meta.crs` 明确声明数据口径。
-- bbox：`minx,miny,maxx,maxy`，对应 `min_lon,min_lat,max_lon,max_lat`。
-- CesiumJS：直接消费经纬度 GeoJSON，由引擎转换到地心坐标进行渲染。
-- 影像底图：Esri World Imagery 使用 Web Mercator 瓦片；Cesium 负责与 EPSG:4326 业务要素对齐，PostGIS 中不存储或伪装影像坐标。
+- PostGIS：`geometry(LineString, 4490)` 或 `geometry(Point, 4490)`。
+- API：标准 GeoJSON；响应 `meta.crs` 明确返回 `EPSG:4490`。
+- bbox：`minx,miny,maxx,maxy`，采用 CGCS2000 经纬度。
+- CesiumJS：直接消费 EPSG:4490 经纬度 GeoJSON，并负责场景坐标转换。
+- 影像底图：Esri World Imagery 使用其公开瓦片坐标体系；Cesium 在显示层完成底图与业务要素叠加，PostGIS 不存储影像瓦片坐标。
 
-## 计算限制
+## 从 Phase 2 迁移
 
-EPSG:4326 的单位是角度，不能直接用于米制长度、面积、缓冲区或水动力网格计算。需要工程量计算时，应在服务或离线处理流程中显式转换到适合项目区域的投影坐标系，并记录源 SRID、目标 SRID、转换方法与精度验证。本阶段不引入未经确认的工程投影。
+迁移 `20260812_0003` 对 `river`、`river_node`、`river_segment`、`cross_section`、`gate`、`pump` 六张表执行显式 `ST_Transform(geometry, 4490)`，随后重建 GIST 索引。迁移不删除业务记录，也不通过仅修改 SRID 标签来伪装坐标转换；降级时显式转换回历史 EPSG:4326 类型。
 
-## 数据导入检查
+## 水动力计算距离
 
-后续导入真实数据必须检查坐标顺序、SRID、有效性和区域包络；禁止仅修改 SRID 标签来冒充坐标转换。建议至少执行 `ST_SRID`、`ST_IsValid`、`ST_Extent` 和已知控制点抽检。
+EPSG:4490 是地理坐标系，角度不能直接作为一维水动力网格距离。Phase 3 求解器严格使用：
+
+- `cross_section.station`：沿河桩号，单位 m；
+- `river_segment.length`：河段长度，单位 m；
+- 横断面 `points`：横距和高程，单位 m。
+
+因此 Saint-Venant 方程中的空间步长、面积、流速和 CFL 条件均不使用经纬度差值。
+
+## 导入检查
+
+真实数据导入前必须核对源坐标系、坐标顺序、区域包络和控制点。若源数据不是 EPSG:4490，应先执行有记录、可复核的坐标转换，禁止只改 SRID 标签。建议抽查 `ST_SRID`、`ST_IsValid`、`ST_Extent` 和已知控制点。

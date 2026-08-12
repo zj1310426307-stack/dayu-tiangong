@@ -1,8 +1,11 @@
-"""幂等生成 Phase 2 版本化河网、水工建筑物和模型输入 DEMO DATA。"""
+"""Idempotently seed the versioned Phase 3 DEMO hydraulic dataset."""
+
+from __future__ import annotations
 
 import math
 import sys
 from pathlib import Path
+from typing import Any
 
 from geoalchemy2.elements import WKTElement
 from sqlalchemy import func, select
@@ -21,7 +24,10 @@ from app.gis.models import (  # noqa: E402
     Pump,
     River,
     RiverNode,
+    RiverConnection,
+    RiverSegment,
     SimulationCase,
+    SimulationCaseBoundary,
 )
 from app.river.service import generate_topology  # noqa: E402
 
@@ -32,7 +38,7 @@ RIVER_SPECS = [
         "name": "DEMO 主河道 A",
         "length": 58_600.0,
         "level": "main",
-        "description": "DEMO DATA｜Phase 2 版本化水利数据库测试，不代表真实工程。",
+        "description": "DEMO DATA｜Phase 3 水动力模拟测试，不代表真实工程。",
         "coordinates": [(120.00, 30.25), (120.15, 30.28), (120.30, 30.24), (120.48, 30.30)],
         "section_count": 10,
     },
@@ -72,20 +78,22 @@ PUMP_SPECS = [
 
 
 def _line_wkt(coordinates: list[tuple[float, float]]) -> WKTElement:
-    """将经纬度序列转换为带 SRID 的 LineString WKT。"""
+    """Return a CGCS2000 LineString element."""
 
     body = ", ".join(f"{longitude} {latitude}" for longitude, latitude in coordinates)
-    return WKTElement(f"LINESTRING ({body})", srid=4326)
+    return WKTElement(f"LINESTRING ({body})", srid=4490)
 
 
 def _point_wkt(longitude: float, latitude: float) -> WKTElement:
-    """将经纬度转换为带 SRID 的 Point WKT。"""
+    """Return a CGCS2000 Point element."""
 
-    return WKTElement(f"POINT ({longitude} {latitude})", srid=4326)
+    return WKTElement(f"POINT ({longitude} {latitude})", srid=4490)
 
 
-def _interpolate(coordinates: list[tuple[float, float]], ratio: float) -> tuple[float, float]:
-    """按折线分段均匀插值，生成横断面测试位置。"""
+def _interpolate(
+    coordinates: list[tuple[float, float]], ratio: float
+) -> tuple[float, float]:
+    """Interpolate a display position along a DEMO polyline."""
 
     segment_count = len(coordinates) - 1
     scaled = min(ratio * segment_count, segment_count - 1e-9)
@@ -99,15 +107,15 @@ def _interpolate(coordinates: list[tuple[float, float]], ratio: float) -> tuple[
     )
 
 
-def _ensure_dataset_version(session) -> DatasetVersion:
-    """取得迁移基线版本，或在空表中补建该版本。"""
+def _ensure_dataset_version(session: Any) -> DatasetVersion:
+    """Return the DEMO version or create it in an empty database."""
 
     version = session.scalar(select(DatasetVersion).where(DatasetVersion.version == "V1.0"))
     if version is None:
         version = DatasetVersion(
             version="V1.0",
-            name="2026现状河网（DEMO）",
-            description="Phase 2 DEMO DATA，不代表真实工程。",
+            name="2026 现状河网（DEMO）",
+            description="Phase 3 DEMO DATA，不代表真实工程。",
             creator="Codex DEMO",
         )
         session.add(version)
@@ -115,8 +123,41 @@ def _ensure_dataset_version(session) -> DatasetVersion:
     return version
 
 
+def _ensure_parameter(
+    session: Any,
+    version_id: int,
+    name: str,
+    value: float,
+    unit: str,
+    description: str,
+) -> None:
+    """Insert or refresh one solver parameter without creating duplicates."""
+
+    parameter = session.scalar(
+        select(ModelParameter).where(
+            ModelParameter.dataset_version_id == version_id,
+            ModelParameter.parameter_type == "solver",
+            ModelParameter.parameter_name == name,
+        )
+    )
+    if parameter is None:
+        parameter = ModelParameter(
+            dataset_version_id=version_id,
+            parameter_type="solver",
+            parameter_name=name,
+            value=value,
+            unit=unit,
+            description=description,
+        )
+        session.add(parameter)
+    else:
+        parameter.value = value
+        parameter.unit = unit
+        parameter.description = description
+
+
 def seed_demo_data() -> dict[str, int]:
-    """按版本化业务唯一键补齐 DEMO DATA 并返回最终数量。"""
+    """Populate the complete DEMO model input and return final row counts."""
 
     with SessionLocal.begin() as session:
         version = _ensure_dataset_version(session)
@@ -143,10 +184,27 @@ def seed_demo_data() -> dict[str, int]:
                 session.flush()
             else:
                 river.level = spec["level"]
-            rivers_by_code[spec["code"]] = river
+                river.description = spec["description"]
+            rivers_by_code[str(spec["code"])] = river
 
-        for index, (code, name, river_code, gate_type, width, height, max_flow, bottom, status, longitude, latitude) in enumerate(GATE_SPECS, start=1):
-            gate = session.scalar(select(Gate).where(Gate.dataset_version_id == version.id, Gate.gate_code == code))
+        for (
+            code,
+            name,
+            river_code,
+            gate_type,
+            width,
+            height,
+            max_flow,
+            bottom,
+            gate_status,
+            longitude,
+            latitude,
+        ) in GATE_SPECS:
+            gate = session.scalar(
+                select(Gate).where(
+                    Gate.dataset_version_id == version.id, Gate.gate_code == code
+                )
+            )
             if gate is None:
                 session.add(
                     Gate(
@@ -161,13 +219,27 @@ def seed_demo_data() -> dict[str, int]:
                         height=height,
                         max_flow=max_flow,
                         bottom_elevation=bottom,
-                        status=status,
+                        status=gate_status,
                         geometry=_point_wkt(longitude, latitude),
                     )
                 )
 
-        for code, name, river_code, design_flow, head, power, status, longitude, latitude in PUMP_SPECS:
-            pump = session.scalar(select(Pump).where(Pump.dataset_version_id == version.id, Pump.pump_code == code))
+        for (
+            code,
+            name,
+            river_code,
+            design_flow,
+            head,
+            power,
+            pump_status,
+            longitude,
+            latitude,
+        ) in PUMP_SPECS:
+            pump = session.scalar(
+                select(Pump).where(
+                    Pump.dataset_version_id == version.id, Pump.pump_code == code
+                )
+            )
             if pump is None:
                 session.add(
                     Pump(
@@ -178,26 +250,40 @@ def seed_demo_data() -> dict[str, int]:
                         design_flow=design_flow,
                         head=head,
                         power=power,
-                        efficiency_curve={"points": [[0.0, 0.0], [0.5, 0.78], [1.0, 0.84]]},
+                        efficiency_curve={
+                            "points": [[0.0, 0.0], [0.5, 0.78], [1.0, 0.84]]
+                        },
                         control_mode="local",
-                        status=status,
+                        status=pump_status,
                         geometry=_point_wkt(longitude, latitude),
                     )
                 )
 
         section_number = 0
         for spec in RIVER_SPECS:
-            river = rivers_by_code[spec["code"]]
-            for index in range(1, spec["section_count"] + 1):
+            river = rivers_by_code[str(spec["code"])]
+            for index in range(1, int(spec["section_count"]) + 1):
                 section_number += 1
-                ratio = index / (spec["section_count"] + 1)
-                station = round(spec["length"] * ratio, 3)
-                section = session.scalar(select(CrossSection).where(CrossSection.dataset_version_id == version.id, CrossSection.river_id == river.id, CrossSection.station == station))
+                ratio = index / (int(spec["section_count"]) + 1)
+                station = round(float(spec["length"]) * ratio, 3)
+                section = session.scalar(
+                    select(CrossSection).where(
+                        CrossSection.dataset_version_id == version.id,
+                        CrossSection.river_id == river.id,
+                        CrossSection.station == station,
+                    )
+                )
                 if section is not None:
                     continue
                 longitude, latitude = _interpolate(spec["coordinates"], ratio)
                 base = 7.2 + math.sin(index * 0.72) * 0.45
-                points = [[0.0, round(base + 2.8, 2)], [5.0, round(base + 0.9, 2)], [10.0, round(base, 2)], [15.0, round(base + 0.7, 2)], [20.0, round(base + 2.5, 2)]]
+                points = [
+                    [0.0, round(base + 2.8, 2)],
+                    [5.0, round(base + 0.9, 2)],
+                    [10.0, round(base, 2)],
+                    [15.0, round(base + 0.7, 2)],
+                    [20.0, round(base + 2.5, 2)],
+                ]
                 session.add(
                     CrossSection(
                         dataset_version_id=version.id,
@@ -214,20 +300,163 @@ def seed_demo_data() -> dict[str, int]:
                 )
 
         session.flush()
-        topology = generate_topology(session, version.id, 0.00001)
-        first_node_id = topology.nodes[0].id if topology.nodes else None
+        river_count = session.scalar(
+            select(func.count(River.id)).where(River.dataset_version_id == version.id)
+        ) or 0
+        node_count = session.scalar(
+            select(func.count(RiverNode.id)).where(RiverNode.dataset_version_id == version.id)
+        ) or 0
+        segment_count = session.scalar(
+            select(func.count(RiverSegment.id)).where(RiverSegment.dataset_version_id == version.id)
+        ) or 0
+        connection_count = session.scalar(
+            select(func.count(RiverConnection.id)).where(
+                RiverConnection.dataset_version_id == version.id
+            )
+        ) or 0
+        # 结果表通过外键绑定稳定的节点身份。仅在拓扑缺失/不完整时生成，
+        # 避免每次容器启动删除节点并破坏历史仿真的可追溯性。
+        if node_count == 0 or segment_count == 0 or connection_count != segment_count or segment_count < river_count:
+            generate_topology(session, version.id, 0.00001)
+        main_river = rivers_by_code["DEMO-RIVER-A"]
+        main_segments = session.scalars(
+            select(RiverSegment).where(RiverSegment.river_id == main_river.id)
+        ).all()
+        all_segments = session.scalars(
+            select(RiverSegment).where(RiverSegment.dataset_version_id == version.id)
+        ).all()
+        upstream_ids = {item.upstream_node_id for item in all_segments}
+        downstream_ids = {item.downstream_node_id for item in all_segments}
+        source_node_ids = sorted(upstream_ids - downstream_ids)
+        sink_node_ids = sorted(downstream_ids - upstream_ids)
 
-        if session.scalar(select(ModelParameter).where(ModelParameter.dataset_version_id == version.id, ModelParameter.parameter_type == "solver", ModelParameter.parameter_name == "time_step")) is None:
-            session.add(ModelParameter(dataset_version_id=version.id, parameter_type="solver", parameter_name="time_step", value=60.0, unit="s", description="DEMO 一维非恒定流计算步长"))
+        parameter_specs = (
+            ("time_step", 60.0, "s", "请求时间步长；CFL 约束可自动降低"),
+            ("duration_seconds", 3600.0, "s", "模拟总时长"),
+            ("output_interval", 300.0, "s", "结果输出间隔"),
+            ("cfl", 0.75, "-", "CFL 稳定性系数"),
+            ("initial_water_level", 10.8, "m", "初始水位"),
+            ("initial_flow", 60.0, "m³/s", "初始流量"),
+            ("minimum_depth", 0.05, "m", "最小计算水深"),
+        )
+        for name, value, unit, description in parameter_specs:
+            _ensure_parameter(session, version.id, name, value, unit, description)
 
-        boundary = session.scalar(select(BoundaryCondition).where(BoundaryCondition.dataset_version_id == version.id, BoundaryCondition.name == "DEMO 上游恒定流量"))
-        if boundary is None:
-            boundary = BoundaryCondition(dataset_version_id=version.id, name="DEMO 上游恒定流量", boundary_type="upstream_flow", target_node_id=first_node_id, values={"mode": "constant", "value": 120.0}, unit="m³/s", description="DEMO DATA")
-            session.add(boundary)
+        explicit_boundaries: list[BoundaryCondition] = []
+        for index, source_node_id in enumerate(source_node_ids, start=1):
+            upstream = session.scalar(
+                select(BoundaryCondition).where(
+                    BoundaryCondition.dataset_version_id == version.id,
+                    BoundaryCondition.name == f"DEMO 上游恒定流量 {index}",
+                )
+            )
+            if upstream is None:
+                upstream = BoundaryCondition(
+                    dataset_version_id=version.id,
+                    name=f"DEMO 上游恒定流量 {index}",
+                    boundary_type="upstream_flow",
+                    target_node_id=source_node_id,
+                    values={"mode": "constant", "value": 60.0 if index == 1 else 20.0},
+                    unit="m³/s",
+                    description="DEMO DATA｜Phase 4 显式外边界",
+                )
+                session.add(upstream)
+            else:
+                upstream.target_node_id = source_node_id
+                upstream.values = {"mode": "constant", "value": 60.0 if index == 1 else 20.0}
+                upstream.unit = "m³/s"
             session.flush()
+            explicit_boundaries.append(upstream)
+        for index, sink_node_id in enumerate(sink_node_ids, start=1):
+            downstream = session.scalar(
+                select(BoundaryCondition).where(
+                    BoundaryCondition.dataset_version_id == version.id,
+                    BoundaryCondition.name == f"DEMO 下游恒定水位 {index}",
+                )
+            )
+            if downstream is None:
+                downstream = BoundaryCondition(
+                    dataset_version_id=version.id,
+                    name=f"DEMO 下游恒定水位 {index}",
+                    boundary_type="downstream_water_level",
+                    target_node_id=sink_node_id,
+                    values={"mode": "constant", "value": 10.2},
+                    unit="m",
+                    description="DEMO DATA｜Phase 4 显式外边界",
+                )
+                session.add(downstream)
+            else:
+                downstream.target_node_id = sink_node_id
+                downstream.values = {"mode": "constant", "value": 10.2}
+                downstream.unit = "m"
+            session.flush()
+            explicit_boundaries.append(downstream)
 
-        if session.scalar(select(SimulationCase).where(SimulationCase.name == "DEMO 基准工况")) is None:
-            session.add(SimulationCase(name="DEMO 基准工况", description="Phase 3 模型输入准备基线", dataset_version_id=version.id, boundary_condition_id=boundary.id))
+        simulation_case = session.scalar(
+            select(SimulationCase)
+            .where(SimulationCase.dataset_version_id == version.id)
+            .order_by(SimulationCase.id)
+        )
+        if simulation_case is None:
+            simulation_case = SimulationCase(
+                name="DEMO 基准工况",
+                description="Phase 4 河网联合调度仿真基线",
+                dataset_version_id=version.id,
+                boundary_condition_id=explicit_boundaries[0].id,
+            )
+            session.add(simulation_case)
+        else:
+            simulation_case.boundary_condition_id = explicit_boundaries[0].id
+        session.flush()
+        session.query(SimulationCaseBoundary).filter(
+            SimulationCaseBoundary.case_id == simulation_case.id
+        ).delete(synchronize_session=False)
+        for boundary in explicit_boundaries:
+            session.add(
+                SimulationCaseBoundary(
+                    case_id=simulation_case.id,
+                    boundary_condition_id=boundary.id,
+                    role=boundary.boundary_type,
+                )
+            )
+
+        segments_by_river: dict[int, list[RiverSegment]] = {}
+        for segment in all_segments:
+            segments_by_river.setdefault(segment.river_id, []).append(segment)
+        for gate_index, gate in enumerate(
+            session.scalars(select(Gate).where(Gate.dataset_version_id == version.id).order_by(Gate.id)).all()
+        ):
+            river_segments = sorted(segments_by_river[gate.river_id], key=lambda item: item.id)
+            segment = river_segments[gate_index % len(river_segments)]
+            gate.river_segment_id = segment.id
+            gate.station = segment.length * 0.5
+            gate.upstream_node_id = segment.upstream_node_id
+            gate.downstream_node_id = segment.downstream_node_id
+            gate.crest_elevation = gate.bottom_elevation
+            gate.discharge_coefficient = 0.62
+            gate.minimum_opening = 0.1
+            gate.maximum_opening = gate.height
+            gate.opening_rate_limit = 0.02
+            gate.minimum_hold_seconds = 60.0
+            gate.allow_reverse_flow = False
+        for pump in session.scalars(
+            select(Pump).where(Pump.dataset_version_id == version.id).order_by(Pump.id)
+        ).all():
+            river_segments = sorted(segments_by_river[pump.river_id], key=lambda item: item.id)
+            segment = river_segments[0]
+            pump.intake_node_id = segment.upstream_node_id
+            pump.outlet_node_id = segment.downstream_node_id
+            pump.transfer_type = "internal_transfer"
+            pump.unit_count = 2
+            pump.minimum_running_units = 1
+            pump.maximum_running_units = 2
+            pump.minimum_run_seconds = 120.0
+            pump.minimum_stop_seconds = 120.0
+            pump.maximum_starts_per_run = 6
+            pump.minimum_operating_head = 0.0
+            pump.maximum_operating_head = pump.head * 1.5
+            pump.reverse_flow_protection = True
+            pump.head_curve = {"points": [[0.0, pump.head * 1.2], [pump.design_flow, pump.head]]}
 
     with SessionLocal() as session:
         return {

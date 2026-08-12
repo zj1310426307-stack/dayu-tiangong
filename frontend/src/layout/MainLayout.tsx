@@ -1,8 +1,9 @@
 import { BellOutlined, MenuFoldOutlined, MenuUnfoldOutlined } from '@ant-design/icons';
-import { Button, Layout, Menu, Tag, Tooltip } from 'antd';
+import { Button, Layout, Menu, Select, Tag, Tooltip } from 'antd';
 import { useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { navigationItems } from '../router';
+import { useDatasetVersion } from '../context/DatasetVersionContext';
 
 const { Header, Sider, Content } = Layout;
 
@@ -11,6 +12,7 @@ export function MainLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const { versions, datasetVersionId, loading, setDatasetVersionId } = useDatasetVersion();
 
   const activeItem = useMemo(
     () =>
@@ -55,8 +57,8 @@ export function MainLayout() {
           <div className="side-footnote">
             <span className="signal-dot" />
             <div>
-              <strong>PHASE 2</strong>
-              <small>水利数据库已贯通</small>
+              <strong>PHASE 4</strong>
+              <small>一维水动力引擎已贯通</small>
             </div>
           </div>
         )}
@@ -80,6 +82,18 @@ export function MainLayout() {
           </div>
 
           <div className="top-bar__right">
+            <Select
+              aria-label="当前数据版本"
+              className="dataset-version-select"
+              loading={loading}
+              value={datasetVersionId}
+              onChange={setDatasetVersionId}
+              options={versions.map((item) => ({
+                value: item.id,
+                label: `${item.version} · ${item.name}`,
+              }))}
+              placeholder="选择数据版本"
+            />
             <Tag className="env-tag">原型环境</Tag>
             <Tooltip title="通知中心将在后续阶段接入">
               <Button className="notification-button" type="text" icon={<BellOutlined />} />

@@ -1,5 +1,19 @@
 /* 本文件由 npm run openapi:update 自动生成，请勿手工修改。 */
 
+export interface app__dispatch__schemas__ValidationReport {
+  "plan_id": number;
+  "valid": boolean;
+  "errors": Array<string>;
+  "warnings": Array<string>;
+}
+
+export interface app__validation__schemas__ValidationReport {
+  "dataset_version_id": number;
+  "checked_time": string;
+  "summary": ValidationSummary;
+  "items": Array<ValidationItem>;
+}
+
 export interface Body_import_csv_api_v1_import_csv_post {
   "resource": "rivers" | "cross_sections" | "gates" | "pumps";
   "dataset_version_id": number;
@@ -116,6 +130,154 @@ export interface DatasetVersionUpdate {
   "description"?: string | null;
 }
 
+export interface DispatchActionCreate {
+  "sequence": number;
+  "time_seconds": number;
+  "structure_type": "gate" | "pump";
+  "gate_id"?: number | null;
+  "pump_id"?: number | null;
+  "command_type": "gate_opening_m" | "gate_opening_ratio" | "pump_enabled" | "pump_unit_count" | "pump_target_flow";
+  "target_value": number;
+  "interpolation"?: "step" | "linear";
+  "priority"?: number;
+  "note"?: string | null;
+}
+
+export interface DispatchActionRecord {
+  "sequence": number;
+  "time_seconds": number;
+  "structure_type": "gate" | "pump";
+  "gate_id"?: number | null;
+  "pump_id"?: number | null;
+  "command_type": "gate_opening_m" | "gate_opening_ratio" | "pump_enabled" | "pump_unit_count" | "pump_target_flow";
+  "target_value": number;
+  "interpolation"?: "step" | "linear";
+  "priority"?: number;
+  "note"?: string | null;
+  "id": number;
+  "plan_id": number;
+}
+
+export interface DispatchActionUpdate {
+  "sequence"?: number | null;
+  "time_seconds"?: number | null;
+  "command_type"?: "gate_opening_m" | "gate_opening_ratio" | "pump_enabled" | "pump_unit_count" | "pump_target_flow" | null;
+  "target_value"?: number | null;
+  "interpolation"?: "step" | "linear" | null;
+  "priority"?: number | null;
+  "note"?: string | null;
+}
+
+export interface DispatchComparison {
+  "run_id": number;
+  "status": "pending" | "queued" | "running" | "cancel_requested" | "cancelled" | "success" | "failed";
+  "baseline_task_id": number | null;
+  "controlled_task_id": number | null;
+  "section_code": string | null;
+  "time": Array<number>;
+  "baseline_water_level": Array<number>;
+  "controlled_water_level": Array<number>;
+  "difference": Array<number>;
+  "metrics": Record<string, unknown>;
+  "diagnostics": Record<string, unknown>;
+}
+
+export interface DispatchPlanCreate {
+  "dataset_version_id": number;
+  "simulation_case_id": number;
+  "name": string;
+  "description"?: string | null;
+  "duration_seconds": number;
+  "evaluation_config"?: Record<string, unknown>;
+  "storage_level"?: "summary" | "key_sections" | "full";
+  "created_by"?: string;
+}
+
+export interface DispatchPlanRecord {
+  "id": number;
+  "dataset_version_id": number;
+  "simulation_case_id": number;
+  "name": string;
+  "version": number;
+  "status": "draft" | "validated" | "frozen" | "archived";
+  "description": string | null;
+  "duration_seconds": number;
+  "evaluation_config": Record<string, unknown>;
+  "storage_level": string;
+  "created_by": string;
+  "created_time": string;
+  "updated_time": string;
+  "frozen_time": string | null;
+  "frozen_snapshot_hash": string | null;
+  "action_count"?: number;
+  "rule_count"?: number;
+}
+
+export interface DispatchPlanUpdate {
+  "name"?: string | null;
+  "description"?: string | null;
+  "duration_seconds"?: number | null;
+  "evaluation_config"?: Record<string, unknown> | null;
+  "storage_level"?: "summary" | "key_sections" | "full" | null;
+  "status"?: "archived" | null;
+}
+
+export interface DispatchRuleCreate {
+  "name": string;
+  "enabled"?: boolean;
+  "observation_type": "elapsed_time" | "node_water_level" | "section_water_level" | "gate_head_difference" | "pump_intake_level";
+  "observation_object_id"?: number | null;
+  "operator": ">" | ">=" | "<" | "<=";
+  "threshold": number;
+  "hysteresis"?: number;
+  "minimum_hold_seconds"?: number;
+  "cooldown_seconds"?: number;
+  "action_template": Record<string, unknown>;
+  "priority"?: number;
+}
+
+export interface DispatchRuleRecord {
+  "name": string;
+  "enabled"?: boolean;
+  "observation_type": "elapsed_time" | "node_water_level" | "section_water_level" | "gate_head_difference" | "pump_intake_level";
+  "observation_object_id"?: number | null;
+  "operator": ">" | ">=" | "<" | "<=";
+  "threshold": number;
+  "hysteresis"?: number;
+  "minimum_hold_seconds"?: number;
+  "cooldown_seconds"?: number;
+  "action_template": Record<string, unknown>;
+  "priority"?: number;
+  "id": number;
+  "plan_id": number;
+}
+
+export interface DispatchRuleUpdate {
+  "name"?: string | null;
+  "enabled"?: boolean | null;
+  "threshold"?: number | null;
+  "hysteresis"?: number | null;
+  "minimum_hold_seconds"?: number | null;
+  "cooldown_seconds"?: number | null;
+  "action_template"?: Record<string, unknown> | null;
+  "priority"?: number | null;
+}
+
+export interface DispatchRunRecord {
+  "id": number;
+  "plan_id": number;
+  "baseline_task_id": number | null;
+  "controlled_task_id": number | null;
+  "status": "pending" | "queued" | "running" | "cancel_requested" | "cancelled" | "success" | "failed";
+  "progress": number;
+  "metrics": Record<string, unknown> | null;
+  "queue_job_id": string | null;
+  "error_message": string | null;
+  "created_time": string;
+  "start_time": string | null;
+  "end_time": string | null;
+}
+
 export interface GateCreate {
   "dataset_version_id": number;
   "name": string;
@@ -130,6 +292,17 @@ export interface GateCreate {
   "height": number;
   "max_flow": number;
   "bottom_elevation": number;
+  "river_segment_id"?: number | null;
+  "station"?: number | null;
+  "upstream_node_id"?: number | null;
+  "downstream_node_id"?: number | null;
+  "crest_elevation"?: number | null;
+  "discharge_coefficient"?: number | null;
+  "minimum_opening"?: number | null;
+  "maximum_opening"?: number | null;
+  "opening_rate_limit"?: number | null;
+  "minimum_hold_seconds"?: number | null;
+  "allow_reverse_flow"?: boolean;
 }
 
 export interface GateListResponse {
@@ -153,6 +326,17 @@ export interface GateRecord {
   "height": number;
   "max_flow": number;
   "bottom_elevation": number;
+  "river_segment_id"?: number | null;
+  "station"?: number | null;
+  "upstream_node_id"?: number | null;
+  "downstream_node_id"?: number | null;
+  "crest_elevation"?: number | null;
+  "discharge_coefficient"?: number | null;
+  "minimum_opening"?: number | null;
+  "maximum_opening"?: number | null;
+  "opening_rate_limit"?: number | null;
+  "minimum_hold_seconds"?: number | null;
+  "allow_reverse_flow"?: boolean;
   "id": number;
   "created_time": string;
 }
@@ -168,6 +352,17 @@ export interface GateUpdate {
   "height"?: number | null;
   "max_flow"?: number | null;
   "bottom_elevation"?: number | null;
+  "river_segment_id"?: number | null;
+  "station"?: number | null;
+  "upstream_node_id"?: number | null;
+  "downstream_node_id"?: number | null;
+  "crest_elevation"?: number | null;
+  "discharge_coefficient"?: number | null;
+  "minimum_opening"?: number | null;
+  "maximum_opening"?: number | null;
+  "opening_rate_limit"?: number | null;
+  "minimum_hold_seconds"?: number | null;
+  "allow_reverse_flow"?: boolean | null;
   "status"?: "online" | "offline" | "maintenance" | "fault" | null;
   "geometry"?: Record<string, unknown> | null;
 }
@@ -189,7 +384,7 @@ export interface GISHealthResponse {
   "status": "healthy";
   "database": string;
   "postgis_version": string;
-  "srid"?: 4326;
+  "srid"?: 4490;
 }
 
 export interface GISStatisticsResponse {
@@ -266,13 +461,20 @@ export interface ModelParameterUpdate {
   "description"?: string | null;
 }
 
+export interface Page {
+  "items": Array<unknown>;
+  "total": number;
+  "limit": number;
+  "offset": number;
+}
+
 export interface PaginationMeta {
   "total": number;
   "limit": number;
   "offset": number;
   "bbox"?: Array<number> | null;
   "demo_data"?: true;
-  "crs"?: "EPSG:4326";
+  "crs"?: "EPSG:4490";
 }
 
 export interface PumpCreate {
@@ -287,6 +489,19 @@ export interface PumpCreate {
   "head": number;
   "power": number;
   "efficiency_curve": Record<string, Array<Array<number>>>;
+  "head_curve"?: Record<string, Array<Array<number>>> | null;
+  "intake_node_id"?: number | null;
+  "outlet_node_id"?: number | null;
+  "transfer_type"?: "internal_transfer" | "external_outflow" | "external_inflow" | null;
+  "unit_count"?: number | null;
+  "minimum_running_units"?: number | null;
+  "maximum_running_units"?: number | null;
+  "minimum_run_seconds"?: number | null;
+  "minimum_stop_seconds"?: number | null;
+  "maximum_starts_per_run"?: number | null;
+  "minimum_operating_head"?: number | null;
+  "maximum_operating_head"?: number | null;
+  "reverse_flow_protection"?: boolean;
 }
 
 export interface PumpListResponse {
@@ -308,6 +523,19 @@ export interface PumpRecord {
   "head": number;
   "power": number;
   "efficiency_curve": Record<string, Array<Array<number>>>;
+  "head_curve"?: Record<string, Array<Array<number>>> | null;
+  "intake_node_id"?: number | null;
+  "outlet_node_id"?: number | null;
+  "transfer_type"?: "internal_transfer" | "external_outflow" | "external_inflow" | null;
+  "unit_count"?: number | null;
+  "minimum_running_units"?: number | null;
+  "maximum_running_units"?: number | null;
+  "minimum_run_seconds"?: number | null;
+  "minimum_stop_seconds"?: number | null;
+  "maximum_starts_per_run"?: number | null;
+  "minimum_operating_head"?: number | null;
+  "maximum_operating_head"?: number | null;
+  "reverse_flow_protection"?: boolean;
   "id": number;
   "created_time": string;
 }
@@ -320,9 +548,29 @@ export interface PumpUpdate {
   "head"?: number | null;
   "power"?: number | null;
   "efficiency_curve"?: Record<string, Array<Array<number>>> | null;
+  "head_curve"?: Record<string, Array<Array<number>>> | null;
+  "intake_node_id"?: number | null;
+  "outlet_node_id"?: number | null;
+  "transfer_type"?: "internal_transfer" | "external_outflow" | "external_inflow" | null;
+  "unit_count"?: number | null;
+  "minimum_running_units"?: number | null;
+  "maximum_running_units"?: number | null;
+  "minimum_run_seconds"?: number | null;
+  "minimum_stop_seconds"?: number | null;
+  "maximum_starts_per_run"?: number | null;
+  "minimum_operating_head"?: number | null;
+  "maximum_operating_head"?: number | null;
+  "reverse_flow_protection"?: boolean | null;
   "control_mode"?: string | null;
   "status"?: "online" | "offline" | "maintenance" | "fault" | null;
   "geometry"?: Record<string, unknown> | null;
+}
+
+export interface ResultSectionOption {
+  "section_id": number | null;
+  "section_code": string;
+  "river_id": number | null;
+  "station": number;
 }
 
 export interface RiverConnectionRecord {
@@ -400,6 +648,7 @@ export interface SimulationCaseCreate {
   "description"?: string | null;
   "dataset_version_id": number;
   "boundary_condition_id": number;
+  "boundary_condition_ids"?: Array<number>;
 }
 
 export interface SimulationCaseRecord {
@@ -407,6 +656,7 @@ export interface SimulationCaseRecord {
   "description"?: string | null;
   "dataset_version_id": number;
   "boundary_condition_id": number;
+  "boundary_condition_ids"?: Array<number>;
   "id": number;
   "created_time": string;
 }
@@ -415,6 +665,65 @@ export interface SimulationCaseUpdate {
   "name"?: string | null;
   "description"?: string | null;
   "boundary_condition_id"?: number | null;
+  "boundary_condition_ids"?: Array<number> | null;
+}
+
+export interface SimulationResultResponse {
+  "task_id": number;
+  "status": "pending" | "queued" | "running" | "cancel_requested" | "cancelled" | "success" | "failed";
+  "section_id": number | null;
+  "section_code": string;
+  "river_id": number | null;
+  "station": number;
+  "time": Array<number>;
+  "water_level": Array<number>;
+  "flow": Array<number>;
+  "velocity": Array<number>;
+  "available_sections": Array<ResultSectionOption>;
+  "diagnostics": Record<string, unknown> | null;
+}
+
+export interface SimulationTaskCreate {
+  "case_id": number;
+  "duration_seconds"?: number | null;
+  "time_step_seconds"?: number | null;
+  "output_interval_seconds"?: number | null;
+  "cfl_number"?: number | null;
+  "initial_water_level"?: number | null;
+  "initial_flow"?: number | null;
+  "minimum_depth"?: number | null;
+  "input_schema_version"?: "dayu.model-input.v1" | "dayu.model-input.v2";
+  "allow_fallback_boundary"?: boolean;
+  "section_geometry"?: "rectangular" | "tabulated";
+  "storage_level"?: "summary" | "key_sections" | "full";
+}
+
+export interface SimulationTaskRecord {
+  "id": number;
+  "case_id": number;
+  "status": "pending" | "queued" | "running" | "cancel_requested" | "cancelled" | "success" | "failed";
+  "progress": number;
+  "config": Record<string, unknown>;
+  "input_schema_version": string | null;
+  "input_snapshot_hash": string | null;
+  "engine_version": string | null;
+  "engine_commit": string | null;
+  "snapshot_summary"?: Record<string, unknown> | null;
+  "queue_job_id": string | null;
+  "worker_id": string | null;
+  "queued_time": string | null;
+  "heartbeat_time": string | null;
+  "cancel_requested": boolean;
+  "retry_count": number;
+  "retry_reason": string | null;
+  "current_simulation_time": number | null;
+  "current_cfl": number | null;
+  "diagnostics": Record<string, unknown> | null;
+  "result_path": string | null;
+  "error_message": string | null;
+  "created_time": string;
+  "start_time": string | null;
+  "end_time": string | null;
 }
 
 export interface SystemInfoResponse {
@@ -422,6 +731,15 @@ export interface SystemInfoResponse {
   "version": string;
   "description": string;
   "status": "running";
+}
+
+export interface TaskSnapshotResponse {
+  "task_id": number;
+  "input_schema_version": string;
+  "input_snapshot_hash": string;
+  "engine_version": string;
+  "engine_commit": string;
+  "snapshot": Record<string, unknown>;
 }
 
 export interface TopologyGenerateRequest {
@@ -451,13 +769,6 @@ export interface ValidationItem {
   "sample_ids"?: Array<number>;
 }
 
-export interface ValidationReport {
-  "dataset_version_id": number;
-  "checked_time": string;
-  "summary": ValidationSummary;
-  "items": Array<ValidationItem>;
-}
-
 export interface ValidationRequest {
   "dataset_version_id": number;
 }
@@ -469,8 +780,12 @@ export interface ValidationSummary {
   "is_model_ready": boolean;
 }
 
+export type ValidationReport = app__validation__schemas__ValidationReport;
+export type DispatchValidationReport = app__dispatch__schemas__ValidationReport;
 export interface GISListQuery { bbox?: string; limit?: number; offset?: number; }
 export interface DatabaseListQuery { dataset_version_id?: number; river_id?: number; search?: string; limit?: number; offset?: number; }
+export interface DispatchListQuery { dataset_version_id?: number; plan_id?: number; status?: string; limit?: number; offset?: number; }
+export interface PageResult<T> { items: T[]; total: number; limit: number; offset: number; }
 export type ImportResource = 'rivers' | 'cross_sections' | 'gates' | 'pumps';
 
 function toQuery<T extends object>(params: T): string {
@@ -490,7 +805,7 @@ async function requestJson<T>(path: string, options: RequestInit = {}, baseUrl =
   return response.json() as Promise<T>;
 }
 
-function jsonOptions(method: 'POST' | 'PUT', body: unknown): RequestInit {
+function jsonOptions(method: 'POST' | 'PUT' | 'PATCH', body: unknown): RequestInit {
   return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
 }
 
@@ -535,6 +850,42 @@ export const getBoundaryConditions = (datasetVersionId?: number, baseUrl = '') =
 export const getSimulationCases = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<SimulationCaseRecord>>(`/api/v1/model-data/simulation-cases${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
 export const getModelInput = (caseId: number, baseUrl = '') => requestJson<ModelInputSnapshot>(`/api/v1/model-data/simulation-cases/${caseId}/input`, {}, baseUrl);
 export const runValidation = (datasetVersionId: number, baseUrl = '') => requestJson<ValidationReport>('/api/v1/validation/run', jsonOptions('POST', { dataset_version_id: datasetVersionId }), baseUrl);
+
+export const createHydraulicTask = (body: SimulationTaskCreate, baseUrl = '') => requestJson<SimulationTaskRecord>('/api/v1/model/tasks', jsonOptions('POST', body), baseUrl);
+export const listHydraulicTasks = (baseUrl = '') => requestJson<Array<SimulationTaskRecord>>('/api/v1/model/tasks', {}, baseUrl);
+export const getHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(`/api/v1/model/tasks/${taskId}`, {}, baseUrl);
+export const runHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(`/api/v1/model/tasks/${taskId}/run`, { method: 'POST' }, baseUrl);
+export const enqueueHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(`/api/v1/model/tasks/${taskId}/enqueue`, { method: 'POST' }, baseUrl);
+export const cancelHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(`/api/v1/model/tasks/${taskId}/cancel`, { method: 'POST' }, baseUrl);
+export const retryHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(`/api/v1/model/tasks/${taskId}/retry`, { method: 'POST' }, baseUrl);
+export const getHydraulicTaskSnapshot = (taskId: number, baseUrl = '') => requestJson<TaskSnapshotResponse>(`/api/v1/model/tasks/${taskId}/snapshot`, {}, baseUrl);
+export const getHydraulicResult = (taskId: number, sectionId?: number, baseUrl = '') => requestJson<SimulationResultResponse>(`/api/v1/model/results/${taskId}${toQuery({ section_id: sectionId })}`, {}, baseUrl);
+
+export const listDispatchPlans = (params: DispatchListQuery = {}, baseUrl = '') => requestJson<PageResult<DispatchPlanRecord>>(`/api/v1/dispatch/plans${toQuery(params)}`, {}, baseUrl);
+export const createDispatchPlan = (body: DispatchPlanCreate, baseUrl = '') => requestJson<DispatchPlanRecord>('/api/v1/dispatch/plans', jsonOptions('POST', body), baseUrl);
+export const getDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchPlanRecord>(`/api/v1/dispatch/plans/${planId}`, {}, baseUrl);
+export const updateDispatchPlan = (planId: number, body: DispatchPlanUpdate, baseUrl = '') => requestJson<DispatchPlanRecord>(`/api/v1/dispatch/plans/${planId}`, jsonOptions('PATCH', body), baseUrl);
+export const deleteDispatchPlan = (planId: number, baseUrl = '') => requestJson<void>(`/api/v1/dispatch/plans/${planId}`, { method: 'DELETE' }, baseUrl);
+export const cloneDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchPlanRecord>(`/api/v1/dispatch/plans/${planId}/clone`, { method: 'POST' }, baseUrl);
+export const validateDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchValidationReport>(`/api/v1/dispatch/plans/${planId}/validate`, { method: 'POST' }, baseUrl);
+export const freezeDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchPlanRecord>(`/api/v1/dispatch/plans/${planId}/freeze`, { method: 'POST' }, baseUrl);
+export const listDispatchActions = (planId: number, baseUrl = '') => requestJson<Array<DispatchActionRecord>>(`/api/v1/dispatch/plans/${planId}/actions`, {}, baseUrl);
+export const createDispatchAction = (planId: number, body: DispatchActionCreate, baseUrl = '') => requestJson<DispatchActionRecord>(`/api/v1/dispatch/plans/${planId}/actions`, jsonOptions('POST', body), baseUrl);
+export const updateDispatchAction = (actionId: number, body: DispatchActionUpdate, baseUrl = '') => requestJson<DispatchActionRecord>(`/api/v1/dispatch/actions/${actionId}`, jsonOptions('PATCH', body), baseUrl);
+export const deleteDispatchAction = (actionId: number, baseUrl = '') => requestJson<void>(`/api/v1/dispatch/actions/${actionId}`, { method: 'DELETE' }, baseUrl);
+export const listDispatchRules = (planId: number, baseUrl = '') => requestJson<Array<DispatchRuleRecord>>(`/api/v1/dispatch/plans/${planId}/rules`, {}, baseUrl);
+export const createDispatchRule = (planId: number, body: DispatchRuleCreate, baseUrl = '') => requestJson<DispatchRuleRecord>(`/api/v1/dispatch/plans/${planId}/rules`, jsonOptions('POST', body), baseUrl);
+export const updateDispatchRule = (ruleId: number, body: DispatchRuleUpdate, baseUrl = '') => requestJson<DispatchRuleRecord>(`/api/v1/dispatch/rules/${ruleId}`, jsonOptions('PATCH', body), baseUrl);
+export const deleteDispatchRule = (ruleId: number, baseUrl = '') => requestJson<void>(`/api/v1/dispatch/rules/${ruleId}`, { method: 'DELETE' }, baseUrl);
+export const createDispatchRun = (planId: number, baseUrl = '') => requestJson<DispatchRunRecord>(`/api/v1/dispatch/plans/${planId}/runs`, { method: 'POST' }, baseUrl);
+export const listDispatchRuns = (params: DispatchListQuery = {}, baseUrl = '') => requestJson<PageResult<DispatchRunRecord>>(`/api/v1/dispatch/runs${toQuery(params)}`, {}, baseUrl);
+export const getDispatchRun = (runId: number, baseUrl = '') => requestJson<DispatchRunRecord>(`/api/v1/dispatch/runs/${runId}`, {}, baseUrl);
+export const cancelDispatchRun = (runId: number, baseUrl = '') => requestJson<DispatchRunRecord>(`/api/v1/dispatch/runs/${runId}/cancel`, { method: 'POST' }, baseUrl);
+export const retryDispatchRun = (runId: number, baseUrl = '') => requestJson<DispatchRunRecord>(`/api/v1/dispatch/runs/${runId}/retry`, { method: 'POST' }, baseUrl);
+export const getDispatchComparison = (runId: number, baseUrl = '') => requestJson<DispatchComparison>(`/api/v1/dispatch/runs/${runId}/comparison`, {}, baseUrl);
+export const getDispatchEvents = (runId: number, baseUrl = '') => requestJson<Array<Record<string, unknown>>>(`/api/v1/dispatch/runs/${runId}/events`, {}, baseUrl);
+export const getDispatchStructures = (runId: number, baseUrl = '') => requestJson<Array<Record<string, unknown>>>(`/api/v1/dispatch/runs/${runId}/structures`, {}, baseUrl);
+export const getDispatchNodes = (runId: number, baseUrl = '') => requestJson<Array<Record<string, unknown>>>(`/api/v1/dispatch/runs/${runId}/nodes`, {}, baseUrl);
 
 export async function uploadDataFile(kind: 'excel' | 'csv' | 'geojson', resource: ImportResource, datasetVersionId: number, file: File, baseUrl = ''): Promise<ImportResponse> {
   const body = new FormData();

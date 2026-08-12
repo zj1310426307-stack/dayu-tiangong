@@ -25,7 +25,7 @@ def test_postgis_health_and_seed_statistics() -> None:
     assert health.json()["status"] == "healthy"
     assert health.json()["database"] == "dayu_tiangong"
     assert "POSTGIS=" in health.json()["postgis_version"]
-    assert health.json()["srid"] == 4326
+    assert health.json()["srid"] == 4490
 
     statistics = client.get("/api/v1/gis/stats")
     assert statistics.status_code == 200
@@ -61,7 +61,7 @@ def test_geojson_collections(resource: str, expected_total: int, geometry_type: 
         "offset": 0,
         "bbox": None,
         "demo_data": True,
-        "crs": "EPSG:4326",
+        "crs": "EPSG:4490",
     }
     assert len(payload["features"]) == expected_total
     assert payload["features"][0]["type"] == "Feature"
@@ -95,7 +95,7 @@ def test_database_srid_geometry_types_migration_and_gist_indexes() -> None:
 
     with SessionLocal() as session:
         revision = session.scalar(text("SELECT version_num FROM alembic_version"))
-        assert revision == "20260811_0002"
+        assert revision == "20260812_0005"
 
         geometries = session.execute(
             text(
@@ -115,10 +115,10 @@ def test_database_srid_geometry_types_migration_and_gist_indexes() -> None:
             )
         ).all()
         assert set(geometries) == {
-            ("river", "LINESTRING", 4326),
-            ("gate", "POINT", 4326),
-            ("pump", "POINT", 4326),
-            ("cross_section", "POINT", 4326),
+            ("river", "LINESTRING", 4490),
+            ("gate", "POINT", 4490),
+            ("pump", "POINT", 4490),
+            ("cross_section", "POINT", 4490),
         }
 
         gist_indexes = session.execute(

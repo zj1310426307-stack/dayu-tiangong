@@ -23,7 +23,7 @@ def validate_geometry(geometry: dict[str, Any], expected_type: str) -> None:
 
 
 def _validate_position(position: Any) -> None:
-    """校验单个 WGS 84 二维坐标。"""
+    """校验单个 CGCS2000 地理二维坐标。"""
 
     if not isinstance(position, list) or len(position) != 2:
         raise ValueError("坐标必须是 [longitude, latitude]")
@@ -31,14 +31,14 @@ def _validate_position(position: Any) -> None:
     if not isinstance(longitude, (int, float)) or not isinstance(latitude, (int, float)):
         raise ValueError("经纬度必须是数值")
     if not -180 <= longitude <= 180 or not -90 <= latitude <= 90:
-        raise ValueError("经纬度超出 EPSG:4326 范围")
+        raise ValueError("经纬度超出 CGCS2000 / EPSG:4490 范围")
 
 
 def geometry_expression(geometry: dict[str, Any], expected_type: str) -> Any:
-    """把已校验 GeoJSON 转换为 SRID 4326 的 PostGIS 表达式。"""
+    """把已校验 GeoJSON 转换为 SRID 4490 的 PostGIS 表达式。"""
 
     validate_geometry(geometry, expected_type)
-    return func.ST_SetSRID(func.ST_GeomFromGeoJSON(json.dumps(geometry)), 4326)
+    return func.ST_SetSRID(func.ST_GeomFromGeoJSON(json.dumps(geometry)), 4490)
 
 
 def geometry_json(session: Session, geometry_column: Any) -> dict[str, Any]:

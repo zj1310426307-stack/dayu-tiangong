@@ -97,6 +97,7 @@ class SimulationCaseCreate(BaseModel):
     description: str | None = None
     dataset_version_id: int = Field(gt=0)
     boundary_condition_id: int = Field(gt=0)
+    boundary_condition_ids: list[int] = Field(default_factory=list)
 
 
 class SimulationCaseUpdate(BaseModel):
@@ -106,6 +107,7 @@ class SimulationCaseUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=128)
     description: str | None = None
     boundary_condition_id: int | None = Field(default=None, gt=0)
+    boundary_condition_ids: list[int] | None = None
 
 
 class SimulationCaseRecord(SimulationCaseCreate):

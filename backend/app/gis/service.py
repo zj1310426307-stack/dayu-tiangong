@@ -22,7 +22,7 @@ BBox: TypeAlias = tuple[float, float, float, float]
 
 
 def parse_bbox(raw_bbox: str | None) -> BBox | None:
-    """解析并校验 `minx,miny,maxx,maxy` 格式的 WGS 84 空间范围。"""
+    """解析并校验 `minx,miny,maxx,maxy` 格式的 CGCS2000 空间范围。"""
 
     if raw_bbox is None:
         return None
@@ -37,7 +37,7 @@ def parse_bbox(raw_bbox: str | None) -> BBox | None:
 
     min_x, min_y, max_x, max_y = values
     if not (-180 <= min_x < max_x <= 180 and -90 <= min_y < max_y <= 90):
-        raise ValueError("bbox 超出 EPSG:4326 范围或最小值不小于最大值")
+        raise ValueError("bbox 超出 CGCS2000 / EPSG:4490 范围或最小值不小于最大值")
     return min_x, min_y, max_x, max_y
 
 
@@ -46,7 +46,7 @@ def _spatial_filter(geometry_column: Any, bbox: BBox | None) -> list[Any]:
 
     if bbox is None:
         return []
-    return [func.ST_Intersects(geometry_column, func.ST_MakeEnvelope(*bbox, 4326))]
+    return [func.ST_Intersects(geometry_column, func.ST_MakeEnvelope(*bbox, 4490))]
 
 
 def _decode_geometry(raw_geometry: str) -> dict[str, Any]:

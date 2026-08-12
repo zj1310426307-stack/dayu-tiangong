@@ -44,6 +44,14 @@ const requiredPaths = [
   '/api/v1/gates', '/api/v1/pumps', '/api/v1/import/excel',
   '/api/v1/validation/run', '/api/v1/model-data/dataset-versions',
   '/api/v1/model-data/simulation-cases/{case_id}/input',
+  '/api/v1/model/tasks', '/api/v1/model/tasks/{task_id}/run',
+  '/api/v1/model/tasks/{task_id}', '/api/v1/model/results/{task_id}',
+  '/api/v1/model/tasks/{task_id}/enqueue', '/api/v1/model/tasks/{task_id}/cancel',
+  '/api/v1/model/tasks/{task_id}/retry', '/api/v1/model/tasks/{task_id}/snapshot',
+  '/api/v1/dispatch/plans', '/api/v1/dispatch/plans/{plan_id}',
+  '/api/v1/dispatch/plans/{plan_id}/actions', '/api/v1/dispatch/plans/{plan_id}/rules',
+  '/api/v1/dispatch/plans/{plan_id}/runs', '/api/v1/dispatch/runs',
+  '/api/v1/dispatch/runs/{run_id}', '/api/v1/dispatch/runs/{run_id}/comparison',
 ];
 for (const path of requiredPaths) {
   if (!openapi.paths?.[path]) throw new Error(`OpenAPI 缺少接口：${path}`);
@@ -59,8 +67,12 @@ const generated = `/* 本文件由 npm run openapi:update 自动生成，请勿�
 
 ${interfaces}
 
+export type ValidationReport = app__validation__schemas__ValidationReport;
+export type DispatchValidationReport = app__dispatch__schemas__ValidationReport;
 export interface GISListQuery { bbox?: string; limit?: number; offset?: number; }
 export interface DatabaseListQuery { dataset_version_id?: number; river_id?: number; search?: string; limit?: number; offset?: number; }
+export interface DispatchListQuery { dataset_version_id?: number; plan_id?: number; status?: string; limit?: number; offset?: number; }
+export interface PageResult<T> { items: T[]; total: number; limit: number; offset: number; }
 export type ImportResource = 'rivers' | 'cross_sections' | 'gates' | 'pumps';
 
 function toQuery<T extends object>(params: T): string {
@@ -80,7 +92,7 @@ async function requestJson<T>(path: string, options: RequestInit = {}, baseUrl =
   return response.json() as Promise<T>;
 }
 
-function jsonOptions(method: 'POST' | 'PUT', body: unknown): RequestInit {
+function jsonOptions(method: 'POST' | 'PUT' | 'PATCH', body: unknown): RequestInit {
   return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) };
 }
 
@@ -125,6 +137,42 @@ export const getBoundaryConditions = (datasetVersionId?: number, baseUrl = '') =
 export const getSimulationCases = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<SimulationCaseRecord>>(\`/api/v1/model-data/simulation-cases\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
 export const getModelInput = (caseId: number, baseUrl = '') => requestJson<ModelInputSnapshot>(\`/api/v1/model-data/simulation-cases/\${caseId}/input\`, {}, baseUrl);
 export const runValidation = (datasetVersionId: number, baseUrl = '') => requestJson<ValidationReport>('/api/v1/validation/run', jsonOptions('POST', { dataset_version_id: datasetVersionId }), baseUrl);
+
+export const createHydraulicTask = (body: SimulationTaskCreate, baseUrl = '') => requestJson<SimulationTaskRecord>('/api/v1/model/tasks', jsonOptions('POST', body), baseUrl);
+export const listHydraulicTasks = (baseUrl = '') => requestJson<Array<SimulationTaskRecord>>('/api/v1/model/tasks', {}, baseUrl);
+export const getHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(\`/api/v1/model/tasks/\${taskId}\`, {}, baseUrl);
+export const runHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(\`/api/v1/model/tasks/\${taskId}/run\`, { method: 'POST' }, baseUrl);
+export const enqueueHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(\`/api/v1/model/tasks/\${taskId}/enqueue\`, { method: 'POST' }, baseUrl);
+export const cancelHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(\`/api/v1/model/tasks/\${taskId}/cancel\`, { method: 'POST' }, baseUrl);
+export const retryHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(\`/api/v1/model/tasks/\${taskId}/retry\`, { method: 'POST' }, baseUrl);
+export const getHydraulicTaskSnapshot = (taskId: number, baseUrl = '') => requestJson<TaskSnapshotResponse>(\`/api/v1/model/tasks/\${taskId}/snapshot\`, {}, baseUrl);
+export const getHydraulicResult = (taskId: number, sectionId?: number, baseUrl = '') => requestJson<SimulationResultResponse>(\`/api/v1/model/results/\${taskId}\${toQuery({ section_id: sectionId })}\`, {}, baseUrl);
+
+export const listDispatchPlans = (params: DispatchListQuery = {}, baseUrl = '') => requestJson<PageResult<DispatchPlanRecord>>(\`/api/v1/dispatch/plans\${toQuery(params)}\`, {}, baseUrl);
+export const createDispatchPlan = (body: DispatchPlanCreate, baseUrl = '') => requestJson<DispatchPlanRecord>('/api/v1/dispatch/plans', jsonOptions('POST', body), baseUrl);
+export const getDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchPlanRecord>(\`/api/v1/dispatch/plans/\${planId}\`, {}, baseUrl);
+export const updateDispatchPlan = (planId: number, body: DispatchPlanUpdate, baseUrl = '') => requestJson<DispatchPlanRecord>(\`/api/v1/dispatch/plans/\${planId}\`, jsonOptions('PATCH', body), baseUrl);
+export const deleteDispatchPlan = (planId: number, baseUrl = '') => requestJson<void>(\`/api/v1/dispatch/plans/\${planId}\`, { method: 'DELETE' }, baseUrl);
+export const cloneDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchPlanRecord>(\`/api/v1/dispatch/plans/\${planId}/clone\`, { method: 'POST' }, baseUrl);
+export const validateDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchValidationReport>(\`/api/v1/dispatch/plans/\${planId}/validate\`, { method: 'POST' }, baseUrl);
+export const freezeDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchPlanRecord>(\`/api/v1/dispatch/plans/\${planId}/freeze\`, { method: 'POST' }, baseUrl);
+export const listDispatchActions = (planId: number, baseUrl = '') => requestJson<Array<DispatchActionRecord>>(\`/api/v1/dispatch/plans/\${planId}/actions\`, {}, baseUrl);
+export const createDispatchAction = (planId: number, body: DispatchActionCreate, baseUrl = '') => requestJson<DispatchActionRecord>(\`/api/v1/dispatch/plans/\${planId}/actions\`, jsonOptions('POST', body), baseUrl);
+export const updateDispatchAction = (actionId: number, body: DispatchActionUpdate, baseUrl = '') => requestJson<DispatchActionRecord>(\`/api/v1/dispatch/actions/\${actionId}\`, jsonOptions('PATCH', body), baseUrl);
+export const deleteDispatchAction = (actionId: number, baseUrl = '') => requestJson<void>(\`/api/v1/dispatch/actions/\${actionId}\`, { method: 'DELETE' }, baseUrl);
+export const listDispatchRules = (planId: number, baseUrl = '') => requestJson<Array<DispatchRuleRecord>>(\`/api/v1/dispatch/plans/\${planId}/rules\`, {}, baseUrl);
+export const createDispatchRule = (planId: number, body: DispatchRuleCreate, baseUrl = '') => requestJson<DispatchRuleRecord>(\`/api/v1/dispatch/plans/\${planId}/rules\`, jsonOptions('POST', body), baseUrl);
+export const updateDispatchRule = (ruleId: number, body: DispatchRuleUpdate, baseUrl = '') => requestJson<DispatchRuleRecord>(\`/api/v1/dispatch/rules/\${ruleId}\`, jsonOptions('PATCH', body), baseUrl);
+export const deleteDispatchRule = (ruleId: number, baseUrl = '') => requestJson<void>(\`/api/v1/dispatch/rules/\${ruleId}\`, { method: 'DELETE' }, baseUrl);
+export const createDispatchRun = (planId: number, baseUrl = '') => requestJson<DispatchRunRecord>(\`/api/v1/dispatch/plans/\${planId}/runs\`, { method: 'POST' }, baseUrl);
+export const listDispatchRuns = (params: DispatchListQuery = {}, baseUrl = '') => requestJson<PageResult<DispatchRunRecord>>(\`/api/v1/dispatch/runs\${toQuery(params)}\`, {}, baseUrl);
+export const getDispatchRun = (runId: number, baseUrl = '') => requestJson<DispatchRunRecord>(\`/api/v1/dispatch/runs/\${runId}\`, {}, baseUrl);
+export const cancelDispatchRun = (runId: number, baseUrl = '') => requestJson<DispatchRunRecord>(\`/api/v1/dispatch/runs/\${runId}/cancel\`, { method: 'POST' }, baseUrl);
+export const retryDispatchRun = (runId: number, baseUrl = '') => requestJson<DispatchRunRecord>(\`/api/v1/dispatch/runs/\${runId}/retry\`, { method: 'POST' }, baseUrl);
+export const getDispatchComparison = (runId: number, baseUrl = '') => requestJson<DispatchComparison>(\`/api/v1/dispatch/runs/\${runId}/comparison\`, {}, baseUrl);
+export const getDispatchEvents = (runId: number, baseUrl = '') => requestJson<Array<Record<string, unknown>>>(\`/api/v1/dispatch/runs/\${runId}/events\`, {}, baseUrl);
+export const getDispatchStructures = (runId: number, baseUrl = '') => requestJson<Array<Record<string, unknown>>>(\`/api/v1/dispatch/runs/\${runId}/structures\`, {}, baseUrl);
+export const getDispatchNodes = (runId: number, baseUrl = '') => requestJson<Array<Record<string, unknown>>>(\`/api/v1/dispatch/runs/\${runId}/nodes\`, {}, baseUrl);
 
 export async function uploadDataFile(kind: 'excel' | 'csv' | 'geojson', resource: ImportResource, datasetVersionId: number, file: File, baseUrl = ''): Promise<ImportResponse> {
   const body = new FormData();

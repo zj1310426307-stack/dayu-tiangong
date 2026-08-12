@@ -1,42 +1,33 @@
-# 大禹·天工 Phase 2 数据库设计
+# 大禹·天工 Phase 4 数据库设计
 
-## 设计目标
+业务空间统一 CGCS2000 / EPSG:4490；数值距离使用米制桩号和河段长度。权威演进为 Alembic `0001 → 0005`。
 
-Phase 2 在 Phase 1 四张空间表上无损升级，形成可供一维水动力模型直接读取的版本化静态数据库。物理坐标统一使用 WGS 84（EPSG:4326），运行时通过 PostGIS 负责几何类型、SRID、有效性与空间索引。
+## 表域
 
-## 领域边界
-
-| 聚合 | 主表 | 职责 |
+| 领域 | 表 | 关键语义 |
 |---|---|---|
-| 数据版本 | `dataset_version` | 隔离不可混用的河网、断面、建筑物与参数 |
-| 河网 | `river`、`river_node`、`river_segment`、`river_connection` | 表达河道空间线、可计算河段和有向拓扑 |
-| 横断面 | `cross_section` | 保存桩号、有序横距—高程点、糙率与测量信息 |
-| 水工建筑物 | `gate`、`pump` | 保存静态设计参数、控制方式和空间位置 |
-| 模型配置 | `model_parameter`、`boundary_condition`、`simulation_case` | 组织 Phase 3 模型参数、边界和可追溯计算方案 |
+| 数据/空间 | `dataset_version`、`river*`、`cross_section` | 版本隔离、有向河网、稳定节点身份、GIST 4490 |
+| 结构物 | `gate`、`pump` | 静态可用性 + 明确河段/节点拓扑 + 设备约束/Q-H/Q-η |
+| 模型输入 | `model_parameter`、`boundary_condition`、`simulation_case`、`simulation_case_boundary` | 一个方案显式关联一组外边界 |
+| 任务 | `simulation_task` | 冻结快照/hash/引擎来源、队列、认领、心跳、取消、重试、诊断 |
+| 调度 | `dispatch_plan`、`dispatch_action`、`dispatch_rule`、`dispatch_run` | 草稿—校验—冻结—归档，冻结 JSON 和 hash |
+| 结果 | `simulation_result`、`junction_result`、`structure_result`、`dispatch_event` | 断面、节点、闸泵、请求/实际/原因审计 |
 
-## 核心关系
+`structure_result` 保存上下游水位、扬程差、泵转输类型、流量、功率、累计能耗、流态与约束标识。`junction_result` 对每个任务—节点—时刻唯一。
 
-- 一个 `dataset_version` 拥有多条河道、断面、闸门、泵站、节点、河段、参数和边界条件。
-- `river_segment` 通过 `upstream_node_id`、`downstream_node_id` 明确水流方向；`river_connection` 提供轻量有向边读取。
-- `cross_section.station` 在同一版本、同一河道内唯一，并受非负约束。
-- 闸门和泵站引用所属河道；河道有建筑物时禁止误删。
-- `simulation_case` 固定引用一个数据版本和同版本边界条件；读取接口会生成 `dayu.model-input.v1` 快照，不写入计算结果。
+## 状态与约束
 
-## 空间与索引
+- 任务：`pending → queued → running → success|failed|cancelled`，可进入 `cancel_requested`。
+- 计划：`draft → validated → frozen → archived`；冻结内容不能就地修改，只能克隆新版本。
+- 动作必须恰有一个 `gate_id` 或 `pump_id`；跨数据版本引用在冻结前拒绝。
+- 所有时间为 UTC；前端本地化显示。
 
-| 表 | 几何类型 | SRID | GIST 索引 |
-|---|---|---:|---|
-| `river` | LineString | 4326 | `ix_river_geometry_gist` |
-| `river_node` | Point | 4326 | `ix_river_node_geometry_gist` |
-| `river_segment` | LineString | 4326 | `ix_river_segment_geometry_gist` |
-| `cross_section` | Point | 4326 | `ix_cross_section_geometry_gist` |
-| `gate` | Point | 4326 | `ix_gate_geometry_gist` |
-| `pump` | Point | 4326 | `ix_pump_geometry_gist` |
+## 迁移
 
-## 迁移和初始化
+- `20260811_0001`：GIS 基线。
+- `20260811_0002`：版本化水利数据库/拓扑。
+- `20260812_0003`：EPSG:4490 与 Phase 3 任务结果。
+- `20260812_0004`：快照、边界组、异步字段、闸泵拓扑、调度和节点/结构结果。
+- `20260812_0005`：结构结果扬程差与泵转输语义。
 
-- `20260811_0001`：Phase 1 GIS 基线。
-- `20260811_0002`：字段无损扩展、版本化、拓扑和模型配置表。
-- `database/seed/demo_data.py`：幂等初始化 1 个版本、3 条河道、20 个断面、5 座闸门、3 座泵站、8 个节点、7 个河段及 1 个计算方案。
-
-数据库变更只允许通过 Alembic 迁移；`schema.sql` 用于结构审阅和新环境核对，不替代迁移历史。
+幂等 seed 在已有完整拓扑时复用节点，避免破坏历史结果外键和可追溯性。

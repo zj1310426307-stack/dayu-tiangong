@@ -17,6 +17,7 @@ import { createBrowserRouter, Navigate } from 'react-router-dom';
 import { MainLayout } from '../layout/MainLayout';
 import { FeaturePage } from '../pages/FeaturePage';
 import type { NavigationItem } from '../types/navigation';
+import { DatasetVersionProvider } from '../context/DatasetVersionContext';
 
 // 地图页面按路由动态加载，避免非地图功能提前下载 Cesium 运行时。
 const HomePage = lazy(() =>
@@ -32,6 +33,13 @@ const PumpsDatabasePage = lazy(() => import('../pages/data-center/DataCenterPage
 const DataImportPage = lazy(() => import('../pages/data-center/DataCenterPages').then((module) => ({ default: module.DataImportPage })));
 const DataValidationPage = lazy(() => import('../pages/data-center/DataCenterPages').then((module) => ({ default: module.DataValidationPage })));
 const ModelDataPage = lazy(() => import('../pages/data-center/DataCenterPages').then((module) => ({ default: module.ModelDataPage })));
+const HydraulicConfigPage = lazy(() => import('../pages/hydraulic/HydraulicPages').then((module) => ({ default: module.HydraulicConfigPage })));
+const HydraulicTasksPage = lazy(() => import('../pages/hydraulic/HydraulicPages').then((module) => ({ default: module.HydraulicTasksPage })));
+const HydraulicResultsPage = lazy(() => import('../pages/hydraulic/HydraulicPages').then((module) => ({ default: module.HydraulicResultsPage })));
+const DispatchPlanListPage = lazy(() => import('../pages/dispatch/DispatchPages').then((module) => ({ default: module.DispatchPlanListPage })));
+const DispatchPlanEditorPage = lazy(() => import('../pages/dispatch/DispatchPages').then((module) => ({ default: module.DispatchPlanEditorPage })));
+const DispatchRunListPage = lazy(() => import('../pages/dispatch/DispatchPages').then((module) => ({ default: module.DispatchRunListPage })));
+const DispatchRunDetailPage = lazy(() => import('../pages/dispatch/DispatchPages').then((module) => ({ default: module.DispatchRunDetailPage })));
 
 // 在动态页面代码到达前提供可感知状态，避免首次进入地图时出现空白区域。
 function RouteLoading({ label }: { label: string }) {
@@ -155,7 +163,7 @@ export const navigationItems: NavigationItem[] = [
 export const appRouter = createBrowserRouter([
   {
     path: '/',
-    element: <MainLayout />,
+    element: <DatasetVersionProvider><MainLayout /></DatasetVersionProvider>,
     children: [
       {
         index: true,
@@ -181,7 +189,16 @@ export const appRouter = createBrowserRouter([
       { path: 'data-center/imports', element: <Suspense fallback={<RouteLoading label="正在加载数据导入中心…" />}><DataImportPage /></Suspense> },
       { path: 'data-center/validation', element: <Suspense fallback={<RouteLoading label="正在加载数据校验中心…" />}><DataValidationPage /></Suspense> },
       { path: 'data-center/model-data', element: <Suspense fallback={<RouteLoading label="正在加载模型数据…" />}><ModelDataPage /></Suspense> },
-      ...navigationItems.slice(9).map((item) => ({
+      { path: 'hydraulic', element: <Navigate to="/hydraulic/config" replace /> },
+      { path: 'hydraulic/config', element: <Suspense fallback={<RouteLoading label="正在加载水动力配置…" />}><HydraulicConfigPage /></Suspense> },
+      { path: 'hydraulic/tasks', element: <Suspense fallback={<RouteLoading label="正在加载模拟任务…" />}><HydraulicTasksPage /></Suspense> },
+      { path: 'hydraulic/results', element: <Suspense fallback={<RouteLoading label="正在加载模拟结果…" />}><HydraulicResultsPage /></Suspense> },
+      { path: 'dispatch', element: <Navigate to="/dispatch/plans" replace /> },
+      { path: 'dispatch/plans', element: <Suspense fallback={<RouteLoading label="正在加载调度计划…" />}><DispatchPlanListPage /></Suspense> },
+      { path: 'dispatch/plans/:planId', element: <Suspense fallback={<RouteLoading label="正在加载计划编辑器…" />}><DispatchPlanEditorPage /></Suspense> },
+      { path: 'dispatch/runs', element: <Suspense fallback={<RouteLoading label="正在加载运行中心…" />}><DispatchRunListPage /></Suspense> },
+      { path: 'dispatch/runs/:runId', element: <Suspense fallback={<RouteLoading label="正在加载运行结果…" />}><DispatchRunDetailPage /></Suspense> },
+      ...navigationItems.filter((item) => ['optimization', 'ai'].includes(item.key)).map((item) => ({
         path: item.path.slice(1),
         element: <FeaturePage item={item} />,
       })),

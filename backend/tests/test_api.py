@@ -16,7 +16,7 @@ def test_root_returns_expected_system_information() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "name": "大禹·天工",
-        "version": "2.0.0",
+        "version": "3.0.0",
         "description": "河网智能调度与数字孪生水利平台",
         "status": "running",
     }
@@ -31,7 +31,7 @@ def test_health_endpoint_reports_application_health() -> None:
     assert response.json() == {
         "status": "healthy",
         "service": "dayu-tiangong-api",
-        "version": "2.0.0",
+        "version": "3.0.0",
     }
 
 
@@ -59,5 +59,9 @@ def test_openapi_contains_system_and_gis_routes() -> None:
         "/api/v1/import/excel",
         "/api/v1/validation/run",
         "/api/v1/model-data/dataset-versions",
+        "/api/v1/model/tasks",
+        "/api/v1/model/tasks/{task_id}/run",
+        "/api/v1/model/tasks/{task_id}",
+        "/api/v1/model/results/{task_id}",
     ]:
         assert path in schema["paths"]
