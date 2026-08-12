@@ -23,4 +23,7 @@ $env:GEOSERVER_DB_PASSWORD="the-local-read-only-secret"
 backend\.venv\Scripts\python.exe geoserver\verify.py
 ```
 
-The script validates WMS/WMTS capabilities and PNG payloads, Basic WFS, read-only SQL behavior, the GeoServer health/layer APIs, and preservation of FastAPI GIS queries.
+`GIS_VERIFY_DATASET_VERSION_ID` defaults to `1` and can select another existing
+version. The script validates version-filtered WMS/WMTS PNG payloads, Basic WFS,
+read-only SQL behavior, GeoServer health/layer APIs, and the matching FastAPI GIS
+query.

@@ -1,21 +1,24 @@
 import { EnvironmentOutlined, ExpandOutlined, ReloadOutlined } from '@ant-design/icons';
-import { Button, Checkbox, Tag, Tooltip } from 'antd';
+import { Button, Checkbox, Slider, Tag, Tooltip } from 'antd';
 import {
   ArcGisMapServerImageryProvider,
   Cartesian2,
   Cartesian3,
   Color,
   GridImageryProvider,
-  type ImageryLayer,
-  type ImageryLayerFeatureInfo,
+  Material,
   Math as CesiumMath,
+  PointPrimitiveCollection,
+  PolylineCollection,
   ScreenSpaceEventType,
   Viewer,
   WebMapServiceImageryProvider,
   WebMapTileServiceImageryProvider,
+  type ImageryLayer,
+  type ImageryLayerFeatureInfo,
 } from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   getCrossSection,
@@ -23,25 +26,29 @@ import {
   getGeoServerConfig,
   getPump,
   getRiver,
+  type GISInteractionFrame,
+  type GISStructureSample,
+  type GISWaterSample,
   type GeoJSONFeature,
 } from '../../api/generated/client';
+import { useDatasetVersion } from '../../context/DatasetVersionContext';
+import { FeatureInspector, type SelectedGISFeature } from './FeatureInspector';
+import { formatBytes, runPerformanceProbes, type GISPerformanceMetric } from './performance';
 
-type LayerKey = 'river' | 'river_segment' | 'river_node' | 'cross_section' | 'gate' | 'pump';
+type StaticLayerKey = 'river' | 'river_segment' | 'river_node' | 'cross_section' | 'gate' | 'pump';
+type DynamicLayerKey = 'water_result' | 'velocity_result' | 'dispatch_status';
+type LayerKey = StaticLayerKey | DynamicLayerKey;
 type LoadState = 'loading' | 'ready' | 'error';
 type BasemapState = 'loading' | 'imagery' | 'fallback';
 type ScaleMode = 'wmts' | 'wms';
 
 interface CesiumMapProps {
   variant?: 'dashboard' | 'workspace';
-  dispatchRunId?: number;
-  timeSeconds?: number;
+  datasetVersionId?: number;
+  interactionFrame?: GISInteractionFrame | null;
+  dynamicLoading?: boolean;
   selectedAsset?: string;
   onCesiumStatusChange?: (online: boolean) => void;
-}
-
-interface SelectedFeature {
-  id: string;
-  properties: Record<string, unknown>;
 }
 
 interface ThematicLayers {
@@ -49,34 +56,43 @@ interface ThematicLayers {
   wmts?: ImageryLayer;
 }
 
-const WORLD_IMAGERY_URL =
-  'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer';
-const MEDIUM_SCALE_HEIGHT_METRES = 72_000;
-const CACHED_LAYERS = new Set<LayerKey>(['river', 'river_segment', 'gate', 'pump']);
-const TILE_MATRIX_LABELS = Array.from({ length: 23 }, (_, level) => `EPSG:900913:${level}`);
-const layerLabels: Record<LayerKey, string> = {
-  river: '河道',
-  river_segment: '河段',
-  river_node: '河网节点',
-  cross_section: '横断面',
-  gate: '闸门',
-  pump: '泵站',
-};
-
-function displayValue(value: unknown): string {
-  if (value === null || value === undefined) return '—';
-  if (typeof value === 'object') return JSON.stringify(value);
-  return String(value);
+interface LayerSetting {
+  visible: boolean;
+  opacity: number;
 }
 
-function parseAssetKey(raw: string | undefined): { type: LayerKey; id: number } | null {
+interface DynamicPick {
+  kind: 'dynamic';
+  layer: DynamicLayerKey;
+  sample: GISWaterSample | GISStructureSample;
+}
+
+const WORLD_IMAGERY_URL = 'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer';
+const MEDIUM_SCALE_HEIGHT_METRES = 72_000;
+const CACHED_LAYERS = new Set<StaticLayerKey>(['river', 'river_segment', 'gate', 'pump']);
+const TILE_MATRIX_LABELS = Array.from({ length: 23 }, (_, level) => `EPSG:900913:${level}`);
+const staticLayerKeys: StaticLayerKey[] = ['river', 'river_segment', 'river_node', 'cross_section', 'gate', 'pump'];
+const dynamicLayerKeys: DynamicLayerKey[] = ['water_result', 'velocity_result', 'dispatch_status'];
+const layerLabels: Record<LayerKey, string> = {
+  river: '河道', river_segment: '河段', river_node: '河网节点', cross_section: '横断面',
+  gate: '闸门', pump: '泵站', water_result: '水位结果', velocity_result: '流速结果',
+  dispatch_status: '调度状态',
+};
+
+const initialLayerSettings = Object.fromEntries(
+  [...staticLayerKeys, ...dynamicLayerKeys].map((key) => [key, { visible: true, opacity: 0.88 }]),
+) as Record<LayerKey, LayerSetting>;
+
+/** Parse stable GeoServer feature identifiers without using display names as identity. */
+function parseAssetKey(raw: string | undefined): { type: StaticLayerKey; id: number } | null {
   if (!raw) return null;
   const match = raw.match(/(river_segment|river_node|cross_section|river|gate|pump)[.:](\d+)$/);
   if (!match) return null;
-  return { type: match[1] as LayerKey, id: Number(match[2]) };
+  return { type: match[1] as StaticLayerKey, id: Number(match[2]) };
 }
 
-function parsePickedFeature(feature: ImageryLayerFeatureInfo): { type: LayerKey; id: number; properties: Record<string, unknown> } | null {
+/** Extract the business key from a WMS GetFeatureInfo result. */
+function parsePickedFeature(feature: ImageryLayerFeatureInfo): { type: StaticLayerKey; id: number; properties: Record<string, unknown> } | null {
   const data = feature.data as { id?: string; properties?: Record<string, unknown> } | undefined;
   const properties = data?.properties ?? {};
   const parsed = parseAssetKey(data?.id ?? feature.name);
@@ -85,36 +101,62 @@ function parsePickedFeature(feature: ImageryLayerFeatureInfo): { type: LayerKey;
   return { type: parsed.type, id, properties: { ...properties, feature_type: parsed.type } };
 }
 
-async function readBusinessFeature(type: LayerKey, id: number): Promise<SelectedFeature> {
+/** Read authoritative business attributes through the generated FastAPI client. */
+async function readBusinessFeature(type: StaticLayerKey, id: number, datasetVersionId: number): Promise<SelectedGISFeature> {
   let feature: GeoJSONFeature | null = null;
-  if (type === 'river') feature = await getRiver(id);
-  if (type === 'gate') feature = await getGate(id);
-  if (type === 'pump') feature = await getPump(id);
-  if (type === 'cross_section') feature = await getCrossSection(id);
+  if (type === 'river') feature = await getRiver(id, datasetVersionId);
+  if (type === 'gate') feature = await getGate(id, datasetVersionId);
+  if (type === 'pump') feature = await getPump(id, datasetVersionId);
+  if (type === 'cross_section') feature = await getCrossSection(id, datasetVersionId);
   if (feature) return { id: String(feature.id), properties: feature.properties };
-  return { id: String(id), properties: { id, feature_type: type, source: 'GeoServer WMS GetFeatureInfo' } };
+  return { id: String(id), properties: { id, feature_type: type, dataset_version_id: datasetVersionId, source: 'GeoServer WMS GetFeatureInfo' } };
 }
 
-// GeoServer owns static cartography; FastAPI is consulted only after a precise feature pick.
+/** Build one version filter shared by WMS, WMTS and browser performance probes. */
+function versionFilter(datasetVersionId: number): string {
+  return `dataset_version_id=${datasetVersionId}`;
+}
+
+/** Convert simulated risk levels into one stable engineering legend. */
+function riskColor(level: GISWaterSample['risk_level'], opacity: number): Color {
+  if (level === 'danger') return Color.fromCssColorString('#ff5b62').withAlpha(opacity);
+  if (level === 'warning') return Color.fromCssColorString('#ffc85c').withAlpha(opacity);
+  return Color.fromCssColorString('#2fe6d6').withAlpha(opacity);
+}
+
+/** Convert velocity classes into map colors independent from water-level risk. */
+function velocityColor(level: GISWaterSample['velocity_level'], opacity: number): Color {
+  if (level === 'high') return Color.fromCssColorString('#a972ff').withAlpha(opacity);
+  if (level === 'medium') return Color.fromCssColorString('#3b8fff').withAlpha(opacity);
+  return Color.fromCssColorString('#77d9ff').withAlpha(opacity);
+}
+
+/** Calculate a short map-space arrow endpoint from a PostGIS-derived bearing. */
+function arrowEnd(sample: GISWaterSample): Cartesian3 {
+  const bearing = CesiumMath.toRadians(sample.flow_bearing_degrees);
+  const distanceMetres = 900;
+  const latitudeDelta = Math.cos(bearing) * distanceMetres / 110_540;
+  const longitudeDelta = Math.sin(bearing) * distanceMetres / (111_320 * Math.max(0.2, Math.cos(CesiumMath.toRadians(sample.latitude))));
+  return Cartesian3.fromDegrees(sample.longitude + longitudeDelta, sample.latitude + latitudeDelta, 45);
+}
+
+/** Render the version-safe Phase 1B spatial workspace while keeping one Viewer per mount. */
 export function CesiumMap({
-  variant = 'dashboard',
-  dispatchRunId,
-  timeSeconds = 0,
-  selectedAsset,
-  onCesiumStatusChange,
+  variant = 'dashboard', datasetVersionId: suppliedVersionId, interactionFrame,
+  dynamicLoading = false, selectedAsset, onCesiumStatusChange,
 }: CesiumMapProps) {
+  const { datasetVersionId: contextVersionId } = useDatasetVersion();
+  const datasetVersionId = suppliedVersionId ?? contextVersionId;
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
   const basemapLayerRef = useRef<ImageryLayer | null>(null);
-  const thematicLayersRef = useRef(new Map<LayerKey, ThematicLayers>());
-  const visibilityRef = useRef<Record<LayerKey, boolean>>({
-    river: true,
-    river_segment: true,
-    river_node: true,
-    cross_section: true,
-    gate: true,
-    pump: true,
-  });
+  const thematicLayersRef = useRef(new Map<StaticLayerKey, ThematicLayers>());
+  const waterPointsRef = useRef<PointPrimitiveCollection | null>(null);
+  const velocityPointsRef = useRef<PointPrimitiveCollection | null>(null);
+  const velocityLinesRef = useRef<PolylineCollection | null>(null);
+  const structurePointsRef = useRef<PointPrimitiveCollection | null>(null);
+  const settingsRef = useRef(initialLayerSettings);
+  const interactionFrameRef = useRef(interactionFrame);
   const scaleModeRef = useRef<ScaleMode>('wmts');
   const navigate = useNavigate();
   const [loadState, setLoadState] = useState<LoadState>('loading');
@@ -123,33 +165,37 @@ export function CesiumMap({
   const [basemapMessage, setBasemapMessage] = useState('正在连接卫星影像');
   const [basemapVisible, setBasemapVisible] = useState(true);
   const [reloadToken, setReloadToken] = useState(0);
-  const [selected, setSelected] = useState<SelectedFeature | null>(null);
+  const [selected, setSelected] = useState<SelectedGISFeature | null>(null);
   const [scaleMode, setScaleMode] = useState<ScaleMode>('wmts');
-  const [visibility, setVisibility] = useState(visibilityRef.current);
+  const [settings, setSettings] = useState(initialLayerSettings);
+  const [performanceMetrics, setPerformanceMetrics] = useState<GISPerformanceMetric[]>([]);
+  const [jsHeapMb, setJsHeapMb] = useState<number | null>(null);
+  interactionFrameRef.current = interactionFrame;
+
+  useEffect(() => {
+    setSelected(null);
+  }, [datasetVersionId]);
 
   useEffect(() => {
     const asset = parseAssetKey(selectedAsset);
-    if (!asset) return;
-    void readBusinessFeature(asset.type, asset.id).then(setSelected).catch(() => undefined);
-  }, [selectedAsset]);
+    if (!asset || !datasetVersionId) return;
+    void readBusinessFeature(asset.type, asset.id, datasetVersionId).then(setSelected).catch(() => undefined);
+  }, [datasetVersionId, selectedAsset]);
 
   useEffect(() => {
-    if (!containerRef.current) return undefined;
+    const memory = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory;
+    setJsHeapMb(memory ? memory.usedJSHeapSize / 1024 / 1024 : null);
+  }, [interactionFrame, reloadToken]);
+
+  useEffect(() => {
+    if (!containerRef.current || !datasetVersionId) return undefined;
+    const activeDatasetVersionId = datasetVersionId;
     let cancelled = false;
     const cleanups: Array<() => void> = [];
     const viewer = new Viewer(containerRef.current, {
-      animation: false,
-      baseLayer: false,
-      baseLayerPicker: false,
-      fullscreenButton: false,
-      geocoder: false,
-      homeButton: false,
-      infoBox: false,
-      navigationHelpButton: false,
-      sceneModePicker: false,
-      selectionIndicator: false,
-      timeline: false,
-      requestRenderMode: true,
+      animation: false, baseLayer: false, baseLayerPicker: false, fullscreenButton: false,
+      geocoder: false, homeButton: false, infoBox: false, navigationHelpButton: false,
+      sceneModePicker: false, selectionIndicator: false, timeline: false, requestRenderMode: true,
     });
     viewerRef.current = viewer;
     thematicLayersRef.current.clear();
@@ -159,18 +205,23 @@ export function CesiumMap({
     viewer.scene.globe.enableLighting = false;
     viewer.camera.setView({
       destination: Cartesian3.fromDegrees(120.27, 30.27, variant === 'workspace' ? 92_000 : 108_000),
-      orientation: {
-        heading: CesiumMath.toRadians(0),
-        pitch: CesiumMath.toRadians(-90),
-        roll: 0,
-      },
+      orientation: { heading: 0, pitch: CesiumMath.toRadians(-90), roll: 0 },
     });
+
+    waterPointsRef.current = viewer.scene.primitives.add(new PointPrimitiveCollection());
+    velocityPointsRef.current = viewer.scene.primitives.add(new PointPrimitiveCollection());
+    velocityLinesRef.current = viewer.scene.primitives.add(new PolylineCollection());
+    structurePointsRef.current = viewer.scene.primitives.add(new PointPrimitiveCollection());
 
     function syncThematicLayers(mode: ScaleMode) {
       for (const [key, layers] of thematicLayersRef.current) {
-        const visible = visibilityRef.current[key];
-        layers.wms.show = visible && mode === 'wms';
-        if (layers.wmts) layers.wmts.show = visible && mode === 'wmts';
+        const setting = settingsRef.current[key];
+        layers.wms.show = setting.visible && mode === 'wms';
+        layers.wms.alpha = setting.opacity;
+        if (layers.wmts) {
+          layers.wmts.show = setting.visible && mode === 'wmts';
+          layers.wmts.alpha = setting.opacity;
+        }
       }
       viewer.scene.requestRender();
     }
@@ -182,10 +233,31 @@ export function CesiumMap({
       syncThematicLayers(mode);
     }
 
-    const removeMoveEnd = viewer.camera.moveEnd.addEventListener(updateScaleMode);
-    cleanups.push(removeMoveEnd);
-
+    cleanups.push(viewer.camera.moveEnd.addEventListener(updateScaleMode));
     viewer.screenSpaceEventHandler.setInputAction((event: { position: Cartesian2 }) => {
+      const scenePick = viewer.scene.pick(event.position) as { id?: unknown } | undefined;
+      const dynamicPick = scenePick?.id as DynamicPick | undefined;
+      if (dynamicPick?.kind === 'dynamic') {
+        if ('section_id' in dynamicPick.sample) {
+          const waterSample = dynamicPick.sample;
+          void getCrossSection(waterSample.section_id, activeDatasetVersionId)
+            .then((feature) => setSelected({
+              id: String(waterSample.section_id),
+              properties: {
+                ...feature.properties,
+                ...waterSample,
+                feature_type: dynamicPick.layer,
+                time_seconds: interactionFrameRef.current?.selected_time_seconds,
+              },
+            }));
+        } else {
+          setSelected({
+            id: String(dynamicPick.sample.structure_id),
+            properties: { ...dynamicPick.sample, feature_type: 'dispatch_status', time_seconds: interactionFrameRef.current?.selected_time_seconds },
+          });
+        }
+        return;
+      }
       const ray = viewer.camera.getPickRay(event.position);
       if (!ray) return;
       const picked = viewer.imageryLayers.pickImageryLayerFeatures(ray, viewer.scene);
@@ -195,7 +267,7 @@ export function CesiumMap({
         const parsed = features.map(parsePickedFeature).find(Boolean);
         if (!parsed) return;
         try {
-          const detail = await readBusinessFeature(parsed.type, parsed.id);
+          const detail = await readBusinessFeature(parsed.type, parsed.id, activeDatasetVersionId);
           if (!cancelled) setSelected({ id: detail.id, properties: { ...parsed.properties, ...detail.properties } });
         } catch {
           if (!cancelled) setSelected({ id: String(parsed.id), properties: parsed.properties });
@@ -210,11 +282,8 @@ export function CesiumMap({
       fallbackActive = true;
       if (activeBasemapLayer) viewer.imageryLayers.remove(activeBasemapLayer, true);
       activeBasemapLayer = viewer.imageryLayers.addImageryProvider(new GridImageryProvider({
-        color: Color.fromCssColorString('#286875'),
-        glowColor: Color.fromCssColorString('#2fe6d6'),
-        backgroundColor: Color.fromCssColorString('#071923'),
-        cells: 4,
-        glowWidth: 1,
+        color: Color.fromCssColorString('#286875'), glowColor: Color.fromCssColorString('#2fe6d6'),
+        backgroundColor: Color.fromCssColorString('#071923'), cells: 4, glowWidth: 1,
       }));
       activeBasemapLayer.show = basemapVisible;
       basemapLayerRef.current = activeBasemapLayer;
@@ -244,48 +313,45 @@ export function CesiumMap({
 
     async function loadGeoServerLayers() {
       setLoadState('loading');
-      setLoadMessage('正在读取 GeoServer WMS / WMTS 配置');
+      setLoadMessage(`正在读取版本 #${activeDatasetVersionId} 的 WMS / WMTS`);
       try {
         const config = await getGeoServerConfig();
         if (cancelled) return;
-        for (const key of Object.keys(layerLabels) as LayerKey[]) {
+        const cql = versionFilter(activeDatasetVersionId);
+        for (const key of staticLayerKeys) {
           const wmsProvider = new WebMapServiceImageryProvider({
-            url: config.wms_url,
-            layers: `dayu:${key}`,
-            parameters: { transparent: true, format: 'image/png', version: '1.1.1' },
-            getFeatureInfoParameters: { info_format: 'application/json', feature_count: 5 },
-            srs: 'EPSG:4490',
-            enablePickFeatures: true,
-            credit: 'GeoServer / PostGIS / CGCS2000',
+            url: config.wms_url, layers: `dayu:${key}`,
+            parameters: { transparent: true, format: 'image/png', version: '1.1.1', CQL_FILTER: cql },
+            getFeatureInfoParameters: { info_format: 'application/json', feature_count: 5, CQL_FILTER: cql },
+            srs: 'EPSG:4490', enablePickFeatures: true, credit: 'GeoServer / PostGIS / CGCS2000',
           });
           const wms = viewer.imageryLayers.addImageryProvider(wmsProvider);
           wms.show = false;
-          cleanups.push(wmsProvider.errorEvent.addEventListener((error) => {
-            if (error.timesRetried < 2) error.retry = true;
-          }));
+          cleanups.push(wmsProvider.errorEvent.addEventListener((error) => { if (error.timesRetried < 2) error.retry = true; }));
           let wmts: ImageryLayer | undefined;
           if (CACHED_LAYERS.has(key)) {
             const wmtsProvider = new WebMapTileServiceImageryProvider({
-              url: config.wmts_url,
-              layer: `dayu:${key}`,
-              style: '',
-              format: 'image/png',
+              url: config.wmts_url, layer: `dayu:${key}`, style: '', format: 'image/png',
               tileMatrixSetID: config.preferred_wmts_matrix_set ?? 'EPSG:900913',
-              tileMatrixLabels: TILE_MATRIX_LABELS,
-              maximumLevel: 22,
-              enablePickFeatures: false,
-              credit: 'GeoWebCache / PostGIS / CGCS2000',
+              tileMatrixLabels: TILE_MATRIX_LABELS, maximumLevel: 22, enablePickFeatures: false,
+              dimensions: { CQL_FILTER: cql }, credit: 'GeoWebCache / PostGIS / CGCS2000',
             });
             wmts = viewer.imageryLayers.addImageryProvider(wmtsProvider);
-            cleanups.push(wmtsProvider.errorEvent.addEventListener((error) => {
-              if (error.timesRetried < 2) error.retry = true;
-            }));
+            cleanups.push(wmtsProvider.errorEvent.addEventListener((error) => { if (error.timesRetried < 2) error.retry = true; }));
           }
           thematicLayersRef.current.set(key, { wms, wmts });
         }
         updateScaleMode();
         setLoadState('ready');
-        setLoadMessage('GeoServer 已发布 6 个图层 · WMTS 4 个缓存图层');
+        setLoadMessage(`版本 #${activeDatasetVersionId} · CQL 隔离 · 6 个静态图层`);
+        if (variant === 'workspace') {
+          setPerformanceMetrics([
+            { source: 'WMS', durationMs: null, bytes: null, status: 'testing' },
+            { source: 'WMTS', durationMs: null, bytes: null, status: 'testing' },
+            { source: 'GeoJSON', durationMs: null, bytes: null, status: 'testing' },
+          ]);
+          void runPerformanceProbes(config, activeDatasetVersionId).then((metrics) => { if (!cancelled) setPerformanceMetrics(metrics); });
+        }
       } catch (error) {
         if (cancelled) return;
         setLoadState('error');
@@ -299,23 +365,90 @@ export function CesiumMap({
       cancelled = true;
       cleanups.forEach((cleanup) => cleanup());
       thematicLayersRef.current.clear();
+      waterPointsRef.current = null;
+      velocityPointsRef.current = null;
+      velocityLinesRef.current = null;
+      structurePointsRef.current = null;
       basemapLayerRef.current = null;
       viewerRef.current = null;
       onCesiumStatusChange?.(false);
       if (!viewer.isDestroyed()) viewer.destroy();
     };
-  }, [reloadToken, variant]);
+  }, [datasetVersionId, reloadToken, variant]);
 
-  function toggleLayer(key: LayerKey, checked: boolean) {
-    const next = { ...visibilityRef.current, [key]: checked };
-    visibilityRef.current = next;
-    setVisibility(next);
-    const layers = thematicLayersRef.current.get(key);
-    if (!layers) return;
-    layers.wms.show = checked && scaleModeRef.current === 'wms';
-    if (layers.wmts) layers.wmts.show = checked && scaleModeRef.current === 'wmts';
-    viewerRef.current?.scene.requestRender();
-  }
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    const waterPoints = waterPointsRef.current;
+    const velocityPoints = velocityPointsRef.current;
+    const velocityLines = velocityLinesRef.current;
+    const structurePoints = structurePointsRef.current;
+    if (!viewer || !waterPoints || !velocityPoints || !velocityLines || !structurePoints) return;
+    waterPoints.removeAll();
+    velocityPoints.removeAll();
+    velocityLines.removeAll();
+    structurePoints.removeAll();
+    const waterSetting = settings.water_result;
+    const velocitySetting = settings.velocity_result;
+    const structureSetting = settings.dispatch_status;
+    for (const sample of interactionFrame?.water_samples ?? []) {
+      if (waterSetting.visible) {
+        waterPoints.add({
+          position: Cartesian3.fromDegrees(sample.longitude, sample.latitude, 70),
+          pixelSize: sample.risk_level === 'danger' ? 14 : 11,
+          color: riskColor(sample.risk_level, waterSetting.opacity),
+          outlineColor: Color.WHITE.withAlpha(0.82), outlineWidth: 1.5,
+          id: { kind: 'dynamic', layer: 'water_result', sample } satisfies DynamicPick,
+        });
+      }
+      if (velocitySetting.visible) {
+        const color = velocityColor(sample.velocity_level, velocitySetting.opacity);
+        velocityPoints.add({
+          position: Cartesian3.fromDegrees(sample.longitude, sample.latitude, 85),
+          pixelSize: 6, color, outlineColor: Color.WHITE.withAlpha(0.6), outlineWidth: 1,
+          id: { kind: 'dynamic', layer: 'velocity_result', sample } satisfies DynamicPick,
+        });
+        if (sample.flow_direction !== 'stationary') {
+          velocityLines.add({
+            positions: [Cartesian3.fromDegrees(sample.longitude, sample.latitude, 75), arrowEnd(sample)],
+            width: sample.velocity_level === 'high' ? 5 : 3,
+            material: Material.fromType('PolylineArrow', { color }),
+            id: { kind: 'dynamic', layer: 'velocity_result', sample } satisfies DynamicPick,
+          });
+        }
+      }
+    }
+    for (const sample of interactionFrame?.structure_samples ?? []) {
+      if (!structureSetting.visible) continue;
+      const active = sample.state === 'open' || sample.state === 'running';
+      structurePoints.add({
+        position: Cartesian3.fromDegrees(sample.longitude, sample.latitude, 100),
+        pixelSize: sample.structure_type === 'gate' ? 15 : 17,
+        color: (active ? Color.fromCssColorString('#48e58b') : Color.fromCssColorString('#8092a2')).withAlpha(structureSetting.opacity),
+        outlineColor: sample.constraint_flags.length > 0 ? Color.fromCssColorString('#ffc85c') : Color.WHITE.withAlpha(0.8),
+        outlineWidth: sample.constraint_flags.length > 0 ? 3 : 1.5,
+        id: { kind: 'dynamic', layer: 'dispatch_status', sample } satisfies DynamicPick,
+      });
+    }
+    viewer.scene.requestRender();
+  }, [interactionFrame, settings]);
+
+  const updateLayer = useCallback((key: LayerKey, patch: Partial<LayerSetting>) => {
+    setSettings((current) => {
+      const next = { ...current, [key]: { ...current[key], ...patch } };
+      settingsRef.current = next;
+      const layers = thematicLayersRef.current.get(key as StaticLayerKey);
+      if (layers) {
+        layers.wms.show = next[key].visible && scaleModeRef.current === 'wms';
+        layers.wms.alpha = next[key].opacity;
+        if (layers.wmts) {
+          layers.wmts.show = next[key].visible && scaleModeRef.current === 'wmts';
+          layers.wmts.alpha = next[key].opacity;
+        }
+        viewerRef.current?.scene.requestRender();
+      }
+      return next;
+    });
+  }, []);
 
   function toggleBasemap(checked: boolean) {
     setBasemapVisible(checked);
@@ -323,52 +456,52 @@ export function CesiumMap({
     viewerRef.current?.scene.requestRender();
   }
 
+  if (!datasetVersionId) {
+    return <section className={`map-card map-card--${variant} panel-surface map-card--waiting`}>正在读取数据版本…</section>;
+  }
   return (
     <section className={`map-card map-card--${variant} panel-surface`} aria-label="GIS 河网空间一张图">
       <div className="panel-heading map-card__heading">
-        <div>
-          <span className="panel-kicker">GEOSERVER · CESIUMJS / 1A</span>
-          <h2>GIS 河网空间一张图</h2>
-        </div>
+        <div><span className="panel-kicker">GEOSERVER · CESIUMJS / 1B</span><h2>版本化 GIS 业务交互</h2></div>
         <div className="map-toolbar">
           <Tag className="outline-tag" icon={<EnvironmentOutlined />}>CGCS2000 · EPSG:4490</Tag>
+          <Tag className="outline-tag">版本 #{datasetVersionId}</Tag>
           <Tag className="outline-tag">{scaleMode === 'wmts' ? '小比例尺 · WMTS' : '中比例尺 · WMS'}</Tag>
-          <Tooltip title="重新读取空间服务">
-            <Button type="text" icon={<ReloadOutlined />} onClick={() => setReloadToken((value) => value + 1)} aria-label="重新加载空间服务" />
-          </Tooltip>
-          {variant === 'dashboard' && (
-            <Tooltip title="打开 GIS 工作台">
-              <Button type="text" icon={<ExpandOutlined />} onClick={() => navigate('/gis')} aria-label="打开 GIS 工作台" />
-            </Tooltip>
-          )}
+          <Tooltip title="重新读取空间服务"><Button type="text" icon={<ReloadOutlined />} onClick={() => setReloadToken((value) => value + 1)} aria-label="重新加载空间服务" /></Tooltip>
+          {variant === 'dashboard' && <Tooltip title="打开 GIS 工作台"><Button type="text" icon={<ExpandOutlined />} onClick={() => navigate('/gis')} aria-label="打开 GIS 工作台" /></Tooltip>}
         </div>
       </div>
-
       <div className="map-stage">
         <div ref={containerRef} className="cesium-container" />
         <div className={`map-load-state map-load-state--${loadState}`} role="status"><i />{loadMessage}</div>
-        {dispatchRunId && <div className="dispatch-map-state"><strong>模拟状态</strong><span>运行 #{dispatchRunId} · {timeSeconds} s</span><small>{selectedAsset ?? '全部设施'} · 计划/模型状态</small></div>}
         <div className={`basemap-status basemap-status--${basemapState}`} data-imagery-source={basemapState === 'imagery' ? 'arcgis-world-imagery' : basemapState}><i />{basemapMessage}</div>
-        <div className="layer-control" aria-label="图层控制">
-          <strong>GeoServer 图层</strong>
-          <Checkbox checked={basemapVisible} onChange={(event) => toggleBasemap(event.target.checked)}>{basemapState === 'fallback' ? '经纬网底图' : '卫星影像'}</Checkbox>
-          {(Object.keys(layerLabels) as LayerKey[]).map((key) => (
-            <Checkbox key={key} checked={visibility[key]} onChange={(event) => toggleLayer(key, event.target.checked)}>{layerLabels[key]}</Checkbox>
-          ))}
-        </div>
-        {selected && (
-          <aside className="feature-inspector" aria-label="空间要素属性">
-            <div className="feature-inspector__head"><span>FastAPI 业务属性</span><button type="button" onClick={() => setSelected(null)} aria-label="关闭属性面板">×</button></div>
-            <dl>
-              <div><dt>ID</dt><dd>{selected.id}</dd></div>
-              {Object.entries(selected.properties).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{displayValue(value)}</dd></div>)}
-            </dl>
-            {selected.properties.feature_type === 'cross_section' && (
-              <Button block type="primary" size="small" onClick={() => navigate(`/hydraulic/results?sectionId=${encodeURIComponent(selected.id)}`)}>查看该断面水动力结果</Button>
-            )}
-          </aside>
+        {variant === 'workspace' && (
+          <div className="layer-control" aria-label="图层控制">
+            <div className="layer-control__title"><strong>图层控制</strong><span>显示 · 透明度</span></div>
+            <div className="layer-control__row"><Checkbox checked={basemapVisible} onChange={(event) => toggleBasemap(event.target.checked)}>{basemapState === 'fallback' ? '经纬网底图' : '卫星影像'}</Checkbox></div>
+            {[...staticLayerKeys, ...dynamicLayerKeys].map((key) => (
+              <div className={`layer-control__row ${dynamicLayerKeys.includes(key as DynamicLayerKey) ? 'layer-control__row--dynamic' : ''}`} key={key}>
+                <Checkbox checked={settings[key].visible} onChange={(event) => updateLayer(key, { visible: event.target.checked })}>{layerLabels[key]}</Checkbox>
+                <Slider min={0.1} max={1} step={0.1} value={settings[key].opacity} onChange={(value) => updateLayer(key, { opacity: value })} tooltip={{ formatter: (value) => `${Math.round((value ?? 0) * 100)}%` }} />
+              </div>
+            ))}
+            <div className="layer-legend">
+              <span><i className="legend-normal" />正常</span><span><i className="legend-warning" />警戒</span><span><i className="legend-danger" />危险</span>
+              <span><i className="legend-flow" />流向</span><span><i className="legend-running" />运行/开启</span>
+            </div>
+          </div>
         )}
-        <div className="map-coordinate">120.27°E / 30.27°N · CGCS2000</div>
+        {variant === 'workspace' && performanceMetrics.length > 0 && (
+          <div className="gis-performance" aria-label="GIS 性能监控">
+            <div><strong>性能监控</strong><span>{jsHeapMb === null ? '内存 API 不可用' : `JS 堆 ${jsHeapMb.toFixed(1)} MB`}</span></div>
+            {performanceMetrics.map((metric) => (
+              <p key={metric.source} className={`gis-performance--${metric.status}`}><b>{metric.source}</b><span>{metric.durationMs === null ? '测试中' : `${metric.durationMs.toFixed(0)} ms`}</span><em>{formatBytes(metric.bytes)}</em></p>
+            ))}
+          </div>
+        )}
+        {dynamicLoading && <div className="dynamic-frame-loading">水位 / 流速 / 调度状态同步中</div>}
+        {selected && <FeatureInspector feature={selected} onClose={() => setSelected(null)} onOpenHydraulicResult={(sectionId) => navigate(`/hydraulic/results?sectionId=${encodeURIComponent(sectionId)}${interactionFrame?.task_id ? `&taskId=${interactionFrame.task_id}` : ''}`)} />}
+        <div className="map-coordinate">120.27°E / 30.27°N · CGCS2000 · DATASET #{datasetVersionId}</div>
       </div>
     </section>
   );

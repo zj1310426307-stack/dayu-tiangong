@@ -8,15 +8,19 @@ import {
 import { Progress } from 'antd';
 import { useEffect, useState } from 'react';
 import { getGISStatistics, type GISStatisticsResponse } from '../api/generated/client';
+import { useDatasetVersion } from '../context/DatasetVersionContext';
 
 // 统计值全部来自 PostGIS；加载失败时明确显示错误，不回退到伪造数量。
 export function StatusPanel() {
+  const { datasetVersionId } = useDatasetVersion();
   const [statistics, setStatistics] = useState<GISStatisticsResponse | null>(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (!datasetVersionId) return undefined;
     let cancelled = false;
-    getGISStatistics()
+    setError('');
+    getGISStatistics(datasetVersionId)
       .then((value) => {
         if (!cancelled) setStatistics(value);
       })
@@ -24,7 +28,7 @@ export function StatusPanel() {
         if (!cancelled) setError(reason instanceof Error ? reason.message : '统计读取失败');
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [datasetVersionId]);
 
   const metrics = [
     { label: '河道数量', value: statistics?.rivers, unit: '条', icon: <ApartmentOutlined />, tone: 'cyan' },

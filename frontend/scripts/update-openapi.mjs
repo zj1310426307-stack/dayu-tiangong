@@ -40,7 +40,7 @@ const openapi = await response.json();
 const schemas = openapi.components?.schemas ?? {};
 
 const requiredPaths = [
-  '/api/v1/gis/rivers', '/api/v1/rivers', '/api/v1/cross-sections',
+  '/api/v1/gis/rivers', '/api/v1/gis/interaction-frame', '/api/v1/rivers', '/api/v1/cross-sections',
   '/api/v1/gates', '/api/v1/pumps', '/api/v1/import/excel',
   '/api/v1/validation/run', '/api/v1/model-data/dataset-versions',
   '/api/v1/model-data/simulation-cases/{case_id}/input',
@@ -79,7 +79,8 @@ ${interfaces}
 
 export type ValidationReport = app__validation__schemas__ValidationReport;
 export type DispatchValidationReport = app__dispatch__schemas__ValidationReport;
-export interface GISListQuery { bbox?: string; limit?: number; offset?: number; }
+export interface GISListQuery { dataset_version_id: number; bbox?: string; limit?: number; offset?: number; }
+export interface GISInteractionQuery { dataset_version_id: number; time_seconds?: number; task_id?: number; dispatch_run_id?: number; }
 export interface DatabaseListQuery { dataset_version_id?: number; river_id?: number; search?: string; limit?: number; offset?: number; }
 export interface DispatchListQuery { dataset_version_id?: number; plan_id?: number; status?: string; limit?: number; offset?: number; }
 export interface PageResult<T> { items: T[]; total: number; limit: number; offset: number; }
@@ -109,18 +110,19 @@ function jsonOptions(method: 'POST' | 'PUT' | 'PATCH', body: unknown): RequestIn
 export const getSystemInfo = (baseUrl = '') => requestJson<SystemInfoResponse>('/', {}, baseUrl);
 export const getHealth = (baseUrl = '') => requestJson<HealthResponse>('/api/v1/health', {}, baseUrl);
 export const getGISHealth = (baseUrl = '') => requestJson<GISHealthResponse>('/api/v1/gis/health', {}, baseUrl);
-export const getGISStatistics = (baseUrl = '') => requestJson<GISStatisticsResponse>('/api/v1/gis/stats', {}, baseUrl);
+export const getGISStatistics = (datasetVersionId: number, baseUrl = '') => requestJson<GISStatisticsResponse>(\`/api/v1/gis/stats\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
 export const getGeoServerHealth = (baseUrl = '') => requestJson<GeoServerHealthResponse>('/api/v1/gis/geoserver/health', {}, baseUrl);
 export const getGeoServerLayers = (baseUrl = '') => requestJson<Array<GeoServerLayerRecord>>('/api/v1/gis/geoserver/layers', {}, baseUrl);
 export const getGeoServerConfig = (baseUrl = '') => requestJson<GeoServerConfigResponse>('/api/v1/gis/geoserver/config', {}, baseUrl);
-export const getRivers = (params: GISListQuery = {}, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/rivers\${toQuery(params)}\`, {}, baseUrl);
-export const getRiver = (id: number, baseUrl = '') => requestJson<GeoJSONFeature>(\`/api/v1/gis/rivers/\${id}\`, {}, baseUrl);
-export const getGates = (params: GISListQuery = {}, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/gates\${toQuery(params)}\`, {}, baseUrl);
-export const getGate = (id: number, baseUrl = '') => requestJson<GeoJSONFeature>(\`/api/v1/gis/gates/\${id}\`, {}, baseUrl);
-export const getPumps = (params: GISListQuery = {}, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/pumps\${toQuery(params)}\`, {}, baseUrl);
-export const getPump = (id: number, baseUrl = '') => requestJson<GeoJSONFeature>(\`/api/v1/gis/pumps/\${id}\`, {}, baseUrl);
-export const getCrossSections = (params: GISListQuery = {}, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/cross_sections\${toQuery(params)}\`, {}, baseUrl);
-export const getCrossSection = (id: number, baseUrl = '') => requestJson<GeoJSONFeature>(\`/api/v1/gis/cross_sections/\${id}\`, {}, baseUrl);
+export const getRivers = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/rivers\${toQuery(params)}\`, {}, baseUrl);
+export const getRiver = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<GeoJSONFeature>(\`/api/v1/gis/rivers/\${id}\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const getGates = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/gates\${toQuery(params)}\`, {}, baseUrl);
+export const getGate = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<GeoJSONFeature>(\`/api/v1/gis/gates/\${id}\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const getPumps = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/pumps\${toQuery(params)}\`, {}, baseUrl);
+export const getPump = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<GeoJSONFeature>(\`/api/v1/gis/pumps/\${id}\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const getCrossSections = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/cross_sections\${toQuery(params)}\`, {}, baseUrl);
+export const getCrossSection = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<GeoJSONFeature>(\`/api/v1/gis/cross_sections/\${id}\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const getGISInteractionFrame = (params: GISInteractionQuery, baseUrl = '') => requestJson<GISInteractionFrame>(\`/api/v1/gis/interaction-frame\${toQuery(params)}\`, {}, baseUrl);
 
 export const listRiverRecords = (params: DatabaseListQuery = {}, baseUrl = '') => requestJson<RiverListResponse>(\`/api/v1/rivers\${toQuery(params)}\`, {}, baseUrl);
 export const createRiverRecord = (body: RiverCreate, baseUrl = '') => requestJson<RiverRecord>('/api/v1/rivers', jsonOptions('POST', body), baseUrl);
