@@ -34,6 +34,7 @@ LAYER_TITLES = {
     "cross_section": "横断面",
     "gate": "闸门",
     "pump": "泵站",
+    "map_annotation": "地点注记",
 }
 CACHED_LAYERS = {"river", "river_segment", "gate", "pump"}
 

@@ -8,6 +8,7 @@ from app.cross_section.router import router as cross_section_router
 from app.dataset.router import router as dataset_router
 from app.dispatch.router import router as dispatch_router
 from app.gis.router import router as gis_router
+from app.gis_analysis.router import router as gis_analysis_router
 from app.geoserver.router import router as geoserver_router
 from app.import_service.router import router as import_router
 from app.model_engine.router import router as model_engine_router
@@ -21,6 +22,7 @@ from app.validation.router import router as validation_router
 api_router = APIRouter()
 api_router.include_router(system.router)
 api_router.include_router(gis_router)
+api_router.include_router(gis_analysis_router)
 api_router.include_router(geoserver_router)
 api_router.include_router(river_router)
 api_router.include_router(cross_section_router)

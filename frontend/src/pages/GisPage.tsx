@@ -5,10 +5,13 @@ import {
   getGeoServerHealth,
   getGISHealth,
   getGISInteractionFrame,
+  type GISComparisonFrame,
   type GISInteractionFrame,
+  type SpatialFeature,
 } from '../api/generated/client';
 import { CesiumMap } from '../components/gis/CesiumMap';
-import { SimulationTimeline } from '../components/gis/SimulationTimeline';
+import { SpatialAnalysis } from '../components/gis/SpatialAnalysis';
+import { TimelineController } from '../components/gis/TimelineController';
 import { useDatasetVersion } from '../context/DatasetVersionContext';
 
 type ServiceState = 'checking' | 'online' | 'offline';
@@ -20,7 +23,7 @@ function serviceTag(label: string, state: ServiceState) {
   return <Tag color={color}>{label}: {text}</Tag>;
 }
 
-/** Coordinate the version, dynamic frame and time axis for the Phase 1B GIS workspace. */
+/** Coordinate versions, model frames and professional Phase 1C spatial workflows. */
 export function GisPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -32,6 +35,9 @@ export function GisPage() {
   const [interactionFrame, setInteractionFrame] = useState<GISInteractionFrame | null>(null);
   const [interactionLoading, setInteractionLoading] = useState(false);
   const [interactionError, setInteractionError] = useState('');
+  const [analysisFeatures, setAnalysisFeatures] = useState<SpatialFeature[]>([]);
+  const [comparisonFrame, setComparisonFrame] = useState<GISComparisonFrame | null>(null);
+  const [viewportBbox, setViewportBbox] = useState<[number, number, number, number]>([120, 30, 120.6, 30.5]);
   const [services, setServices] = useState<Record<'postgis' | 'geoserver' | 'cesium', ServiceState>>({
     postgis: 'checking', geoserver: 'checking', cesium: 'checking',
   });
@@ -39,6 +45,9 @@ export function GisPage() {
   const pumpStateCount = interactionFrame?.structure_samples.filter((sample) => sample.structure_type === 'pump').length ?? 0;
   const handleCesiumStatusChange = useCallback((online: boolean) => {
     setServices((current) => ({ ...current, cesium: online ? 'online' : 'offline' }));
+  }, []);
+  const handleViewportChange = useCallback((bbox: [number, number, number, number]) => {
+    setViewportBbox(bbox);
   }, []);
 
   useEffect(() => {
@@ -85,6 +94,8 @@ export function GisPage() {
 
   const changeDatasetVersion = (value: number) => {
     setInteractionFrame(null);
+    setAnalysisFeatures([]);
+    setComparisonFrame(null);
     setDatasetVersionId(value);
   };
 
@@ -92,9 +103,9 @@ export function GisPage() {
     <div className="gis-page">
       <header className="gis-page__header">
         <div>
-          <span className="hero-kicker"><i /> HYDRAULIC GIS INTERACTION</span>
-          <h1>GIS 业务交互工作台</h1>
-          <p>数据版本、GeoServer 静态制图、FastAPI 动态结果与 Cesium 时间帧保持同源联动。</p>
+          <span className="hero-kicker"><i /> PROFESSIONAL GIS + MODEL INTEGRATION</span>
+          <h1>GIS 与模型融合工作台</h1>
+          <p>专业注记、空间分析、水动力演进、调度状态、多方案差异与专题图输出保持同版本、同时间联动。</p>
         </div>
         <Space wrap>
           <label className="gis-version-select">数据版本
@@ -107,7 +118,7 @@ export function GisPage() {
             />
           </label>
           {dispatchRunId > 0 && <Button onClick={() => navigate(`/dispatch/runs/${dispatchRunId}`)}>返回运行 #{dispatchRunId}</Button>}
-          <span className="gis-page__badge">PHASE 1B · DEMO DATA</span>
+          <span className="gis-page__badge">PHASE 1C · DEMO DATA</span>
         </Space>
       </header>
       <div className="spatial-service-strip" aria-label="空间服务状态">
@@ -117,7 +128,7 @@ export function GisPage() {
           {serviceTag('GeoServer', services.geoserver)}
           {serviceTag('Cesium', services.cesium)}
         </Space>
-        <span>静态制图：WMS / WMTS · 动态业务：FastAPI 原子时间帧</span>
+        <span>静态：WMS / WMTS · 矢量：MVT · 动态：FastAPI / Cesium Primitive</span>
       </div>
       {interactionError && <Alert className="data-alert" type="error" showIcon message="动态结果未加载" description={interactionError} />}
       {interactionFrame && (
@@ -147,9 +158,19 @@ export function GisPage() {
           interactionFrame={interactionFrame}
           dynamicLoading={interactionLoading}
           selectedAsset={selectedAsset}
+          analysisFeatures={analysisFeatures}
+          comparisonFrame={comparisonFrame}
+          onViewportChange={handleViewportChange}
           onCesiumStatusChange={handleCesiumStatusChange}
         />
-        <SimulationTimeline
+        <SpatialAnalysis
+          datasetVersionId={datasetVersionId!}
+          timeSeconds={interactionFrame?.selected_time_seconds ?? requestedTime}
+          viewportBbox={viewportBbox}
+          onSpatialResult={setAnalysisFeatures}
+          onComparisonResult={setComparisonFrame}
+        />
+        <TimelineController
           timeline={interactionFrame?.timeline ?? []}
           selectedTime={interactionFrame?.selected_time_seconds}
           loading={interactionLoading}

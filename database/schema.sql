@@ -464,3 +464,29 @@ CREATE TABLE ai_report (
     source JSON NOT NULL,
     created_time TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Phase 1C professional annotations remain in the same authoritative PostGIS database.
+CREATE TABLE map_annotation (
+    id SERIAL PRIMARY KEY,
+    dataset_version_id INTEGER NOT NULL REFERENCES dataset_version(id) ON DELETE CASCADE,
+    annotation_type VARCHAR(32) NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    text VARCHAR(256) NOT NULL,
+    description TEXT,
+    longitude DOUBLE PRECISION NOT NULL,
+    latitude DOUBLE PRECISION NOT NULL,
+    rotation DOUBLE PRECISION NOT NULL DEFAULT 0,
+    font_size INTEGER NOT NULL DEFAULT 14,
+    color VARCHAR(16) NOT NULL DEFAULT '#E8F7FF',
+    visible_scale_min DOUBLE PRECISION NOT NULL DEFAULT 0,
+    visible_scale_max DOUBLE PRECISION NOT NULL DEFAULT 500000,
+    related_type VARCHAR(32),
+    related_id INTEGER,
+    geometry geometry(Point, 4490) NOT NULL,
+    created_time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT uq_map_annotation_version_related_name UNIQUE (
+        dataset_version_id, annotation_type, name, related_type, related_id
+    )
+);
+CREATE INDEX ix_map_annotation_geometry_gist ON map_annotation USING gist (geometry);
+CREATE INDEX ix_map_annotation_dataset_type ON map_annotation (dataset_version_id, annotation_type);

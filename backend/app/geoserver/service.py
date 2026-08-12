@@ -24,6 +24,7 @@ EXPECTED_LAYERS: tuple[GeoServerLayerRecord, ...] = (
     GeoServerLayerRecord(name="cross_section", qualified_name="dayu:cross_section", title="横断面", geometry_type="Point", style="cross_section", wmts_cached=False),
     GeoServerLayerRecord(name="gate", qualified_name="dayu:gate", title="闸门", geometry_type="Point", style="gate", wmts_cached=True),
     GeoServerLayerRecord(name="pump", qualified_name="dayu:pump", title="泵站", geometry_type="Point", style="pump", wmts_cached=True),
+    GeoServerLayerRecord(name="map_annotation", qualified_name="dayu:map_annotation", title="地点注记", geometry_type="Point", style="map_annotation", wmts_cached=False),
 )
 
 

@@ -96,7 +96,7 @@ def test_phase2_physical_tables_revision_and_spatial_indexes() -> None:
     """直接审计物理版本、拓扑表和新增 GIST 索引。"""
 
     with SessionLocal() as session:
-        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260812_0007"
+        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260813_0008"
         tables = set(
             session.execute(
                 text(
@@ -106,7 +106,7 @@ def test_phase2_physical_tables_revision_and_spatial_indexes() -> None:
                       AND tablename IN (
                         'dataset_version', 'river_node', 'river_segment',
                         'river_connection', 'model_parameter',
-                        'boundary_condition', 'simulation_case'
+                        'boundary_condition', 'simulation_case', 'map_annotation'
                       )
                     """
                 )
@@ -120,6 +120,7 @@ def test_phase2_physical_tables_revision_and_spatial_indexes() -> None:
             "model_parameter",
             "boundary_condition",
             "simulation_case",
+            "map_annotation",
         }
         indexes = set(
             session.execute(

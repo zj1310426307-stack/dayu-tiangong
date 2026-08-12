@@ -49,6 +49,9 @@ class DatasetVersion(Base):
     simulation_cases: Mapped[list["SimulationCase"]] = relationship(
         back_populates="dataset_version"
     )
+    annotations: Mapped[list["MapAnnotation"]] = relationship(
+        back_populates="dataset_version", cascade="all, delete-orphan"
+    )
 
 
 class River(Base):
@@ -349,6 +352,71 @@ class Pump(Base):
     )
 
     river: Mapped[River] = relationship(back_populates="pumps")
+
+
+class MapAnnotation(Base):
+    """Store one versioned professional map label without mixing runtime state into GIS data."""
+
+    __tablename__ = "map_annotation"
+    __table_args__ = (
+        CheckConstraint("longitude BETWEEN -180 AND 180", name="ck_map_annotation_longitude"),
+        CheckConstraint("latitude BETWEEN -90 AND 90", name="ck_map_annotation_latitude"),
+        CheckConstraint("rotation >= 0 AND rotation < 360", name="ck_map_annotation_rotation"),
+        CheckConstraint("font_size BETWEEN 8 AND 72", name="ck_map_annotation_font_size"),
+        CheckConstraint(
+            "ST_Equals(geometry, ST_SetSRID(ST_MakePoint(longitude, latitude), 4490))",
+            name="ck_map_annotation_coordinate_geometry",
+        ),
+        CheckConstraint(
+            "visible_scale_min >= 0 AND visible_scale_max >= visible_scale_min",
+            name="ck_map_annotation_visible_scale",
+        ),
+        CheckConstraint(
+            "annotation_type IN ('river', 'gate', 'pump', 'cross_section', "
+            "'hydrology_station', 'dispatch_event', 'parameter', 'place')",
+            name="ck_map_annotation_type",
+        ),
+        CheckConstraint(
+            "related_type IS NULL OR related_type IN "
+            "('river', 'gate', 'pump', 'cross_section', 'hydrology_station', 'dispatch_event')",
+            name="ck_map_annotation_related_type",
+        ),
+        UniqueConstraint(
+            "dataset_version_id", "annotation_type", "name", "related_type", "related_id",
+            name="uq_map_annotation_version_related_name",
+        ),
+        Index("ix_map_annotation_geometry_gist", "geometry", postgresql_using="gist"),
+        Index("ix_map_annotation_dataset_type", "dataset_version_id", "annotation_type"),
+        Index("ix_map_annotation_related", "related_type", "related_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="CASCADE"), nullable=False
+    )
+    annotation_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    text: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    longitude: Mapped[float] = mapped_column(Float, nullable=False)
+    latitude: Mapped[float] = mapped_column(Float, nullable=False)
+    rotation: Mapped[float] = mapped_column(Float, nullable=False, server_default="0")
+    font_size: Mapped[int] = mapped_column(Integer, nullable=False, server_default="14")
+    color: Mapped[str] = mapped_column(String(16), nullable=False, server_default="#E8F7FF")
+    visible_scale_min: Mapped[float] = mapped_column(Float, nullable=False, server_default="0")
+    visible_scale_max: Mapped[float] = mapped_column(
+        Float, nullable=False, server_default="500000"
+    )
+    related_type: Mapped[str | None] = mapped_column(String(32))
+    related_id: Mapped[int | None] = mapped_column(Integer)
+    geometry: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="POINT", srid=4490, spatial_index=False), nullable=False
+    )
+    created_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    dataset_version: Mapped[DatasetVersion] = relationship(back_populates="annotations")
 
 
 class ModelParameter(Base):

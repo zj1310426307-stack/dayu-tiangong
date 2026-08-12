@@ -17,6 +17,7 @@ openpyxl==3.1.5
 
 # Phase 6 PDF 知识文档文本提取；报告 PDF 由仓库内确定性渲染器生成
 pypdf==5.9.0
+reportlab==4.4.3
 
 # 测试依赖
 httpx==0.28.1

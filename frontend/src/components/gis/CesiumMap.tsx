@@ -1,5 +1,5 @@
 import { EnvironmentOutlined, ExpandOutlined, ReloadOutlined } from '@ant-design/icons';
-import { Button, Checkbox, Slider, Tag, Tooltip } from 'antd';
+import { Button, Tag, Tooltip } from 'antd';
 import {
   ArcGisMapServerImageryProvider,
   Cartesian2,
@@ -24,16 +24,22 @@ import {
   getCrossSection,
   getGate,
   getGeoServerConfig,
+  getGISAnnotations,
   getPump,
   getRiver,
+  type GISComparisonFrame,
   type GISInteractionFrame,
   type GISStructureSample,
   type GISWaterSample,
   type GeoJSONFeature,
+  type SpatialFeature,
 } from '../../api/generated/client';
 import { useDatasetVersion } from '../../context/DatasetVersionContext';
+import { AnnotationLayer } from './AnnotationLayer';
 import { FeatureInspector, type SelectedGISFeature } from './FeatureInspector';
+import { LayerManager } from './LayerManager';
 import { formatBytes, runPerformanceProbes, type GISPerformanceMetric } from './performance';
+import { ResultRenderer } from './ResultRenderer';
 
 type StaticLayerKey = 'river' | 'river_segment' | 'river_node' | 'cross_section' | 'gate' | 'pump';
 type DynamicLayerKey = 'water_result' | 'velocity_result' | 'dispatch_status';
@@ -48,6 +54,9 @@ interface CesiumMapProps {
   interactionFrame?: GISInteractionFrame | null;
   dynamicLoading?: boolean;
   selectedAsset?: string;
+  analysisFeatures?: SpatialFeature[];
+  comparisonFrame?: GISComparisonFrame | null;
+  onViewportChange?: (bbox: [number, number, number, number]) => void;
   onCesiumStatusChange?: (online: boolean) => void;
 }
 
@@ -140,10 +149,11 @@ function arrowEnd(sample: GISWaterSample): Cartesian3 {
   return Cartesian3.fromDegrees(sample.longitude + longitudeDelta, sample.latitude + latitudeDelta, 45);
 }
 
-/** Render the version-safe Phase 1B spatial workspace while keeping one Viewer per mount. */
+/** Render the version-safe Phase 1C spatial workspace while keeping one Viewer per mount. */
 export function CesiumMap({
   variant = 'dashboard', datasetVersionId: suppliedVersionId, interactionFrame,
-  dynamicLoading = false, selectedAsset, onCesiumStatusChange,
+  dynamicLoading = false, selectedAsset, analysisFeatures = [], comparisonFrame,
+  onViewportChange, onCesiumStatusChange,
 }: CesiumMapProps) {
   const { datasetVersionId: contextVersionId } = useDatasetVersion();
   const datasetVersionId = suppliedVersionId ?? contextVersionId;
@@ -155,6 +165,8 @@ export function CesiumMap({
   const velocityPointsRef = useRef<PointPrimitiveCollection | null>(null);
   const velocityLinesRef = useRef<PolylineCollection | null>(null);
   const structurePointsRef = useRef<PointPrimitiveCollection | null>(null);
+  const annotationLayerRef = useRef<AnnotationLayer | null>(null);
+  const resultRendererRef = useRef<ResultRenderer | null>(null);
   const settingsRef = useRef(initialLayerSettings);
   const interactionFrameRef = useRef(interactionFrame);
   const scaleModeRef = useRef<ScaleMode>('wmts');
@@ -170,6 +182,8 @@ export function CesiumMap({
   const [settings, setSettings] = useState(initialLayerSettings);
   const [performanceMetrics, setPerformanceMetrics] = useState<GISPerformanceMetric[]>([]);
   const [jsHeapMb, setJsHeapMb] = useState<number | null>(null);
+  const [annotationCount, setAnnotationCount] = useState(0);
+  const [framesPerSecond, setFramesPerSecond] = useState(0);
   interactionFrameRef.current = interactionFrame;
 
   useEffect(() => {
@@ -212,6 +226,45 @@ export function CesiumMap({
     velocityPointsRef.current = viewer.scene.primitives.add(new PointPrimitiveCollection());
     velocityLinesRef.current = viewer.scene.primitives.add(new PolylineCollection());
     structurePointsRef.current = viewer.scene.primitives.add(new PointPrimitiveCollection());
+    annotationLayerRef.current = new AnnotationLayer(viewer.scene);
+    resultRendererRef.current = new ResultRenderer(viewer.scene);
+
+    let renderedFrames = 0;
+    let frameWindowStarted = performance.now();
+    cleanups.push(viewer.scene.postRender.addEventListener(() => {
+      renderedFrames += 1;
+      const now = performance.now();
+      if (now - frameWindowStarted >= 1000) {
+        setFramesPerSecond(Math.round(renderedFrames * 1000 / (now - frameWindowStarted)));
+        renderedFrames = 0;
+        frameWindowStarted = now;
+      }
+    }));
+
+    async function syncAnnotations() {
+      const layer = annotationLayerRef.current;
+      if (!layer) return;
+      const rectangle = viewer.camera.computeViewRectangle();
+      const bbox = rectangle ? [
+        CesiumMath.toDegrees(rectangle.west), CesiumMath.toDegrees(rectangle.south),
+        CesiumMath.toDegrees(rectangle.east), CesiumMath.toDegrees(rectangle.north),
+      ].join(',') : undefined;
+      const frame = interactionFrameRef.current;
+      const scaleDenominator = Math.max(500, viewer.camera.positionCartographic.height * 5);
+      try {
+        const result = await getGISAnnotations({
+          dataset_version_id: activeDatasetVersionId, scale_denominator: scaleDenominator,
+          bbox, limit: 2000, time_seconds: frame?.selected_time_seconds ?? 0,
+          task_id: frame?.task_id ?? undefined, dispatch_run_id: frame?.dispatch_run_id ?? undefined,
+        });
+        if (cancelled) return;
+        layer.sync(result.items, scaleDenominator);
+        setAnnotationCount(layer.count);
+        viewer.scene.requestRender();
+      } catch {
+        if (!cancelled) setAnnotationCount(0);
+      }
+    }
 
     function syncThematicLayers(mode: ScaleMode) {
       for (const [key, layers] of thematicLayersRef.current) {
@@ -231,6 +284,12 @@ export function CesiumMap({
       scaleModeRef.current = mode;
       setScaleMode(mode);
       syncThematicLayers(mode);
+      const rectangle = viewer.camera.computeViewRectangle();
+      if (rectangle) onViewportChange?.([
+        CesiumMath.toDegrees(rectangle.west), CesiumMath.toDegrees(rectangle.south),
+        CesiumMath.toDegrees(rectangle.east), CesiumMath.toDegrees(rectangle.north),
+      ]);
+      void syncAnnotations();
     }
 
     cleanups.push(viewer.camera.moveEnd.addEventListener(updateScaleMode));
@@ -361,6 +420,7 @@ export function CesiumMap({
 
     void loadBasemap();
     void loadGeoServerLayers();
+    void syncAnnotations();
     return () => {
       cancelled = true;
       cleanups.forEach((cleanup) => cleanup());
@@ -369,12 +429,46 @@ export function CesiumMap({
       velocityPointsRef.current = null;
       velocityLinesRef.current = null;
       structurePointsRef.current = null;
+      annotationLayerRef.current = null;
+      resultRendererRef.current = null;
       basemapLayerRef.current = null;
       viewerRef.current = null;
       onCesiumStatusChange?.(false);
       if (!viewer.isDestroyed()) viewer.destroy();
     };
-  }, [datasetVersionId, reloadToken, variant]);
+  }, [datasetVersionId, onViewportChange, reloadToken, variant]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    const layer = annotationLayerRef.current;
+    if (!viewer || !layer || !datasetVersionId) return;
+    const frame = interactionFrame;
+    const scaleDenominator = Math.max(500, viewer.camera.positionCartographic.height * 5);
+    const rectangle = viewer.camera.computeViewRectangle();
+    const bbox = rectangle ? [
+      CesiumMath.toDegrees(rectangle.west), CesiumMath.toDegrees(rectangle.south),
+      CesiumMath.toDegrees(rectangle.east), CesiumMath.toDegrees(rectangle.north),
+    ].join(',') : undefined;
+    void getGISAnnotations({
+      dataset_version_id: datasetVersionId, scale_denominator: scaleDenominator, bbox,
+      limit: 2000, time_seconds: frame?.selected_time_seconds ?? 0,
+      task_id: frame?.task_id ?? undefined, dispatch_run_id: frame?.dispatch_run_id ?? undefined,
+    }).then((result) => {
+      if (annotationLayerRef.current !== layer) return;
+      layer.sync(result.items, scaleDenominator);
+      setAnnotationCount(layer.count);
+      viewer.scene.requestRender();
+    }).catch(() => setAnnotationCount(0));
+  }, [datasetVersionId, interactionFrame, reloadToken]);
+
+  useEffect(() => {
+    const renderer = resultRendererRef.current;
+    const viewer = viewerRef.current;
+    if (!renderer || !viewer) return;
+    if (comparisonFrame) renderer.renderComparison(comparisonFrame);
+    else renderer.renderSpatial(analysisFeatures);
+    viewer.scene.requestRender();
+  }, [analysisFeatures, comparisonFrame]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -462,7 +556,7 @@ export function CesiumMap({
   return (
     <section className={`map-card map-card--${variant} panel-surface`} aria-label="GIS 河网空间一张图">
       <div className="panel-heading map-card__heading">
-        <div><span className="panel-kicker">GEOSERVER · CESIUMJS / 1B</span><h2>版本化 GIS 业务交互</h2></div>
+        <div><span className="panel-kicker">POSTGIS · GEOSERVER · CESIUMJS / 1C</span><h2>专业 GIS 与模型融合</h2></div>
         <div className="map-toolbar">
           <Tag className="outline-tag" icon={<EnvironmentOutlined />}>CGCS2000 · EPSG:4490</Tag>
           <Tag className="outline-tag">版本 #{datasetVersionId}</Tag>
@@ -475,25 +569,20 @@ export function CesiumMap({
         <div ref={containerRef} className="cesium-container" />
         <div className={`map-load-state map-load-state--${loadState}`} role="status"><i />{loadMessage}</div>
         <div className={`basemap-status basemap-status--${basemapState}`} data-imagery-source={basemapState === 'imagery' ? 'arcgis-world-imagery' : basemapState}><i />{basemapMessage}</div>
-        {variant === 'workspace' && (
-          <div className="layer-control" aria-label="图层控制">
-            <div className="layer-control__title"><strong>图层控制</strong><span>显示 · 透明度</span></div>
-            <div className="layer-control__row"><Checkbox checked={basemapVisible} onChange={(event) => toggleBasemap(event.target.checked)}>{basemapState === 'fallback' ? '经纬网底图' : '卫星影像'}</Checkbox></div>
-            {[...staticLayerKeys, ...dynamicLayerKeys].map((key) => (
-              <div className={`layer-control__row ${dynamicLayerKeys.includes(key as DynamicLayerKey) ? 'layer-control__row--dynamic' : ''}`} key={key}>
-                <Checkbox checked={settings[key].visible} onChange={(event) => updateLayer(key, { visible: event.target.checked })}>{layerLabels[key]}</Checkbox>
-                <Slider min={0.1} max={1} step={0.1} value={settings[key].opacity} onChange={(value) => updateLayer(key, { opacity: value })} tooltip={{ formatter: (value) => `${Math.round((value ?? 0) * 100)}%` }} />
-              </div>
-            ))}
-            <div className="layer-legend">
-              <span><i className="legend-normal" />正常</span><span><i className="legend-warning" />警戒</span><span><i className="legend-danger" />危险</span>
-              <span><i className="legend-flow" />流向</span><span><i className="legend-running" />运行/开启</span>
-            </div>
-          </div>
-        )}
+        {variant === 'workspace' && <LayerManager
+          basemapLabel={basemapState === 'fallback' ? '经纬网底图' : '卫星影像'}
+          basemapVisible={basemapVisible}
+          items={[...staticLayerKeys, ...dynamicLayerKeys].map((key) => ({
+            key, label: layerLabels[key], visible: settings[key].visible,
+            opacity: settings[key].opacity, dynamic: dynamicLayerKeys.includes(key as DynamicLayerKey),
+          }))}
+          onBasemapChange={toggleBasemap}
+          onLayerChange={(key, update) => updateLayer(key as LayerKey, update)}
+        />}
         {variant === 'workspace' && performanceMetrics.length > 0 && (
           <div className="gis-performance" aria-label="GIS 性能监控">
-            <div><strong>性能监控</strong><span>{jsHeapMb === null ? '内存 API 不可用' : `JS 堆 ${jsHeapMb.toFixed(1)} MB`}</span></div>
+            <div><strong>性能监控 · {framesPerSecond} FPS</strong><span>{jsHeapMb === null ? '内存 API 不可用' : `JS 堆 ${jsHeapMb.toFixed(1)} MB`}</span></div>
+            <p><b>图层 / 标注</b><span>{thematicLayersRef.current.size + 7} 层</span><em>{annotationCount} 条</em></p>
             {performanceMetrics.map((metric) => (
               <p key={metric.source} className={`gis-performance--${metric.status}`}><b>{metric.source}</b><span>{metric.durationMs === null ? '测试中' : `${metric.durationMs.toFixed(0)} ms`}</span><em>{formatBytes(metric.bytes)}</em></p>
             ))}
