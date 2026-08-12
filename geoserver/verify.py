@@ -138,7 +138,7 @@ def _verify_backend() -> None:
     health = json.loads(payload)
     assert health["status"] == "healthy" and health["layers"] == 7
     _, payload, _ = _get(f"{BACKEND_URL}/api/v1/gis/geoserver/layers")
-    assert len(json.loads(payload)) == 6
+    assert len(json.loads(payload)) == 7
     rivers_query = urllib.parse.urlencode(
         {"dataset_version_id": DATASET_VERSION_ID, "limit": 1}
     )
