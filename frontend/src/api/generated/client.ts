@@ -443,6 +443,37 @@ export interface GeoJSONFeatureCollection {
   "meta": PaginationMeta;
 }
 
+export interface GeoServerConfigResponse {
+  "workspace"?: "dayu";
+  "wms_url": string;
+  "wmts_url": string;
+  "wfs_url": string;
+  "preferred_wmts_matrix_set"?: "EPSG:900913";
+  "interaction_source"?: "FastAPI /api/v1/gis/*";
+}
+
+export interface GeoServerHealthResponse {
+  "status": "healthy";
+  "workspace"?: "dayu";
+  "layers": number;
+  "cached_layers": number;
+  "wms"?: "online";
+  "wmts"?: "online";
+  "wfs_mode"?: "basic-read-only";
+  "source"?: "PostGIS / CGCS2000";
+}
+
+export interface GeoServerLayerRecord {
+  "name": string;
+  "qualified_name": string;
+  "title": string;
+  "geometry_type": "LineString" | "Point";
+  "style": string;
+  "wms_enabled"?: true;
+  "wmts_cached": boolean;
+  "srid"?: 4490;
+}
+
 export interface GISHealthResponse {
   "status": "healthy";
   "database": string;
@@ -1049,6 +1080,9 @@ export const getSystemInfo = (baseUrl = '') => requestJson<SystemInfoResponse>('
 export const getHealth = (baseUrl = '') => requestJson<HealthResponse>('/api/v1/health', {}, baseUrl);
 export const getGISHealth = (baseUrl = '') => requestJson<GISHealthResponse>('/api/v1/gis/health', {}, baseUrl);
 export const getGISStatistics = (baseUrl = '') => requestJson<GISStatisticsResponse>('/api/v1/gis/stats', {}, baseUrl);
+export const getGeoServerHealth = (baseUrl = '') => requestJson<GeoServerHealthResponse>('/api/v1/gis/geoserver/health', {}, baseUrl);
+export const getGeoServerLayers = (baseUrl = '') => requestJson<Array<GeoServerLayerRecord>>('/api/v1/gis/geoserver/layers', {}, baseUrl);
+export const getGeoServerConfig = (baseUrl = '') => requestJson<GeoServerConfigResponse>('/api/v1/gis/geoserver/config', {}, baseUrl);
 export const getRivers = (params: GISListQuery = {}, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(`/api/v1/gis/rivers${toQuery(params)}`, {}, baseUrl);
 export const getRiver = (id: number, baseUrl = '') => requestJson<GeoJSONFeature>(`/api/v1/gis/rivers/${id}`, {}, baseUrl);
 export const getGates = (params: GISListQuery = {}, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(`/api/v1/gis/gates${toQuery(params)}`, {}, baseUrl);

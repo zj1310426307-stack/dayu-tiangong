@@ -16,6 +16,8 @@ COPY backend ./backend
 COPY database ./database
 COPY model ./model
 COPY ai ./ai
+COPY optimization ./optimization
+COPY geoserver ./geoserver
 COPY docs/templates ./docs/templates
 
 WORKDIR /app/backend

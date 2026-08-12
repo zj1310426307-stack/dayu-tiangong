@@ -1,6 +1,6 @@
 # 大禹·天工（Dayu Tiangong）
 
-面向河网数字孪生的联合水动力、闸泵调度、多目标优化与 AI 辅助解释平台。Phase 6 已形成“模型/优化结果 → 只读工具与 RAG → 来源约束回答/报告 → 人工复核”的可追溯闭环。
+面向河网数字孪生的联合水动力、闸泵调度、多目标优化与 AI 辅助解释平台。Phase 1A 在 Phase 6 业务能力上新增 GeoServer 标准空间服务层，同时保留 FastAPI 动态业务接口。
 
 > 本仓库内置数据均为 **DEMO DATA**。当前计算未经工程率定，不连接实时监测、PLC/SCADA 或真实控制设备；AI 只解释、检索和生成报告，不修改结果，不替代人工审批。
 
@@ -10,6 +10,7 @@
 - 后端：FastAPI、Pydantic 2、SQLAlchemy 2、Alembic
 - 数值：一维 Saint-Venant、hydrostatic reconstruction、Rusanov；河网共同水位 + 节点连续性；闸门/泵站内部耦合
 - 数据：PostgreSQL 17、PostGIS 3.5，空间坐标统一为 CGCS2000 / EPSG:4490
+- 空间服务：GeoServer 2.28、WMS、Basic WFS、GeoWebCache/WMTS、6 个 SLD
 - 异步：Celery 5.5.3、Redis 7.4
 - 优化：种子可复现 PSO、多目标评分、硬约束、Pareto 非支配分层
 - AI：本地来源约束生成 / 可选 OpenAI-compatible LLM、离线 RAG、只读工具、安全护栏、Markdown/PDF
@@ -17,10 +18,14 @@
 ## 启动
 
 ```powershell
+$env:GEOSERVER_ADMIN_PASSWORD="replace-with-local-secret"
+$env:GEOSERVER_DB_PASSWORD="replace-with-another-local-secret"
 docker compose -p dayu-tiangong-phase1 -f docker/docker-compose.yml up --build
 ```
 
-编排顺序为 `database + redis → migrate (0001…0007) → seed → backend + worker → frontend`。seed 会复用稳定河网节点并幂等导入五类内置知识。
+也可以把这两个变量写入仓库根目录中被 `.gitignore` 排除的 `.env`。禁止把真实密码提交到版本库。
+
+编排顺序为 `database + redis + geoserver → migrate (0001…0007) → seed → geoserver-init → backend + worker → frontend`。`geoserver-init` 幂等创建只读数据库账号、`dayu` workspace、`dayu_postgis` store、6 个图层/SLD、Basic WFS 和 4 个 WMTS 缓存图层。
 
 - 平台：`http://127.0.0.1:8080/`
 - GIS：`http://127.0.0.1:8080/gis`
@@ -30,6 +35,18 @@ docker compose -p dayu-tiangong-phase1 -f docker/docker-compose.yml up --build
 - 多目标优化：`http://127.0.0.1:8080/optimization`
 - AI 水利助手：`http://127.0.0.1:8080/ai-assistant`
 - OpenAPI：`http://127.0.0.1:8001/docs`
+- GeoServer OGC 入口：`http://127.0.0.1:8081/geoserver/`（仅绑定本机；前端使用同源 `/geoserver/*` 代理）
+
+## Phase 1A 空间服务
+
+- WMS：`/geoserver/dayu/wms`
+- WMTS：`/geoserver/gwc/service/wmts`
+- Basic WFS：`/geoserver/dayu/ows`，不开放 WFS-T
+- 健康检查：`GET /api/v1/gis/geoserver/health`
+- 图层清单：`GET /api/v1/gis/geoserver/layers`
+- 浏览器安全配置：`GET /api/v1/gis/geoserver/config`
+
+GeoServer 的 PostGIS 登录默认名为 `dayu_geoserver`，只有 `CONNECT`、`USAGE`、`SELECT` 和序列读取权限，并设置 `default_transaction_read_only=on`。`/api/v1/gis/*` 全部保留，用于属性详情、数据版本和模型联动。
 
 ## Phase 6 API
 
@@ -59,7 +76,7 @@ docker compose -p dayu-tiangong-phase1 -f docker/docker-compose.yml build fronte
 docker run --rm -v "${PWD}\frontend:/app:ro" -w /app node:22-alpine npm audit --audit-level=moderate
 ```
 
-本次开启真实 PostGIS 集成后的全量自动测试为 102 passed，Phase 6 专项 11 项通过；Alembic 为 `0007 (head)`；前端类型检查、生产构建和内置浏览器验收通过。AI 页面块 8.68 kB（gzip 3.80 kB）；Cesium、ECharts、Ant Design 仍是独立大块。
+Phase 1A 全量回归（含真实 PostGIS）为 105 passed；前端类型检查与生产构建通过，GIS 页面块 2.42 kB、CesiumMap 8.35 kB。Compose 在线验收已覆盖 GeoServer catalog、WMS 图片、WMTS 缓存瓦片、Basic WFS、只读数据库角色、FastAPI 与浏览器 GIS 页面；结果见 `docs/review/phase1A_geoserver_review.md`。
 
 ## 文档
 
@@ -78,3 +95,4 @@ docker run --rm -v "${PWD}\frontend:/app:ro" -w /app node:22-alpine npm audit --
 - [Phase 5 审查](docs/review/phase5_optimization_review.md)
 - [Phase 6 AI 架构](docs/ai/phase6_ai_architecture.md)
 - [Phase 6 审查](docs/review/phase6_ai_review.md)
+- [Phase 1A GeoServer 审查](docs/review/phase1A_geoserver_review.md)

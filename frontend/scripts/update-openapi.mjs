@@ -60,6 +60,8 @@ const requiredPaths = [
   '/api/v1/ai/chat', '/api/v1/ai/knowledge/search',
   '/api/v1/ai/knowledge/documents', '/api/v1/ai/report/generate',
   '/api/v1/ai/tools/logs',
+  '/api/v1/gis/geoserver/health', '/api/v1/gis/geoserver/layers',
+  '/api/v1/gis/geoserver/config',
 ];
 for (const path of requiredPaths) {
   if (!openapi.paths?.[path]) throw new Error(`OpenAPI 缺少接口：${path}`);
@@ -108,6 +110,9 @@ export const getSystemInfo = (baseUrl = '') => requestJson<SystemInfoResponse>('
 export const getHealth = (baseUrl = '') => requestJson<HealthResponse>('/api/v1/health', {}, baseUrl);
 export const getGISHealth = (baseUrl = '') => requestJson<GISHealthResponse>('/api/v1/gis/health', {}, baseUrl);
 export const getGISStatistics = (baseUrl = '') => requestJson<GISStatisticsResponse>('/api/v1/gis/stats', {}, baseUrl);
+export const getGeoServerHealth = (baseUrl = '') => requestJson<GeoServerHealthResponse>('/api/v1/gis/geoserver/health', {}, baseUrl);
+export const getGeoServerLayers = (baseUrl = '') => requestJson<Array<GeoServerLayerRecord>>('/api/v1/gis/geoserver/layers', {}, baseUrl);
+export const getGeoServerConfig = (baseUrl = '') => requestJson<GeoServerConfigResponse>('/api/v1/gis/geoserver/config', {}, baseUrl);
 export const getRivers = (params: GISListQuery = {}, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/rivers\${toQuery(params)}\`, {}, baseUrl);
 export const getRiver = (id: number, baseUrl = '') => requestJson<GeoJSONFeature>(\`/api/v1/gis/rivers/\${id}\`, {}, baseUrl);
 export const getGates = (params: GISListQuery = {}, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/gates\${toQuery(params)}\`, {}, baseUrl);
