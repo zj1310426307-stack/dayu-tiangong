@@ -1,15 +1,17 @@
-import { AimOutlined, BorderOutlined, DeploymentUnitOutlined, FilePdfOutlined, RadarChartOutlined } from '@ant-design/icons';
+import { AimOutlined, BorderOutlined, DeploymentUnitOutlined, RadarChartOutlined } from '@ant-design/icons';
 import { Button, Input, InputNumber, Select, Space, Tag, message } from 'antd';
 import { useState } from 'react';
 import {
-  bufferGISFeatures, downloadGISThematicMap, getGISComparisonFrame,
+  bufferGISFeatures, getGISComparisonFrame,
   getNearestGISFacilities, selectGISFeatures, traceGISRiver,
   type GISComparisonFrame, type SpatialFeature,
 } from '../../api/generated/client';
+import { MapExport } from './MapExport';
 
 interface SpatialAnalysisProps {
   datasetVersionId: number;
   timeSeconds: number;
+  taskId?: number;
   viewportBbox: [number, number, number, number];
   onSpatialResult: (features: SpatialFeature[]) => void;
   onComparisonResult: (frame: GISComparisonFrame | null) => void;
@@ -17,7 +19,7 @@ interface SpatialAnalysisProps {
 
 /** Coordinate professional spatial tools while keeping all requests on the generated client. */
 export function SpatialAnalysis({
-  datasetVersionId, timeSeconds, viewportBbox = [120, 30, 120.6, 30.5],
+  datasetVersionId, timeSeconds, taskId, viewportBbox = [120, 30, 120.6, 30.5],
   onSpatialResult, onComparisonResult,
 }: SpatialAnalysisProps) {
   const [busy, setBusy] = useState('');
@@ -35,19 +37,6 @@ export function SpatialAnalysis({
     try { await action(); } catch (reason) {
       message.error(reason instanceof Error ? reason.message : '空间分析失败');
     } finally { setBusy(''); }
-  }
-
-  function exportPdf() {
-    void run('pdf', async () => {
-      const blob = await downloadGISThematicMap({
-        dataset_version_id: datasetVersionId, time_seconds: timeSeconds,
-        title: '大禹·天工 水动力专题图', author: 'Dayu Tiangong',
-      });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url; anchor.download = `dayu-phase1c-version-${datasetVersionId}.pdf`; anchor.click();
-      URL.revokeObjectURL(url);
-    });
   }
 
   return (
@@ -92,7 +81,7 @@ export function SpatialAnalysis({
           onComparisonResult(frame); onSpatialResult([]);
         })}>渲染差异</Button>
       </div>
-      <Button block loading={busy === 'pdf'} icon={<FilePdfOutlined />} onClick={exportPdf}>导出专业专题图 PDF</Button>
+      <MapExport datasetVersionId={datasetVersionId} timeSeconds={timeSeconds} taskId={taskId} />
     </aside>
   );
 }

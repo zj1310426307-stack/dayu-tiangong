@@ -1,4 +1,4 @@
-"""Strict Phase 1C contracts for annotations, spatial analysis and thematic mapping."""
+"""Strict Phase 1D contracts for search, annotations, spatial analysis and mapping."""
 
 from datetime import datetime
 from typing import Any, Literal
@@ -15,6 +15,9 @@ RelatedType = Literal[
 ]
 SpatialObjectType = Literal["river", "gate", "pump", "cross_section"]
 AnalysisFeatureType = Literal["river", "gate", "pump", "cross_section", "hydrology_station"]
+LocationResultType = Literal[
+    "coordinate", "administrative_area", "road", "place_name", "water_name", "poi"
+]
 
 
 class AnnotationBase(BaseModel):
@@ -110,6 +113,33 @@ class LayerCatalogItem(BaseModel):
     version_isolated: Literal[True] = True
     default_visible: bool
     dynamic: bool
+
+
+class LocationSearchItem(BaseModel):
+    """Represent one deterministic coordinate or local PostGIS gazetteer result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    result_type: LocationResultType
+    object_id: int | None = Field(default=None, gt=0)
+    name: str
+    address: str | None = None
+    longitude: float = Field(ge=-180, le=180)
+    latitude: float = Field(ge=-90, le=90)
+    source: Literal["coordinate-parser", "PostGIS dayu_basemap"]
+
+
+class LocationSearchResponse(BaseModel):
+    """Return bounded location candidates with explicit mode and coordinate reference."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    query: str
+    mode: Literal["coordinate", "text"]
+    dataset_version_id: int = Field(gt=0)
+    items: list[LocationSearchItem]
+    crs: Literal["EPSG:4490"] = "EPSG:4490"
+    demo_data: Literal[True] = True
 
 
 class SpatialFeature(BaseModel):

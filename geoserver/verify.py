@@ -1,4 +1,4 @@
-"""Run post-deployment Phase 1C checks against Compose-exposed services."""
+"""Run post-deployment Phase 1D checks against Compose-exposed services."""
 
 from __future__ import annotations
 
@@ -14,8 +14,11 @@ import psycopg
 
 GEOSERVER_URL = os.getenv("GEOSERVER_VERIFY_URL", "http://127.0.0.1:8081/geoserver").rstrip("/")
 BACKEND_URL = os.getenv("BACKEND_VERIFY_URL", "http://127.0.0.1:8001").rstrip("/")
-LAYERS = ("river", "river_segment", "river_node", "cross_section", "gate", "pump", "map_annotation")
-CACHED = ("river", "river_segment", "gate", "pump")
+LAYERS = (
+    "river", "river_segment", "river_node", "cross_section", "gate", "pump",
+    "map_annotation", "administrative_area", "road", "place_name", "water_name", "poi",
+)
+CACHED = ("river", "river_segment", "gate", "pump", "road", "place_name", "water_name")
 DATASET_VERSION_ID = int(os.getenv("GIS_VERIFY_DATASET_VERSION_ID", "1"))
 
 
@@ -46,13 +49,14 @@ def _capabilities(service: str, path: str, version: str) -> str:
 
 
 def _verify_catalog_and_images() -> None:
-    """Check the seven-layer catalog, rendered imagery, and Basic WFS reads."""
+    """Check the twelve-layer catalog, basemap group, imagery, and Basic WFS reads."""
 
     wms = _capabilities("WMS", "/dayu/wms", "1.3.0")
     wmts = _capabilities("WMTS", "/gwc/service/wmts", "1.0.0")
     wfs = _capabilities("WFS", "/dayu/ows", "2.0.0")
     for layer in LAYERS:
         assert f"dayu:{layer}" in wms or f">{layer}<" in wms
+    assert "dayu_basemap" in wms
     for layer in CACHED:
         assert f"dayu:{layer}" in wmts
     wfs_root = ET.fromstring(wfs)
@@ -103,6 +107,19 @@ def _verify_catalog_and_images() -> None:
     media_type, wms_png, _ = _get(f"{GEOSERVER_URL}/dayu/wms?{wms_query}")
     assert media_type == "image/png"
     assert _png_dimensions(wms_png) == (512, 384)
+
+    basemap_query = urllib.parse.urlencode(
+        {
+            "service": "WMS", "version": "1.1.1", "request": "GetMap",
+            "layers": "dayu:dayu_basemap", "styles": "", "srs": "EPSG:4490",
+            "bbox": "113.10,22.95,113.55,23.35", "width": 512, "height": 384,
+            "format": "image/png", "transparent": "true",
+            "CQL_FILTER": f"dataset_version_id={DATASET_VERSION_ID}",
+        }
+    )
+    media_type, basemap_png, _ = _get(f"{GEOSERVER_URL}/dayu/wms?{basemap_query}")
+    assert media_type == "image/png"
+    assert _png_dimensions(basemap_png) == (512, 384)
 
     wmts_query = urllib.parse.urlencode(
         {
@@ -155,9 +172,10 @@ def _verify_backend() -> None:
 
     _, payload, _ = _get(f"{BACKEND_URL}/api/v1/gis/geoserver/health")
     health = json.loads(payload)
-    assert health["status"] == "healthy" and health["layers"] == 7
+    assert health["status"] == "healthy" and health["layers"] == 12
+    assert health["basemap_group"] == "dayu_basemap"
     _, payload, _ = _get(f"{BACKEND_URL}/api/v1/gis/geoserver/layers")
-    assert len(json.loads(payload)) == 7
+    assert len(json.loads(payload)) == 12
     rivers_query = urllib.parse.urlencode(
         {"dataset_version_id": DATASET_VERSION_ID, "limit": 1}
     )
@@ -172,7 +190,7 @@ def main() -> None:
     _verify_read_only_role()
     _verify_backend()
     print(
-        "Phase 1C live verification passed: seven-layer catalog, annotation WFS, "
+        "Phase 1D live verification passed: dayu_basemap, twelve-layer catalog, annotation WFS, "
         "version-filtered WMS/WMTS, read-only role, FastAPI"
     )
 

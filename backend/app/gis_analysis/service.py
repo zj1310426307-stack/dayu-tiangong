@@ -1,10 +1,11 @@
-"""Phase 1C business logic for PostGIS analysis, A/B comparison and PDF cartography."""
+"""Phase 1D business logic for basemap search, spatial analysis, comparison and cartography."""
 
 from __future__ import annotations
 
 from collections import defaultdict, deque
 from io import BytesIO
 import json
+import re
 from typing import Any
 
 from geoalchemy2 import Geography, Geometry
@@ -20,8 +21,8 @@ from app.gis_analysis.schemas import (
     AnnotationCreate, AnnotationRecord, AnnotationUpdate, BufferAnalysisRequest,
     BufferAnalysisResponse, ComparisonStructureSample, ComparisonWaterSample,
     GISComparisonFrame, LayerCatalogItem, NearestFacilityRequest,
-    NearestFacilityResponse, SpatialFeature, SpatialSelectRequest, SpatialSelectResponse,
-    ThematicMapRequest, TraceResponse,
+    NearestFacilityResponse, LocationSearchItem, LocationSearchResponse, SpatialFeature,
+    SpatialSelectRequest, SpatialSelectResponse, ThematicMapRequest, TraceResponse,
 )
 
 
@@ -47,6 +48,11 @@ def layer_catalog() -> list[LayerCatalogItem]:
 
     rows = [
         ("basemap", "卫星影像/经纬网", "base", "WMTS", "raster", True, False),
+        ("administrative_area", "行政区", "base", "WMS", "polygon", True, False),
+        ("road", "道路", "base", "WMTS", "line", True, False),
+        ("place_name", "地名", "base", "WMTS", "point", True, False),
+        ("water_name", "水名", "base", "WMTS", "point", True, False),
+        ("poi", "公共设施 / POI", "base", "WMS", "point", False, False),
         ("river", "河道", "engineering", "WMTS", "line", True, False),
         ("river_segment", "河段", "engineering", "WMS", "line", False, False),
         ("river_node", "河网节点", "engineering", "WMS", "point", False, False),
@@ -56,11 +62,20 @@ def layer_catalog() -> list[LayerCatalogItem]:
         ("annotation", "地点注记", "annotation", "FastAPI", "point", True, True),
         ("water_result", "水位风险", "model", "FastAPI", "point", True, True),
         ("velocity_result", "流速与流向", "model", "FastAPI", "mixed", True, True),
+        ("risk_result", "风险分级", "analysis", "FastAPI", "point", True, True),
         ("flood_evolution", "洪水演进", "model", "FastAPI", "mixed", False, True),
-        ("dispatch_status", "闸泵调度", "dispatch", "FastAPI", "point", True, True),
+        ("gate_status", "闸门调度", "dispatch", "FastAPI", "point", True, True),
+        ("pump_status", "泵站调度", "dispatch", "FastAPI", "point", True, True),
         ("comparison", "方案差异", "analysis", "PostGIS analysis", "mixed", False, True),
         ("selection", "空间分析结果", "analysis", "PostGIS analysis", "mixed", False, True),
         ("vector_tile", "PostGIS 矢量瓦片", "engineering", "MVT", "mixed", False, True),
+    ]
+    return [
+        LayerCatalogItem(
+            key=key, title=title, group=group, source=source, geometry=geometry,
+            default_visible=visible, dynamic=dynamic,
+        )
+        for key, title, group, source, geometry, visible, dynamic in rows
     ]
 
 
@@ -98,13 +113,86 @@ def build_vector_tile(
         "dataset_version_id": dataset_version_id, "layer": layer,
     })
     return bytes(payload or b"")
-    return [
-        LayerCatalogItem(
-            key=key, title=title, group=group, source=source, geometry=geometry,
-            default_visible=visible, dynamic=dynamic,
+
+
+COORDINATE_PATTERN = re.compile(
+    r"^\s*([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*[,，]\s*"
+    r"([+-]?(?:\d+(?:\.\d+)?|\.\d+))\s*$"
+)
+
+
+def search_locations(
+    session: Session, dataset_version_id: int, query: str, limit: int
+) -> LocationSearchResponse:
+    """Parse coordinates or search the versioned offline PostGIS gazetteer."""
+
+    _require_version(session, dataset_version_id)
+    token = query.strip()
+    coordinate = COORDINATE_PATTERN.fullmatch(token)
+    if coordinate:
+        longitude, latitude = (float(coordinate.group(1)), float(coordinate.group(2)))
+        if not (-180 <= longitude <= 180 and -90 <= latitude <= 90):
+            raise GISAnalysisError("坐标超出 EPSG:4490 经度/纬度范围")
+        return LocationSearchResponse(
+            query=token, mode="coordinate", dataset_version_id=dataset_version_id,
+            items=[LocationSearchItem(
+                result_type="coordinate", name=f"坐标 {longitude:.6f}, {latitude:.6f}",
+                longitude=longitude, latitude=latitude, source="coordinate-parser",
+            )],
         )
-        for key, title, group, source, geometry, visible, dynamic in rows
-    ]
+
+    pattern = f"%{token}%"
+    prefix = f"{token}%"
+    rows = session.execute(text("""
+        WITH candidates AS (
+            SELECT 'administrative_area' AS result_type, id AS object_id, name, address,
+                   ST_X(ST_PointOnSurface(geometry)) AS longitude,
+                   ST_Y(ST_PointOnSurface(geometry)) AS latitude,
+                   CASE WHEN name = :query THEN 0 WHEN name ILIKE :prefix THEN 1 ELSE 2 END AS rank
+            FROM administrative_area
+            WHERE dataset_version_id = :version_id
+              AND (name ILIKE :pattern OR COALESCE(address, '') ILIKE :pattern)
+            UNION ALL
+            SELECT 'road', id, name, address,
+                   ST_X(ST_LineInterpolatePoint(geometry, 0.5)),
+                   ST_Y(ST_LineInterpolatePoint(geometry, 0.5)),
+                   CASE WHEN name = :query THEN 0 WHEN name ILIKE :prefix THEN 1 ELSE 2 END
+            FROM road
+            WHERE dataset_version_id = :version_id
+              AND (name ILIKE :pattern OR COALESCE(address, '') ILIKE :pattern)
+            UNION ALL
+            SELECT 'place_name', id, name, address, ST_X(geometry), ST_Y(geometry),
+                   CASE WHEN name = :query THEN 0 WHEN name ILIKE :prefix THEN 1 ELSE 2 END
+            FROM place_name
+            WHERE dataset_version_id = :version_id
+              AND (name ILIKE :pattern OR COALESCE(address, '') ILIKE :pattern)
+            UNION ALL
+            SELECT 'water_name', id, name, address, ST_X(geometry), ST_Y(geometry),
+                   CASE WHEN name = :query THEN 0 WHEN name ILIKE :prefix THEN 1 ELSE 2 END
+            FROM water_name
+            WHERE dataset_version_id = :version_id
+              AND (name ILIKE :pattern OR COALESCE(address, '') ILIKE :pattern)
+            UNION ALL
+            SELECT 'poi', id, name, address, ST_X(geometry), ST_Y(geometry),
+                   CASE WHEN name = :query THEN 0 WHEN name ILIKE :prefix THEN 1 ELSE 2 END
+            FROM poi
+            WHERE dataset_version_id = :version_id
+              AND (name ILIKE :pattern OR COALESCE(address, '') ILIKE :pattern)
+        )
+        SELECT result_type, object_id, name, address, longitude, latitude
+        FROM candidates ORDER BY rank, result_type, name, object_id LIMIT :limit
+    """), {
+        "query": token, "prefix": prefix, "pattern": pattern,
+        "version_id": dataset_version_id, "limit": limit,
+    }).mappings().all()
+    return LocationSearchResponse(
+        query=token, mode="text", dataset_version_id=dataset_version_id,
+        items=[LocationSearchItem(
+            result_type=row["result_type"], object_id=row["object_id"], name=row["name"],
+            address=row["address"], longitude=float(row["longitude"]),
+            latitude=float(row["latitude"]), source="PostGIS dayu_basemap",
+        ) for row in rows],
+    )
 
 
 def create_annotation(session: Session, payload: AnnotationCreate) -> AnnotationRecord:
@@ -435,7 +523,7 @@ def build_thematic_pdf(session: Session, payload: ThematicMapRequest) -> bytes:
     pdf.drawString(36, height - 42, payload.title)
     pdf.setFont("STSong-Light", 9)
     pdf.setFillColor(colors.HexColor("#49646C"))
-    pdf.drawRightString(width - 36, height - 38, "DAYU TIANGONG · PHASE 1C · DEMO DATA")
+    pdf.drawRightString(width - 36, height - 38, "DAYU TIANGONG · PHASE 1D · DEMO DATA")
     map_x, map_y, map_w, map_h = 36, 78, width - 260, height - 140
     pdf.setFillColor(colors.HexColor("#071923"))
     pdf.setStrokeColor(colors.HexColor("#3B7C86"))
@@ -481,8 +569,13 @@ def build_thematic_pdf(session: Session, payload: ThematicMapRequest) -> bytes:
         pdf.setFillColor(colors.HexColor(color)); pdf.rect(panel_x, y - 3, 10, 10, fill=1, stroke=0)
         pdf.setFillColor(colors.HexColor("#294A53")); pdf.drawString(panel_x + 16, y, label); y -= 20
     selected_time = frame.selected_time_seconds if frame.selected_time_seconds is not None else payload.time_seconds
+    task = session.get(SimulationTask, frame.task_id) if frame.task_id else None
+    model_version = task.engine_version if task and task.engine_version else "DEMO simplified hydraulic engine"
+    if task and task.engine_commit:
+        model_version = f"{model_version} / {task.engine_commit}"
     metadata = [
         f"坐标系：CGCS2000 / EPSG:4490", f"数据版本：#{payload.dataset_version_id}",
+        f"模型版本：{model_version}",
         f"模型任务：#{frame.task_id or '无'}", f"调度运行：#{frame.dispatch_run_id or '无'}",
         f"模拟时刻：{selected_time:.0f} s", f"水动力点：{len(frame.water_samples)}",
         f"闸泵状态：{len(frame.structure_samples)}", f"制图人：{payload.author}",
@@ -496,7 +589,7 @@ def build_thematic_pdf(session: Session, payload: ThematicMapRequest) -> bytes:
         pdf.drawString(panel_x, y, line); y -= 14
     pdf.setFillColor(colors.HexColor("#49646C"))
     pdf.drawString(36, 44, f"范围：{bbox[0]:.5f}, {bbox[1]:.5f} - {bbox[2]:.5f}, {bbox[3]:.5f}")
-    pdf.drawRightString(width - 36, 44, "图例 · 比例尺 · 指北针 · 坐标 · 时间 · 数据版本")
+    pdf.drawRightString(width - 36, 44, "图例 · 比例尺 · 指北针 · 坐标 · 时间 · 数据/模型版本")
     pdf.showPage(); pdf.save()
     return stream.getvalue()
 

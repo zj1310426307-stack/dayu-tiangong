@@ -12,24 +12,30 @@ from sqlalchemy import func, select, text
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPOSITORY_ROOT))
 sys.path.insert(0, str(REPOSITORY_ROOT / "backend"))
 
 from app.database.session import SessionLocal  # noqa: E402
 from app.ai.service import seed_builtin_knowledge  # noqa: E402
 from app.gis.models import (  # noqa: E402
+    AdministrativeArea,
     BoundaryCondition,
     CrossSection,
     DatasetVersion,
     Gate,
     MapAnnotation,
     ModelParameter,
+    PlaceName,
+    PointOfInterest,
     Pump,
     River,
     RiverNode,
     RiverConnection,
     RiverSegment,
+    Road,
     SimulationCase,
     SimulationCaseBoundary,
+    WaterName,
 )
 from app.river.service import generate_topology  # noqa: E402
 
@@ -492,6 +498,55 @@ def seed_demo_data() -> dict[str, int]:
             ON CONFLICT ON CONSTRAINT uq_map_annotation_version_related_name DO NOTHING
         """), {"version_id": version.id})
 
+        # Phase 1D offline gazetteer rows are idempotent and remain version-owned.
+        session.execute(text("""
+            INSERT INTO administrative_area
+                (dataset_version_id, code, name, administrative_level, address, geometry)
+            VALUES
+                (:version_id, 'CN-GD-GZ', '广州市', 'city', '广东省广州市', ST_GeomFromText('POLYGON((113.10 22.95,113.55 22.95,113.55 23.35,113.10 23.35,113.10 22.95))',4490)),
+                (:version_id, 'CN-GD-GZ-TH', '天河区', 'district', '广东省广州市天河区', ST_GeomFromText('POLYGON((113.25 23.05,113.48 23.05,113.48 23.24,113.25 23.24,113.25 23.05))',4490)),
+                (:version_id, 'DEMO-BASIN', 'DEMO 工程流域', 'engineering_demo', 'DEMO DATA', ST_GeomFromText('POLYGON((119.92 30.02,120.62 30.02,120.62 30.55,119.92 30.55,119.92 30.02))',4490))
+            ON CONFLICT ON CONSTRAINT uq_administrative_area_version_code DO NOTHING
+        """), {"version_id": version.id})
+
+        session.execute(text("""
+            INSERT INTO road (dataset_version_id, code, name, road_type, address, geometry)
+            VALUES
+                (:version_id, 'GZ-TSL', '天寿路', 'urban', '广州市天河区天寿路', ST_GeomFromText('LINESTRING(113.3380 23.1410,113.3392 23.1465,113.3400 23.1515)',4490)),
+                (:version_id, 'GZ-GYKSL', '广园快速路', 'expressway', '广州市天河区广园快速路', ST_GeomFromText('LINESTRING(113.2900 23.1590,113.3500 23.1610,113.4300 23.1580)',4490)),
+                (:version_id, 'GZ-TYDXL', '天源路', 'arterial', '广州市天河区天源路', ST_GeomFromText('LINESTRING(113.3450 23.1650,113.3600 23.2050,113.3760 23.2450)',4490)),
+                (:version_id, 'DEMO-RD-001', 'DEMO 防汛巡检路', 'engineering', 'DEMO 工程流域', ST_GeomFromText('LINESTRING(120.00 30.235,120.18 30.255,120.36 30.235,120.55 30.285)',4490))
+            ON CONFLICT ON CONSTRAINT uq_road_version_code DO NOTHING
+        """), {"version_id": version.id})
+
+        session.execute(text("""
+            INSERT INTO place_name (dataset_version_id, code, name, place_type, address, importance, geometry)
+            VALUES
+                (:version_id, 'PLACE-GZ', '广州市', 'city', '广东省广州市', 100, ST_SetSRID(ST_MakePoint(113.2644,23.1291),4490)),
+                (:version_id, 'PLACE-TH', '天河区', 'district', '广东省广州市天河区', 90, ST_SetSRID(ST_MakePoint(113.3612,23.1247),4490)),
+                (:version_id, 'PLACE-DEMO', 'DEMO 河网调度区', 'engineering_demo', 'DEMO DATA', 80, ST_SetSRID(ST_MakePoint(120.27,30.27),4490))
+            ON CONFLICT ON CONSTRAINT uq_place_name_version_code DO NOTHING
+        """), {"version_id": version.id})
+
+        session.execute(text("""
+            INSERT INTO water_name (dataset_version_id, code, name, water_type, address, geometry)
+            VALUES
+                (:version_id, 'WATER-ZJ', '珠江', 'river', '广东省广州市', ST_SetSRID(ST_MakePoint(113.2700,23.1050),4490)),
+                (:version_id, 'WATER-SHC', '沙河涌', 'channel', '广州市天河区', ST_SetSRID(ST_MakePoint(113.3220,23.1450),4490)),
+                (:version_id, 'WATER-DEMO', 'DEMO 主河道水系', 'engineering_demo', 'DEMO DATA', ST_SetSRID(ST_MakePoint(120.30,30.24),4490))
+            ON CONFLICT ON CONSTRAINT uq_water_name_version_code DO NOTHING
+        """), {"version_id": version.id})
+
+        session.execute(text("""
+            INSERT INTO poi (dataset_version_id, code, name, category, address, geometry)
+            VALUES
+                (:version_id, 'POI-GZ-EAST', '广州东站', 'transport', '广州市天河区林和中路', ST_SetSRID(ST_MakePoint(113.3249,23.1503),4490)),
+                (:version_id, 'POI-TIANHE-SPORTS', '天河体育中心', 'public_service', '广州市天河区天河路299号', ST_SetSRID(ST_MakePoint(113.3283,23.1377),4490)),
+                (:version_id, 'POI-COORD-DEMO', '天寿路坐标示例点', 'demo_coordinate', '广州市天河区天寿路', ST_SetSRID(ST_MakePoint(113.3238,23.1356),4490)),
+                (:version_id, 'POI-DAYU-CENTER', '大禹天工调度中心', 'engineering', 'DEMO 工程流域', ST_SetSRID(ST_MakePoint(120.27,30.27),4490))
+            ON CONFLICT ON CONSTRAINT uq_poi_version_code DO NOTHING
+        """), {"version_id": version.id})
+
     with SessionLocal() as session:
         # Phase 6 内置知识随空库初始化幂等入库，容器无需手工执行第二条命令。
         seed_builtin_knowledge(session)
@@ -502,6 +557,11 @@ def seed_demo_data() -> dict[str, int]:
             "pumps": session.scalar(select(func.count(Pump.id))) or 0,
             "cross_sections": session.scalar(select(func.count(CrossSection.id))) or 0,
             "map_annotations": session.scalar(select(func.count(MapAnnotation.id))) or 0,
+            "administrative_areas": session.scalar(select(func.count(AdministrativeArea.id))) or 0,
+            "roads": session.scalar(select(func.count(Road.id))) or 0,
+            "place_names": session.scalar(select(func.count(PlaceName.id))) or 0,
+            "water_names": session.scalar(select(func.count(WaterName.id))) or 0,
+            "pois": session.scalar(select(func.count(PointOfInterest.id))) or 0,
             "river_nodes": session.scalar(select(func.count(RiverNode.id))) or 0,
             "simulation_cases": session.scalar(select(func.count(SimulationCase.id))) or 0,
         }

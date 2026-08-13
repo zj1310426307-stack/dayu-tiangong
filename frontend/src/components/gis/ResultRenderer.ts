@@ -35,6 +35,19 @@ export class ResultRenderer {
           }),
         });
       }
+      if (geometry.type === 'Polygon' && Array.isArray(geometry.coordinates)) {
+        const rings = geometry.coordinates as number[][][];
+        for (const ring of rings) {
+          this.lines.add({
+            id: { kind: 'analysis', feature },
+            positions: ring.map(([longitude, latitude]) => Cartesian3.fromDegrees(longitude, latitude, 95)),
+            width: 4,
+            material: Material.fromType(Material.ColorType, {
+              color: Color.fromCssColorString('#ffcf5c').withAlpha(0.9),
+            }),
+          });
+        }
+      }
     }
   }
 

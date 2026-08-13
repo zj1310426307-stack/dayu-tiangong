@@ -1,4 +1,4 @@
-"""HTTP boundary for Phase 1C GIS annotations, analysis, comparison and map export."""
+"""HTTP boundary for Phase 1D search, GIS analysis, comparison and map export."""
 
 from typing import Annotated, Literal
 
@@ -12,7 +12,7 @@ from app.gis_analysis import annotation, service
 from app.gis_analysis.schemas import (
     AnnotationCollection, AnnotationCreate, AnnotationRecord, AnnotationType,
     AnnotationUpdate, BufferAnalysisRequest, BufferAnalysisResponse, GISComparisonFrame,
-    LayerCatalogItem, NearestFacilityRequest, NearestFacilityResponse,
+    LayerCatalogItem, LocationSearchResponse, NearestFacilityRequest, NearestFacilityResponse,
     SpatialSelectRequest, SpatialSelectResponse, ThematicMapRequest, TraceResponse,
 )
 
@@ -34,11 +34,25 @@ def _domain_call(session: Session, action):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="注记违反版本、关联或唯一性约束") from exc
 
 
-@router.get("/layers", response_model=list[LayerCatalogItem], summary="获取 Phase 1C 专业图层目录")
+@router.get("/layers", response_model=list[LayerCatalogItem], summary="获取 Phase 1D 专业图层目录")
 def read_layer_catalog() -> list[LayerCatalogItem]:
     """Return the static, dynamic and analysis layer ownership catalog."""
 
     return service.layer_catalog()
+
+
+@router.get("/search", response_model=LocationSearchResponse, summary="坐标或本地地名道路 POI 定位")
+def search_map_locations(
+    session: SessionDependency,
+    dataset_version_id: int = Query(gt=0),
+    q: str = Query(min_length=1, max_length=128),
+    limit: int = Query(default=12, ge=1, le=50),
+) -> LocationSearchResponse:
+    """Expose the read-only Phase 1D location search boundary."""
+
+    return _domain_call(
+        session, lambda: service.search_locations(session, dataset_version_id, q, limit)
+    )
 
 
 @router.get("/vector-tiles/{layer}/{z}/{x}/{y}.mvt", summary="读取版本隔离的 PostGIS 矢量瓦片")
@@ -168,5 +182,5 @@ def thematic_map_pdf(payload: ThematicMapRequest, session: SessionDependency) ->
     content = _domain_call(session, lambda: service.build_thematic_pdf(session, payload))
     return Response(
         content=content, media_type="application/pdf",
-        headers={"Content-Disposition": 'attachment; filename="dayu-phase1c-thematic-map.pdf"'},
+        headers={"Content-Disposition": 'attachment; filename="dayu-phase1d-thematic-map.pdf"'},
     )

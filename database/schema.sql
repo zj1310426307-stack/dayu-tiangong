@@ -490,3 +490,37 @@ CREATE TABLE map_annotation (
 );
 CREATE INDEX ix_map_annotation_geometry_gist ON map_annotation USING gist (geometry);
 CREATE INDEX ix_map_annotation_dataset_type ON map_annotation (dataset_version_id, annotation_type);
+
+-- Phase 1D local basemap and gazetteer tables share the authoritative version boundary.
+CREATE TABLE administrative_area (
+    id SERIAL PRIMARY KEY, dataset_version_id INTEGER NOT NULL REFERENCES dataset_version(id) ON DELETE CASCADE,
+    code VARCHAR(64) NOT NULL, name VARCHAR(128) NOT NULL, address VARCHAR(256),
+    administrative_level VARCHAR(32) NOT NULL, geometry geometry(Polygon,4490) NOT NULL,
+    CONSTRAINT uq_administrative_area_version_code UNIQUE (dataset_version_id, code)
+);
+CREATE INDEX ix_administrative_area_geometry_gist ON administrative_area USING gist (geometry);
+CREATE TABLE road (
+    id SERIAL PRIMARY KEY, dataset_version_id INTEGER NOT NULL REFERENCES dataset_version(id) ON DELETE CASCADE,
+    code VARCHAR(64) NOT NULL, name VARCHAR(128) NOT NULL, address VARCHAR(256), road_type VARCHAR(32) NOT NULL,
+    geometry geometry(LineString,4490) NOT NULL, CONSTRAINT uq_road_version_code UNIQUE (dataset_version_id, code)
+);
+CREATE INDEX ix_road_geometry_gist ON road USING gist (geometry);
+CREATE TABLE place_name (
+    id SERIAL PRIMARY KEY, dataset_version_id INTEGER NOT NULL REFERENCES dataset_version(id) ON DELETE CASCADE,
+    code VARCHAR(64) NOT NULL, name VARCHAR(128) NOT NULL, address VARCHAR(256), place_type VARCHAR(32) NOT NULL,
+    importance INTEGER NOT NULL DEFAULT 50, geometry geometry(Point,4490) NOT NULL,
+    CONSTRAINT uq_place_name_version_code UNIQUE (dataset_version_id, code)
+);
+CREATE INDEX ix_place_name_geometry_gist ON place_name USING gist (geometry);
+CREATE TABLE water_name (
+    id SERIAL PRIMARY KEY, dataset_version_id INTEGER NOT NULL REFERENCES dataset_version(id) ON DELETE CASCADE,
+    code VARCHAR(64) NOT NULL, name VARCHAR(128) NOT NULL, address VARCHAR(256), water_type VARCHAR(32) NOT NULL,
+    geometry geometry(Point,4490) NOT NULL, CONSTRAINT uq_water_name_version_code UNIQUE (dataset_version_id, code)
+);
+CREATE INDEX ix_water_name_geometry_gist ON water_name USING gist (geometry);
+CREATE TABLE poi (
+    id SERIAL PRIMARY KEY, dataset_version_id INTEGER NOT NULL REFERENCES dataset_version(id) ON DELETE CASCADE,
+    code VARCHAR(64) NOT NULL, name VARCHAR(128) NOT NULL, address VARCHAR(256), category VARCHAR(64) NOT NULL,
+    geometry geometry(Point,4490) NOT NULL, CONSTRAINT uq_poi_version_code UNIQUE (dataset_version_id, code)
+);
+CREATE INDEX ix_poi_geometry_gist ON poi USING gist (geometry);

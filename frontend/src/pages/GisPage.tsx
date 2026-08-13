@@ -23,7 +23,7 @@ function serviceTag(label: string, state: ServiceState) {
   return <Tag color={color}>{label}: {text}</Tag>;
 }
 
-/** Coordinate versions, model frames and professional Phase 1C spatial workflows. */
+/** Coordinate versions, model frames, basemap search, and professional Phase 1D workflows. */
 export function GisPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -103,9 +103,9 @@ export function GisPage() {
     <div className="gis-page">
       <header className="gis-page__header">
         <div>
-          <span className="hero-kicker"><i /> PROFESSIONAL GIS + MODEL INTEGRATION</span>
-          <h1>GIS 与模型融合工作台</h1>
-          <p>专业注记、空间分析、水动力演进、调度状态、多方案差异与专题图输出保持同版本、同时间联动。</p>
+          <span className="hero-kicker"><i /> ARCGIS-STYLE HYDRAULIC WORKBENCH</span>
+          <h1>GIS 空间分析与水动力融合工作台</h1>
+          <p>基础地图、坐标地名定位、工程图层、空间分析、水动力演进、调度状态与专题制图保持同版本联动。</p>
         </div>
         <Space wrap>
           <label className="gis-version-select">数据版本
@@ -118,7 +118,7 @@ export function GisPage() {
             />
           </label>
           {dispatchRunId > 0 && <Button onClick={() => navigate(`/dispatch/runs/${dispatchRunId}`)}>返回运行 #{dispatchRunId}</Button>}
-          <span className="gis-page__badge">PHASE 1C · DEMO DATA</span>
+          <span className="gis-page__badge">PHASE 1D · DEMO DATA</span>
         </Space>
       </header>
       <div className="spatial-service-strip" aria-label="空间服务状态">
@@ -166,6 +166,7 @@ export function GisPage() {
         <SpatialAnalysis
           datasetVersionId={datasetVersionId!}
           timeSeconds={interactionFrame?.selected_time_seconds ?? requestedTime}
+          taskId={interactionFrame?.task_id ?? undefined}
           viewportBbox={viewportBbox}
           onSpatialResult={setAnalysisFeatures}
           onComparisonResult={setComparisonFrame}

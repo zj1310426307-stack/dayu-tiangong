@@ -12,6 +12,10 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+tmp/
+
+# 本地验收产物（正式审查结论保存在 docs/review）
+output/
 
 # 运行期导入归档
 backend/storage/imports/

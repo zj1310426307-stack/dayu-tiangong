@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<StyledLayerDescriptor version="1.0.0" xmlns="http://www.opengis.net/sld" xmlns:ogc="http://www.opengis.net/ogc" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <NamedLayer><Name>water_name</Name><UserStyle><Name>water_name</Name><Title>Water Name</Title><FeatureTypeStyle><Rule><MaxScaleDenominator>700000</MaxScaleDenominator><TextSymbolizer><Label><ogc:PropertyName>name</ogc:PropertyName></Label><Font><CssParameter name="font-family">Noto Sans CJK SC</CssParameter><CssParameter name="font-size">12</CssParameter><CssParameter name="font-style">italic</CssParameter></Font><Halo><Radius>1.2</Radius><Fill><CssParameter name="fill">#061522</CssParameter></Fill></Halo><Fill><CssParameter name="fill">#6CC7FF</CssParameter></Fill><VendorOption name="conflictResolution">true</VendorOption></TextSymbolizer></Rule></FeatureTypeStyle></UserStyle></NamedLayer>
+</StyledLayerDescriptor>
