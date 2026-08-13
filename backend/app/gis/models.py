@@ -5,12 +5,14 @@ from typing import Any
 
 from geoalchemy2 import Geometry
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Date,
     DateTime,
     Float,
     ForeignKey,
+    Identity,
     Index,
     Integer,
     JSON,
@@ -19,11 +21,96 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 class Base(DeclarativeBase):
     """集中保存全部数据库模型元数据，作为 Alembic 唯一发现入口。"""
+
+
+class FeatureState(Base):
+    """Store one versioned observed or simulated feature state in TimescaleDB."""
+
+    __tablename__ = "feature_state"
+    __table_args__ = (
+        CheckConstraint(
+            "feature_type IN ('water_level','flow','rainfall','gate','pump','flood_risk')",
+            name="ck_feature_state_type",
+        ),
+        CheckConstraint(
+            "source IN ('observation','simulation','dispatch','import')",
+            name="ck_feature_state_source",
+        ),
+        UniqueConstraint(
+            "dataset_version_id", "feature_type", "feature_id", "timestamp", "source",
+            name="uq_feature_state_identity",
+        ),
+        Index(
+            "ix_feature_state_feature_time", "dataset_version_id", "feature_type",
+            "feature_id", "timestamp",
+        ),
+        Index("ix_feature_state_geometry_gist", "geometry", postgresql_using="gist"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), primary_key=True)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="CASCADE"), nullable=False
+    )
+    feature_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    feature_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    state_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    geometry: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="GEOMETRY", srid=4490, spatial_index=False), nullable=False
+    )
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("simulation_task.id", ondelete="SET NULL")
+    )
+
+
+class SimulationLayer(Base):
+    """Register one versioned MVT, COG, WMS, or 3D Tiles simulation asset."""
+
+    __tablename__ = "simulation_layer"
+    __table_args__ = (
+        CheckConstraint(
+            "layer_type IN ('water_level','velocity','flood_risk','terrain','facility_3d')",
+            name="ck_simulation_layer_type",
+        ),
+        CheckConstraint(
+            "service_type IN ('COG','TITILER','MVT','WMS','3D_TILES')",
+            name="ck_simulation_layer_service_type",
+        ),
+        CheckConstraint(
+            "time_end IS NULL OR time_start IS NULL OR time_end >= time_start",
+            name="ck_simulation_layer_time_range",
+        ),
+        UniqueConstraint(
+            "dataset_version_id", "name", "version", name="uq_simulation_layer_version_name"
+        ),
+        Index("ix_simulation_layer_lookup", "dataset_version_id", "layer_type", "task_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="CASCADE"), nullable=False
+    )
+    task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("simulation_task.id", ondelete="SET NULL")
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    layer_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    time_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    time_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    service_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    service_url: Mapped[str] = mapped_column(Text, nullable=False)
+    style: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    version: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class DatasetVersion(Base):

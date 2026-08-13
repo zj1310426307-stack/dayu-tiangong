@@ -1,15 +1,27 @@
-import { Alert, Button, Select, Space, Tag } from 'antd';
+import { Alert, Button, Collapse, Select, Space, Tag } from 'antd';
+import { type Cesium3DTileset } from 'cesium';
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   getGeoServerHealth,
   getGISHealth,
   getGISInteractionFrame,
+  getDGISCatalog,
+  getDGISThreeDTiles,
+  type DGISCatalogResponse,
+  type FeatureStateCollection,
   type GISComparisonFrame,
   type GISInteractionFrame,
   type SpatialFeature,
 } from '../api/generated/client';
 import { CesiumMap } from '../components/gis/CesiumMap';
+import { Catalog } from '../components/dgis/Catalog';
+import { DataManager } from '../components/dgis/DataManager';
+import { LayerTree } from '../components/dgis/LayerTree';
+import { RasterLayer } from '../components/dgis/RasterLayer';
+import { ThreeDViewer } from '../components/dgis/ThreeDViewer';
+import { TimeController } from '../components/dgis/TimeController';
+import { VectorTileLayer } from '../components/dgis/VectorTileLayer';
 import { SpatialAnalysis } from '../components/gis/SpatialAnalysis';
 import { TimelineController } from '../components/gis/TimelineController';
 import { useDatasetVersion } from '../context/DatasetVersionContext';
@@ -37,6 +49,14 @@ export function GisPage() {
   const [interactionError, setInteractionError] = useState('');
   const [analysisFeatures, setAnalysisFeatures] = useState<SpatialFeature[]>([]);
   const [comparisonFrame, setComparisonFrame] = useState<GISComparisonFrame | null>(null);
+  const [dgisCatalog, setDgisCatalog] = useState<DGISCatalogResponse | null>(null);
+  const [dgisLoading, setDgisLoading] = useState(false);
+  const [selectedVectorSource, setSelectedVectorSource] = useState<string | null>(null);
+  const [selectedRasterId, setSelectedRasterId] = useState<number | null>(null);
+  const [selectedThreeDId, setSelectedThreeDId] = useState<number | null>(null);
+  const [threeDAssets, setThreeDAssets] = useState<Awaited<ReturnType<typeof getDGISThreeDTiles>>>([]);
+  const [threeDTilesets, setThreeDTilesets] = useState<Cesium3DTileset[]>([]);
+  const [replayedStates, setReplayedStates] = useState<FeatureStateCollection | null>(null);
   const [viewportBbox, setViewportBbox] = useState<[number, number, number, number]>([120, 30, 120.6, 30.5]);
   const [services, setServices] = useState<Record<'postgis' | 'geoserver' | 'cesium', ServiceState>>({
     postgis: 'checking', geoserver: 'checking', cesium: 'checking',
@@ -86,6 +106,21 @@ export function GisPage() {
     return () => { cancelled = true; };
   }, [datasetVersionId, dispatchRunId, requestedTime, taskId]);
 
+  useEffect(() => {
+    if (!datasetVersionId) return;
+    let cancelled = false;
+    setDgisLoading(true);
+    void Promise.all([getDGISCatalog(datasetVersionId), getDGISThreeDTiles(datasetVersionId)])
+      .then(([catalog, assets]) => {
+        if (cancelled) return;
+        setDgisCatalog(catalog);
+        setThreeDAssets(assets);
+      })
+      .catch(() => { if (!cancelled) { setDgisCatalog(null); setThreeDAssets([]); } })
+      .finally(() => { if (!cancelled) setDgisLoading(false); });
+    return () => { cancelled = true; };
+  }, [datasetVersionId]);
+
   const setTimelineTime = useCallback((timeSeconds: number) => {
     const next = new URLSearchParams(params);
     next.set('time', String(timeSeconds));
@@ -96,6 +131,12 @@ export function GisPage() {
     setInteractionFrame(null);
     setAnalysisFeatures([]);
     setComparisonFrame(null);
+    setDgisCatalog(null);
+    setSelectedVectorSource(null);
+    setSelectedRasterId(null);
+    setSelectedThreeDId(null);
+    setThreeDTilesets([]);
+    setReplayedStates(null);
     setDatasetVersionId(value);
   };
 
@@ -118,7 +159,7 @@ export function GisPage() {
             />
           </label>
           {dispatchRunId > 0 && <Button onClick={() => navigate(`/dispatch/runs/${dispatchRunId}`)}>返回运行 #{dispatchRunId}</Button>}
-          <span className="gis-page__badge">PHASE 1D · DEMO DATA</span>
+          <span className="gis-page__badge">DGIS FOUNDATION · DEMO DATA</span>
         </Space>
       </header>
       <div className="spatial-service-strip" aria-label="空间服务状态">
@@ -151,6 +192,36 @@ export function GisPage() {
           )}
         />
       )}
+      {replayedStates && (
+        <Alert
+          className="data-alert" type="info" showIcon
+          message={`时空状态已恢复 · ${replayedStates.total} 个对象`}
+          description="来源为 TimescaleDB feature_state 超表；观测、调度和模拟状态不会改写工程对象静态设计状态。"
+        />
+      )}
+      <Collapse className="dgis-console" defaultActiveKey={['catalog']} items={[
+        {
+          key: 'catalog', label: 'DGIS 开源生态与时空底座控制台',
+          children: <div className="dgis-grid">
+            <Catalog catalog={dgisCatalog} loading={dgisLoading} />
+            <LayerTree catalog={dgisCatalog} />
+            <VectorTileLayer
+              sources={dgisCatalog?.vector_tile_sources ?? []}
+              selected={selectedVectorSource} onChange={setSelectedVectorSource}
+            />
+            <RasterLayer
+              layers={(dgisCatalog?.simulation_layers ?? []).filter((layer) => layer.service_type === 'TITILER')}
+              selectedId={selectedRasterId} onChange={setSelectedRasterId}
+            />
+            <ThreeDViewer
+              assets={threeDAssets} selectedId={selectedThreeDId}
+              onChange={setSelectedThreeDId} onTilesetsChange={setThreeDTilesets}
+            />
+            {datasetVersionId && <TimeController datasetVersionId={datasetVersionId} onReplay={setReplayedStates} />}
+            <DataManager />
+          </div>,
+        },
+      ]} />
       <div className="gis-workspace-shell">
         <CesiumMap
           variant="workspace"
@@ -160,6 +231,9 @@ export function GisPage() {
           selectedAsset={selectedAsset}
           analysisFeatures={analysisFeatures}
           comparisonFrame={comparisonFrame}
+          dgisVectorTileSource={selectedVectorSource}
+          dgisRasterTileUrl={selectedRasterId === null ? null : `/api/v1/dgis/raster/${selectedRasterId}/{z}/{x}/{y}.png`}
+          dgisThreeDTilesets={threeDTilesets}
           onViewportChange={handleViewportChange}
           onCesiumStatusChange={handleCesiumStatusChange}
         />

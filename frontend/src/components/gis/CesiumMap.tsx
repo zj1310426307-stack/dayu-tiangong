@@ -6,14 +6,17 @@ import {
   Cartesian3,
   Color,
   GridImageryProvider,
+  MVTDataProvider,
   Material,
   Math as CesiumMath,
   PointPrimitiveCollection,
   PolylineCollection,
   ScreenSpaceEventType,
+  UrlTemplateImageryProvider,
   Viewer,
   WebMapServiceImageryProvider,
   WebMapTileServiceImageryProvider,
+  type Cesium3DTileset,
   type ImageryLayer,
   type ImageryLayerFeatureInfo,
 } from 'cesium';
@@ -60,6 +63,9 @@ interface CesiumMapProps {
   selectedAsset?: string;
   analysisFeatures?: SpatialFeature[];
   comparisonFrame?: GISComparisonFrame | null;
+  dgisVectorTileSource?: string | null;
+  dgisRasterTileUrl?: string | null;
+  dgisThreeDTilesets?: Cesium3DTileset[];
   onViewportChange?: (bbox: [number, number, number, number]) => void;
   onCesiumStatusChange?: (online: boolean) => void;
 }
@@ -176,6 +182,7 @@ function arrowEnd(sample: GISWaterSample): Cartesian3 {
 export function CesiumMap({
   variant = 'dashboard', datasetVersionId: suppliedVersionId, interactionFrame,
   dynamicLoading = false, selectedAsset, analysisFeatures = [], comparisonFrame,
+  dgisVectorTileSource = null, dgisRasterTileUrl = null, dgisThreeDTilesets = [],
   onViewportChange, onCesiumStatusChange,
 }: CesiumMapProps) {
   const { datasetVersionId: contextVersionId } = useDatasetVersion();
@@ -191,6 +198,8 @@ export function CesiumMap({
   const searchPointsRef = useRef<PointPrimitiveCollection | null>(null);
   const annotationLayerRef = useRef<AnnotationLayer | null>(null);
   const resultRendererRef = useRef<ResultRenderer | null>(null);
+  const dgisVectorRef = useRef<MVTDataProvider | null>(null);
+  const dgisRasterRef = useRef<ImageryLayer | null>(null);
   const settingsRef = useRef(initialLayerSettings);
   const interactionFrameRef = useRef(interactionFrame);
   const scaleModeRef = useRef<ScaleMode>('wmts');
@@ -471,12 +480,68 @@ export function CesiumMap({
       searchPointsRef.current = null;
       annotationLayerRef.current = null;
       resultRendererRef.current = null;
+      dgisVectorRef.current = null;
+      dgisRasterRef.current = null;
       basemapLayerRef.current = null;
       viewerRef.current = null;
       onCesiumStatusChange?.(false);
       if (!viewer.isDestroyed()) viewer.destroy();
     };
   }, [datasetVersionId, onViewportChange, reloadToken, variant]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !dgisRasterTileUrl) return undefined;
+    const provider = new UrlTemplateImageryProvider({
+      url: dgisRasterTileUrl, minimumLevel: 0, maximumLevel: 18,
+      credit: 'Dayu Tiangong · TiTiler COG',
+    });
+    const layer = viewer.imageryLayers.addImageryProvider(provider);
+    layer.alpha = 0.72;
+    dgisRasterRef.current = layer;
+    viewer.scene.requestRender();
+    return () => {
+      if (!viewer.isDestroyed()) viewer.imageryLayers.remove(layer, true);
+      if (dgisRasterRef.current === layer) dgisRasterRef.current = null;
+    };
+  }, [dgisRasterTileUrl]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !dgisVectorTileSource || !datasetVersionId) return undefined;
+    let disposed = false;
+    let provider: MVTDataProvider | null = null;
+    void MVTDataProvider.fromUrl(
+      `/vector/${dgisVectorTileSource}/{z}/{x}/{y}?dataset_version_id=${datasetVersionId}`,
+      { minZoom: 0, maxZoom: 18, featureIdProperty: 'id' },
+    ).then((created) => {
+      if (disposed || viewer.isDestroyed()) return;
+      provider = created;
+      dgisVectorRef.current = created;
+      viewer.scene.primitives.add(created);
+      viewer.scene.requestRender();
+    }).catch(() => undefined);
+    return () => {
+      disposed = true;
+      if (provider && !viewer.isDestroyed()) viewer.scene.primitives.remove(provider);
+      if (dgisVectorRef.current === provider) dgisVectorRef.current = null;
+    };
+  }, [datasetVersionId, dgisVectorTileSource]);
+
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer) return undefined;
+    for (const tileset of dgisThreeDTilesets) {
+      if (!viewer.scene.primitives.contains(tileset)) viewer.scene.primitives.add(tileset);
+    }
+    viewer.scene.requestRender();
+    return () => {
+      if (viewer.isDestroyed()) return;
+      for (const tileset of dgisThreeDTilesets) {
+        if (viewer.scene.primitives.contains(tileset)) viewer.scene.primitives.remove(tileset);
+      }
+    };
+  }, [dgisThreeDTilesets]);
 
   useEffect(() => {
     const viewer = viewerRef.current;

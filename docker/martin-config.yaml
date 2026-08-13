@@ -1,0 +1,16 @@
+# Martin only discovers the five version-filtered MVT functions owned by the tiles schema.
+listen_addresses: 0.0.0.0:3000
+cache:
+  size_mb: 128
+  tile_expiry: 10m
+postgres:
+  connection_string: ${DATABASE_URL}
+  default_srid: 4490
+  pool_size: 8
+  auto_publish:
+    from_schemas: []
+    tables: false
+    functions:
+      from_schemas: [tiles]
+      source_id_format: "{schema}.{function}"
+  tables: {}

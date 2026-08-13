@@ -13,8 +13,8 @@ def create_app() -> FastAPI:
     configure_logging()
     application = FastAPI(
         title="大禹·天工 API",
-        version="6.0.0",
-        description="河网水动力、调度优化、RAG 水利知识与 AI 辅助解释接口",
+        version="7.0.0",
+        description="河网水动力、调度优化、AI 与开源 DGIS 时空数字孪生底座接口",
     )
 
     # 开发阶段仅允许本地前端来源，生产环境应改为显式域名白名单。

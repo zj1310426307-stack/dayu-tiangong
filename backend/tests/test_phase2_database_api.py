@@ -96,7 +96,7 @@ def test_phase2_physical_tables_revision_and_spatial_indexes() -> None:
     """直接审计物理版本、拓扑表和新增 GIST 索引。"""
 
     with SessionLocal() as session:
-        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260813_0009"
+        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260813_0010"
         tables = set(
             session.execute(
                 text(

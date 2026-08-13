@@ -69,6 +69,13 @@ const requiredPaths = [
   '/api/v1/gis-analysis/nearest', '/api/v1/gis-analysis/comparison-frame',
   '/api/v1/gis-analysis/thematic-map.pdf',
   '/api/v1/gis-analysis/vector-tiles/{layer}/{z}/{x}/{y}.mvt',
+  '/api/v1/dgis/health', '/api/v1/dgis/catalog',
+  '/api/v1/dgis/feature-states', '/api/v1/dgis/feature-states/replay',
+  '/api/v1/dgis/simulation-layers', '/api/v1/dgis/3d-tiles',
+  '/api/v1/dgis/raster/{layer_id}/{z}/{x}/{y}.png',
+  '/api/v1/dgis/conversions/capabilities', '/api/v1/dgis/conversions/inspect',
+  '/api/v1/dgis/conversions/geojson', '/api/v1/dgis/conversions/cog',
+  '/api/v1/dgis/conversions/postgis',
 ];
 for (const path of requiredPaths) {
   if (!openapi.paths?.[path]) throw new Error(`OpenAPI 缺少接口：${path}`);
@@ -91,6 +98,9 @@ export interface GISInteractionQuery { dataset_version_id: number; time_seconds?
 export interface GISAnnotationQuery { dataset_version_id: number; scale_denominator?: number; bbox?: string; annotation_type?: string; limit?: number; offset?: number; time_seconds?: number; task_id?: number; dispatch_run_id?: number; }
 export interface GISLocationSearchQuery { dataset_version_id: number; q: string; limit?: number; }
 export interface GISComparisonQuery { dataset_version_id: number; baseline_task_id: number; comparison_task_id: number; time_seconds?: number; baseline_dispatch_run_id?: number; comparison_dispatch_run_id?: number; }
+export interface DGISStateQuery { dataset_version_id: number; feature_type?: string; feature_id?: number; time_start?: string; time_end?: string; bbox?: string; task_id?: number; limit?: number; offset?: number; }
+export interface DGISReplayQuery { dataset_version_id: number; at: string; feature_type?: string; task_id?: number; }
+export interface DGISLayerQuery { dataset_version_id: number; layer_type?: string; task_id?: number; }
 export interface DatabaseListQuery { dataset_version_id?: number; river_id?: number; search?: string; limit?: number; offset?: number; }
 export interface DispatchListQuery { dataset_version_id?: number; plan_id?: number; status?: string; limit?: number; offset?: number; }
 export interface PageResult<T> { items: T[]; total: number; limit: number; offset: number; }
@@ -155,6 +165,27 @@ export const getNearestGISFacilities = (body: NearestFacilityRequest, baseUrl = 
 export const getGISComparisonFrame = (params: GISComparisonQuery, baseUrl = '') => requestJson<GISComparisonFrame>(\`/api/v1/gis-analysis/comparison-frame\${toQuery(params)}\`, {}, baseUrl);
 export const downloadGISThematicMap = (body: ThematicMapRequest, baseUrl = '') => requestBlob('/api/v1/gis-analysis/thematic-map.pdf', jsonOptions('POST', body), baseUrl);
 export const getGISVectorTile = (layer: 'river' | 'gate' | 'pump' | 'cross_section' | 'map_annotation', z: number, x: number, y: number, datasetVersionId: number, baseUrl = '') => requestBlob(\`/api/v1/gis-analysis/vector-tiles/\${layer}/\${z}/\${x}/\${y}.mvt\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+
+export const getDGISHealth = (baseUrl = '') => requestJson<DGISHealthResponse>('/api/v1/dgis/health', {}, baseUrl);
+export const getDGISCatalog = (datasetVersionId: number, baseUrl = '') => requestJson<DGISCatalogResponse>(\`/api/v1/dgis/catalog\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const getDGISFeatureStates = (params: DGISStateQuery, baseUrl = '') => requestJson<FeatureStateCollection>(\`/api/v1/dgis/feature-states\${toQuery(params)}\`, {}, baseUrl);
+export const createDGISFeatureState = (body: FeatureStateCreate, baseUrl = '') => requestJson<FeatureStateRecord>('/api/v1/dgis/feature-states', jsonOptions('POST', body), baseUrl);
+export const replayDGISFeatureStates = (params: DGISReplayQuery, baseUrl = '') => requestJson<FeatureStateCollection>(\`/api/v1/dgis/feature-states/replay\${toQuery(params)}\`, {}, baseUrl);
+export const getDGISSimulationLayers = (params: DGISLayerQuery, baseUrl = '') => requestJson<Array<SimulationLayerRecord>>(\`/api/v1/dgis/simulation-layers\${toQuery(params)}\`, {}, baseUrl);
+export const getDGISThreeDTiles = (datasetVersionId: number, baseUrl = '') => requestJson<Array<ThreeDTilesAsset>>(\`/api/v1/dgis/3d-tiles\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const getDGISConversionCapabilities = (baseUrl = '') => requestJson<ConversionCapabilityResponse>('/api/v1/dgis/conversions/capabilities', {}, baseUrl);
+
+async function uploadDGISConversion(path: 'inspect' | 'geojson' | 'cog' | 'postgis', file: File, fields: Record<string, string | number> = {}, baseUrl = ''): Promise<ConversionJobResponse> {
+  const body = new FormData();
+  body.set('file', file);
+  Object.entries(fields).forEach(([key, value]) => body.set(key, String(value)));
+  return requestJson<ConversionJobResponse>(\`/api/v1/dgis/conversions/\${path}\`, { method: 'POST', body }, baseUrl);
+}
+
+export const inspectDGISFile = (file: File, baseUrl = '') => uploadDGISConversion('inspect', file, {}, baseUrl);
+export const convertDGISToGeoJSON = (file: File, targetSrid = 4490, baseUrl = '') => uploadDGISConversion('geojson', file, { target_srid: targetSrid }, baseUrl);
+export const convertDGISToCOG = (file: File, targetSrid = 4490, baseUrl = '') => uploadDGISConversion('cog', file, { target_srid: targetSrid }, baseUrl);
+export const importDGISToPostGIS = (file: File, layerName: string, targetSrid = 4490, baseUrl = '') => uploadDGISConversion('postgis', file, { layer_name: layerName, target_srid: targetSrid }, baseUrl);
 
 export const listRiverRecords = (params: DatabaseListQuery = {}, baseUrl = '') => requestJson<RiverListResponse>(\`/api/v1/rivers\${toQuery(params)}\`, {}, baseUrl);
 export const createRiverRecord = (body: RiverCreate, baseUrl = '') => requestJson<RiverRecord>('/api/v1/rivers', jsonOptions('POST', body), baseUrl);

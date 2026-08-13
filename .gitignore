@@ -13,6 +13,7 @@ __pycache__/
 .coverage
 htmlcov/
 tmp/
+99_python_cache/
 
 # 本地验收产物（正式审查结论保存在 docs/review）
 output/
@@ -20,6 +21,7 @@ output/
 # 运行期导入归档
 backend/storage/imports/
 backend/storage/ai-reports/
+backend/storage/conversions/
 
 # 本地环境与编辑器文件
 .env

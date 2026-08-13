@@ -130,6 +130,16 @@ export interface app__validation__schemas__ValidationReport {
   "items": Array<ValidationItem>;
 }
 
+export interface Body_convert_cog_api_v1_dgis_conversions_cog_post {
+  "file": string;
+  "target_srid"?: number;
+}
+
+export interface Body_convert_geojson_api_v1_dgis_conversions_geojson_post {
+  "file": string;
+  "target_srid"?: number;
+}
+
 export interface Body_import_csv_api_v1_import_csv_post {
   "resource": "rivers" | "cross_sections" | "gates" | "pumps";
   "dataset_version_id": number;
@@ -145,6 +155,16 @@ export interface Body_import_excel_api_v1_import_excel_post {
 export interface Body_import_geojson_api_v1_import_geojson_post {
   "resource": "rivers" | "cross_sections" | "gates" | "pumps";
   "dataset_version_id": number;
+  "file": string;
+}
+
+export interface Body_import_to_postgis_api_v1_dgis_conversions_postgis_post {
+  "file": string;
+  "layer_name": string;
+  "target_srid"?: number;
+}
+
+export interface Body_inspect_file_api_v1_dgis_conversions_inspect_post {
   "file": string;
 }
 
@@ -239,6 +259,25 @@ export interface ConstraintConfig {
   "hydraulic_limits"?: HydraulicLimits;
 }
 
+export interface ConversionCapabilityResponse {
+  "status": "online" | "offline";
+  "gdal_version": string | null;
+  "vector_inputs": Array<string>;
+  "raster_inputs": Array<string>;
+  "outputs": Array<string>;
+  "cad_note": string;
+}
+
+export interface ConversionJobResponse {
+  "job_id": string;
+  "operation": "inspect" | "geojson" | "cog" | "postgis";
+  "status": "success";
+  "input_format": string;
+  "output_format": string;
+  "output_name": string | null;
+  "details": Record<string, unknown>;
+}
+
 export interface CrossSectionCreate {
   "dataset_version_id": number;
   "river_id": number;
@@ -305,6 +344,34 @@ export interface DatasetVersionRecord {
 export interface DatasetVersionUpdate {
   "name"?: string | null;
   "description"?: string | null;
+}
+
+export interface DGISCatalogResponse {
+  "components": Array<DGISComponent>;
+  "simulation_layers": Array<SimulationLayerRecord>;
+  "vector_tile_template": string;
+  "vector_tile_sources": Array<string>;
+  "geonode_url": string | null;
+  "conversion_formats": Record<string, Array<string>>;
+}
+
+export interface DGISComponent {
+  "key": "postgis" | "timescaledb" | "geoserver" | "geonode" | "gdal" | "martin" | "titiler" | "cesium";
+  "name": string;
+  "responsibility": string;
+  "status": "online" | "configured" | "optional" | "offline";
+  "endpoint"?: string | null;
+  "version"?: string | null;
+}
+
+export interface DGISHealthResponse {
+  "status": "healthy" | "degraded";
+  "database"?: "single PostgreSQL/PostGIS instance";
+  "timescale_hypertable": boolean;
+  "components": Array<DGISComponent>;
+  "vector_tile_sources": Array<string>;
+  "simulation_layer_count": number;
+  "demo_data"?: true;
 }
 
 export interface DispatchActionCreate {
@@ -453,6 +520,38 @@ export interface DispatchRunRecord {
   "created_time": string;
   "start_time": string | null;
   "end_time": string | null;
+}
+
+export interface FeatureStateCollection {
+  "items": Array<FeatureStateRecord>;
+  "total": number;
+  "dataset_version_id": number;
+  "storage"?: "TimescaleDB hypertable + PostGIS";
+  "crs"?: "EPSG:4490";
+  "demo_data"?: true;
+}
+
+export interface FeatureStateCreate {
+  "dataset_version_id": number;
+  "feature_type": "water_level" | "flow" | "rainfall" | "gate" | "pump" | "flood_risk";
+  "feature_id": number;
+  "timestamp": string;
+  "state_json": Record<string, unknown>;
+  "geometry": PointGeometry;
+  "source": "observation" | "simulation" | "dispatch" | "import";
+  "task_id"?: number | null;
+}
+
+export interface FeatureStateRecord {
+  "dataset_version_id": number;
+  "feature_type": "water_level" | "flow" | "rainfall" | "gate" | "pump" | "flood_risk";
+  "feature_id": number;
+  "timestamp": string;
+  "state_json": Record<string, unknown>;
+  "geometry": PointGeometry;
+  "source": "observation" | "simulation" | "dispatch" | "import";
+  "task_id"?: number | null;
+  "id": number;
 }
 
 export interface GateCreate {
@@ -937,6 +1036,11 @@ export interface ParetoCandidateRecord {
   "explanation": Record<string, unknown>;
 }
 
+export interface PointGeometry {
+  "type"?: "Point";
+  "coordinates": Array<unknown>;
+}
+
 export interface PumpCreate {
   "dataset_version_id": number;
   "name": string;
@@ -1151,6 +1255,21 @@ export interface SimulationCaseUpdate {
   "boundary_condition_ids"?: Array<number> | null;
 }
 
+export interface SimulationLayerRecord {
+  "id": number;
+  "dataset_version_id": number;
+  "task_id": number | null;
+  "name": string;
+  "layer_type": "water_level" | "velocity" | "flood_risk" | "terrain" | "facility_3d";
+  "time_start": string | null;
+  "time_end": string | null;
+  "service_type": "COG" | "TITILER" | "MVT" | "WMS" | "3D_TILES";
+  "service_url": string;
+  "style": Record<string, unknown>;
+  "version": string;
+  "created_time": string;
+}
+
 export interface SimulationResultResponse {
   "task_id": number;
   "status": "pending" | "queued" | "running" | "cancel_requested" | "cancelled" | "success" | "failed";
@@ -1268,6 +1387,15 @@ export interface ThematicMapRequest {
   "author"?: string;
 }
 
+export interface ThreeDTilesAsset {
+  "layer_id": number;
+  "name": string;
+  "tileset_url": string;
+  "version": string;
+  "maximum_screen_space_error": number;
+  "demo_data"?: true;
+}
+
 export interface TopologyGenerateRequest {
   "dataset_version_id": number;
   "tolerance"?: number;
@@ -1324,6 +1452,9 @@ export interface GISInteractionQuery { dataset_version_id: number; time_seconds?
 export interface GISAnnotationQuery { dataset_version_id: number; scale_denominator?: number; bbox?: string; annotation_type?: string; limit?: number; offset?: number; time_seconds?: number; task_id?: number; dispatch_run_id?: number; }
 export interface GISLocationSearchQuery { dataset_version_id: number; q: string; limit?: number; }
 export interface GISComparisonQuery { dataset_version_id: number; baseline_task_id: number; comparison_task_id: number; time_seconds?: number; baseline_dispatch_run_id?: number; comparison_dispatch_run_id?: number; }
+export interface DGISStateQuery { dataset_version_id: number; feature_type?: string; feature_id?: number; time_start?: string; time_end?: string; bbox?: string; task_id?: number; limit?: number; offset?: number; }
+export interface DGISReplayQuery { dataset_version_id: number; at: string; feature_type?: string; task_id?: number; }
+export interface DGISLayerQuery { dataset_version_id: number; layer_type?: string; task_id?: number; }
 export interface DatabaseListQuery { dataset_version_id?: number; river_id?: number; search?: string; limit?: number; offset?: number; }
 export interface DispatchListQuery { dataset_version_id?: number; plan_id?: number; status?: string; limit?: number; offset?: number; }
 export interface PageResult<T> { items: T[]; total: number; limit: number; offset: number; }
@@ -1388,6 +1519,27 @@ export const getNearestGISFacilities = (body: NearestFacilityRequest, baseUrl = 
 export const getGISComparisonFrame = (params: GISComparisonQuery, baseUrl = '') => requestJson<GISComparisonFrame>(`/api/v1/gis-analysis/comparison-frame${toQuery(params)}`, {}, baseUrl);
 export const downloadGISThematicMap = (body: ThematicMapRequest, baseUrl = '') => requestBlob('/api/v1/gis-analysis/thematic-map.pdf', jsonOptions('POST', body), baseUrl);
 export const getGISVectorTile = (layer: 'river' | 'gate' | 'pump' | 'cross_section' | 'map_annotation', z: number, x: number, y: number, datasetVersionId: number, baseUrl = '') => requestBlob(`/api/v1/gis-analysis/vector-tiles/${layer}/${z}/${x}/${y}.mvt${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
+
+export const getDGISHealth = (baseUrl = '') => requestJson<DGISHealthResponse>('/api/v1/dgis/health', {}, baseUrl);
+export const getDGISCatalog = (datasetVersionId: number, baseUrl = '') => requestJson<DGISCatalogResponse>(`/api/v1/dgis/catalog${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
+export const getDGISFeatureStates = (params: DGISStateQuery, baseUrl = '') => requestJson<FeatureStateCollection>(`/api/v1/dgis/feature-states${toQuery(params)}`, {}, baseUrl);
+export const createDGISFeatureState = (body: FeatureStateCreate, baseUrl = '') => requestJson<FeatureStateRecord>('/api/v1/dgis/feature-states', jsonOptions('POST', body), baseUrl);
+export const replayDGISFeatureStates = (params: DGISReplayQuery, baseUrl = '') => requestJson<FeatureStateCollection>(`/api/v1/dgis/feature-states/replay${toQuery(params)}`, {}, baseUrl);
+export const getDGISSimulationLayers = (params: DGISLayerQuery, baseUrl = '') => requestJson<Array<SimulationLayerRecord>>(`/api/v1/dgis/simulation-layers${toQuery(params)}`, {}, baseUrl);
+export const getDGISThreeDTiles = (datasetVersionId: number, baseUrl = '') => requestJson<Array<ThreeDTilesAsset>>(`/api/v1/dgis/3d-tiles${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
+export const getDGISConversionCapabilities = (baseUrl = '') => requestJson<ConversionCapabilityResponse>('/api/v1/dgis/conversions/capabilities', {}, baseUrl);
+
+async function uploadDGISConversion(path: 'inspect' | 'geojson' | 'cog' | 'postgis', file: File, fields: Record<string, string | number> = {}, baseUrl = ''): Promise<ConversionJobResponse> {
+  const body = new FormData();
+  body.set('file', file);
+  Object.entries(fields).forEach(([key, value]) => body.set(key, String(value)));
+  return requestJson<ConversionJobResponse>(`/api/v1/dgis/conversions/${path}`, { method: 'POST', body }, baseUrl);
+}
+
+export const inspectDGISFile = (file: File, baseUrl = '') => uploadDGISConversion('inspect', file, {}, baseUrl);
+export const convertDGISToGeoJSON = (file: File, targetSrid = 4490, baseUrl = '') => uploadDGISConversion('geojson', file, { target_srid: targetSrid }, baseUrl);
+export const convertDGISToCOG = (file: File, targetSrid = 4490, baseUrl = '') => uploadDGISConversion('cog', file, { target_srid: targetSrid }, baseUrl);
+export const importDGISToPostGIS = (file: File, layerName: string, targetSrid = 4490, baseUrl = '') => uploadDGISConversion('postgis', file, { layer_name: layerName, target_srid: targetSrid }, baseUrl);
 
 export const listRiverRecords = (params: DatabaseListQuery = {}, baseUrl = '') => requestJson<RiverListResponse>(`/api/v1/rivers${toQuery(params)}`, {}, baseUrl);
 export const createRiverRecord = (body: RiverCreate, baseUrl = '') => requestJson<RiverRecord>('/api/v1/rivers', jsonOptions('POST', body), baseUrl);
