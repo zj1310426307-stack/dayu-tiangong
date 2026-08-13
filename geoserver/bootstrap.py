@@ -1,4 +1,4 @@
-"""Idempotently provision the read-only GeoServer catalog for Phase 1A."""
+"""Idempotently provision the read-only Phase 1D GeoServer catalog."""
 
 from __future__ import annotations
 
@@ -26,6 +26,10 @@ READONLY_USER = os.getenv("GEOSERVER_DB_USER", "dayu_geoserver")
 READONLY_PASSWORD = os.environ["GEOSERVER_DB_PASSWORD"]
 STYLE_DIRECTORY = Path(__file__).resolve().parent / "styles"
 SRID = 4490
+BASEMAP_GROUP = "dayu_basemap"
+BASEMAP_LAYERS = (
+    "administrative_area", "road", "place_name", "water_name", "poi",
+)
 
 LAYER_TITLES = {
     "river": "河道",
@@ -35,8 +39,13 @@ LAYER_TITLES = {
     "gate": "闸门",
     "pump": "泵站",
     "map_annotation": "地点注记",
+    "administrative_area": "行政区",
+    "road": "道路",
+    "place_name": "地名",
+    "water_name": "水名",
+    "poi": "公共设施与 POI",
 }
-CACHED_LAYERS = {"river", "river_segment", "gate", "pump"}
+CACHED_LAYERS = {"river", "river_segment", "gate", "pump", "road", "place_name", "water_name"}
 
 
 def _require_identifier(value: str, label: str) -> str:
@@ -264,6 +273,32 @@ def _configure_read_only_wfs() -> None:
     )
 
 
+def _ensure_basemap_group() -> None:
+    """Create or refresh the named dayu_basemap layer group in a fixed draw order."""
+
+    resource = (
+        f"/rest/workspaces/{WORKSPACE}/layergroups/"
+        f"{urllib.parse.quote(BASEMAP_GROUP)}.xml"
+    )
+    publishables = "".join(
+        f'<published type="layer"><name>{WORKSPACE}:{name}</name></published>'
+        for name in BASEMAP_LAYERS
+    )
+    styles = "".join(
+        f"<style><name>{name}</name><workspace><name>{WORKSPACE}</name></workspace></style>"
+        for name in BASEMAP_LAYERS
+    )
+    body = (
+        f"<layerGroup><name>{BASEMAP_GROUP}</name><mode>NAMED</mode>"
+        "<title>大禹天工基础地图</title>"
+        f"<workspace><name>{WORKSPACE}</name></workspace>"
+        f"<publishables>{publishables}</publishables><styles>{styles}</styles></layerGroup>"
+    )
+    method = "PUT" if _exists(f"{resource}?quietOnNotFound=true") else "POST"
+    target = resource if method == "PUT" else f"/rest/workspaces/{WORKSPACE}/layergroups"
+    _request(target, method=method, body=body, content_type="application/xml")
+
+
 def _configure_cache(name: str) -> None:
     """Enable WMTS and isolate cached tiles by normalized dataset version CQL."""
 
@@ -304,6 +339,8 @@ def _validate_public_services() -> None:
     wms_root = ET.fromstring(wms)
     names = {node.text.split(":")[-1] for node in wms_root.iter() if node.tag.endswith("Name") and node.text}
     missing = expected - names
+    if BASEMAP_GROUP not in names:
+        missing.add(BASEMAP_GROUP)
     if missing:
         raise RuntimeError(f"WMS capabilities missing layers: {sorted(missing)}")
 
@@ -325,7 +362,7 @@ def _validate_public_services() -> None:
 
 
 def main() -> None:
-    """Run the complete Phase 1A provisioning sequence."""
+    """Run the complete Phase 1D provisioning sequence."""
 
     _configure_database_role()
     _wait_for_geoserver()
@@ -335,6 +372,7 @@ def main() -> None:
         _ensure_style(layer_name)
         _ensure_feature_type(layer_name, LAYER_TITLES[layer_name])
         _configure_cache(layer_name)
+    _ensure_basemap_group()
     _configure_read_only_wfs()
     _validate_public_services()
     print(

@@ -571,6 +571,7 @@ export interface GeoServerHealthResponse {
   "workspace"?: "dayu";
   "layers": number;
   "cached_layers": number;
+  "basemap_group"?: "dayu_basemap";
   "wms"?: "online";
   "wmts"?: "online";
   "wfs_mode"?: "basic-read-only";
@@ -581,7 +582,7 @@ export interface GeoServerLayerRecord {
   "name": string;
   "qualified_name": string;
   "title": string;
-  "geometry_type": "LineString" | "Point";
+  "geometry_type": "LineString" | "Point" | "Polygon";
   "style": string;
   "wms_enabled"?: true;
   "wmts_cached": boolean;
@@ -736,6 +737,25 @@ export interface LayerCatalogItem {
   "version_isolated"?: true;
   "default_visible": boolean;
   "dynamic": boolean;
+}
+
+export interface LocationSearchItem {
+  "result_type": "coordinate" | "administrative_area" | "road" | "place_name" | "water_name" | "poi";
+  "object_id"?: number | null;
+  "name": string;
+  "address"?: string | null;
+  "longitude": number;
+  "latitude": number;
+  "source": "coordinate-parser" | "PostGIS dayu_basemap";
+}
+
+export interface LocationSearchResponse {
+  "query": string;
+  "mode": "coordinate" | "text";
+  "dataset_version_id": number;
+  "items": Array<LocationSearchItem>;
+  "crs"?: "EPSG:4490";
+  "demo_data"?: true;
 }
 
 export interface ModelInputSnapshot {
@@ -1302,6 +1322,7 @@ export type DispatchValidationReport = app__dispatch__schemas__ValidationReport;
 export interface GISListQuery { dataset_version_id: number; bbox?: string; limit?: number; offset?: number; }
 export interface GISInteractionQuery { dataset_version_id: number; time_seconds?: number; task_id?: number; dispatch_run_id?: number; }
 export interface GISAnnotationQuery { dataset_version_id: number; scale_denominator?: number; bbox?: string; annotation_type?: string; limit?: number; offset?: number; time_seconds?: number; task_id?: number; dispatch_run_id?: number; }
+export interface GISLocationSearchQuery { dataset_version_id: number; q: string; limit?: number; }
 export interface GISComparisonQuery { dataset_version_id: number; baseline_task_id: number; comparison_task_id: number; time_seconds?: number; baseline_dispatch_run_id?: number; comparison_dispatch_run_id?: number; }
 export interface DatabaseListQuery { dataset_version_id?: number; river_id?: number; search?: string; limit?: number; offset?: number; }
 export interface DispatchListQuery { dataset_version_id?: number; plan_id?: number; status?: string; limit?: number; offset?: number; }
@@ -1355,6 +1376,7 @@ export const getCrossSections = (params: GISListQuery, baseUrl = '') => requestJ
 export const getCrossSection = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<GeoJSONFeature>(`/api/v1/gis/cross_sections/${id}${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
 export const getGISInteractionFrame = (params: GISInteractionQuery, baseUrl = '') => requestJson<GISInteractionFrame>(`/api/v1/gis/interaction-frame${toQuery(params)}`, {}, baseUrl);
 export const getGISLayerCatalog = (baseUrl = '') => requestJson<Array<LayerCatalogItem>>('/api/v1/gis-analysis/layers', {}, baseUrl);
+export const searchGISLocations = (params: GISLocationSearchQuery, baseUrl = '') => requestJson<LocationSearchResponse>(`/api/v1/gis-analysis/search${toQuery(params)}`, {}, baseUrl);
 export const getGISAnnotations = (params: GISAnnotationQuery, baseUrl = '') => requestJson<AnnotationCollection>(`/api/v1/gis-analysis/annotations${toQuery(params)}`, {}, baseUrl);
 export const createGISAnnotation = (body: AnnotationCreate, baseUrl = '') => requestJson<AnnotationRecord>('/api/v1/gis-analysis/annotations', jsonOptions('POST', body), baseUrl);
 export const updateGISAnnotation = (id: number, datasetVersionId: number, body: AnnotationUpdate, baseUrl = '') => requestJson<AnnotationRecord>(`/api/v1/gis-analysis/annotations/${id}${toQuery({ dataset_version_id: datasetVersionId })}`, jsonOptions('PUT', body), baseUrl);

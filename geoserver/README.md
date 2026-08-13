@@ -1,6 +1,6 @@
 # GeoServer Phase 1A
 
-GeoServer publishes seven static PostGIS layers in workspace `dayu`, including the Phase 1C `map_annotation` layer. The source database remains the existing `dayu_tiangong` PostgreSQL/PostGIS instance; the bootstrap creates only a restricted login, not a second database.
+GeoServer publishes twelve static PostGIS layers in workspace `dayu`, including the Phase 1C `map_annotation` layer and the Phase 1D `dayu_basemap` group (`administrative_area`, `road`, `place_name`, `water_name`, `poi`). The source database remains the existing `dayu_tiangong` PostgreSQL/PostGIS instance; the bootstrap creates only a restricted login, not a second database.
 
 - WMS: `/geoserver/dayu/wms`
 - WMTS: `/geoserver/gwc/service/wmts`

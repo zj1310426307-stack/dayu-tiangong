@@ -13,7 +13,7 @@ class GeoServerLayerRecord(BaseModel):
     name: str
     qualified_name: str
     title: str
-    geometry_type: Literal["LineString", "Point"]
+    geometry_type: Literal["LineString", "Point", "Polygon"]
     style: str
     wms_enabled: Literal[True] = True
     wmts_cached: bool
@@ -29,6 +29,7 @@ class GeoServerHealthResponse(BaseModel):
     workspace: Literal["dayu"] = "dayu"
     layers: int = Field(ge=0)
     cached_layers: int = Field(ge=0)
+    basemap_group: Literal["dayu_basemap"] = "dayu_basemap"
     wms: Literal["online"] = "online"
     wmts: Literal["online"] = "online"
     wfs_mode: Literal["basic-read-only"] = "basic-read-only"

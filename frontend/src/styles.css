@@ -171,14 +171,17 @@ button, input { font: inherit; }
 .basemap-status i { width: 5px; height: 5px; background: #ffc85c; border-radius: 50%; box-shadow: 0 0 7px #ffc85c; }
 .basemap-status--imagery i { background: #55b7ff; box-shadow: 0 0 7px #55b7ff; }
 .basemap-status--fallback { color: #ffd38a; border-color: rgba(255, 200, 92, 0.28); }
-.layer-control { position: absolute; top: 16px; left: 16px; z-index: 4; display: grid; width: 238px; gap: 7px; padding: 13px 14px; background: rgba(5, 20, 31, 0.9); border: 1px solid rgba(77, 154, 181, 0.27); border-radius: 8px; backdrop-filter: blur(12px); }
+.layer-control { position: absolute; top: 64px; left: 16px; z-index: 4; display: grid; width: 286px; max-height: calc(100% - 112px); gap: 7px; padding: 13px 14px; overflow: auto; background: rgba(5, 20, 31, 0.92); border: 1px solid rgba(77, 154, 181, 0.27); border-radius: 8px; backdrop-filter: blur(12px); }
 .layer-control__title { display: flex; align-items: center; justify-content: space-between; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 .layer-control strong { color: #b8d6df; font-size: 9px; letter-spacing: 0.12em; }
 .layer-control__title span { color: #52758b; font: 8px Consolas, monospace; }
-.layer-control__row { display: grid; grid-template-columns: 104px 1fr; align-items: center; gap: 8px; min-height: 20px; }
+.layer-control__group { display: grid; gap: 4px; }.layer-control__group-title { padding: 4px 0 2px; color: #50b7bf; border-bottom: 1px solid rgba(47, 230, 214, 0.1); font: 700 8px Consolas, monospace; letter-spacing: 0.08em; }
+.layer-control__row { display: grid; grid-template-columns: 112px 1fr 42px; align-items: center; gap: 6px; min-height: 22px; }
 .layer-control__row--dynamic { margin-inline: -5px; padding-inline: 5px; background: rgba(47, 230, 214, 0.045); border-radius: 4px; }
 .layer-control .ant-checkbox-wrapper { color: #7898aa; font-size: 9px; }
 .layer-control .ant-slider { margin: 4px 2px; }
+.layer-control__order { display: flex; }.layer-control__order .ant-btn { width: 20px; min-width: 20px; height: 20px; padding: 0; color: #64889a; font-size: 8px; }
+.gis-search { position: absolute; top: 15px; left: 16px; z-index: 7; width: min(430px, calc(100% - 340px)); }.gis-search .ant-input-group-wrapper { box-shadow: 0 8px 24px rgba(0,0,0,.28); }.gis-search__results { display: grid; max-height: 260px; margin-top: 5px; padding: 7px; overflow: auto; background: rgba(5, 20, 31, 0.96); border: 1px solid rgba(77, 154, 181, 0.3); border-radius: 7px; }.gis-search__result { display: grid !important; height: auto !important; grid-template-columns: 18px 1fr auto; align-items: center; gap: 7px; padding: 7px !important; text-align: left; }.gis-search__result span { display: grid; min-width: 0; }.gis-search__result strong { color: #bfdce4; font-size: 10px; }.gis-search__result small { overflow: hidden; color: #648397; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }.gis-search__result .anticon { color: var(--cyan); }
 .layer-legend { display: flex; flex-wrap: wrap; gap: 6px 10px; padding-top: 7px; border-top: 1px solid var(--line); }
 .layer-legend span { display: inline-flex; align-items: center; gap: 4px; color: #6f8da0; font-size: 8px; }
 .layer-legend i { width: 7px; height: 7px; border-radius: 50%; }
@@ -402,8 +405,9 @@ button, input { font: inherit; }
   .status-panel { margin-top: 14px; }
   .metric-list { grid-template-columns: 1fr; }
   .map-toolbar .outline-tag { display: none; }
-  .layer-control { top: 58px; left: 10px; width: 205px; }
-  .layer-control__row { grid-template-columns: 90px 1fr; }
+  .layer-control { top: 104px; left: 10px; width: 238px; }
+  .layer-control__row { grid-template-columns: 96px 1fr 40px; }
+  .gis-search { top: 56px; left: 10px; width: calc(100% - 20px); }
   .gis-performance { display: none; }
   .feature-inspector { top: auto; max-height: 58%; }
   .gis-page__header { align-items: start; flex-direction: column; }

@@ -419,6 +419,122 @@ class MapAnnotation(Base):
     dataset_version: Mapped[DatasetVersion] = relationship(back_populates="annotations")
 
 
+class AdministrativeArea(Base):
+    """Store one searchable administrative boundary in the authoritative data version."""
+
+    __tablename__ = "administrative_area"
+    __table_args__ = (
+        UniqueConstraint("dataset_version_id", "code", name="uq_administrative_area_version_code"),
+        Index("ix_administrative_area_geometry_gist", "geometry", postgresql_using="gist"),
+        Index("ix_administrative_area_version_name", "dataset_version_id", "name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="CASCADE"), nullable=False
+    )
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    administrative_level: Mapped[str] = mapped_column(String(32), nullable=False)
+    address: Mapped[str | None] = mapped_column(String(256))
+    geometry: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="POLYGON", srid=4490, spatial_index=False), nullable=False
+    )
+
+
+class Road(Base):
+    """Store one versioned road centerline used by WMS, WMTS, and local search."""
+
+    __tablename__ = "road"
+    __table_args__ = (
+        UniqueConstraint("dataset_version_id", "code", name="uq_road_version_code"),
+        Index("ix_road_geometry_gist", "geometry", postgresql_using="gist"),
+        Index("ix_road_version_name", "dataset_version_id", "name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="CASCADE"), nullable=False
+    )
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    road_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    address: Mapped[str | None] = mapped_column(String(256))
+    geometry: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="LINESTRING", srid=4490, spatial_index=False), nullable=False
+    )
+
+
+class PlaceName(Base):
+    """Store a scale-styled settlement or district label with a stable search point."""
+
+    __tablename__ = "place_name"
+    __table_args__ = (
+        UniqueConstraint("dataset_version_id", "code", name="uq_place_name_version_code"),
+        Index("ix_place_name_geometry_gist", "geometry", postgresql_using="gist"),
+        Index("ix_place_name_version_name", "dataset_version_id", "name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="CASCADE"), nullable=False
+    )
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    place_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    address: Mapped[str | None] = mapped_column(String(256))
+    importance: Mapped[int] = mapped_column(Integer, nullable=False, server_default="50")
+    geometry: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="POINT", srid=4490, spatial_index=False), nullable=False
+    )
+
+
+class WaterName(Base):
+    """Store a searchable cartographic water-body name independently from hydraulic assets."""
+
+    __tablename__ = "water_name"
+    __table_args__ = (
+        UniqueConstraint("dataset_version_id", "code", name="uq_water_name_version_code"),
+        Index("ix_water_name_geometry_gist", "geometry", postgresql_using="gist"),
+        Index("ix_water_name_version_name", "dataset_version_id", "name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="CASCADE"), nullable=False
+    )
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    water_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    address: Mapped[str | None] = mapped_column(String(256))
+    geometry: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="POINT", srid=4490, spatial_index=False), nullable=False
+    )
+
+
+class PointOfInterest(Base):
+    """Store a versioned local POI for deterministic offline engineering-map search."""
+
+    __tablename__ = "poi"
+    __table_args__ = (
+        UniqueConstraint("dataset_version_id", "code", name="uq_poi_version_code"),
+        Index("ix_poi_geometry_gist", "geometry", postgresql_using="gist"),
+        Index("ix_poi_version_name", "dataset_version_id", "name"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="CASCADE"), nullable=False
+    )
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    category: Mapped[str] = mapped_column(String(64), nullable=False)
+    address: Mapped[str | None] = mapped_column(String(256))
+    geometry: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="POINT", srid=4490, spatial_index=False), nullable=False
+    )
+
+
 class ModelParameter(Base):
     """保存可按数据版本追溯的 Phase 3 模型参数。"""
 

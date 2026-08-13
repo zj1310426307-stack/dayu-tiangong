@@ -25,6 +25,11 @@ EXPECTED_LAYERS: tuple[GeoServerLayerRecord, ...] = (
     GeoServerLayerRecord(name="gate", qualified_name="dayu:gate", title="闸门", geometry_type="Point", style="gate", wmts_cached=True),
     GeoServerLayerRecord(name="pump", qualified_name="dayu:pump", title="泵站", geometry_type="Point", style="pump", wmts_cached=True),
     GeoServerLayerRecord(name="map_annotation", qualified_name="dayu:map_annotation", title="地点注记", geometry_type="Point", style="map_annotation", wmts_cached=False),
+    GeoServerLayerRecord(name="administrative_area", qualified_name="dayu:administrative_area", title="行政区", geometry_type="Polygon", style="administrative_area", wmts_cached=False),
+    GeoServerLayerRecord(name="road", qualified_name="dayu:road", title="道路", geometry_type="LineString", style="road", wmts_cached=True),
+    GeoServerLayerRecord(name="place_name", qualified_name="dayu:place_name", title="地名", geometry_type="Point", style="place_name", wmts_cached=True),
+    GeoServerLayerRecord(name="water_name", qualified_name="dayu:water_name", title="水名", geometry_type="Point", style="water_name", wmts_cached=True),
+    GeoServerLayerRecord(name="poi", qualified_name="dayu:poi", title="公共设施与 POI", geometry_type="Point", style="poi", wmts_cached=False),
 )
 
 
@@ -132,6 +137,8 @@ def get_health() -> GeoServerHealthResponse:
     wms_names = _layer_names(wms)
     wmts_names = _layer_names(wmts)
     missing_wms = {layer.name for layer in EXPECTED_LAYERS} - wms_names
+    if "dayu_basemap" not in wms_names:
+        missing_wms.add("dayu_basemap")
     expected_cached = {layer.qualified_name for layer in EXPECTED_LAYERS if layer.wmts_cached}
     missing_wmts = expected_cached - wmts_names
     if missing_wms or missing_wmts:
