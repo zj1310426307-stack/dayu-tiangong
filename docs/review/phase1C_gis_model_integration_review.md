@@ -1,14 +1,14 @@
 # Phase 1C GIS 与模型融合审查
 
 日期：2026-08-13
-结论：代码与本地运行验收通过；GeoServer 增量配置已就绪，但本轮本机没有可调用的 Docker CLI，新增 `map_annotation` WMS 图层尚未在容器中重新发布。
+结论：代码、本地运行与 Docker Compose 在线验收全部通过；`map_annotation` 已作为第 7 个 GeoServer 图层发布。
 
 ## 1. 架构与数据
 
 - PostGIS 仍是唯一 GIS/模型数据源，没有建立第二套空间数据库。
 - 迁移 `20260813_0008` 新增版本化 `map_annotation`，几何固定为 `Point/4490`，并由约束保证经纬度、几何、比例尺和类型一致。
 - 演示库迁移及播种成功：31 条基础注记，SRID 全部为 4490。
-- GeoServer 目录、SLD、发布脚本和验证脚本已扩展至 7 个图层；`map_annotation` 不进入 GeoWebCache，避免高频编辑造成缓存失效复杂化。
+- GeoServer 目录、SLD、发布脚本和验证脚本已扩展至 7 个图层；`map_annotation` 已在线发布且不进入 GeoWebCache，避免高频编辑造成缓存失效复杂化。
 - FastAPI 新增 `/api/v1/gis-analysis`，路由只处理 HTTP 边界，业务逻辑位于 `service.py` 与 `annotation.py`。
 
 ## 2. 专业 GIS 能力
@@ -44,14 +44,16 @@
 - 前端：`npm run typecheck` 通过；`npm run build` 通过（5091 modules）。
 - 浏览器：Cesium 加载、动态图层、视域框选、空间结果渲染、时间轴、性能面板通过；最终回归最近 15 秒控制台 0 warning / 0 error。
 - PDF：A4 横版、1 页，已用 Poppler 150 DPI 渲染并视觉检查。
+- Docker Compose：Docker Desktop 4.84.0 / Engine 29.6.2 / Compose 5.3.1；迁移、播种、GeoServer 初始化均以退出码 0 完成，数据库、Redis、GeoServer、后端与 Worker 健康，前端正常运行。
+- GeoServer 在线门禁：7 层目录、`map_annotation` WFS、版本过滤 WMS/WMTS、只读数据库角色和 FastAPI 均通过。
 
-## 6. 已知边界与部署动作
+## 6. 已知边界与运维动作
 
 - 当前仍为 DEMO 数据和简化水动力结果，不可替代工程率定、生产容量测试或真实遥测。
-- GeoServer 容器未在本轮重建。具备 Docker CLI 与本地密钥后执行：
+- 当前 Compose 栈已在本机完成 Phase 1C 增量部署。后续代码或图层配置变化时复用同一项目名执行：
 
 ```powershell
-docker compose -p dayu-tiangong-phase1 -f docker/docker-compose.yml up -d --build migrate seed geoserver-init backend frontend
+docker compose -p dayu-tiangong-phase1 -f docker/docker-compose.yml up -d --build --wait migrate seed geoserver-init backend worker frontend
 python geoserver/verify.py
 ```
 

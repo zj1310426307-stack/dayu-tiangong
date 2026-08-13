@@ -1,4 +1,4 @@
-"""Run post-deployment Phase 1A checks against Compose-exposed services."""
+"""Run post-deployment Phase 1C checks against Compose-exposed services."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def _capabilities(service: str, path: str, version: str) -> str:
 
 
 def _verify_catalog_and_images() -> None:
-    """Check catalog contents, rendered WMS, cached WMTS, and Basic WFS."""
+    """Check the seven-layer catalog, rendered imagery, and Basic WFS reads."""
 
     wms = _capabilities("WMS", "/dayu/wms", "1.3.0")
     wmts = _capabilities("WMTS", "/gwc/service/wmts", "1.0.0")
@@ -62,6 +62,25 @@ def _verify_catalog_and_images() -> None:
         if node.tag.endswith("Operation") and node.attrib.get("name")
     }
     assert not ({"Transaction", "LockFeature"} & operations)
+
+    annotation_query = urllib.parse.urlencode(
+        {
+            "service": "WFS",
+            "version": "2.0.0",
+            "request": "GetFeature",
+            "typeNames": "dayu:map_annotation",
+            "count": 1,
+            "outputFormat": "application/json",
+            "CQL_FILTER": f"dataset_version_id={DATASET_VERSION_ID}",
+        }
+    )
+    media_type, annotation_payload, _ = _get(
+        f"{GEOSERVER_URL}/dayu/ows?{annotation_query}"
+    )
+    assert media_type == "application/json"
+    annotation_collection = json.loads(annotation_payload)
+    assert annotation_collection["numberReturned"] == 1
+    assert len(annotation_collection["features"]) == 1
 
     wms_query = urllib.parse.urlencode(
         {
@@ -153,8 +172,8 @@ def main() -> None:
     _verify_read_only_role()
     _verify_backend()
     print(
-        "Phase 1B live verification passed: version-filtered WMS/WMTS, "
-        "Basic WFS, read-only role, FastAPI"
+        "Phase 1C live verification passed: seven-layer catalog, annotation WFS, "
+        "version-filtered WMS/WMTS, read-only role, FastAPI"
     )
 
 
