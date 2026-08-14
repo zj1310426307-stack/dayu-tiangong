@@ -26,7 +26,7 @@ def _domain_call(session: Session, action):
 
     try:
         return action()
-    except (service.GISAnalysisError, gis_service.GISVersionError) as exc:
+    except (ValueError, service.GISAnalysisError, gis_service.GISVersionError) as exc:
         session.rollback()
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except IntegrityError as exc:

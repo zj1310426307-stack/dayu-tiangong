@@ -4,6 +4,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.common.spatial import geometry_expression, geometry_json
+from app.dataset.lifecycle import assert_dataset_version_mutable
 from app.cross_section.schemas import (
     CrossSectionCreate,
     CrossSectionListResponse,
@@ -78,6 +79,7 @@ def get_cross_section(session: Session, section_id: int) -> CrossSectionRecord |
 def create_cross_section(session: Session, payload: CrossSectionCreate) -> CrossSectionRecord:
     """新增横断面。"""
 
+    assert_dataset_version_mutable(session, payload.dataset_version_id)
     values = payload.model_dump(exclude={"geometry"})
     section = CrossSection(**values, geometry=geometry_expression(payload.geometry, "Point"))
     session.add(section)
@@ -90,6 +92,7 @@ def update_cross_section(
 ) -> CrossSectionRecord:
     """局部更新横断面。"""
 
+    assert_dataset_version_mutable(session, section.dataset_version_id)
     values = payload.model_dump(exclude_unset=True)
     geometry = values.pop("geometry", None)
     for key, value in values.items():
@@ -103,5 +106,6 @@ def update_cross_section(
 def delete_cross_section(session: Session, section: CrossSection) -> None:
     """删除指定横断面。"""
 
+    assert_dataset_version_mutable(session, section.dataset_version_id)
     session.delete(section)
     session.flush()

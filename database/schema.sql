@@ -1,4 +1,6 @@
--- 大禹·天工 Phase 2 水利数据库目标结构（权威迁移仍以 Alembic 为准）。
+-- 大禹·天工早期 Phase 2 参考结构。
+-- 注意：本文件不是可部署基线，已不包含后续 DGIS/GIS-OPT-1 演进；
+-- 生产和测试数据库唯一权威入口是 database/migrations 的 Alembic 链（当前至 0011）。
 CREATE EXTENSION IF NOT EXISTS postgis;
 
 CREATE TABLE dataset_version (

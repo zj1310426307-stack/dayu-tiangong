@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.common.spatial import geometry_json
+from app.dataset.lifecycle import assert_dataset_version_mutable
 from app.dataset.schemas import (
     BoundaryConditionCreate,
     BoundaryConditionRecord,
@@ -80,9 +81,10 @@ def create_dataset_version(session: Session, payload: DatasetVersionCreate) -> D
 def update_dataset_version(session: Session, entity: DatasetVersion, payload: DatasetVersionUpdate) -> DatasetVersionRecord:
     """修改数据集版本说明性字段。"""
 
-    _apply(entity, payload.model_dump(exclude_unset=True))
+    mutable = assert_dataset_version_mutable(session, entity.id)
+    _apply(mutable, payload.model_dump(exclude_unset=True))
     session.flush()
-    return DatasetVersionRecord(**_dump(entity))
+    return DatasetVersionRecord(**_dump(mutable))
 
 
 def list_parameters(session: Session, dataset_version_id: int | None) -> list[ModelParameterRecord]:
@@ -97,6 +99,7 @@ def list_parameters(session: Session, dataset_version_id: int | None) -> list[Mo
 def create_parameter(session: Session, payload: ModelParameterCreate) -> ModelParameterRecord:
     """新增模型参数。"""
 
+    assert_dataset_version_mutable(session, payload.dataset_version_id)
     entity = ModelParameter(**payload.model_dump())
     session.add(entity)
     session.flush()
@@ -106,6 +109,7 @@ def create_parameter(session: Session, payload: ModelParameterCreate) -> ModelPa
 def update_parameter(session: Session, entity: ModelParameter, payload: ModelParameterUpdate) -> ModelParameterRecord:
     """修改模型参数值或说明。"""
 
+    assert_dataset_version_mutable(session, entity.dataset_version_id)
     _apply(entity, payload.model_dump(exclude_unset=True))
     session.flush()
     return ModelParameterRecord(**_dump(entity))
@@ -123,6 +127,7 @@ def list_boundaries(session: Session, dataset_version_id: int | None) -> list[Bo
 def create_boundary(session: Session, payload: BoundaryConditionCreate) -> BoundaryConditionRecord:
     """新增边界条件。"""
 
+    assert_dataset_version_mutable(session, payload.dataset_version_id)
     entity = BoundaryCondition(**payload.model_dump())
     session.add(entity)
     session.flush()
@@ -132,6 +137,7 @@ def create_boundary(session: Session, payload: BoundaryConditionCreate) -> Bound
 def update_boundary(session: Session, entity: BoundaryCondition, payload: BoundaryConditionUpdate) -> BoundaryConditionRecord:
     """局部修改边界条件。"""
 
+    assert_dataset_version_mutable(session, entity.dataset_version_id)
     _apply(entity, payload.model_dump(exclude_unset=True))
     session.flush()
     return BoundaryConditionRecord(**_dump(entity))
@@ -195,6 +201,7 @@ def _replace_case_boundary_links(
 def create_case(session: Session, payload: SimulationCaseCreate) -> SimulationCaseRecord:
     """新增计算方案，并要求边界条件属于同一数据版本。"""
 
+    assert_dataset_version_mutable(session, payload.dataset_version_id)
     boundary_ids = payload.boundary_condition_ids or [payload.boundary_condition_id]
     boundaries = _validate_case_boundaries(session, payload.dataset_version_id, boundary_ids)
     values = payload.model_dump(exclude={"boundary_condition_ids"})
@@ -210,6 +217,7 @@ def create_case(session: Session, payload: SimulationCaseCreate) -> SimulationCa
 def update_case(session: Session, entity: SimulationCase, payload: SimulationCaseUpdate) -> SimulationCaseRecord:
     """修改计算方案并保持数据版本与边界条件一致。"""
 
+    assert_dataset_version_mutable(session, entity.dataset_version_id)
     values = payload.model_dump(exclude_unset=True)
     boundary_ids = values.pop("boundary_condition_ids", None)
     boundary_id = values.get("boundary_condition_id")
@@ -228,6 +236,10 @@ def update_case(session: Session, entity: SimulationCase, payload: SimulationCas
 def delete_entity(session: Session, entity: Any) -> None:
     """删除版本配置类对象并刷新约束。"""
 
+    if isinstance(entity, DatasetVersion):
+        assert_dataset_version_mutable(session, entity.id)
+    elif isinstance(entity, (ModelParameter, BoundaryCondition, SimulationCase)):
+        assert_dataset_version_mutable(session, entity.dataset_version_id)
     session.delete(entity)
     session.flush()
 

@@ -20,6 +20,14 @@ def test_required_phase1_files_exist() -> None:
         "backend/app/gis/service.py",
         "backend/app/geoserver/router.py",
         "backend/app/geoserver/service.py",
+        "backend/app/gis_governance/errors.py",
+        "backend/app/gis_governance/hashing.py",
+        "backend/app/gis_governance/repository.py",
+        "backend/app/gis_governance/router.py",
+        "backend/app/gis_governance/schemas.py",
+        "backend/app/gis_governance/service.py",
+        "backend/app/gis_governance/state.py",
+        "backend/app/gis_governance/validation.py",
         "geoserver/bootstrap.py",
         "geoserver/verify.py",
         "geoserver/styles/river.sld",
@@ -33,6 +41,10 @@ def test_required_phase1_files_exist() -> None:
         "database/migrations/versions/20260811_0002_phase2_hydraulic_database.py",
         "database/migrations/versions/20260812_0003_phase3_hydraulic_engine.py",
         "database/migrations/versions/20260812_0004_phase4_dispatch.py",
+        "database/migrations/versions/20260814_0011_qgis_governance.py",
+        "database/migrations/versions/20260814_0012_publish_geoserver_boundary.py",
+        "database/bootstrap_qgis.py",
+        "database/bootstrap_app.py",
         "database/seed/demo_data.py",
         "database/schema.sql",
         "database/database_design.md",
@@ -59,6 +71,15 @@ def test_required_phase1_files_exist() -> None:
         "docs/coordinate_system.md",
         "docs/review/phase1_gis_review.md",
         "docs/review/phase2_database_review.md",
+        "docs/adr/ADR-0011-qgis-controlled-production.md",
+        "qgis/README.md",
+        "qgis/Start_Dayu_QGIS.cmd",
+        "qgis/Start_Dayu_QGIS.ps1",
+        "qgis/projects/dayu_tiangong_ltr.qgs",
+        "qgis/styles/staging_river.qml",
+        "qgis/styles/staging_cross_section.qml",
+        "qgis/styles/staging_gate.qml",
+        "qgis/styles/staging_pump.qml",
         "docker/docker-compose.yml",
         "README.md",
     ]
@@ -108,3 +129,33 @@ def test_frontend_and_database_static_contracts() -> None:
     assert "/api/v1/model/results/" in generated_client
     assert "/api/v1/ai/chat" in generated_client
     assert "/api/v1/ai/report/generate" in generated_client
+    assert "/api/v1/gis-governance/batches" in generated_client
+    assert "/api/v1/gis-governance/publications" in generated_client
+    assert "export class ApiError extends Error" in generated_client
+    assert "readonly code?: string" in generated_client
+    assert "readonly context?: Record<string, unknown>" in generated_client
+    assert "throw new ApiError(response.status, decodeApiError(payload))" in generated_client
+
+
+def test_dgis_postgis_ui_forwards_governance_provenance() -> None:
+    """DGIS raw landing must collect and forward the governed entity identity and actor."""
+
+    data_manager = (
+        REPOSITORY_ROOT / "frontend/src/components/dgis/DataManager.tsx"
+    ).read_text(encoding="utf-8")
+    generator = (
+        REPOSITORY_ROOT / "frontend/scripts/update-openapi.mjs"
+    ).read_text(encoding="utf-8")
+    generated_client = (
+        REPOSITORY_ROOT / "frontend/src/api/generated/client.ts"
+    ).read_text(encoding="utf-8")
+
+    for entity_type in ["river", "cross_section", "gate", "pump"]:
+        assert f"value: '{entity_type}'" in data_manager
+    for field in ["entityType", "parentVersionId", "operator"]:
+        assert field in data_manager
+    for form_field in ["entity_type", "parent_version_id", "operator"]:
+        assert f"fields.{form_field}" in generator
+        assert f"fields.{form_field}" in generated_client
+    assert "optionsOrTargetSrid?: DGISPostGISImportOptions | number" in generator
+    assert "optionsOrTargetSrid?: DGISPostGISImportOptions | number" in generated_client

@@ -7,6 +7,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.common.spatial import geometry_expression, geometry_json
+from app.dataset.lifecycle import assert_dataset_version_mutable
 from app.gis.models import River, RiverConnection, RiverNode, RiverSegment
 from app.river.schemas import (
     RiverCreate,
@@ -71,6 +72,7 @@ def get_river(session: Session, river_id: int) -> RiverRecord | None:
 def create_river(session: Session, payload: RiverCreate) -> RiverRecord:
     """新增河道并刷新数据库生成字段。"""
 
+    assert_dataset_version_mutable(session, payload.dataset_version_id)
     values = payload.model_dump(exclude={"geometry"})
     river = River(**values, geometry=geometry_expression(payload.geometry, "LineString"))
     session.add(river)
@@ -81,6 +83,7 @@ def create_river(session: Session, payload: RiverCreate) -> RiverRecord:
 def update_river(session: Session, river: River, payload: RiverUpdate) -> RiverRecord:
     """局部更新河道，未提供字段保持不变。"""
 
+    assert_dataset_version_mutable(session, river.dataset_version_id)
     values = payload.model_dump(exclude_unset=True)
     geometry = values.pop("geometry", None)
     for key, value in values.items():
@@ -94,6 +97,7 @@ def update_river(session: Session, river: River, payload: RiverUpdate) -> RiverR
 def delete_river(session: Session, river: River) -> None:
     """删除河道；数据库负责级联断面与拓扑、限制关联建筑物。"""
 
+    assert_dataset_version_mutable(session, river.dataset_version_id)
     session.delete(river)
     session.flush()
 
@@ -109,6 +113,7 @@ def generate_topology(
 ) -> TopologyResponse:
     """从版本内每条 LineString 的首尾坐标幂等重建节点、河段和连接。"""
 
+    assert_dataset_version_mutable(session, dataset_version_id)
     session.execute(
         delete(RiverConnection).where(RiverConnection.dataset_version_id == dataset_version_id)
     )

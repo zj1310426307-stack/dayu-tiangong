@@ -51,6 +51,7 @@ from app.gis.models import (
     OptimizationTask,
     Pump,
     River,
+    SimulationCase,
     SimulationResult,
     SimulationTask,
 )
@@ -294,21 +295,39 @@ def search_knowledge(
     return KnowledgeSearchResponse(query=query, items=items)
 
 
-def _latest_dataset_id(session: Session) -> int | None:
-    """返回最新数据版本主键，供未显式选择版本的只读查询使用。"""
+def _resolve_dataset_version(
+    session: Session, dataset_version_id: int | None
+) -> DatasetVersion:
+    """为 AI 只读工具选择稳定版本，并保留退役版本的历史查询能力。"""
 
-    return session.scalar(select(DatasetVersion.id).order_by(DatasetVersion.id.desc()))
+    if dataset_version_id is None:
+        version = session.scalar(
+            select(DatasetVersion)
+            .where(DatasetVersion.status == "published")
+            .order_by(
+                DatasetVersion.published_at.desc().nullslast(),
+                DatasetVersion.id.desc(),
+            )
+        )
+        if version is None:
+            raise AINotFoundError("没有可用的已发布数据版本")
+        return version
+
+    version = session.get(DatasetVersion, dataset_version_id)
+    if version is None:
+        raise AINotFoundError("数据版本不存在")
+    if version.status in {"draft", "rejected"}:
+        raise AIServiceError(
+            f"数据版本 {dataset_version_id} 状态为 {version.status}，AI 只读工具不允许引用"
+        )
+    return version
 
 
 def get_river_info(session: Session, context: AIContext) -> tuple[dict[str, Any], SourceCitation]:
     """只读聚合河道、断面和闸泵数量与状态。"""
 
-    dataset_id = context.dataset_version_id or _latest_dataset_id(session)
-    if dataset_id is None:
-        raise AINotFoundError("没有可用的数据版本")
-    version = session.get(DatasetVersion, dataset_id)
-    if version is None:
-        raise AINotFoundError("数据版本不存在")
+    version = _resolve_dataset_version(session, context.dataset_version_id)
+    dataset_id = version.id
     river_filter = [River.dataset_version_id == dataset_id]
     if context.river_id is not None:
         river_filter.append(River.id == context.river_id)
@@ -369,13 +388,28 @@ def get_simulation_result(
 ) -> tuple[dict[str, Any], SourceCitation]:
     """只读聚合成功任务的水位、流量、流速和警戒阈值。"""
 
-    task = session.get(SimulationTask, context.simulation_task_id) if context.simulation_task_id else session.scalar(
-        select(SimulationTask)
-        .where(SimulationTask.status == "success")
-        .order_by(SimulationTask.id.desc())
-    )
+    dataset_id = _resolve_dataset_version(session, context.dataset_version_id).id
+    if context.simulation_task_id:
+        task = session.get(SimulationTask, context.simulation_task_id)
+    else:
+        statement = (
+            select(SimulationTask)
+            .join(SimulationCase)
+            .where(
+                SimulationTask.status == "success",
+                SimulationCase.dataset_version_id == dataset_id,
+            )
+        )
+        task = session.scalar(statement.order_by(SimulationTask.id.desc()))
     if task is None:
         raise AINotFoundError("没有可用的成功仿真任务")
+    case_dataset_id = session.scalar(
+        select(SimulationCase.dataset_version_id).where(
+            SimulationCase.id == task.case_id
+        )
+    )
+    if case_dataset_id != dataset_id:
+        raise AIServiceError("仿真任务与指定数据版本不一致")
     values = session.execute(
         select(
             func.max(SimulationResult.water_level),
@@ -429,13 +463,19 @@ def get_optimization_result(
 ) -> tuple[dict[str, Any], SourceCitation]:
     """只读返回成功优化任务的推荐、Pareto 与评价指标。"""
 
-    task = session.get(OptimizationTask, context.optimization_task_id) if context.optimization_task_id else session.scalar(
-        select(OptimizationTask)
-        .where(OptimizationTask.status == "success")
-        .order_by(OptimizationTask.id.desc())
-    )
+    dataset_id = _resolve_dataset_version(session, context.dataset_version_id).id
+    if context.optimization_task_id:
+        task = session.get(OptimizationTask, context.optimization_task_id)
+    else:
+        statement = select(OptimizationTask).where(
+            OptimizationTask.status == "success",
+            OptimizationTask.dataset_version_id == dataset_id,
+        )
+        task = session.scalar(statement.order_by(OptimizationTask.id.desc()))
     if task is None:
         raise AINotFoundError("没有可用的成功优化任务")
+    if task.dataset_version_id != dataset_id:
+        raise AIServiceError("优化任务与指定数据版本不一致")
     row = session.execute(
         select(OptimizationCandidate, OptimizationResult)
         .join(OptimizationResult, OptimizationResult.candidate_id == OptimizationCandidate.id)
@@ -551,12 +591,24 @@ def _external_answer(
 def chat(session: Session, payload: AIChatRequest) -> AIChatResponse:
     """完成安全检查、检索/工具调用、回答生成与一次性审计提交。"""
 
+    selected_version = None
+    if payload.context.dataset_version_id is not None:
+        selected_version = _resolve_dataset_version(
+            session, payload.context.dataset_version_id
+        )
     guard = inspect_question(payload.question)
     evidence: list[dict[str, Any]] = []
     sources: list[SourceCitation] = []
     pending_logs: list[dict[str, Any]] = []
     tools_used: list[str] = []
     intent = _intent(payload.question)
+    tool_context = payload.context
+    if guard.status != "blocked" and intent != "knowledge":
+        if selected_version is None:
+            selected_version = _resolve_dataset_version(session, None)
+        tool_context = payload.context.model_copy(
+            update={"dataset_version_id": selected_version.id}
+        )
     if guard.status == "blocked":
         answer = guard.text
         safety_status = guard.status
@@ -588,7 +640,7 @@ def chat(session: Session, payload: AIChatRequest) -> AIChatResponse:
                     "simulation": "get_simulation_result",
                     "river": "get_river_info",
                 }[intent]
-                output, source, log = _call_tool(session, tool_name, payload.context)
+                output, source, log = _call_tool(session, tool_name, tool_context)
                 evidence.append(output)
                 sources.append(source)
                 pending_logs.append(log)
@@ -678,6 +730,12 @@ def generate_report(
 ) -> ReportGenerateResponse:
     """聚合三类只读工具证据并生成 Markdown/PDF 双格式报告。"""
 
+    selected_version = _resolve_dataset_version(
+        session, payload.context.dataset_version_id
+    )
+    tool_context = payload.context.model_copy(
+        update={"dataset_version_id": selected_version.id}
+    )
     context: dict[str, Any] = {}
     sources: list[SourceCitation] = []
     logs: list[dict[str, Any]] = []
@@ -687,7 +745,7 @@ def generate_report(
         ("optimization", "get_optimization_result"),
     ):
         try:
-            output, source, log = _call_tool(session, tool_name, payload.context)
+            output, source, log = _call_tool(session, tool_name, tool_context)
         except AINotFoundError:
             continue
         context[key] = output

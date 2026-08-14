@@ -28,6 +28,17 @@ class DatasetVersionRecord(DatasetVersionCreate):
     """返回带主键与创建时间的数据集版本。"""
 
     id: int
+    status: str = "draft"
+    parent_version_id: int | None = None
+    source_batch_id: int | None = None
+    content_hash: str | None = None
+    change_summary: str | None = None
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+    approved_by: str | None = None
+    approved_at: datetime | None = None
+    published_at: datetime | None = None
+    retired_at: datetime | None = None
     created_time: datetime
 
 

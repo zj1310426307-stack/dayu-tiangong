@@ -1,0 +1,9 @@
+# Copy this file to a user-owned location and set PGSERVICEFILE to that path.
+# Keep credentials in QGIS Authentication Manager or the platform credential store.
+[dayu_qgis]
+host=127.0.0.1
+port=5432
+dbname=dayu_tiangong
+user=dayu_qgis_editor
+sslmode=prefer
+application_name=dayu_qgis_3_44_ltr

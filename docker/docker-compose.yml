@@ -82,6 +82,36 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  qgis-bootstrap:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    command: ["python", "../database/bootstrap_qgis.py"]
+    environment:
+      <<: *backend_environment
+      QGIS_EDITOR_DB_USER: ${QGIS_EDITOR_DB_USER:-dayu_qgis_editor}
+      QGIS_EDITOR_DB_PASSWORD: ${QGIS_EDITOR_DB_PASSWORD:?set QGIS_EDITOR_DB_PASSWORD in an ignored .env file}
+      QGIS_REVIEWER_DB_USER: ${QGIS_REVIEWER_DB_USER:-dayu_qgis_reviewer}
+      QGIS_REVIEWER_DB_PASSWORD: ${QGIS_REVIEWER_DB_PASSWORD:?set QGIS_REVIEWER_DB_PASSWORD in an ignored .env file}
+      QGIS_PUBLISHER_DB_USER: ${QGIS_PUBLISHER_DB_USER:-dayu_publisher}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  app-bootstrap:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    command: ["python", "../database/bootstrap_app.py"]
+    environment:
+      <<: *backend_environment
+      BACKEND_DB_USER: ${BACKEND_DB_USER:-dayu_backend}
+      BACKEND_DB_PASSWORD: ${BACKEND_DB_PASSWORD:?set BACKEND_DB_PASSWORD in an ignored .env file}
+      QGIS_PUBLISHER_DB_USER: ${QGIS_PUBLISHER_DB_USER:-dayu_publisher}
+    depends_on:
+      qgis-bootstrap:
+        condition: service_completed_successfully
+
   dgis-assets:
     build:
       context: ..
@@ -162,12 +192,15 @@ services:
       GEOSERVER_DB_HOST: database
       GEOSERVER_DB_USER: ${GEOSERVER_DB_USER:-dayu_geoserver}
       GEOSERVER_DB_PASSWORD: ${GEOSERVER_DB_PASSWORD:?set GEOSERVER_DB_PASSWORD in an ignored .env file}
+      GEOSERVER_DB_SCHEMA: publish
       GEOSERVER_WORKSPACE: dayu
       GEOSERVER_DATASTORE: dayu_postgis
     depends_on:
       geoserver:
         condition: service_healthy
       seed:
+        condition: service_completed_successfully
+      app-bootstrap:
         condition: service_completed_successfully
 
   backend:
@@ -176,6 +209,8 @@ services:
       dockerfile: docker/backend.Dockerfile
     environment:
       <<: *backend_environment
+      POSTGRES_USER: ${BACKEND_DB_USER:-dayu_backend}
+      POSTGRES_PASSWORD: ${BACKEND_DB_PASSWORD:?set BACKEND_DB_PASSWORD in an ignored .env file}
       GEOSERVER_INTERNAL_URL: http://geoserver:8080/geoserver
       GEOSERVER_PUBLIC_WMS_URL: /geoserver/dayu/wms
       GEOSERVER_PUBLIC_WMTS_URL: /geoserver/gwc/service/wmts
@@ -187,6 +222,10 @@ services:
       - ../backend/storage:/app/backend/storage
     depends_on:
       geoserver-init:
+        condition: service_completed_successfully
+      qgis-bootstrap:
+        condition: service_completed_successfully
+      app-bootstrap:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
@@ -205,9 +244,14 @@ services:
       context: ..
       dockerfile: docker/backend.Dockerfile
     command: ["python", "-m", "celery", "-A", "app.worker.celery_app:celery_app", "worker", "--loglevel=INFO", "--pool=solo"]
-    environment: *backend_environment
+    environment:
+      <<: *backend_environment
+      POSTGRES_USER: ${BACKEND_DB_USER:-dayu_backend}
+      POSTGRES_PASSWORD: ${BACKEND_DB_PASSWORD:?set BACKEND_DB_PASSWORD in an ignored .env file}
     depends_on:
       seed:
+        condition: service_completed_successfully
+      app-bootstrap:
         condition: service_completed_successfully
       redis:
         condition: service_healthy

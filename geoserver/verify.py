@@ -144,7 +144,7 @@ def _verify_catalog_and_images() -> None:
 
 
 def _verify_read_only_role() -> None:
-    """Audit role attributes/grants and prove that a DML statement is rejected."""
+    """Audit publish-only reads, staging isolation, and rejected core access/DML."""
 
     role = os.getenv("GEOSERVER_DB_USER", "dayu_geoserver")
     with psycopg.connect(
@@ -157,10 +157,28 @@ def _verify_read_only_role() -> None:
         with connection.cursor() as cursor:
             cursor.execute("SHOW default_transaction_read_only")
             assert cursor.fetchone()[0] == "on"
-            cursor.execute("SELECT count(*) FROM river")
+            cursor.execute("SELECT count(*) FROM publish.river")
             assert cursor.fetchone()[0] >= 0
+            cursor.execute(
+                "SELECT has_schema_privilege(current_user, 'staging_qgis', 'USAGE')"
+            )
+            assert cursor.fetchone()[0] is False
+            cursor.execute(
+                "SELECT has_table_privilege(current_user, 'gis_import_batch', 'SELECT')"
+            )
+            assert cursor.fetchone()[0] is False
+            cursor.execute(
+                "SELECT has_table_privilege(current_user, 'publish.river', 'SELECT')"
+            )
+            assert cursor.fetchone()[0] is True
             try:
-                cursor.execute("DELETE FROM river WHERE false")
+                cursor.execute("SELECT count(*) FROM public.river")
+            except psycopg.errors.InsufficientPrivilege:
+                connection.rollback()
+            else:
+                raise AssertionError("GeoServer role unexpectedly read the public core table")
+            try:
+                cursor.execute("DELETE FROM public.river WHERE false")
             except psycopg.errors.ReadOnlySqlTransaction:
                 connection.rollback()
             else:

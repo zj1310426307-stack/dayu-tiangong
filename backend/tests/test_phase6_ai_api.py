@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 from zipfile import ZIP_DEFLATED, ZipFile
 from io import BytesIO
 
@@ -14,10 +16,18 @@ from sqlalchemy import func, select
 from ai.guardrails import inspect_question
 from ai.retrieval import chunk_text, cosine_similarity, embed_text
 from app.ai.models import AIConversation, AIReport, AIToolCallLog, KnowledgeDocument
-from app.ai.service import REPOSITORY_ROOT, seed_builtin_knowledge
+from app.ai.service import (
+    AIServiceError,
+    REPOSITORY_ROOT,
+    _resolve_dataset_version,
+    get_optimization_result,
+    get_simulation_result,
+    seed_builtin_knowledge,
+)
+from app.ai.schemas import AIContext
 from app.ai.service import _decode_docx, _decode_pdf
 from app.database.session import SessionLocal
-from app.gis.models import OptimizationTask, SimulationTask
+from app.gis.models import DatasetVersion, OptimizationTask, SimulationTask
 from app.main import app
 
 
@@ -118,6 +128,102 @@ def test_generated_pdf_can_be_read_back_for_knowledge_ingestion() -> None:
         assert "人工复核" in extracted
     finally:
         output.unlink(missing_ok=True)
+
+
+def test_ai_default_dataset_uses_latest_published_version() -> None:
+    """An omitted context never lets a newer draft replace published evidence."""
+
+    session = Mock()
+    expected = SimpleNamespace(id=8, status="published")
+    session.scalar.return_value = expected
+
+    assert _resolve_dataset_version(session, None) is expected
+    statement = session.scalar.call_args.args[0]
+    sql = str(statement)
+    assert "dataset_version.status = :status_1" in sql
+    assert statement.compile().params["status_1"] == "published"
+    assert "dataset_version.published_at DESC NULLS LAST" in sql
+    assert "dataset_version.id DESC" in sql
+    session.get.assert_not_called()
+
+
+@pytest.mark.parametrize("version_status", ["draft", "rejected"])
+def test_ai_rejects_unreleased_explicit_dataset_context(version_status: str) -> None:
+    """Draft and rejected data cannot become AI evidence through an explicit ID."""
+
+    session = Mock()
+    session.get.return_value = SimpleNamespace(id=12, status=version_status)
+
+    with pytest.raises(AIServiceError, match=version_status):
+        _resolve_dataset_version(session, 12)
+    session.scalar.assert_not_called()
+
+
+def test_ai_allows_retired_dataset_as_explicit_historical_context() -> None:
+    """A retired version remains available only when its history is requested."""
+
+    session = Mock()
+    expected = SimpleNamespace(id=4, status="retired")
+    session.get.return_value = expected
+
+    assert _resolve_dataset_version(session, 4) is expected
+    session.get.assert_called_once_with(DatasetVersion, 4)
+
+
+def test_ai_rejects_explicit_simulation_task_from_another_dataset() -> None:
+    """A task ID cannot bypass an explicit dataset-version boundary."""
+
+    session = Mock()
+    session.get.side_effect = [
+        SimpleNamespace(id=4, status="published"),
+        SimpleNamespace(id=19, case_id=6),
+    ]
+    session.scalar.return_value = 3
+
+    with pytest.raises(AIServiceError, match="仿真任务与指定数据版本不一致"):
+        get_simulation_result(
+            session,
+            AIContext(dataset_version_id=4, simulation_task_id=19),
+        )
+
+
+def test_ai_rejects_explicit_optimization_task_from_another_dataset() -> None:
+    """Optimization evidence must belong to the requested dataset version."""
+
+    session = Mock()
+    session.get.side_effect = [
+        SimpleNamespace(id=4, status="published"),
+        SimpleNamespace(id=23, dataset_version_id=3),
+    ]
+
+    with pytest.raises(AIServiceError, match="优化任务与指定数据版本不一致"):
+        get_optimization_result(
+            session,
+            AIContext(dataset_version_id=4, optimization_task_id=23),
+        )
+
+
+@pytestmark_postgis
+@pytest.mark.parametrize("endpoint", ["/api/v1/ai/chat", "/api/v1/ai/report/generate"])
+def test_ai_endpoints_reject_explicit_draft_context(endpoint: str) -> None:
+    """All AI entry points reject a draft context before choosing a read-only tool."""
+
+    with SessionLocal() as session:
+        draft = session.scalar(
+            select(DatasetVersion)
+            .where(DatasetVersion.status == "draft")
+            .order_by(DatasetVersion.id.desc())
+        )
+        if draft is None:
+            pytest.skip("requires a draft dataset version")
+        draft_id = draft.id
+
+    body = {"context": {"dataset_version_id": draft_id}}
+    if endpoint.endswith("/chat"):
+        body["question"] = "AI 安全边界是什么？"
+    response = client.post(endpoint, json=body)
+    assert response.status_code == 422
+    assert "draft" in response.json()["detail"]
 
 
 @pytestmark_postgis

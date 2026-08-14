@@ -8,12 +8,15 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+from types import SimpleNamespace
 import zipfile
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.data_converter import validator
+from app.data_converter import gdal_service, router as conversion_router, validator
+from app.data_converter.importer import immutable_table_name
+from app.database.session import get_database_session
 from app.main import app
 
 
@@ -46,6 +49,16 @@ def test_dgis_openapi_and_gdal_capability_contract() -> None:
         "/api/v1/dgis/3d-tiles", "/api/v1/dgis/conversions/capabilities",
     ):
         assert path in paths
+    postgis_body = schema.json()["components"]["schemas"][
+        "Body_import_to_postgis_api_v1_dgis_conversions_postgis_post"
+    ]
+    assert {"file", "layer_name"}.issubset(postgis_body["required"])
+    assert {
+        "entity_type", "parent_version_id", "operator",
+    }.issubset(postgis_body["properties"])
+    assert postgis_body["properties"]["entity_type"]["anyOf"][0]["enum"] == [
+        "river", "cross_section", "gate", "pump",
+    ]
     capability = client.get("/api/v1/dgis/conversions/capabilities")
     assert capability.status_code == 200
     assert capability.json()["outputs"] == ["PostGIS", "GeoJSON", "COG"]
@@ -65,6 +78,218 @@ def test_conversion_validator_rejects_unsafe_or_incomplete_archives() -> None:
     assert validator.validate_layer_name("River_Import_01") == "river_import_01"
     with pytest.raises(validator.ConversionValidationError):
         validator.validate_layer_name("imports.river")
+    assert validator.validate_governed_target_srid(4490) == 4490
+    with pytest.raises(validator.ConversionValidationError, match="EPSG:4490"):
+        validator.validate_governed_target_srid(4326)
+
+
+def test_raw_postgis_table_names_are_server_owned_and_batch_scoped() -> None:
+    """Keep the legacy logical label while preventing raw table overwrite semantics."""
+
+    first = immutable_table_name("a" * 32, "River_Import_01")
+    second = immutable_table_name("b" * 32, "River_Import_01")
+    assert first == "batch_aaaaaaaaaaaaaaaa_river_import_01"
+    assert second == "batch_bbbbbbbbbbbbbbbb_river_import_01"
+    assert first != second
+    assert len(first) <= 63
+
+    gdal_source = (Path(__file__).parents[1] / "app" / "data_converter" / "gdal_service.py").read_text(encoding="utf-8")
+    assert '"-overwrite"' not in gdal_source
+
+
+def test_detect_source_crs_never_treats_geometry_type_as_a_crs() -> None:
+    """Geometry family metadata must not be persisted as false CRS provenance."""
+
+    assert gdal_service.detect_source_crs({
+        "layers": [{"geometryType": "LineString"}],
+    }) == "unknown"
+    assert gdal_service.detect_source_crs({
+        "layers": [{
+            "geometryFields": [{
+                "coordinateSystem": {"id": {"authority": "EPSG", "code": 4490}}
+            }]
+        }]
+    }) == "EPSG:4490"
+
+
+class _FakeImportSession:
+    """Capture import-batch persistence without requiring a live PostGIS database."""
+
+    def __init__(self, parent: object | None = None) -> None:
+        self.parent = parent
+        self.added: list[object] = []
+        self.commit_count = 0
+        self.rollback_count = 0
+
+    def get(self, _model: object, _identifier: int) -> object | None:
+        return self.parent
+
+    def add(self, value: object) -> None:
+        setattr(value, "id", len(self.added) + 1)
+        self.added.append(value)
+
+    def commit(self) -> None:
+        self.commit_count += 1
+
+    def rollback(self) -> None:
+        self.rollback_count += 1
+
+
+def _postgis_import(
+    monkeypatch: pytest.MonkeyPatch,
+    session: _FakeImportSession,
+    *,
+    layer_name: str,
+    entity_type: str | None = None,
+    parent_version_id: int | None = None,
+    operator: str | None = None,
+    inspect_error: Exception | None = None,
+    import_error: Exception | None = None,
+) -> object:
+    """Call the multipart route with deterministic GDAL and database fakes."""
+
+    monkeypatch.setattr(
+        conversion_router.importer,
+        "stage_upload",
+        lambda *_args, **_kwargs: ("a" * 32, "GeoJSON", Path("source.geojson")),
+    )
+
+    def inspect(*_args: object, **_kwargs: object) -> dict[str, object]:
+        if inspect_error is not None:
+            raise inspect_error
+        return {
+            "layers": [{
+                "geometryFields": [{
+                    "coordinateSystem": {"id": {"authority": "EPSG", "code": 4490}}
+                }]
+            }]
+        }
+
+    def import_postgis(*_args: object, **_kwargs: object) -> None:
+        if import_error is not None:
+            raise import_error
+
+    monkeypatch.setattr(conversion_router.gdal_service, "inspect", inspect)
+    monkeypatch.setattr(conversion_router.importer, "import_postgis", import_postgis)
+    app.dependency_overrides[get_database_session] = lambda: session
+    data = {"layer_name": layer_name}
+    if entity_type is not None:
+        data["entity_type"] = entity_type
+    if parent_version_id is not None:
+        data["parent_version_id"] = str(parent_version_id)
+    if operator is not None:
+        data["operator"] = operator
+    try:
+        return client.post(
+            "/api/v1/dgis/conversions/postgis",
+            files={"file": ("input.geojson", b'{"type":"FeatureCollection"}')},
+            data=data,
+        )
+    finally:
+        app.dependency_overrides.pop(get_database_session, None)
+
+
+def test_postgis_import_accepts_explicit_entity_and_keeps_raw_batch_created(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Raw landing records provenance but does not claim typed staging is complete."""
+
+    parent = SimpleNamespace(status="published", content_hash="b" * 64)
+    session = _FakeImportSession(parent)
+    response = _postgis_import(
+        monkeypatch,
+        session,
+        layer_name="survey_2026",
+        entity_type="cross_section",
+        parent_version_id=7,
+        operator="survey-team-a",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert {
+        "entity_type": "cross_section",
+        "batch_status": "created",
+        "raw_landing_status": "completed",
+        "parent_version_id": 7,
+    }.items() <= body["details"].items()
+    batch = session.added[0]
+    assert batch.status == "created"
+    assert batch.entity_type == "cross_section"
+    assert batch.operator == "survey-team-a"
+    assert batch.parent_content_hash == "b" * 64
+    assert batch.source_crs == "EPSG:4490"
+    assert batch.metadata_json["_governance"]["raw_landing"]["status"] == "completed"
+    assert batch.metadata_json["_governance"]["standardization"]["status"] == "required"
+    assert "standardization to staging_qgis is still required" in batch.notes
+
+
+def test_postgis_import_only_infers_entity_from_known_legacy_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep safe old calls working without silently disguising unknown layers as rivers."""
+
+    inferred_session = _FakeImportSession()
+    inferred = _postgis_import(monkeypatch, inferred_session, layer_name="rivers")
+    assert inferred.status_code == 200
+    assert inferred_session.added[0].entity_type == "river"
+
+    unknown_session = _FakeImportSession()
+    unknown = _postgis_import(monkeypatch, unknown_session, layer_name="survey_2026")
+    assert unknown.status_code == 422
+    assert "entity_type is required" in unknown.json()["detail"]
+    assert unknown_session.added == []
+
+
+@pytest.mark.parametrize(
+    "parent",
+    [
+        None,
+        SimpleNamespace(status="draft", content_hash="b" * 64),
+        SimpleNamespace(status="approved", content_hash=None),
+    ],
+)
+def test_postgis_import_rejects_unqualified_parent_versions(
+    monkeypatch: pytest.MonkeyPatch, parent: object | None,
+) -> None:
+    """A parent must be frozen and content-addressed before it can anchor a batch."""
+
+    session = _FakeImportSession(parent)
+    response = _postgis_import(
+        monkeypatch,
+        session,
+        layer_name="rivers",
+        parent_version_id=9,
+    )
+
+    assert response.status_code == 422
+    assert session.added == []
+
+
+@pytest.mark.parametrize("failure_stage", ["inspect", "import"])
+def test_postgis_import_persists_auditable_raw_failure(
+    monkeypatch: pytest.MonkeyPatch, failure_stage: str,
+) -> None:
+    """Any GDAL failure after batch registration remains visible and blocks standardization."""
+
+    session = _FakeImportSession()
+    error = gdal_service.GDALServiceError(f"{failure_stage} failed")
+    response = _postgis_import(
+        monkeypatch,
+        session,
+        layer_name="gates",
+        inspect_error=error if failure_stage == "inspect" else None,
+        import_error=error if failure_stage == "import" else None,
+    )
+
+    assert response.status_code == 503
+    batch = session.added[0]
+    assert batch.status == "created"
+    assert batch.notes.startswith("RAW_LANDING_FAILED:")
+    governance = batch.metadata_json["_governance"]
+    assert governance["raw_landing"]["status"] == "failed"
+    assert governance["standardization"]["status"] == "blocked"
+    assert session.rollback_count == 1
 
 
 def test_real_gdal_vector_and_cog_conversion(tmp_path: Path) -> None:

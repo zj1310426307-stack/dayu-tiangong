@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Identity,
     Index,
     Integer,
@@ -117,13 +118,39 @@ class DatasetVersion(Base):
     """标识一组不可混用的河网、断面、建筑物和模型参数数据。"""
 
     __tablename__ = "dataset_version"
-    __table_args__ = (UniqueConstraint("version", name="uq_dataset_version_version"),)
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft','review','approved','published','retired','rejected')",
+            name="ck_dataset_version_status",
+        ),
+        UniqueConstraint("version", name="uq_dataset_version_version"),
+        UniqueConstraint("source_batch_id", name="uq_dataset_version_source_batch_id"),
+        Index("ix_dataset_version_status", "status"),
+        Index("ix_dataset_version_content_hash", "content_hash"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     version: Mapped[str] = mapped_column(String(32), nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     creator: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="draft"
+    )
+    parent_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="RESTRICT")
+    )
+    source_batch_id: Mapped[int | None] = mapped_column(
+        ForeignKey("gis_import_batch.id", ondelete="RESTRICT")
+    )
+    content_hash: Mapped[str | None] = mapped_column(String(64))
+    change_summary: Mapped[str | None] = mapped_column(Text)
+    reviewed_by: Mapped[str | None] = mapped_column(String(64))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approved_by: Mapped[str | None] = mapped_column(String(64))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -138,6 +165,400 @@ class DatasetVersion(Base):
     )
     annotations: Mapped[list["MapAnnotation"]] = relationship(
         back_populates="dataset_version", cascade="all, delete-orphan"
+    )
+
+
+class GISImportBatch(Base):
+    """Track one immutable source landing and its controlled governance lifecycle."""
+
+    __tablename__ = "gis_import_batch"
+    __table_args__ = (
+        CheckConstraint(
+            "entity_type IN ('river','cross_section','gate','pump')",
+            name="ck_gis_import_batch_entity_type",
+        ),
+        CheckConstraint(
+            "status IN ('created','staged','validating','validation_failed','validated',"
+            "'in_review','changes_requested','rejected','approved','promoting','promoted',"
+            "'published')",
+            name="ck_gis_import_batch_status",
+        ),
+        CheckConstraint("source_size >= 0", name="ck_gis_import_batch_source_size"),
+        CheckConstraint(
+            "source_hash_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_gis_import_batch_source_hash",
+        ),
+        CheckConstraint("target_crs = 'EPSG:4490'", name="ck_gis_import_batch_target_crs"),
+        CheckConstraint(
+            "(parent_version_id IS NULL AND parent_content_hash IS NULL) OR "
+            "(parent_version_id IS NOT NULL AND parent_content_hash IS NOT NULL)",
+            name="ck_gis_import_batch_parent_hash_pair",
+        ),
+        UniqueConstraint("batch_code", name="uq_gis_import_batch_code"),
+        UniqueConstraint("raw_table_name", name="uq_gis_import_batch_raw_table"),
+        UniqueConstraint(
+            "promoted_dataset_version_id",
+            name="uq_gis_import_batch_promoted_version",
+        ),
+        Index("ix_gis_import_batch_status", "status"),
+        Index("ix_gis_import_batch_parent_version_id", "parent_version_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_code: Mapped[str] = mapped_column(String(36), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_format: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_hash_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_crs: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_crs: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default="EPSG:4490"
+    )
+    mapping_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    operator: Mapped[str] = mapped_column(String(64), nullable=False)
+    survey_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default="created"
+    )
+    raw_location: Mapped[str | None] = mapped_column(Text)
+    raw_table_name: Mapped[str | None] = mapped_column(String(63))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    notes: Mapped[str | None] = mapped_column(Text)
+    parent_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="RESTRICT")
+    )
+    parent_content_hash: Mapped[str | None] = mapped_column(String(64))
+    staging_content_hash: Mapped[str | None] = mapped_column(String(64))
+    staged_by: Mapped[str | None] = mapped_column(String(64))
+    staged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    review_submitted_by: Mapped[str | None] = mapped_column(String(64))
+    review_submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    promoted_dataset_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "dataset_version.id",
+            name="fk_gis_import_batch_promoted_dataset_version_id",
+            ondelete="RESTRICT",
+        )
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class GISValidationRun(Base):
+    """Persist one authoritative validation generation for a staging batch."""
+
+    __tablename__ = "gis_validation_run"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running','passed','failed')",
+            name="ck_gis_validation_run_status",
+        ),
+        UniqueConstraint(
+            "batch_id", "id", name="uq_gis_validation_run_batch_id_id"
+        ),
+        Index("ix_gis_validation_run_batch_id", "batch_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("gis_import_batch.id", ondelete="CASCADE"), nullable=False
+    )
+    ruleset_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    staging_content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    summary_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+
+class GISValidationIssue(Base):
+    """Store one queryable validation issue tied to a feature and rule."""
+
+    __tablename__ = "gis_validation_issue"
+    __table_args__ = (
+        CheckConstraint(
+            "entity_type IN ('river','cross_section','gate','pump')",
+            name="ck_gis_validation_issue_entity_type",
+        ),
+        CheckConstraint(
+            "severity IN ('error','warning','info')",
+            name="ck_gis_validation_issue_severity",
+        ),
+        ForeignKeyConstraint(
+            ["batch_id", "validation_run_id"],
+            ["gis_validation_run.batch_id", "gis_validation_run.id"],
+            name="fk_gis_validation_issue_batch_run",
+            ondelete="CASCADE",
+        ),
+        Index("ix_gis_validation_issue_batch_severity", "batch_id", "severity"),
+        Index("ix_gis_validation_issue_geometry_gist", "geometry", postgresql_using="gist"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    validation_run_id: Mapped[int] = mapped_column(nullable=False)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("gis_import_batch.id", ondelete="CASCADE"), nullable=False
+    )
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    feature_ref: Mapped[str | None] = mapped_column(String(128))
+    rule_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    geometry: Mapped[Any | None] = mapped_column(
+        Geometry(geometry_type="GEOMETRY", srid=4490, spatial_index=False)
+    )
+    details_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution_note: Mapped[str | None] = mapped_column(Text)
+
+
+class GISReview(Base):
+    """Append one immutable human review decision for a validated batch generation."""
+
+    __tablename__ = "gis_review"
+    __table_args__ = (
+        CheckConstraint(
+            "decision IN ('approve','reject','request_changes')",
+            name="ck_gis_review_decision",
+        ),
+        ForeignKeyConstraint(
+            ["batch_id", "validation_run_id"],
+            ["gis_validation_run.batch_id", "gis_validation_run.id"],
+            name="fk_gis_review_batch_run",
+            ondelete="RESTRICT",
+        ),
+        Index("ix_gis_review_batch_id", "batch_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("gis_import_batch.id", ondelete="CASCADE"), nullable=False
+    )
+    validation_run_id: Mapped[int] = mapped_column(nullable=False)
+    staging_content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    reviewer: Mapped[str] = mapped_column(String(64), nullable=False)
+    decision: Mapped[str] = mapped_column(String(24), nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class GISPublication(Base):
+    """Audit one publication manifest without changing the existing service contracts."""
+
+    __tablename__ = "gis_publication"
+    __table_args__ = (
+        CheckConstraint(
+            "publication_status IN ('pending','published','failed','retired')",
+            name="ck_gis_publication_status",
+        ),
+        UniqueConstraint("dataset_version_id", name="uq_gis_publication_dataset_version_id"),
+        Index("ix_gis_publication_status", "publication_status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="RESTRICT"), nullable=False
+    )
+    publication_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    published_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    previous_publication_id: Mapped[int | None] = mapped_column(
+        ForeignKey("gis_publication.id", ondelete="SET NULL")
+    )
+    manifest_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class _QGISStagingMixin:
+    """Provide immutable provenance and editable-state metadata to every staging layer."""
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(
+        ForeignKey("gis_import_batch.id", ondelete="CASCADE"), nullable=False
+    )
+    source_feature_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    operation: Mapped[str] = mapped_column(String(12), nullable=False, server_default="upsert")
+    quality_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="pending"
+    )
+    source_crs: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_crs: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default="EPSG:4490"
+    )
+    source_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    operator: Mapped[str] = mapped_column(String(64), nullable=False)
+    survey_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_payload: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class QGISStagingRiver(_QGISStagingMixin, Base):
+    """Expose stable river fields for direct QGIS editing in the staging schema."""
+
+    __tablename__ = "river"
+    __table_args__ = (
+        CheckConstraint("operation IN ('upsert','delete')", name="ck_qgis_river_operation"),
+        CheckConstraint(
+            "quality_status IN ('pending','passed','failed')",
+            name="ck_qgis_river_quality_status",
+        ),
+        CheckConstraint("target_crs = 'EPSG:4490'", name="ck_qgis_river_target_crs"),
+        UniqueConstraint("batch_id", "source_feature_id", name="uq_qgis_river_source"),
+        UniqueConstraint("batch_id", "code", name="uq_qgis_river_code"),
+        Index("ix_qgis_river_geometry_gist", "geometry", postgresql_using="gist"),
+        {"schema": "staging_qgis"},
+    )
+
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    code: Mapped[str] = mapped_column(String(64), nullable=False)
+    length: Mapped[float] = mapped_column(Float, nullable=False)
+    level: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, server_default="active")
+    description: Mapped[str | None] = mapped_column(Text)
+    geometry: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="LINESTRING", srid=4490, spatial_index=False), nullable=False
+    )
+
+
+class QGISStagingCrossSection(_QGISStagingMixin, Base):
+    """Expose stable cross-section attributes and point geometry for QGIS editing."""
+
+    __tablename__ = "cross_section"
+    __table_args__ = (
+        CheckConstraint("operation IN ('upsert','delete')", name="ck_qgis_section_operation"),
+        CheckConstraint(
+            "quality_status IN ('pending','passed','failed')",
+            name="ck_qgis_section_quality_status",
+        ),
+        CheckConstraint("target_crs = 'EPSG:4490'", name="ck_qgis_section_target_crs"),
+        UniqueConstraint("batch_id", "source_feature_id", name="uq_qgis_section_source"),
+        UniqueConstraint("batch_id", "section_code", name="uq_qgis_section_code"),
+        Index("ix_qgis_section_geometry_gist", "geometry", postgresql_using="gist"),
+        {"schema": "staging_qgis"},
+    )
+
+    river_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    section_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    section_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    station: Mapped[float] = mapped_column(Float, nullable=False)
+    points: Mapped[dict[str, list[list[float]]]] = mapped_column(JSONB, nullable=False)
+    roughness: Mapped[float] = mapped_column(Float, nullable=False)
+    elevation_min: Mapped[float] = mapped_column(Float, nullable=False)
+    survey_date: Mapped[date | None] = mapped_column(Date)
+    geometry: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="POINT", srid=4490, spatial_index=False), nullable=False
+    )
+
+
+class QGISStagingGate(_QGISStagingMixin, Base):
+    """Expose gate design fields while deferring topology IDs to server promotion."""
+
+    __tablename__ = "gate"
+    __table_args__ = (
+        CheckConstraint("operation IN ('upsert','delete')", name="ck_qgis_gate_operation"),
+        CheckConstraint(
+            "quality_status IN ('pending','passed','failed')",
+            name="ck_qgis_gate_quality_status",
+        ),
+        CheckConstraint("target_crs = 'EPSG:4490'", name="ck_qgis_gate_target_crs"),
+        UniqueConstraint("batch_id", "source_feature_id", name="uq_qgis_gate_source"),
+        UniqueConstraint("batch_id", "gate_code", name="uq_qgis_gate_code"),
+        Index("ix_qgis_gate_geometry_gist", "geometry", postgresql_using="gist"),
+        {"schema": "staging_qgis"},
+    )
+
+    river_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    gate_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    gate_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    opening_direction: Mapped[str] = mapped_column(String(32), nullable=False)
+    control_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    width: Mapped[float] = mapped_column(Float, nullable=False)
+    height: Mapped[float] = mapped_column(Float, nullable=False)
+    max_flow: Mapped[float] = mapped_column(Float, nullable=False)
+    bottom_elevation: Mapped[float] = mapped_column(Float, nullable=False)
+    station: Mapped[float | None] = mapped_column(Float)
+    crest_elevation: Mapped[float | None] = mapped_column(Float)
+    discharge_coefficient: Mapped[float | None] = mapped_column(Float)
+    minimum_opening: Mapped[float | None] = mapped_column(Float)
+    maximum_opening: Mapped[float | None] = mapped_column(Float)
+    opening_rate_limit: Mapped[float | None] = mapped_column(Float)
+    minimum_hold_seconds: Mapped[float | None] = mapped_column(Float)
+    allow_reverse_flow: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, server_default="offline")
+    geometry: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="POINT", srid=4490, spatial_index=False), nullable=False
+    )
+
+
+class QGISStagingPump(_QGISStagingMixin, Base):
+    """Expose pump design fields while deferring topology IDs to server promotion."""
+
+    __tablename__ = "pump"
+    __table_args__ = (
+        CheckConstraint("operation IN ('upsert','delete')", name="ck_qgis_pump_operation"),
+        CheckConstraint(
+            "quality_status IN ('pending','passed','failed')",
+            name="ck_qgis_pump_quality_status",
+        ),
+        CheckConstraint("target_crs = 'EPSG:4490'", name="ck_qgis_pump_target_crs"),
+        UniqueConstraint("batch_id", "source_feature_id", name="uq_qgis_pump_source"),
+        UniqueConstraint("batch_id", "pump_code", name="uq_qgis_pump_code"),
+        Index("ix_qgis_pump_geometry_gist", "geometry", postgresql_using="gist"),
+        {"schema": "staging_qgis"},
+    )
+
+    river_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    pump_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    design_flow: Mapped[float] = mapped_column(Float, nullable=False)
+    head: Mapped[float] = mapped_column(Float, nullable=False)
+    power: Mapped[float] = mapped_column(Float, nullable=False)
+    efficiency_curve: Mapped[dict[str, list[list[float]]]] = mapped_column(JSONB, nullable=False)
+    head_curve: Mapped[dict[str, list[list[float]]] | None] = mapped_column(JSONB)
+    transfer_type: Mapped[str | None] = mapped_column(String(24))
+    unit_count: Mapped[int | None] = mapped_column(Integer)
+    minimum_running_units: Mapped[int | None] = mapped_column(Integer)
+    maximum_running_units: Mapped[int | None] = mapped_column(Integer)
+    minimum_run_seconds: Mapped[float | None] = mapped_column(Float)
+    minimum_stop_seconds: Mapped[float | None] = mapped_column(Float)
+    maximum_starts_per_run: Mapped[int | None] = mapped_column(Integer)
+    minimum_operating_head: Mapped[float | None] = mapped_column(Float)
+    maximum_operating_head: Mapped[float | None] = mapped_column(Float)
+    reverse_flow_protection: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="true"
+    )
+    control_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, server_default="offline")
+    geometry: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="POINT", srid=4490, spatial_index=False), nullable=False
     )
 
 

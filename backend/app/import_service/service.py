@@ -14,6 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.cross_section import service as cross_section_service
+from app.dataset.lifecycle import assert_dataset_version_mutable
 from app.cross_section.schemas import CrossSectionCreate
 from app.gis.models import River
 from app.import_service.schemas import ImportIssue, ImportResponse
@@ -202,6 +203,7 @@ def _build_payload(session: Session, resource: ResourceName, dataset_version_id:
 def import_records(session: Session, resource: ResourceName, dataset_version_id: int, records: list[dict[str, Any]], stored_filename: str) -> ImportResponse:
     """先校验全部记录，再在一个事务中写入；任何错误都不产生部分数据。"""
 
+    assert_dataset_version_mutable(session, dataset_version_id)
     payloads: list[Any] = []
     errors: list[ImportIssue] = []
     for row_number, record in enumerate(records, start=2):

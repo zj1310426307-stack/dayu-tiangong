@@ -10,7 +10,15 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
 from app.database.session import SessionLocal
-from app.gis.models import CrossSection, Gate, SimulationCase, SimulationResult, SimulationTask
+from app.gis.models import (
+    CrossSection,
+    DatasetVersion,
+    Gate,
+    MapAnnotation,
+    SimulationCase,
+    SimulationResult,
+    SimulationTask,
+)
 from app.main import app
 
 
@@ -72,12 +80,21 @@ def test_annotation_crud_and_scale_visibility() -> None:
     with SessionLocal() as session:
         gate = session.scalar(select(Gate).order_by(Gate.id))
         assert gate is not None
-        version_id, gate_id = gate.dataset_version_id, gate.id
+        source_version_id = gate.dataset_version_id
+        draft = DatasetVersion(
+            version=f"ANNOTATION-{datetime.now(UTC).timestamp()}",
+            name="Phase 1C annotation draft",
+            creator="pytest",
+            status="draft",
+        )
+        session.add(draft)
+        session.commit()
+        version_id = draft.id
     created = client.post("/api/v1/gis-analysis/annotations", json={
         "dataset_version_id": version_id, "annotation_type": "parameter",
         "name": "phase1c-crud", "text": "闸门设计流量", "longitude": 120.18,
         "latitude": 30.28, "visible_scale_min": 1000, "visible_scale_max": 25000,
-        "related_type": "gate", "related_id": gate_id,
+        "related_type": None, "related_id": None,
     })
     assert created.status_code == 201
     annotation_id = created.json()["id"]
@@ -105,6 +122,26 @@ def test_annotation_crud_and_scale_visibility() -> None:
             params={"dataset_version_id": version_id},
         )
         assert deleted.status_code == 204
+        with SessionLocal() as session:
+            session.execute(
+                text("DELETE FROM map_annotation WHERE dataset_version_id=:version_id"),
+                {"version_id": version_id},
+            )
+            session.execute(
+                text("DELETE FROM dataset_version WHERE id=:version_id"),
+                {"version_id": version_id},
+            )
+            session.commit()
+
+    frozen = client.post("/api/v1/gis-analysis/annotations", json={
+        "dataset_version_id": source_version_id,
+        "annotation_type": "parameter",
+        "name": "phase1c-frozen-reject",
+        "text": "must not mutate published content",
+        "longitude": 120.18,
+        "latitude": 30.28,
+    })
+    assert frozen.status_code == 409
     missing_version = client.get("/api/v1/gis-analysis/annotations", params={
         "dataset_version_id": 999999, "scale_denominator": 1000,
     })
@@ -137,15 +174,28 @@ def test_trace_box_buffer_nearest_and_vector_tile() -> None:
     assert buffered.json()["distance_basis"] == "PostGIS geography metres"
     assert buffered.json()["buffer_geometry"]["type"] == "Polygon"
 
+    with SessionLocal() as session:
+        station_version = DatasetVersion(
+            version=f"ANNO-STATION-{datetime.now(UTC).timestamp()}",
+            name="Phase 1C station annotation draft",
+            creator="pytest",
+            status="draft",
+        )
+        session.add(station_version)
+        session.commit()
+        station_version_id = station_version.id
+
     station = client.post("/api/v1/gis-analysis/annotations", json={
-        "dataset_version_id": 1, "annotation_type": "hydrology_station",
+        "dataset_version_id": station_version_id,
+        "annotation_type": "hydrology_station",
         "name": "phase1c-station", "text": "演示水文站", "longitude": 120.2,
         "latitude": 30.2, "related_type": "hydrology_station", "related_id": 999001,
     })
     assert station.status_code == 201
     try:
         nearest = client.post("/api/v1/gis-analysis/nearest", json={
-            "dataset_version_id": 1, "longitude": 120.2001, "latitude": 30.2001,
+            "dataset_version_id": station_version_id,
+            "longitude": 120.2001, "latitude": 30.2001,
             "facility_types": ["hydrology_station"], "limit": 1,
         })
         assert nearest.status_code == 200
@@ -154,8 +204,14 @@ def test_trace_box_buffer_nearest_and_vector_tile() -> None:
     finally:
         client.delete(
             f"/api/v1/gis-analysis/annotations/{station.json()['id']}",
-            params={"dataset_version_id": 1},
+            params={"dataset_version_id": station_version_id},
         )
+        with SessionLocal() as session:
+            session.execute(
+                text("DELETE FROM dataset_version WHERE id=:version_id"),
+                {"version_id": station_version_id},
+            )
+            session.commit()
 
     tile = client.get(
         "/api/v1/gis-analysis/vector-tiles/river/8/213/105.mvt",
@@ -209,7 +265,16 @@ def test_more_than_one_thousand_annotations_share_one_collection_endpoint() -> N
     """A 1000+ label page must stay bounded and advertise LabelCollection rendering."""
 
     with SessionLocal() as session:
-        session.execute(text("""
+        draft = DatasetVersion(
+            version=f"ANNO-BULK-{datetime.now(UTC).timestamp()}",
+            name="Phase 1C bulk annotation draft",
+            creator="pytest",
+            status="draft",
+        )
+        session.add(draft)
+        session.flush()
+        version_id = draft.id
+        bulk_insert = text("""
             INSERT INTO map_annotation (
                 dataset_version_id, annotation_type, name, text, longitude, latitude,
                 rotation, font_size, color, visible_scale_min, visible_scale_max, geometry
@@ -222,11 +287,15 @@ def test_more_than_one_thousand_annotations_share_one_collection_endpoint() -> N
                        30.05 + (value % 30) * 0.001
                    ), 4490)
             FROM generate_series(1, 1001) AS value
-        """))
+        """)
+        bulk_insert = text(
+            bulk_insert.text.replace("SELECT 1, 'place'", "SELECT :version_id, 'place'")
+        )
+        session.execute(bulk_insert, {"version_id": version_id})
         session.commit()
     try:
         response = client.get("/api/v1/gis-analysis/annotations", params={
-            "dataset_version_id": 1, "scale_denominator": 1000,
+            "dataset_version_id": version_id, "scale_denominator": 1000,
             "annotation_type": "place", "limit": 2000,
         })
         assert response.status_code == 200
@@ -236,7 +305,11 @@ def test_more_than_one_thousand_annotations_share_one_collection_endpoint() -> N
     finally:
         with SessionLocal() as session:
             session.execute(text(
-                "DELETE FROM map_annotation WHERE dataset_version_id = 1 "
+                "DELETE FROM map_annotation WHERE dataset_version_id = :version_id "
                 "AND annotation_type = 'place' AND name LIKE 'phase1c-bulk-%'"
-            ))
+            ), {"version_id": version_id})
+            session.execute(
+                text("DELETE FROM dataset_version WHERE id=:version_id"),
+                {"version_id": version_id},
+            )
             session.commit()

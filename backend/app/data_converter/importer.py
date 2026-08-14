@@ -40,9 +40,16 @@ def stage_upload(filename: str, content: bytes, expected: str = "any") -> tuple[
     return job_id, input_format, shape
 
 
-def import_postgis(source: Path, layer_name: str, target_srid: int) -> None:
-    """Import a staged vector source to the shared PostGIS imports schema."""
+def immutable_table_name(job_id: str, logical_layer_name: str) -> str:
+    """Build a server-owned identifier that never aliases a previous raw batch."""
+
+    safe_label = validator.validate_layer_name(logical_layer_name).lower()[:24]
+    return f"batch_{job_id[:16]}_{safe_label}"[:63]
+
+
+def import_postgis(source: Path, table_name: str, target_srid: int) -> None:
+    """Import a staged vector source to one immutable shared-database raw table."""
 
     gdal_service.vector_to_postgis(
-        source, validator.validate_layer_name(layer_name), validator.validate_srid(target_srid)
+        source, validator.validate_layer_name(table_name), validator.validate_srid(target_srid)
     )

@@ -6,6 +6,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.common.spatial import geometry_expression, geometry_json
+from app.dataset.lifecycle import assert_dataset_version_mutable
 from app.gis.models import Gate, Pump
 from app.structure.schemas import (
     GateCreate,
@@ -135,6 +136,7 @@ def get_pump(session: Session, entity_id: int) -> PumpRecord | None:
 def create_gate(session: Session, payload: GateCreate) -> GateRecord:
     """新增闸门。"""
 
+    assert_dataset_version_mutable(session, payload.dataset_version_id)
     values = payload.model_dump(exclude={"geometry"})
     entity = Gate(**values, geometry=geometry_expression(payload.geometry, "Point"))
     session.add(entity)
@@ -145,6 +147,7 @@ def create_gate(session: Session, payload: GateCreate) -> GateRecord:
 def create_pump(session: Session, payload: PumpCreate) -> PumpRecord:
     """新增泵站。"""
 
+    assert_dataset_version_mutable(session, payload.dataset_version_id)
     values = payload.model_dump(exclude={"geometry"})
     entity = Pump(**values, geometry=geometry_expression(payload.geometry, "Point"))
     session.add(entity)
@@ -155,6 +158,7 @@ def create_pump(session: Session, payload: PumpCreate) -> PumpRecord:
 def update_gate(session: Session, entity: Gate, payload: GateUpdate) -> GateRecord:
     """局部更新闸门。"""
 
+    assert_dataset_version_mutable(session, entity.dataset_version_id)
     values = payload.model_dump(exclude_unset=True)
     geometry = values.pop("geometry", None)
     for key, value in values.items():
@@ -168,6 +172,7 @@ def update_gate(session: Session, entity: Gate, payload: GateUpdate) -> GateReco
 def update_pump(session: Session, entity: Pump, payload: PumpUpdate) -> PumpRecord:
     """局部更新泵站。"""
 
+    assert_dataset_version_mutable(session, entity.dataset_version_id)
     values = payload.model_dump(exclude_unset=True)
     geometry = values.pop("geometry", None)
     for key, value in values.items():
@@ -181,5 +186,6 @@ def update_pump(session: Session, entity: Pump, payload: PumpUpdate) -> PumpReco
 def delete_structure(session: Session, entity: Gate | Pump) -> None:
     """删除指定闸门或泵站。"""
 
+    assert_dataset_version_mutable(session, entity.dataset_version_id)
     session.delete(entity)
     session.flush()

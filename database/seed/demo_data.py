@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from app.gis.models import (  # noqa: E402
     CrossSection,
     DatasetVersion,
     Gate,
+    GISPublication,
     MapAnnotation,
     ModelParameter,
     PlaceName,
@@ -38,6 +40,8 @@ from app.gis.models import (  # noqa: E402
     WaterName,
 )
 from app.river.service import generate_topology  # noqa: E402
+from app.gis_governance.hashing import canonical_sha256  # noqa: E402
+from app.gis_governance.service import _core_content_rows  # noqa: E402
 
 
 RIVER_SPECS = [
@@ -131,6 +135,59 @@ def _ensure_dataset_version(session: Any) -> DatasetVersion:
     return version
 
 
+def _backfill_governance_metadata(session: Any) -> None:
+    """Backfill immutable-version hashes and missing publication audit rows.
+
+    This maintenance step deliberately updates only governance metadata.  It
+    never refreshes or otherwise mutates the four frozen core business tables.
+    """
+
+    frozen_without_hash = session.scalars(
+        select(DatasetVersion)
+        .where(
+            DatasetVersion.status.in_(("approved", "published", "retired")),
+            DatasetVersion.content_hash.is_(None),
+        )
+        .order_by(DatasetVersion.id)
+        .with_for_update()
+    ).all()
+    for frozen_version in frozen_without_hash:
+        frozen_version.content_hash = canonical_sha256(
+            _core_content_rows(session, frozen_version.id)
+        )
+
+    published_without_audit = session.scalars(
+        select(DatasetVersion)
+        .outerjoin(
+            GISPublication,
+            GISPublication.dataset_version_id == DatasetVersion.id,
+        )
+        .where(
+            DatasetVersion.status == "published",
+            GISPublication.id.is_(None),
+        )
+        .order_by(DatasetVersion.id)
+        .with_for_update(of=DatasetVersion)
+    ).all()
+    for published_version in published_without_audit:
+        session.add(
+            GISPublication(
+                dataset_version_id=published_version.id,
+                publication_status="published",
+                published_by="demo-seed-governance-backfill",
+                published_at=(
+                    published_version.published_at
+                    or published_version.created_time
+                    or datetime.now(UTC)
+                ),
+                manifest_json={
+                    "legacy_backfill": True,
+                    "publish_boundary": "existing public compatibility",
+                },
+            )
+        )
+
+
 def _ensure_parameter(
     session: Any,
     version_id: int,
@@ -164,11 +221,28 @@ def _ensure_parameter(
         parameter.description = description
 
 
-def seed_demo_data() -> dict[str, int]:
-    """Populate the complete DEMO model input and return final row counts."""
+def _seed_demo_data_rows() -> dict[str, int]:
+    """Populate DEMO rows or maintain governance metadata for a frozen baseline."""
 
     with SessionLocal.begin() as session:
         version = _ensure_dataset_version(session)
+        if version.status != "draft":
+            # Published/approved versions are frozen facts. Repeated container starts
+            # may add governance metadata and count rows, but must never refresh
+            # business fields, annotations, gazetteer data, or topology.
+            _backfill_governance_metadata(session)
+            session.flush()
+            counts: dict[str, int] = {}
+            for label, model in (
+                ("dataset_versions", DatasetVersion), ("rivers", River), ("gates", Gate),
+                ("pumps", Pump), ("cross_sections", CrossSection),
+                ("map_annotations", MapAnnotation), ("administrative_areas", AdministrativeArea),
+                ("roads", Road), ("place_names", PlaceName), ("water_names", WaterName),
+                ("pois", PointOfInterest), ("river_nodes", RiverNode),
+                ("simulation_cases", SimulationCase),
+            ):
+                counts[label] = session.scalar(select(func.count(model.id))) or 0
+            return counts
         rivers_by_code: dict[str, River] = {}
         for spec in RIVER_SPECS:
             river = session.scalar(
@@ -547,9 +621,15 @@ def seed_demo_data() -> dict[str, int]:
             ON CONFLICT ON CONSTRAINT uq_poi_version_code DO NOTHING
         """), {"version_id": version.id})
 
+        # Fresh installations run migration 0011 before seeding, so explicitly
+        # freeze the completed DEMO version just like upgraded installations do.
+        version.status = "published"
+        version.published_at = datetime.now(UTC)
+        version.change_summary = version.change_summary or "Frozen DEMO baseline."
+        session.flush()
+        _backfill_governance_metadata(session)
+
     with SessionLocal() as session:
-        # Phase 6 内置知识随空库初始化幂等入库，容器无需手工执行第二条命令。
-        seed_builtin_knowledge(session)
         return {
             "dataset_versions": session.scalar(select(func.count(DatasetVersion.id))) or 0,
             "rivers": session.scalar(select(func.count(River.id))) or 0,
@@ -565,6 +645,17 @@ def seed_demo_data() -> dict[str, int]:
             "river_nodes": session.scalar(select(func.count(RiverNode.id))) or 0,
             "simulation_cases": session.scalar(select(func.count(SimulationCase.id))) or 0,
         }
+
+
+def seed_demo_data() -> dict[str, int]:
+    """Seed DEMO data and always run the idempotent built-in knowledge import."""
+
+    counts = _seed_demo_data_rows()
+    # Keep the AI knowledge transaction separate from the spatial seed.  In
+    # particular, the frozen-baseline fast path above must not skip this step.
+    with SessionLocal() as session:
+        seed_builtin_knowledge(session)
+    return counts
 
 
 if __name__ == "__main__":
