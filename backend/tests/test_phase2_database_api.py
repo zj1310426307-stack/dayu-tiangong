@@ -57,12 +57,38 @@ def test_phase2_lists_topology_validation_and_model_input() -> None:
 
 
 def test_river_crud_round_trip_and_conflict_contract() -> None:
-    """河道新增、修改、读取和删除必须在同一管理契约内闭环。"""
+    """河道 CRUD 在临时 draft 闭环，并证明 published DEMO 不可写。"""
+
+    frozen = client.post(
+        "/api/v1/rivers",
+        json={
+            "dataset_version_id": 1,
+            "name": "不得写入已发布版本",
+            "code": "TEST-FROZEN-VERSION",
+            "length": 1,
+            "level": "channel",
+            "status": "planned",
+            "geometry": {"type": "LineString", "coordinates": [[120.6, 30.1], [120.61, 30.11]]},
+        },
+    )
+    assert frozen.status_code == 422
+
+    draft = client.post(
+        "/api/v1/model-data/dataset-versions",
+        json={
+            "version": "PYTEST-DRAFT-CRUD",
+            "name": "pytest draft",
+            "description": "临时可变版本",
+            "creator": "pytest",
+        },
+    )
+    assert draft.status_code == 201
+    draft_id = draft.json()["id"]
 
     create = client.post(
         "/api/v1/rivers",
         json={
-            "dataset_version_id": 1,
+            "dataset_version_id": draft_id,
             "name": "API 临时测试河道",
             "code": "TEST-RIVER-API",
             "length": 1000,
@@ -90,13 +116,59 @@ def test_river_crud_round_trip_and_conflict_contract() -> None:
     assert client.get(f"/api/v1/rivers/{river_id}").status_code == 200
     assert client.delete(f"/api/v1/rivers/{river_id}").status_code == 204
     assert client.get(f"/api/v1/rivers/{river_id}").status_code == 404
+    assert client.delete(f"/api/v1/model-data/dataset-versions/{draft_id}").status_code == 204
+
+
+def test_published_model_configuration_is_immutable() -> None:
+    """Freeze model parameters, boundaries, and cases together with GIS core data."""
+
+    parameter = client.get(
+        "/api/v1/model-data/parameters", params={"dataset_version_id": 1}
+    ).json()[0]
+    boundary = client.get(
+        "/api/v1/model-data/boundary-conditions", params={"dataset_version_id": 1}
+    ).json()[0]
+    case = client.get(
+        "/api/v1/model-data/simulation-cases", params={"dataset_version_id": 1}
+    ).json()[0]
+
+    assert client.post(
+        "/api/v1/model-data/parameters",
+        json={
+            "dataset_version_id": 1,
+            "parameter_type": "solver",
+            "parameter_name": "forbidden-published-write",
+            "value": 1,
+            "unit": "1",
+        },
+    ).status_code == 422
+    assert client.put(
+        f"/api/v1/model-data/parameters/{parameter['id']}", json={"value": 999}
+    ).status_code == 422
+    assert client.delete(
+        f"/api/v1/model-data/parameters/{parameter['id']}"
+    ).status_code == 422
+    assert client.put(
+        f"/api/v1/model-data/boundary-conditions/{boundary['id']}",
+        json={"description": "forbidden"},
+    ).status_code == 422
+    assert client.delete(
+        f"/api/v1/model-data/boundary-conditions/{boundary['id']}"
+    ).status_code == 422
+    assert client.put(
+        f"/api/v1/model-data/simulation-cases/{case['id']}",
+        json={"description": "forbidden"},
+    ).status_code == 422
+    assert client.delete(
+        f"/api/v1/model-data/simulation-cases/{case['id']}"
+    ).status_code == 422
 
 
 def test_phase2_physical_tables_revision_and_spatial_indexes() -> None:
     """直接审计物理版本、拓扑表和新增 GIST 索引。"""
 
     with SessionLocal() as session:
-        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260813_0010"
+        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260814_0012"
         tables = set(
             session.execute(
                 text(

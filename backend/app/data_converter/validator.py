@@ -79,3 +79,14 @@ def validate_srid(value: int) -> int:
     if value not in {4326, 4490, 3857}:
         raise ConversionValidationError("target_srid must be one of 4326, 4490, 3857")
     return value
+
+
+def validate_governed_target_srid(value: int) -> int:
+    """Keep authoritative raw-to-staging imports on the CGCS2000 target standard."""
+
+    srid = validate_srid(value)
+    if srid != 4490:
+        raise ConversionValidationError(
+            "governed PostGIS imports must target EPSG:4490"
+        )
+    return srid

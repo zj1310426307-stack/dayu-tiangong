@@ -24,6 +24,7 @@ ADMIN_USER = os.getenv("GEOSERVER_ADMIN_USER", "admin")
 ADMIN_PASSWORD = os.environ["GEOSERVER_ADMIN_PASSWORD"]
 READONLY_USER = os.getenv("GEOSERVER_DB_USER", "dayu_geoserver")
 READONLY_PASSWORD = os.environ["GEOSERVER_DB_PASSWORD"]
+DATASTORE_SCHEMA = os.getenv("GEOSERVER_DB_SCHEMA", "publish")
 STYLE_DIRECTORY = Path(__file__).resolve().parent / "styles"
 SRID = 4490
 BASEMAP_GROUP = "dayu_basemap"
@@ -90,32 +91,48 @@ def _configure_database_role() -> None:
                 ).format(sql.Identifier(role_name), sql.Literal(READONLY_PASSWORD))
             )
 
-        cursor.execute(sql.SQL("REVOKE {} FROM CURRENT_USER").format(sql.Identifier(role_name)))
         role = sql.Identifier(role_name)
         database = sql.Identifier(database_name)
         owner = sql.Identifier(admin_user)
         cursor.execute(sql.SQL("ALTER ROLE {} SET default_transaction_read_only = on").format(role))
         cursor.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM {}").format(database, role))
         cursor.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(database, role))
+        cursor.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
         cursor.execute(sql.SQL("REVOKE CREATE ON SCHEMA public FROM {}").format(role))
         cursor.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(role))
-        cursor.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA public TO {}").format(role))
-        cursor.execute(sql.SQL("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {}").format(role))
         cursor.execute(
-            sql.SQL("ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public GRANT SELECT ON TABLES TO {}").format(
+            sql.SQL(
+                "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "
+                "REVOKE ALL ON TABLES FROM {}"
+            ).format(
                 owner, role
             )
         )
         cursor.execute(sql.SQL("REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM {}").format(role))
-        cursor.execute(sql.SQL("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {}").format(role))
         cursor.execute(
             sql.SQL(
                 "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA public "
-                "GRANT USAGE, SELECT ON SEQUENCES TO {}"
+                "REVOKE ALL ON SEQUENCES FROM {}"
             ).format(owner, role)
         )
         cursor.execute(sql.SQL("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {}").format(role))
-        cursor.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA public TO {}").format(role))
+        cursor.execute(sql.SQL("REVOKE ALL ON SCHEMA staging_qgis FROM {}").format(role))
+        cursor.execute(
+            sql.SQL("REVOKE ALL ON ALL TABLES IN SCHEMA staging_qgis FROM {}").format(role)
+        )
+        cursor.execute(sql.SQL("GRANT USAGE ON SCHEMA publish TO {}").format(role))
+        cursor.execute(
+            sql.SQL("REVOKE ALL ON ALL TABLES IN SCHEMA publish FROM {}").format(role)
+        )
+        cursor.execute(
+            sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA publish TO {}").format(role)
+        )
+        cursor.execute(
+            sql.SQL(
+                "ALTER DEFAULT PRIVILEGES FOR ROLE {} IN SCHEMA publish "
+                "GRANT SELECT ON TABLES TO {}"
+            ).format(owner, role)
+        )
 
 
 def _request(
@@ -189,6 +206,7 @@ def _ensure_datastore() -> None:
     db_name = escape(os.getenv("POSTGRES_DB", "dayu_tiangong"))
     db_user = escape(READONLY_USER)
     db_password = escape(READONLY_PASSWORD)
+    db_schema = escape(_require_identifier(DATASTORE_SCHEMA, "GEOSERVER_DB_SCHEMA"))
     body = f"""<dataStore>
   <name>{DATASTORE}</name>
   <enabled>true</enabled>
@@ -196,7 +214,7 @@ def _ensure_datastore() -> None:
     <entry key="host">{db_host}</entry>
     <entry key="port">{db_port}</entry>
     <entry key="database">{db_name}</entry>
-    <entry key="schema">public</entry>
+    <entry key="schema">{db_schema}</entry>
     <entry key="user">{db_user}</entry>
     <entry key="passwd">{db_password}</entry>
     <entry key="dbtype">postgis</entry>

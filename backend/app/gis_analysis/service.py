@@ -12,6 +12,7 @@ from geoalchemy2 import Geography, Geometry
 from sqlalchemy import cast, func, select, text
 from sqlalchemy.orm import Session
 
+from app.dataset.lifecycle import assert_dataset_version_mutable
 from app.gis import service as gis_service
 from app.gis.models import (
     CrossSection, DatasetVersion, Gate, MapAnnotation, Pump, River, RiverConnection,
@@ -198,7 +199,7 @@ def search_locations(
 def create_annotation(session: Session, payload: AnnotationCreate) -> AnnotationRecord:
     """Persist a versioned label and derive its point geometry from validated coordinates."""
 
-    _require_version(session, payload.dataset_version_id)
+    assert_dataset_version_mutable(session, payload.dataset_version_id)
     _validate_relation(session, payload.dataset_version_id, payload.related_type, payload.related_id)
     row = MapAnnotation(**payload.model_dump(), geometry=func.ST_SetSRID(
         func.ST_MakePoint(payload.longitude, payload.latitude), 4490
@@ -220,6 +221,7 @@ def update_annotation(
     ))
     if row is None:
         raise GISAnalysisError("注记不存在")
+    assert_dataset_version_mutable(session, dataset_version_id)
     values = payload.model_dump(exclude_unset=True)
     for key, value in values.items():
         setattr(row, key, value)
@@ -246,6 +248,7 @@ def delete_annotation(session: Session, annotation_id: int, dataset_version_id: 
     ))
     if row is None:
         raise GISAnalysisError("注记不存在")
+    assert_dataset_version_mutable(session, dataset_version_id)
     session.delete(row)
     session.commit()
 

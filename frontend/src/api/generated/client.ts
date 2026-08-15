@@ -130,6 +130,68 @@ export interface app__validation__schemas__ValidationReport {
   "items": Array<ValidationItem>;
 }
 
+export interface BatchCreate {
+  "entity_type": "river" | "cross_section" | "gate" | "pump";
+  "source_filename": string;
+  "source_format": string;
+  "source_size": number;
+  "source_hash_sha256": string;
+  "source_crs": string;
+  "target_crs"?: "EPSG:4490";
+  "mapping_version": string;
+  "operator": string;
+  "survey_time"?: string | null;
+  "parent_version_id"?: number | null;
+  "metadata_json"?: Record<string, unknown>;
+  "notes"?: string | null;
+}
+
+export interface BatchDiff {
+  "batch_id": number;
+  "entity_type": "river" | "cross_section" | "gate" | "pump";
+  "parent_version_id": number | null;
+  "additions": Array<string>;
+  "updates": Array<string>;
+  "deletions": Array<string>;
+  "unchanged": Array<string>;
+}
+
+export interface BatchRecord {
+  "entity_type": "river" | "cross_section" | "gate" | "pump";
+  "source_filename": string;
+  "source_format": string;
+  "source_size": number;
+  "source_hash_sha256": string;
+  "source_crs": string;
+  "target_crs"?: "EPSG:4490";
+  "mapping_version": string;
+  "operator": string;
+  "survey_time"?: string | null;
+  "parent_version_id"?: number | null;
+  "metadata_json"?: Record<string, unknown>;
+  "notes"?: string | null;
+  "id": number;
+  "batch_code": string;
+  "status": "created" | "staged" | "validating" | "validation_failed" | "validated" | "in_review" | "changes_requested" | "rejected" | "approved" | "promoting" | "promoted" | "published";
+  "raw_location"?: string | null;
+  "raw_table_name"?: string | null;
+  "parent_content_hash"?: string | null;
+  "staging_content_hash"?: string | null;
+  "promoted_dataset_version_id"?: number | null;
+  "staged_by"?: string | null;
+  "staged_at"?: string | null;
+  "review_submitted_by"?: string | null;
+  "review_submitted_at"?: string | null;
+  "created_at": string;
+  "updated_at": string;
+}
+
+export interface BatchStageRequest {
+  "actor": string;
+  "note"?: string | null;
+  "standardization_completed"?: boolean;
+}
+
 export interface Body_convert_cog_api_v1_dgis_conversions_cog_post {
   "file": string;
   "target_srid"?: number;
@@ -162,6 +224,9 @@ export interface Body_import_to_postgis_api_v1_dgis_conversions_postgis_post {
   "file": string;
   "layer_name": string;
   "target_srid"?: number;
+  "entity_type"?: "river" | "cross_section" | "gate" | "pump" | null;
+  "parent_version_id"?: number | null;
+  "operator"?: string;
 }
 
 export interface Body_inspect_file_api_v1_dgis_conversions_inspect_post {
@@ -338,6 +403,17 @@ export interface DatasetVersionRecord {
   "description"?: string | null;
   "creator": string;
   "id": number;
+  "status"?: string;
+  "parent_version_id"?: number | null;
+  "source_batch_id"?: number | null;
+  "content_hash"?: string | null;
+  "change_summary"?: string | null;
+  "reviewed_by"?: string | null;
+  "reviewed_at"?: string | null;
+  "approved_by"?: string | null;
+  "approved_at"?: string | null;
+  "published_at"?: string | null;
+  "retired_at"?: string | null;
   "created_time": string;
 }
 
@@ -1041,6 +1117,46 @@ export interface PointGeometry {
   "coordinates": Array<unknown>;
 }
 
+export interface PromotedVersionRecord {
+  "id": number;
+  "version": string;
+  "name": string;
+  "description"?: string | null;
+  "creator": string;
+  "status": "approved" | "published" | "retired";
+  "parent_version_id"?: number | null;
+  "source_batch_id"?: number | null;
+  "content_hash"?: string | null;
+  "change_summary"?: string | null;
+  "approved_by"?: string | null;
+  "approved_at"?: string | null;
+  "published_at"?: string | null;
+  "created_time": string;
+}
+
+export interface PromoteRequest {
+  "version": string;
+  "name": string;
+  "creator": string;
+  "change_summary": string;
+}
+
+export interface PublicationRecord {
+  "id": number;
+  "dataset_version_id": number;
+  "publication_status": "pending" | "published" | "failed" | "retired";
+  "published_by": string;
+  "published_at"?: string | null;
+  "previous_publication_id"?: number | null;
+  "manifest_json": Record<string, unknown>;
+  "created_at": string;
+}
+
+export interface PublishRequest {
+  "published_by": string;
+  "manifest_json"?: Record<string, unknown>;
+}
+
 export interface PumpCreate {
   "dataset_version_id": number;
   "name": string;
@@ -1158,6 +1274,32 @@ export interface ResultSectionOption {
   "section_code": string;
   "river_id": number | null;
   "station": number;
+}
+
+export interface RetireRequest {
+  "retired_by": string;
+  "reason": string;
+}
+
+export interface ReviewDecisionRequest {
+  "reviewer": string;
+  "decision": "approve" | "reject" | "request_changes";
+  "comment"?: string | null;
+}
+
+export interface ReviewRecord {
+  "id": number;
+  "batch_id": number;
+  "validation_run_id": number;
+  "staging_content_hash": string;
+  "reviewer": string;
+  "decision": "approve" | "reject" | "request_changes";
+  "comment"?: string | null;
+  "created_at": string;
+}
+
+export interface ReviewSubmitRequest {
+  "actor": string;
 }
 
 export interface RiverConnectionRecord {
@@ -1425,6 +1567,22 @@ export interface ValidationError {
   "type": string;
 }
 
+export interface ValidationIssueRecord {
+  "id": number;
+  "validation_run_id": number;
+  "batch_id": number;
+  "entity_type": "river" | "cross_section" | "gate" | "pump";
+  "feature_ref"?: string | null;
+  "rule_code": string;
+  "severity": "error" | "warning" | "info";
+  "message": string;
+  "geometry"?: Record<string, unknown> | null;
+  "details_json": Record<string, unknown>;
+  "created_at": string;
+  "resolved_at"?: string | null;
+  "resolution_note"?: string | null;
+}
+
 export interface ValidationItem {
   "code": string;
   "category": "spatial" | "hydraulic" | "structure" | "topology" | "model";
@@ -1436,6 +1594,17 @@ export interface ValidationItem {
 
 export interface ValidationRequest {
   "dataset_version_id": number;
+}
+
+export interface ValidationRunRecord {
+  "id": number;
+  "batch_id": number;
+  "ruleset_version": string;
+  "status": "running" | "passed" | "failed";
+  "staging_content_hash": string;
+  "started_at": string;
+  "finished_at"?: string | null;
+  "summary_json": Record<string, unknown>;
 }
 
 export interface ValidationSummary {
@@ -1460,6 +1629,44 @@ export interface DispatchListQuery { dataset_version_id?: number; plan_id?: numb
 export interface PageResult<T> { items: T[]; total: number; limit: number; offset: number; }
 export type ImportResource = 'rivers' | 'cross_sections' | 'gates' | 'pumps';
 
+export interface ApiErrorDetail {
+  code: string;
+  message: string;
+  context: Record<string, unknown>;
+}
+
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly context?: Record<string, unknown>;
+
+  constructor(status: number, detail?: string | ApiErrorDetail) {
+    const fallback = `API 请求失败：${status}`;
+    super(typeof detail === 'string' ? detail : detail?.message ?? fallback);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = typeof detail === 'object' ? detail.code : undefined;
+    this.context = typeof detail === 'object' ? detail.context : undefined;
+  }
+}
+
+function isApiErrorDetail(value: unknown): value is ApiErrorDetail {
+  if (typeof value !== 'object' || value === null) return false;
+  const detail = value as Record<string, unknown>;
+  return typeof detail.code === 'string'
+    && typeof detail.message === 'string'
+    && typeof detail.context === 'object'
+    && detail.context !== null
+    && !Array.isArray(detail.context);
+}
+
+function decodeApiError(payload: unknown): string | ApiErrorDetail | undefined {
+  if (typeof payload !== 'object' || payload === null || !('detail' in payload)) return undefined;
+  const detail = (payload as { detail?: unknown }).detail;
+  if (typeof detail === 'string') return detail;
+  return isApiErrorDetail(detail) ? detail : undefined;
+}
+
 function toQuery<T extends object>(params: T): string {
   const query = new URLSearchParams();
   Object.entries(params as Record<string, string | number | undefined>).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); });
@@ -1470,8 +1677,8 @@ function toQuery<T extends object>(params: T): string {
 async function requestJson<T>(path: string, options: RequestInit = {}, baseUrl = ''): Promise<T> {
   const response = await fetch(`${baseUrl}${path}`, options);
   if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { detail?: string } | null;
-    throw new Error(payload?.detail ?? `API 请求失败：${response.status}`);
+    const payload: unknown = await response.json().catch(() => null);
+    throw new ApiError(response.status, decodeApiError(payload));
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
@@ -1480,8 +1687,8 @@ async function requestJson<T>(path: string, options: RequestInit = {}, baseUrl =
 async function requestBlob(path: string, options: RequestInit = {}, baseUrl = ''): Promise<Blob> {
   const response = await fetch(`${baseUrl}${path}`, options);
   if (!response.ok) {
-    const payload = await response.json().catch(() => null) as { detail?: string } | null;
-    throw new Error(payload?.detail ?? `API 请求失败：${response.status}`);
+    const payload: unknown = await response.json().catch(() => null);
+    throw new ApiError(response.status, decodeApiError(payload));
   }
   return response.blob();
 }
@@ -1539,7 +1746,63 @@ async function uploadDGISConversion(path: 'inspect' | 'geojson' | 'cog' | 'postg
 export const inspectDGISFile = (file: File, baseUrl = '') => uploadDGISConversion('inspect', file, {}, baseUrl);
 export const convertDGISToGeoJSON = (file: File, targetSrid = 4490, baseUrl = '') => uploadDGISConversion('geojson', file, { target_srid: targetSrid }, baseUrl);
 export const convertDGISToCOG = (file: File, targetSrid = 4490, baseUrl = '') => uploadDGISConversion('cog', file, { target_srid: targetSrid }, baseUrl);
-export const importDGISToPostGIS = (file: File, layerName: string, targetSrid = 4490, baseUrl = '') => uploadDGISConversion('postgis', file, { layer_name: layerName, target_srid: targetSrid }, baseUrl);
+export type DGISGovernedEntityType = NonNullable<
+  Body_import_to_postgis_api_v1_dgis_conversions_postgis_post['entity_type']
+>;
+
+export interface DGISPostGISImportOptions {
+  targetSrid?: number;
+  entityType?: DGISGovernedEntityType;
+  parentVersionId?: number;
+  operator?: string;
+  baseUrl?: string;
+}
+
+/** Import a raw file with explicit governance provenance while retaining the legacy call signature. */
+export function importDGISToPostGIS(
+  file: File,
+  layerName: string,
+  options?: DGISPostGISImportOptions,
+): Promise<ConversionJobResponse>;
+export function importDGISToPostGIS(
+  file: File,
+  layerName: string,
+  targetSrid?: number,
+  baseUrl?: string,
+): Promise<ConversionJobResponse>;
+export function importDGISToPostGIS(
+  file: File,
+  layerName: string,
+  optionsOrTargetSrid?: DGISPostGISImportOptions | number,
+  legacyBaseUrl = '',
+): Promise<ConversionJobResponse> {
+  const options: DGISPostGISImportOptions = typeof optionsOrTargetSrid === 'number'
+    ? { targetSrid: optionsOrTargetSrid, baseUrl: legacyBaseUrl }
+    : optionsOrTargetSrid ?? { baseUrl: legacyBaseUrl };
+  const fields: Record<string, string | number> = {
+    layer_name: layerName,
+    target_srid: options.targetSrid ?? 4490,
+  };
+  if (options.entityType !== undefined) fields.entity_type = options.entityType;
+  if (options.parentVersionId !== undefined) fields.parent_version_id = options.parentVersionId;
+  if (options.operator !== undefined) fields.operator = options.operator;
+  return uploadDGISConversion('postgis', file, fields, options.baseUrl ?? '');
+}
+
+export const createGISGovernanceBatch = (body: BatchCreate, baseUrl = '') => requestJson<BatchRecord>('/api/v1/gis-governance/batches', jsonOptions('POST', body), baseUrl);
+export const listGISGovernanceBatches = (baseUrl = '') => requestJson<Array<BatchRecord>>('/api/v1/gis-governance/batches', {}, baseUrl);
+export const getGISGovernanceBatch = (batchId: number, baseUrl = '') => requestJson<BatchRecord>(`/api/v1/gis-governance/batches/${batchId}`, {}, baseUrl);
+export const stageGISGovernanceBatch = (batchId: number, body: BatchStageRequest, baseUrl = '') => requestJson<BatchRecord>(`/api/v1/gis-governance/batches/${batchId}/stage`, jsonOptions('POST', body), baseUrl);
+export const validateGISGovernanceBatch = (batchId: number, baseUrl = '') => requestJson<ValidationRunRecord>(`/api/v1/gis-governance/batches/${batchId}/validate`, { method: 'POST' }, baseUrl);
+export const getGISGovernanceValidation = (batchId: number, baseUrl = '') => requestJson<ValidationRunRecord>(`/api/v1/gis-governance/batches/${batchId}/validation`, {}, baseUrl);
+export const listGISGovernanceIssues = (batchId: number, baseUrl = '') => requestJson<Array<ValidationIssueRecord>>(`/api/v1/gis-governance/batches/${batchId}/issues`, {}, baseUrl);
+export const submitGISGovernanceReview = (batchId: number, body: ReviewSubmitRequest, baseUrl = '') => requestJson<BatchRecord>(`/api/v1/gis-governance/batches/${batchId}/submit-review`, jsonOptions('POST', body), baseUrl);
+export const reviewGISGovernanceBatch = (batchId: number, body: ReviewDecisionRequest, baseUrl = '') => requestJson<ReviewRecord>(`/api/v1/gis-governance/batches/${batchId}/review`, jsonOptions('POST', body), baseUrl);
+export const getGISGovernanceDiff = (batchId: number, baseUrl = '') => requestJson<BatchDiff>(`/api/v1/gis-governance/batches/${batchId}/diff`, {}, baseUrl);
+export const promoteGISGovernanceBatch = (batchId: number, body: PromoteRequest, baseUrl = '') => requestJson<PromotedVersionRecord>(`/api/v1/gis-governance/batches/${batchId}/promote`, jsonOptions('POST', body), baseUrl);
+export const listGISGovernancePublications = (baseUrl = '') => requestJson<Array<PublicationRecord>>('/api/v1/gis-governance/publications', {}, baseUrl);
+export const publishGISGovernanceVersion = (versionId: number, body: PublishRequest, baseUrl = '') => requestJson<PublicationRecord>(`/api/v1/gis-governance/versions/${versionId}/publish`, jsonOptions('POST', body), baseUrl);
+export const retireGISGovernanceVersion = (versionId: number, body: RetireRequest, baseUrl = '') => requestJson<PromotedVersionRecord>(`/api/v1/gis-governance/versions/${versionId}/retire`, jsonOptions('POST', body), baseUrl);
 
 export const listRiverRecords = (params: DatabaseListQuery = {}, baseUrl = '') => requestJson<RiverListResponse>(`/api/v1/rivers${toQuery(params)}`, {}, baseUrl);
 export const createRiverRecord = (body: RiverCreate, baseUrl = '') => requestJson<RiverRecord>('/api/v1/rivers', jsonOptions('POST', body), baseUrl);

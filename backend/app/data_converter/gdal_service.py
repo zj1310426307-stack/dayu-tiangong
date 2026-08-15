@@ -66,6 +66,53 @@ def inspect(path: Path, raster: bool) -> dict[str, Any]:
     return value if isinstance(value, dict) else {"value": value}
 
 
+def detect_source_crs(metadata: dict[str, Any]) -> str:
+    """Extract an auditable source CRS label from common GDAL/OGR JSON shapes."""
+
+    def coordinate_system_label(value: object) -> str | None:
+        """Return a CRS identifier or bounded WKT, never a geometry type."""
+
+        if not isinstance(value, dict):
+            return None
+        identifier = value.get("id")
+        if isinstance(identifier, dict):
+            authority = identifier.get("authority")
+            code = identifier.get("code")
+            if authority and code is not None:
+                return f"{authority}:{code}"[:64]
+        projjson = value.get("projjson")
+        if isinstance(projjson, dict):
+            identifier = projjson.get("id")
+            if isinstance(identifier, dict):
+                authority = identifier.get("authority")
+                code = identifier.get("code")
+                if authority and code is not None:
+                    return f"{authority}:{code}"[:64]
+        wkt = value.get("wkt")
+        if isinstance(wkt, str) and wkt.strip():
+            return wkt.strip()[:64]
+        return None
+
+    layers = metadata.get("layers")
+    if isinstance(layers, list) and layers:
+        layer = layers[0] if isinstance(layers[0], dict) else {}
+        fields = layer.get("geometryFields")
+        if isinstance(fields, list) and fields and isinstance(fields[0], dict):
+            label = coordinate_system_label(fields[0].get("coordinateSystem"))
+            if label:
+                return label
+        srs_name = layer.get("srsName")
+        if isinstance(srs_name, str) and srs_name.strip():
+            return srs_name.strip()[:64]
+        label = coordinate_system_label(layer.get("coordinateSystem"))
+        if label:
+            return label
+    label = coordinate_system_label(metadata.get("coordinateSystem"))
+    if label:
+        return label
+    return "unknown"
+
+
 def vector_to_geojson(source: Path, target: Path, target_srid: int) -> None:
     """Convert a vector dataset through ogr2ogr and normalize its target CRS."""
 
@@ -84,8 +131,8 @@ def raster_to_cog(source: Path, target: Path, target_srid: int) -> None:
     ])
 
 
-def vector_to_postgis(source: Path, layer_name: str, target_srid: int) -> None:
-    """Import a vector dataset into the configured single PostGIS instance."""
+def vector_to_postgis(source: Path, table_name: str, target_srid: int) -> None:
+    """Create one batch-scoped immutable raw table in the shared PostGIS instance."""
 
     host = os.getenv("POSTGRES_HOST", "localhost")
     port = os.getenv("POSTGRES_PORT", "5432")
@@ -98,6 +145,6 @@ def vector_to_postgis(source: Path, layer_name: str, target_srid: int) -> None:
         environment["PGPASSWORD"] = password
     _run([
         _executable("ogr2ogr"), "-f", "PostgreSQL", env_dsn, str(source),
-        "-nln", f"imports.{layer_name}", "-nlt", "PROMOTE_TO_MULTI", "-t_srs",
-        f"EPSG:{target_srid}", "-lco", "GEOMETRY_NAME=geometry", "-overwrite",
+        "-nln", f"imports.{table_name}", "-nlt", "PROMOTE_TO_MULTI", "-t_srs",
+        f"EPSG:{target_srid}", "-lco", "GEOMETRY_NAME=geometry",
     ], environment=environment)

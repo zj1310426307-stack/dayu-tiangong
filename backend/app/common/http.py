@@ -18,6 +18,12 @@ def commit_or_conflict(session: Session, action: Callable[[], T]) -> T:
         result = action()
         session.commit()
         return result
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
     except IntegrityError as exc:
         session.rollback()
         raise HTTPException(
