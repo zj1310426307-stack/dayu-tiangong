@@ -7,9 +7,10 @@
 ## 使用前准备
 
 本仓库随项目提供的 Windows 便捷入口是 `Start_Dayu_QGIS.cmd`。它会使用短英文
-盘符绕开 QGIS/Qt 对中文安装路径的 Python 模块加载缺陷，从忽略提交的 `.env`
-读取 `QGIS_EDITOR_DB_PASSWORD`，并打开正式工程；口令不会写入 `.qgs`、service
-示例或日志。日常本机使用建议直接双击该入口。
+盘符绕开 QGIS/Qt 对中文安装路径的 Python/SIP 模块加载缺陷，从忽略提交的
+`.env` 读取 `QGIS_EDITOR_DB_PASSWORD`，拷贝并启动仓库内置 Dayu Tiangong Bridge，然后
+打开正式工程。启动窗口存续期间会保持短盘符，直到 QGIS 退出；口令不会写入
+`.qgs`、service 示例或日志。日常本机使用建议直接双击该入口。
 
 1. 在操作系统用户目录创建本机专用的 PostgreSQL service 文件，并设置
    `PGSERVICEFILE` 指向该文件；可从 `docs/pg_service.conf.example` 复制。
@@ -56,4 +57,5 @@
 backend\.venv\Scripts\python.exe -m pytest -q tests/test_qgis_project_contract.py
 ```
 
-若本机没有 `qgis_process`，可选的 CLI 烟雾检查会跳过，不影响默认静态契约。
+本项目已使用 QGIS 3.44.13 自带的 `qgis_process` 完成原生烟雾检查。如在其他机器
+执行且程序不在 `PATH`，应显式设置 `QGIS_PROCESS_EXECUTABLE`，不应把跳过写成通过。
