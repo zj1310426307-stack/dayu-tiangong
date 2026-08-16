@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   getGeoServerHealth,
+  getQgisServerHealth,
   getGISHealth,
   getGISInteractionFrame,
   getDGISCatalog,
@@ -58,8 +59,8 @@ export function GisPage() {
   const [threeDTilesets, setThreeDTilesets] = useState<Cesium3DTileset[]>([]);
   const [replayedStates, setReplayedStates] = useState<FeatureStateCollection | null>(null);
   const [viewportBbox, setViewportBbox] = useState<[number, number, number, number]>([120, 30, 120.6, 30.5]);
-  const [services, setServices] = useState<Record<'postgis' | 'geoserver' | 'cesium', ServiceState>>({
-    postgis: 'checking', geoserver: 'checking', cesium: 'checking',
+  const [services, setServices] = useState<Record<'postgis' | 'qgis' | 'geoserver' | 'cesium', ServiceState>>({
+    postgis: 'checking', qgis: 'checking', geoserver: 'checking', cesium: 'checking',
   });
   const gateStateCount = interactionFrame?.structure_samples.filter((sample) => sample.structure_type === 'gate').length ?? 0;
   const pumpStateCount = interactionFrame?.structure_samples.filter((sample) => sample.structure_type === 'pump').length ?? 0;
@@ -72,11 +73,12 @@ export function GisPage() {
 
   useEffect(() => {
     let cancelled = false;
-    void Promise.allSettled([getGISHealth(), getGeoServerHealth()]).then(([postgis, geoserver]) => {
+    void Promise.allSettled([getGISHealth(), getQgisServerHealth(), getGeoServerHealth()]).then(([postgis, qgis, geoserver]) => {
       if (cancelled) return;
       setServices((current) => ({
         ...current,
         postgis: postgis.status === 'fulfilled' ? 'online' : 'offline',
+        qgis: qgis.status === 'fulfilled' && qgis.value.status === 'healthy' ? 'online' : 'offline',
         geoserver: geoserver.status === 'fulfilled' ? 'online' : 'offline',
       }));
     });
@@ -166,10 +168,11 @@ export function GisPage() {
         <strong>空间服务状态</strong>
         <Space wrap>
           {serviceTag('PostGIS', services.postgis)}
+          {serviceTag('QGIS Server', services.qgis)}
           {serviceTag('GeoServer', services.geoserver)}
           {serviceTag('Cesium', services.cesium)}
         </Space>
-        <span>静态：WMS / WMTS · 矢量：MVT · 动态：FastAPI / Cesium Primitive</span>
+        <span>专业制图：QGIS WMS · 兼容：GeoServer · 矢量：MVT · 动态：FastAPI / Cesium Primitive</span>
       </div>
       {interactionError && <Alert className="data-alert" type="error" showIcon message="动态结果未加载" description={interactionError} />}
       {interactionFrame && (

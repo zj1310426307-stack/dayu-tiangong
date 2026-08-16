@@ -67,6 +67,7 @@ const requiredPaths = [
   '/api/v1/ai/tools/logs',
   '/api/v1/gis/geoserver/health', '/api/v1/gis/geoserver/layers',
   '/api/v1/gis/geoserver/config',
+  '/api/v1/gis/catalog', '/api/v1/gis/qgis-server/health', '/qgis-server/wms',
   '/api/v1/gis-analysis/layers', '/api/v1/gis-analysis/annotations',
   '/api/v1/gis-analysis/search',
   '/api/v1/gis-analysis/annotations/{annotation_id}', '/api/v1/gis-analysis/trace',
@@ -111,6 +112,16 @@ ${interfaces}
 export type ValidationReport = app__validation__schemas__ValidationReport;
 export type DispatchValidationReport = app__dispatch__schemas__ValidationReport;
 export interface GISListQuery { dataset_version_id: number; bbox?: string; limit?: number; offset?: number; }
+export interface QgisFeatureInfoQuery {
+  request: 'GetFeatureInfo'; dataset_version_id: number; layer_key: string;
+  bbox: string; width: number; height: number; crs: 'EPSG:4490' | 'EPSG:3857';
+  format: 'image/png' | 'image/jpeg'; transparent?: 'true' | 'false';
+  i: number; j: number; feature_count?: number;
+}
+export interface QgisFeatureInfoCollection {
+  type?: 'FeatureCollection';
+  features?: Array<{ id?: string | number; properties?: Record<string, unknown>; geometry?: Record<string, unknown> | null }>;
+}
 export interface GISInteractionQuery { dataset_version_id: number; time_seconds?: number; task_id?: number; dispatch_run_id?: number; }
 export interface GISAnnotationQuery { dataset_version_id: number; scale_denominator?: number; bbox?: string; annotation_type?: string; limit?: number; offset?: number; time_seconds?: number; task_id?: number; dispatch_run_id?: number; }
 export interface GISLocationSearchQuery { dataset_version_id: number; q: string; limit?: number; }
@@ -198,6 +209,9 @@ export const getGISStatistics = (datasetVersionId: number, baseUrl = '') => requ
 export const getGeoServerHealth = (baseUrl = '') => requestJson<GeoServerHealthResponse>('/api/v1/gis/geoserver/health', {}, baseUrl);
 export const getGeoServerLayers = (baseUrl = '') => requestJson<Array<GeoServerLayerRecord>>('/api/v1/gis/geoserver/layers', {}, baseUrl);
 export const getGeoServerConfig = (baseUrl = '') => requestJson<GeoServerConfigResponse>('/api/v1/gis/geoserver/config', {}, baseUrl);
+export const getGISCatalog = (datasetVersionId: number, baseUrl = '') => requestJson<GISCatalogResponse>(\`/api/v1/gis/catalog\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const getQgisServerHealth = (baseUrl = '') => requestJson<QgisServerHealthResponse>('/api/v1/gis/qgis-server/health', {}, baseUrl);
+export const getQgisWmsFeatureInfo = (params: QgisFeatureInfoQuery, baseUrl = '') => requestJson<QgisFeatureInfoCollection>(\`/qgis-server/wms\${toQuery(params)}\`, {}, baseUrl);
 export const getRivers = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/rivers\${toQuery(params)}\`, {}, baseUrl);
 export const getRiver = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<GeoJSONFeature>(\`/api/v1/gis/rivers/\${id}\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
 export const getGates = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/gates\${toQuery(params)}\`, {}, baseUrl);

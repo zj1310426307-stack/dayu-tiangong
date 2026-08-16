@@ -17,6 +17,8 @@ tmp/
 
 # 本地验收产物（正式审查结论保存在 docs/review）
 output/
+qgis/server/generated/*.secret
+qgis/server/generated/*.isolation.json
 
 # 运行期导入归档
 backend/storage/imports/

@@ -11,6 +11,8 @@ $qgisRuntimeRoot = Join-Path $workRoot "tools\QGIS-3.44.13\QGIS 3.44.13"
 $sessionRoot = Join-Path $projectRoot "99_临时文件\qgis-gui"
 $profileRoot = Join-Path $sessionRoot "profiles-final"
 $environmentFile = Join-Path $repositoryRoot ".env"
+$pluginSource = Join-Path $qgisAssetsRoot "plugins\dayu_tiangong_bridge"
+$profilePlugins = Join-Path $profileRoot "profiles\dayu-gui-final\python\plugins"
 
 function Mount-VerifiedSubstDrive {
     param(
@@ -20,14 +22,15 @@ function Mount-VerifiedSubstDrive {
     )
 
     $driveRoot = "${Drive}:\"
-    if (Test-Path -LiteralPath (Join-Path $driveRoot $Probe)) {
+    $probePath = "${driveRoot}${Probe}"
+    if (Test-Path -LiteralPath $probePath) {
         return
     }
     if (Test-Path -LiteralPath $driveRoot) {
         throw "Drive ${Drive}: is already in use. Close this launcher and free that drive letter first."
     }
     & subst.exe "${Drive}:" $Target
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath (Join-Path $driveRoot $Probe))) {
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $probePath)) {
         throw "Unable to mount ${Drive}: for the QGIS runtime."
     }
 }
@@ -36,7 +39,8 @@ if (-not (Test-Path -LiteralPath $environmentFile)) {
     throw "Missing repository .env file. Initialize the local environment first."
 }
 
-New-Item -ItemType Directory -Force -Path $sessionRoot, $profileRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $sessionRoot, $profileRoot, $profilePlugins | Out-Null
+Copy-Item -LiteralPath $pluginSource -Destination $profilePlugins -Recurse -Force
 Mount-VerifiedSubstDrive -Drive "Q" -Target $qgisRuntimeRoot -Probe "bin\qgis-ltr.bat"
 Mount-VerifiedSubstDrive -Drive "R" -Target $sessionRoot -Probe "profiles-final"
 Mount-VerifiedSubstDrive -Drive "S" -Target $repositoryRoot -Probe "qgis\projects\dayu_tiangong_ltr.qgs"
@@ -65,6 +69,9 @@ $env:PGSERVICEFILE = "S:\qgis\docs\pg_service.conf.example"
 $arguments = @(
     "/d",
     "/c",
-    "Q:\bin\qgis-ltr.bat --noplugins --noversioncheck --profiles-path R:\profiles-final --profile dayu-gui-final -p S:\qgis\projects\dayu_tiangong_ltr.qgs"
+    "S:\qgis\Start_Dayu_QGIS_Runtime.cmd --noversioncheck --profiles-path R:\profiles-final --profile dayu-gui-final --code S:\qgis\Start_Dayu_QGIS.py -p S:\qgis\projects\dayu_tiangong_ltr.qgs"
 )
-Start-Process -FilePath "cmd.exe" -ArgumentList $arguments -WindowStyle Hidden
+# Keep this launcher alive for the whole QGIS session.  The synchronous runtime
+# wrapper avoids the official batch file's detached ``start /B`` process, so the
+# short subst drives remain available while Qt/Python load DLLs and plugins.
+Start-Process -FilePath "cmd.exe" -ArgumentList $arguments -Wait

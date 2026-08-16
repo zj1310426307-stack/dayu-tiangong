@@ -1,0 +1,13 @@
+[general]
+name=Dayu Tiangong Bridge
+description=Controlled bridge from QGIS Desktop to Dayu Tiangong governance APIs
+version=1.0.0
+qgisMinimumVersion=3.44
+author=Dayu Tiangong
+email=
+about=Thin API bridge for batch status, validation, issues, review, and publication visibility. It never connects to core tables directly.
+category=Web
+experimental=False
+deprecated=False
+hasProcessingProvider=False
+server=False

@@ -79,7 +79,21 @@ services:
       MARTIN_DB_USER: ${MARTIN_DB_USER:-dayu_martin}
       MARTIN_DB_PASSWORD: ${MARTIN_DB_PASSWORD:?set MARTIN_DB_PASSWORD in an ignored .env file}
     depends_on:
-      migrate:
+      app-bootstrap:
+        condition: service_completed_successfully
+
+  gis-registry-seed:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    command: ["python", "../database/seed/gis_registry.py"]
+    environment:
+      <<: *backend_environment
+      QGIS_SERVER_DB_USER: ${QGIS_SERVER_DB_USER:-dayu_qgis_server}
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      qgis-bootstrap:
         condition: service_completed_successfully
 
   qgis-bootstrap:
@@ -94,6 +108,8 @@ services:
       QGIS_REVIEWER_DB_USER: ${QGIS_REVIEWER_DB_USER:-dayu_qgis_reviewer}
       QGIS_REVIEWER_DB_PASSWORD: ${QGIS_REVIEWER_DB_PASSWORD:?set QGIS_REVIEWER_DB_PASSWORD in an ignored .env file}
       QGIS_PUBLISHER_DB_USER: ${QGIS_PUBLISHER_DB_USER:-dayu_publisher}
+      QGIS_SERVER_DB_USER: ${QGIS_SERVER_DB_USER:-dayu_qgis_server}
+      QGIS_SERVER_DB_PASSWORD: ${QGIS_SERVER_DB_PASSWORD:?set QGIS_SERVER_DB_PASSWORD in an ignored .env file}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -202,6 +218,53 @@ services:
         condition: service_completed_successfully
       app-bootstrap:
         condition: service_completed_successfully
+      dgis-bootstrap:
+        condition: service_completed_successfully
+
+  qgis-server:
+    image: qgis/qgis-server:3.44.12-trixie
+    command:
+      - /bin/bash
+      - -lc
+      - |
+        umask 077
+        printf 'database:5432:%s:%s:%s\n' "$${POSTGRES_DB}" "$${QGIS_SERVER_DB_USER}" "$$(cat /run/secrets/qgis_server_db_password)" > /tmp/dayu_qgis_server.pgpass
+        chown www-data:www-data /tmp/dayu_qgis_server.pgpass
+        exec /usr/local/bin/start-xvfb-nginx.sh
+    environment:
+      QGIS_PROJECT_FILE: /srv/qgis/dayu_tiangong_server.qgz
+      PGSERVICEFILE: /srv/qgis/pg_service.server.conf
+      POSTGRES_DB: ${POSTGRES_DB:-dayu_tiangong}
+      QGIS_SERVER_DB_USER: ${QGIS_SERVER_DB_USER:-dayu_qgis_server}
+      QGIS_SERVER_DISABLE_GETPRINT: "true"
+      QGIS_SERVER_FORCE_READONLY_LAYERS: "true"
+      QGIS_SERVER_IGNORE_BAD_LAYERS: "false"
+      QGIS_SERVER_LOG_LEVEL: "1"
+      QGIS_SERVER_PROJECT_CACHE_STRATEGY: filesystem
+      QGIS_SERVER_WMS_MAX_WIDTH: "4096"
+      QGIS_SERVER_WMS_MAX_HEIGHT: "4096"
+    volumes:
+      - ../qgis/server/generated/dayu_tiangong_server.qgz:/srv/qgis/dayu_tiangong_server.qgz:ro
+      - ../qgis/server/pg_service.server.conf:/srv/qgis/pg_service.server.conf:ro
+      - ../qgis/server/nginx/dayu-qgis.conf:/etc/nginx/qgis.d/dayu-qgis.conf:ro
+    secrets:
+      - qgis_server_db_password
+    depends_on:
+      gis-registry-seed:
+        condition: service_completed_successfully
+      qgis-bootstrap:
+        condition: service_completed_successfully
+    expose:
+      - "80"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/tmp
+      - /run
+      - /var/lib/nginx
+      - /var/cache/nginx
+      - /var/cache/fontconfig
+      - /var/log/nginx
 
   backend:
     build:
@@ -216,10 +279,15 @@ services:
       GEOSERVER_PUBLIC_WMTS_URL: /geoserver/gwc/service/wmts
       GEOSERVER_PUBLIC_WFS_URL: /geoserver/dayu/ows
       GEOSERVER_WORKSPACE: dayu
+      QGIS_SERVER_INTERNAL_URL: http://qgis-server/dayu-ows/
+      QGIS_SERVER_MANIFEST_PATH: /srv/qgis/dayu_tiangong_server.manifest.json
+      GIS_CATALOG_MODE: ${GIS_CATALOG_MODE:-catalog}
+      BASEMAP_WORLD_IMAGERY_URL: ${BASEMAP_WORLD_IMAGERY_URL:-https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer}
     ports:
       - "${BACKEND_PORT:-8001}:8000"
     volumes:
       - ../backend/storage:/app/backend/storage
+      - ../qgis/server/generated:/srv/qgis:ro
     depends_on:
       geoserver-init:
         condition: service_completed_successfully
@@ -233,6 +301,10 @@ services:
         condition: service_healthy
       titiler:
         condition: service_healthy
+      qgis-server:
+        condition: service_started
+      gis-registry-seed:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/gis/health', timeout=2)"]
       interval: 10s
@@ -368,3 +440,7 @@ volumes:
   dayu_dgis_raster_data:
   dayu_dgis_3d_data:
   dayu_geonode_statics:
+
+secrets:
+  qgis_server_db_password:
+    file: ${QGIS_SERVER_DB_PASSWORD_FILE:-../qgis/server/generated/qgis_server_db_password.secret}

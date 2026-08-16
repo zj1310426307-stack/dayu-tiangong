@@ -15,6 +15,11 @@ flowchart LR
   REV["Human review<br/>批准绑定质检哈希"]
   CORE["dataset_version / core<br/>不可变权威版本"]
   PUB["publish<br/>已发布版本只读视图"]
+  BUILDER["确定性 QGIS Builder<br/>Server QGZ + Manifest"]
+  QSERVER["QGIS Server 3.44 LTR<br/>独立只读账号"]
+  GATEWAY["FastAPI Safe WMS Gateway<br/>服务端版本过滤"]
+  REGISTRY["GIS Layer Registry<br/>业务图层身份"]
+  CATALOG["Unified GIS Catalog<br/>Registry + Manifest + Runtime + Version"]
   GS["GeoServer<br/>WMS / WMTS / Basic WFS"]
   MARTIN["Martin<br/>tiles.* MVT"]
   TITILER["TiTiler<br/>COG"]
@@ -33,6 +38,15 @@ flowchart LR
   VAL --> REV
   REV --> CORE
   CORE --> PUB
+  QGIS --> BUILDER
+  BUILDER --> QSERVER
+  PUB --> QSERVER
+  QSERVER --> GATEWAY
+  REGISTRY --> BUILDER
+  REGISTRY --> CATALOG
+  GATEWAY --> CATALOG
+  CORE --> CATALOG
+  CATALOG --> CESIUM
   CORE --> MARTIN
   CORE --> TITILER
   PUB --> GS
@@ -64,6 +78,11 @@ flowchart LR
 | `optimization/` / `backend/app/optimization` | PSO、多目标、候选仿真、约束、Pareto 和人工推荐，不修改模型权威数据 |
 | `ai/` / `backend/app/ai` | 来源约束生成、RAG、知识、只读工具、安全护栏、报告和审计 |
 | `frontend/src/api/generated` | 前后端唯一接口边界 |
+| `qgis/server` | 从 Desktop 主工程和 Registry snapshot 确定性生成只读 Server QGZ 与 canonical manifest |
+| `backend/app/qgis_server` | 限定 WMS 操作和浏览器参数，服务端合成版本过滤，分项报告运行证据 |
+| `backend/app/gis_catalog` | 合并 Registry、QGIS manifest、服务健康和 Dataset Version，只返回 browser-safe DTO |
+| `frontend/src/gis` | 仅按 `service_mode + render_mode` 选择 QGIS WMS、legacy WMS/WMTS、Martin、TiTiler、dynamic 或 3D adapter |
+| QGIS Bridge | 只调用 FastAPI 治理路由，显示 validation/review/publish 并以临时 memory layer 定位 issue |
 | `geoserver/` | 只读 PostGIS 连接、SLD、WMS、WMTS、Basic WFS；不提供 WFS-T 写入口 |
 | Martin | 调用 `tiles.*` 版本过滤函数发布 MVT，不替换 GeoServer |
 | TiTiler | 只读提供登记过的 COG 元数据与瓦片，不自研栅格服务器 |
@@ -102,6 +121,14 @@ approved → promoting → promoted → published → retired
 `publish.*` 视图只选择 `dataset_version.status='published'` 的权威对象，并保留稳定 `id`、`dataset_version_id`、版本号和内容哈希。0012 将河道/拓扑/断面/闸泵/注记/基础地图对象补齐为 12 个 GeoServer 兼容视图；GeoServer、QGIS reviewer 和发布角色只读这些视图。
 
 GeoServer 的 `dayu_postgis` store 已切换到 `publish`，数据库账号已撤销 `public` 核心表读取；12 层仍按 `dataset_version_id` 提供 WMS/WMTS/Basic WFS/GetFeatureInfo 与 Cesium 兼容行为。Martin 继续读取 `tiles.*`，TiTiler 继续读取登记的 COG，二者均未被替换。
+
+GIS-OPT-2 新增的 QGIS Server 只发布 `river/cross_section/gate/pump`，使用不具备核心/暂存读取权的 `dayu_qgis_server`。容器不映射宿主端口，浏览器只能通过 `/qgis-server/wms` 访问 FastAPI；Gateway 拒绝 `MAP/FILTER/SQL/CQL/datasource/URL` 和未知 vendor 参数，并从受控 Registry 解析 short name 和 `dataset_version_id`。GetPrint 在真实双版本图像/FeatureInfo 隔离与打印内容检查通过前保持禁用。
+
+`gis_layer_registry` 是图层稳定身份与服务/渲染方式的权威源；`basemap_registry` 仅存 deployment-owned endpoint key。Catalog 不返回 schema/relation/internal URL/DSN/project path，并在 manifest 漂移或服务不健康时缩减能力。旧 `/api/v1/gis-analysis/layers` 和 `/api/v1/dgis/catalog` 保留兼容，不再驱动主地图业务图层树。
+
+## 横断面加法空间模型
+
+0014 保留 `cross_section.geometry=Point`、`points` JSON、`station` 和原主键，另行新增 `cross_section_location`、`cross_section_axis`、`cross_section_point`、`cross_section_profile`。新表与旧断面通过 `(cross_section_id,dataset_version_id)` 复合外键绑定，因此不能跨版本挂载空间或高程数据。旧水动力 solver 输入完全不变；新 GIS 消费者通过 `publish.cross_section_spatial` 逐步接入。
 
 ## 模型、调度、优化与 AI 一致性
 

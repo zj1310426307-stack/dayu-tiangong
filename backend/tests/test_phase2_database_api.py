@@ -22,10 +22,11 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 def test_phase2_lists_topology_validation_and_model_input() -> None:
     """演示版本必须贯通资产读取、拓扑、质量门禁和 Phase 3 输入快照。"""
 
-    assert client.get("/api/v1/rivers").json()["total"] == 3
-    assert client.get("/api/v1/cross-sections").json()["total"] == 20
-    assert client.get("/api/v1/gates").json()["total"] == 5
-    assert client.get("/api/v1/pumps").json()["total"] == 3
+    version = {"dataset_version_id": 1}
+    assert client.get("/api/v1/rivers", params=version).json()["total"] == 3
+    assert client.get("/api/v1/cross-sections", params=version).json()["total"] == 20
+    assert client.get("/api/v1/gates", params=version).json()["total"] == 5
+    assert client.get("/api/v1/pumps", params=version).json()["total"] == 3
 
     topology = client.get(
         "/api/v1/rivers/topology", params={"dataset_version_id": 1}
@@ -168,7 +169,7 @@ def test_phase2_physical_tables_revision_and_spatial_indexes() -> None:
     """直接审计物理版本、拓扑表和新增 GIST 索引。"""
 
     with SessionLocal() as session:
-        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260814_0012"
+        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260815_0014"
         tables = set(
             session.execute(
                 text(

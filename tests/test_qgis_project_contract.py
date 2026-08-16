@@ -183,7 +183,11 @@ def test_datasources_use_service_only_and_assets_have_no_secrets_or_personal_pat
         text = path.read_text(encoding="utf-8")
         assert not SECRET_ASSIGNMENT.search(text), path
         path_scan_text = text
-        if path.name in {"Start_Dayu_QGIS.ps1", "Start_Dayu_QGIS.cmd"}:
+        if path.name in {
+            "Start_Dayu_QGIS.ps1",
+            "Start_Dayu_QGIS.cmd",
+            "Start_Dayu_QGIS_Runtime.cmd",
+        }:
             path_scan_text = re.sub(r"(?i)(?<![a-z0-9])[qrs]:[\\/]", "", text)
         assert not PERSONAL_ABSOLUTE_PATH.search(path_scan_text), path
 

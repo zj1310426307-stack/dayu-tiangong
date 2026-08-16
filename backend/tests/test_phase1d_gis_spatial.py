@@ -96,7 +96,7 @@ def test_phase1d_physical_tables_srid_rows_and_indexes() -> None:
     }
     expected_indexes = {f"ix_{name}_geometry_gist" for name, _, _ in expected_geometry}
     with SessionLocal() as session:
-        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260814_0012"
+        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260815_0014"
         geometries = set(session.execute(text("""
             SELECT f_table_name, type, srid FROM geometry_columns
             WHERE f_table_name IN ('administrative_area','road','place_name','water_name','poi')
