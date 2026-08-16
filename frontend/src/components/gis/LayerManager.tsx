@@ -1,12 +1,12 @@
 import { DownOutlined, UpOutlined } from '@ant-design/icons';
 import { Button, Checkbox, Slider } from 'antd';
 
-export type LayerGroupKey = 'base' | 'engineering' | 'analysis' | 'dispatch';
-
 export interface LayerManagerItem {
   key: string;
   label: string;
-  group: LayerGroupKey;
+  group: string;
+  groupTitle: string;
+  groupOrder: number;
   visible: boolean;
   opacity: number;
   dynamic?: boolean;
@@ -21,27 +21,20 @@ interface LayerManagerProps {
   onMove: (key: string, direction: 'up' | 'down') => void;
 }
 
-const groupLabels: Record<LayerGroupKey, string> = {
-  base: '基础地图', engineering: '水利工程', analysis: '分析结果', dispatch: '调度状态',
-};
-
-/** Render an ArcGIS-style grouped layer tree with visibility, opacity, and draw order. */
+/** Render Catalog groups without owning business layer names or ordering. */
 export function LayerManager({
   basemapLabel, basemapVisible, items, onBasemapChange, onLayerChange, onMove,
 }: LayerManagerProps) {
   return (
     <div className="layer-control" aria-label="ArcGIS 风格图层管理">
       <div className="layer-control__title"><strong>LayerManager</strong><span>显示 · 透明度 · 顺序</span></div>
-      {(Object.keys(groupLabels) as LayerGroupKey[]).map((group) => {
+      {[...new Map(items.map((item) => [item.group, { key: item.group, title: item.groupTitle, order: item.groupOrder }])).values()]
+        .sort((left, right) => left.order - right.order || left.key.localeCompare(right.key))
+        .map(({ key: group, title }) => {
         const groupItems = items.filter((item) => item.group === group);
         return (
-          <section className="layer-control__group" key={group} aria-label={groupLabels[group]}>
-            <div className="layer-control__group-title">{groupLabels[group]}</div>
-            {group === 'base' && (
-              <div className="layer-control__row">
-                <Checkbox checked={basemapVisible} onChange={(event) => onBasemapChange(event.target.checked)}>{basemapLabel}</Checkbox>
-              </div>
-            )}
+          <section className="layer-control__group" key={group} aria-label={title}>
+            <div className="layer-control__group-title">{title}</div>
             {groupItems.map((item, index) => (
               <div className={`layer-control__row ${item.dynamic ? 'layer-control__row--dynamic' : ''}`} key={item.key}>
                 <Checkbox checked={item.visible} onChange={(event) => onLayerChange(item.key, { visible: event.target.checked })}>{item.label}</Checkbox>
@@ -55,6 +48,12 @@ export function LayerManager({
           </section>
         );
       })}
+      <section className="layer-control__group" aria-label="底图">
+        <div className="layer-control__group-title">底图</div>
+        <div className="layer-control__row">
+          <Checkbox checked={basemapVisible} onChange={(event) => onBasemapChange(event.target.checked)}>{basemapLabel}</Checkbox>
+        </div>
+      </section>
       <div className="layer-legend">
         <span><i className="legend-normal" />正常</span><span><i className="legend-warning" />警戒</span><span><i className="legend-danger" />危险</span>
         <span><i className="legend-flow" />流向</span><span><i className="legend-running" />运行/开启</span>
