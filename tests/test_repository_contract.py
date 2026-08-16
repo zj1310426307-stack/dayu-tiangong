@@ -112,13 +112,22 @@ def test_frontend_and_database_static_contracts() -> None:
         assert f"create table {table_name}" in schema_source
 
     assert "MapPlaceholder" not in cesium_source
-    assert "WebMapServiceImageryProvider" in cesium_source
-    assert "WebMapTileServiceImageryProvider" in cesium_source
-    assert "ArcGisMapServerImageryProvider.fromUrl" in cesium_source
-    assert "World_Imagery/MapServer" in cesium_source
-    assert "getGeoServerConfig" in cesium_source
-    assert "getRiver" in cesium_source
-    assert "getCrossSection" in cesium_source
+    assert "GisAdapterRuntime" in cesium_source
+    assert "getGISCatalog" in cesium_source
+    adapter_source = (
+        REPOSITORY_ROOT / "frontend/src/gis/adapters/imagery.ts"
+    ).read_text(encoding="utf-8")
+    assert "WebMapServiceImageryProvider" in adapter_source
+    assert "QgisWmsAdapter" in adapter_source
+    assert "WebMapTileServiceImageryProvider" in adapter_source
+    assert "ArcGisMapServerImageryProvider.fromUrl" not in cesium_source
+    assert "World_Imagery/MapServer" not in cesium_source
+    assert "getGeoServerConfig" not in cesium_source
+    selection_source = (
+        REPOSITORY_ROOT / "frontend/src/gis/selection/identity.ts"
+    ).read_text(encoding="utf-8")
+    assert "getRiver" in selection_source
+    assert "getCrossSection" in selection_source
     assert "/api/v1/gis/rivers" in generated_client
     assert "/api/v1/gis/geoserver/health" in generated_client
     assert "fetch(" not in cesium_source
