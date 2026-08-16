@@ -1,6 +1,6 @@
 # 大禹·天工当前数据库设计
 
-业务空间统一采用 CGCS2000 / EPSG:4490；水动力距离采用米制桩号、河段长度和经批准的 CGCS2000 投影计算。权威 Alembic 演进为 `0001 → 0012`。
+业务空间统一采用 CGCS2000 / EPSG:4490；水动力距离采用米制桩号、河段长度和经批准的 CGCS2000 投影计算。权威 Alembic 演进为 `0001 → 0014`。
 
 ## 单库与 schema 边界
 
@@ -21,12 +21,14 @@
 | 领域 | 表 | 关键语义 |
 |---|---|---|
 | 版本治理 | `dataset_version` | 父版本、来源批次、内容哈希、审核/批准/发布/退役审计；权威版本不就地覆盖 |
+| GIS 目录 | `gis_layer_registry`、`basemap_registry` | 图层稳定身份、服务/渲染模式、权限能力和受控底图 endpoint key |
 | 导入治理 | `gis_import_batch` | 文件名、格式、大小、来源 SHA-256、源/目标 CRS、映射版本、操作人、原始表、父版本与状态 |
 | 质检 | `gis_validation_run`、`gis_validation_issue` | 每次质检绑定暂存内容哈希；问题可按批次、规则、严重级别和几何查询 |
 | 审核/发布 | `gis_review`、`gis_publication` | 人工决定绑定质检 generation；发布清单与版本一一对应 |
 | QGIS 暂存 | `staging_qgis.river`、`cross_section`、`gate`、`pump` | 四类稳定字段、来源追溯、`upsert/delete`、EPSG:4490 几何和 GiST |
 | 发布视图 | `publish` 下 12 个 GeoServer 兼容视图 | 仅 `published` 版本；GeoServer 已改接且无核心表直读权限 |
 | 数据/空间 | `river`、`river_node`、`river_segment`、`river_connection`、`cross_section` | 版本隔离、有向河网、稳定节点身份、GiST 4490 |
+| 横断面扩展 | `cross_section_location`、`cross_section_axis`、`cross_section_point`、`cross_section_profile` | 加法空间模型；复合外键保证与断面属于同一版本，不改旧 solver 合同 |
 | 结构物 | `gate`、`pump` | 静态设计、明确河段/节点拓扑与设备约束/Q-H/Q-η |
 | 时态状态 | `feature_state` | TimescaleDB hypertable，追加式对象状态，不覆盖静态设计字段 |
 | 模型输入 | `model_parameter`、`boundary_condition`、`simulation_case`、`simulation_case_boundary` | 一个方案显式关联一组外边界 |
@@ -68,6 +70,7 @@
 | `dayu_publisher` | 否 | 受控后端晋级/发布所需的最小表和序列权限 | 桌面直接登录、任意 schema DDL |
 | `dayu_backend` | 是 | 非 owner 的 API/Worker 运行账号，继承发布组并按应用白名单读写 | 数据库所有权、角色管理、核心 schema DDL |
 | `dayu_geoserver` | 是 | 只读 `publish` 的 12 个兼容视图 | `public` 核心表、暂存读取、DML、WFS-T |
+| `dayu_qgis_server` | 是 | 只读 `publish.river|cross_section|gate|pump` | `public`、`staging_qgis`、`imports`、DDL/DML、任何其他角色成员资格 |
 | `dayu_martin` | 是 | 只读来源表并执行 `tiles.*` | 写业务表 |
 
 Compose 的 backend/worker 已使用 `dayu_backend`，迁移和角色引导仍由 owner 的一次性任务执行。运行账号降权不等于平台统一 IAM 已完成。
@@ -86,5 +89,7 @@ Compose 的 backend/worker 已使用 `dayu_backend`，迁移和角色引导仍�
 - `20260813_0010`：TimescaleDB、`imports`、`tiles`、时态状态和模型图层。
 - `20260814_0011`：QGIS 暂存、GIS 治理审计、版本生命周期和 `publish` 视图。
 - `20260814_0012`：补齐 12 个 GeoServer 兼容发布视图，并把服务读取边界收口到 `publish`。
+- `20260815_0013`：新增权威 GIS Layer Registry 和受控 Basemap Registry。
+- `20260815_0014`：以 ADD ONLY 方式新增横断面 location/axis/point/profile 及发布视图。
 
 幂等 seed 在已有完整拓扑时复用节点，避免破坏历史结果外键和可追溯性。任何生产升级都必须先备份、运行迁移与权限集成测试，再开放 QGIS 编辑连接。
