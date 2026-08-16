@@ -286,6 +286,99 @@ export interface BufferAnalysisResponse {
   "distance_basis"?: "PostGIS geography metres";
 }
 
+export interface CatalogBasemap {
+  "basemap_key": string;
+  "title": string;
+  "type": "XYZ" | "WMS" | "WMTS" | "COG" | "MVT" | "ARCGIS_REST";
+  "endpoint": string;
+  "credit": string;
+  "crs": string;
+  "visible": boolean;
+  "opacity": number;
+}
+
+export interface CatalogCapabilities {
+  "identify": boolean;
+  "legend": boolean;
+  "print": boolean;
+  "measure": boolean;
+  "version_switch": boolean;
+  "external_basemap_registration": boolean;
+  "editing": boolean;
+}
+
+export interface CatalogDataset {
+  "dataset_version_id": number;
+  "version": string;
+  "name": string;
+  "status": "published";
+  "content_hash": string;
+  "published_at": string;
+  "change_summary": string | null;
+}
+
+export interface CatalogGroup {
+  "group_key": string;
+  "title": string;
+  "order": number;
+  "collapsed"?: boolean;
+}
+
+export interface CatalogLayer {
+  "key": string;
+  "title": string;
+  "display_title": string;
+  "group_key": string;
+  "group_title": string;
+  "order": number;
+  "z_index": number;
+  "geometry_type": string;
+  "service_key": string;
+  "service_mode": "QGIS_WMS" | "GEOSERVER_WMS_LEGACY" | "MARTIN_MVT" | "TITILER" | "FASTAPI" | "CESIUM_DYNAMIC" | "THREE_D_TILES";
+  "render_mode": "RASTER_WMS" | "VECTOR_TILE" | "RASTER_TILE" | "DYNAMIC_PRIMITIVE" | "THREE_D";
+  "dataset_version_id": number;
+  "dataset_filter_field": string | null;
+  "default_visible": boolean;
+  "default_opacity": number;
+  "min_scale": number | null;
+  "max_scale": number | null;
+  "identify_enabled": boolean;
+  "legend_enabled": boolean;
+  "search_enabled": boolean;
+  "qgis_short_name": string | null;
+  "model_entity_type": string | null;
+  "service": Record<string, unknown>;
+  "legend": Record<string, unknown> | null;
+  "identify": Record<string, unknown>;
+  "cache_mode": "NONE" | "CLIENT_PRIVATE" | "VERSIONED_PUBLIC";
+  "capabilities": Record<string, boolean>;
+}
+
+export interface CatalogProject {
+  "project_key": string;
+  "title": string;
+  "crs": string;
+  "project_revision": string;
+  "qgis_project_hash": string | null;
+  "qgis_version": string | null;
+  "extent": Array<unknown> | null;
+}
+
+export interface CatalogService {
+  "service_key": string;
+  "service_mode": "QGIS_WMS" | "GEOSERVER_WMS_LEGACY" | "MARTIN_MVT" | "TITILER" | "FASTAPI" | "CESIUM_DYNAMIC" | "THREE_D_TILES";
+  "endpoint": string;
+  "healthy": boolean;
+  "revision"?: string | null;
+  "wms_version"?: string | null;
+  "wmts_endpoint"?: string | null;
+  "gateway_contract_version"?: string | null;
+  "tile_template"?: string | null;
+  "endpoint_key"?: string | null;
+  "min_zoom"?: number | null;
+  "max_zoom"?: number | null;
+}
+
 export interface ComparisonStructureSample {
   "structure_type": "gate" | "pump";
   "structure_id": number;
@@ -764,6 +857,19 @@ export interface GeoServerLayerRecord {
   "srid"?: 4490;
 }
 
+export interface GISCatalogResponse {
+  "schema_version"?: "gis-catalog/v1alpha1";
+  "catalog_revision": string;
+  "generated_at": string;
+  "project": CatalogProject;
+  "dataset": CatalogDataset;
+  "capabilities": CatalogCapabilities;
+  "services": Array<CatalogService>;
+  "groups": Array<CatalogGroup>;
+  "layers": Array<CatalogLayer>;
+  "basemaps": Array<CatalogBasemap>;
+}
+
 export interface GISComparisonFrame {
   "dataset_version_id": number;
   "baseline_task_id": number;
@@ -841,6 +947,11 @@ export interface GISWaterSample {
   "velocity_level": "low" | "medium" | "high";
   "flow_direction": "downstream" | "upstream" | "stationary";
   "flow_bearing_degrees": number;
+}
+
+export interface HealthEvidence {
+  "passed": boolean;
+  "evidence": string;
 }
 
 export interface HealthResponse {
@@ -1246,6 +1357,17 @@ export interface PumpUpdate {
   "geometry"?: Record<string, unknown> | null;
 }
 
+export interface QgisServerHealthResponse {
+  "status": "healthy" | "degraded";
+  "process": HealthEvidence;
+  "project_valid": HealthEvidence;
+  "manifest_revision": string | null;
+  "database_read": HealthEvidence;
+  "wms_capabilities": HealthEvidence;
+  "dataset_version_isolation": HealthEvidence;
+  "details": Record<string, unknown>;
+}
+
 export interface RecommendationResponse {
   "task_id": number;
   "candidate": ParetoCandidateRecord | null;
@@ -1617,6 +1739,16 @@ export interface ValidationSummary {
 export type ValidationReport = app__validation__schemas__ValidationReport;
 export type DispatchValidationReport = app__dispatch__schemas__ValidationReport;
 export interface GISListQuery { dataset_version_id: number; bbox?: string; limit?: number; offset?: number; }
+export interface QgisFeatureInfoQuery {
+  request: 'GetFeatureInfo'; dataset_version_id: number; layer_key: string;
+  bbox: string; width: number; height: number; crs: 'EPSG:4490' | 'EPSG:3857';
+  format: 'image/png' | 'image/jpeg'; transparent?: 'true' | 'false';
+  i: number; j: number; feature_count?: number;
+}
+export interface QgisFeatureInfoCollection {
+  type?: 'FeatureCollection';
+  features?: Array<{ id?: string | number; properties?: Record<string, unknown>; geometry?: Record<string, unknown> | null }>;
+}
 export interface GISInteractionQuery { dataset_version_id: number; time_seconds?: number; task_id?: number; dispatch_run_id?: number; }
 export interface GISAnnotationQuery { dataset_version_id: number; scale_denominator?: number; bbox?: string; annotation_type?: string; limit?: number; offset?: number; time_seconds?: number; task_id?: number; dispatch_run_id?: number; }
 export interface GISLocationSearchQuery { dataset_version_id: number; q: string; limit?: number; }
@@ -1704,6 +1836,9 @@ export const getGISStatistics = (datasetVersionId: number, baseUrl = '') => requ
 export const getGeoServerHealth = (baseUrl = '') => requestJson<GeoServerHealthResponse>('/api/v1/gis/geoserver/health', {}, baseUrl);
 export const getGeoServerLayers = (baseUrl = '') => requestJson<Array<GeoServerLayerRecord>>('/api/v1/gis/geoserver/layers', {}, baseUrl);
 export const getGeoServerConfig = (baseUrl = '') => requestJson<GeoServerConfigResponse>('/api/v1/gis/geoserver/config', {}, baseUrl);
+export const getGISCatalog = (datasetVersionId: number, baseUrl = '') => requestJson<GISCatalogResponse>(`/api/v1/gis/catalog${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
+export const getQgisServerHealth = (baseUrl = '') => requestJson<QgisServerHealthResponse>('/api/v1/gis/qgis-server/health', {}, baseUrl);
+export const getQgisWmsFeatureInfo = (params: QgisFeatureInfoQuery, baseUrl = '') => requestJson<QgisFeatureInfoCollection>(`/qgis-server/wms${toQuery(params)}`, {}, baseUrl);
 export const getRivers = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(`/api/v1/gis/rivers${toQuery(params)}`, {}, baseUrl);
 export const getRiver = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<GeoJSONFeature>(`/api/v1/gis/rivers/${id}${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
 export const getGates = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(`/api/v1/gis/gates${toQuery(params)}`, {}, baseUrl);
