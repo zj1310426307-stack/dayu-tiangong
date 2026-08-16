@@ -168,6 +168,162 @@ class DatasetVersion(Base):
     )
 
 
+class GISLayerRegistry(Base):
+    """Allow-listed logical GIS layer contract shared by server and web clients."""
+
+    __tablename__ = "gis_layer_registry"
+    __table_args__ = (
+        CheckConstraint(
+            "layer_key ~ '^[a-z][a-z0-9_]{1,62}$'",
+            name="ck_gis_layer_registry_layer_key",
+        ),
+        CheckConstraint(
+            "source_schema IN ('publish','tiles')",
+            name="ck_gis_layer_registry_source_schema",
+        ),
+        CheckConstraint(
+            "source_relation ~ '^[a-z][a-z0-9_]{1,62}$'",
+            name="ck_gis_layer_registry_source_relation",
+        ),
+        CheckConstraint(
+            "geometry_type IN ('POINT','LINESTRING','POLYGON','MULTIPOINT',"
+            "'MULTILINESTRING','MULTIPOLYGON','NONE')",
+            name="ck_gis_layer_registry_geometry_type",
+        ),
+        CheckConstraint(
+            "native_crs ~ '^EPSG:[0-9]{4,6}$'",
+            name="ck_gis_layer_registry_native_crs",
+        ),
+        CheckConstraint(
+            "service_mode IN ('QGIS_WMS','GEOSERVER_WMS_LEGACY','MARTIN_MVT',"
+            "'TITILER','FASTAPI','CESIUM_DYNAMIC','THREE_D_TILES')",
+            name="ck_gis_layer_registry_service_mode",
+        ),
+        CheckConstraint(
+            "render_mode IN ('RASTER_WMS','VECTOR_TILE','RASTER_TILE',"
+            "'DYNAMIC_PRIMITIVE','THREE_D')",
+            name="ck_gis_layer_registry_render_mode",
+        ),
+        CheckConstraint(
+            "(service_mode = 'QGIS_WMS' AND render_mode = 'RASTER_WMS') OR "
+            "(service_mode = 'GEOSERVER_WMS_LEGACY' AND render_mode IN ('RASTER_WMS','RASTER_TILE')) OR "
+            "(service_mode = 'MARTIN_MVT' AND render_mode = 'VECTOR_TILE') OR "
+            "(service_mode = 'TITILER' AND render_mode = 'RASTER_TILE') OR "
+            "(service_mode IN ('FASTAPI','CESIUM_DYNAMIC') AND render_mode = 'DYNAMIC_PRIMITIVE') OR "
+            "(service_mode = 'THREE_D_TILES' AND render_mode = 'THREE_D')",
+            name="ck_gis_layer_registry_service_render",
+        ),
+        CheckConstraint(
+            "service_mode <> 'QGIS_WMS' OR (qgis_short_name IS NOT NULL AND "
+            "dataset_filter_field = 'dataset_version_id' AND source_schema = 'publish')",
+            name="ck_gis_layer_registry_qgis_contract",
+        ),
+        CheckConstraint(
+            "dataset_filter_field IS NULL OR dataset_filter_field = 'dataset_version_id'",
+            name="ck_gis_layer_registry_filter_field",
+        ),
+        CheckConstraint(
+            "cache_mode IN ('NONE','CLIENT_PRIVATE','VERSIONED_PUBLIC')",
+            name="ck_gis_layer_registry_cache_mode",
+        ),
+        CheckConstraint(
+            "identify_mode IN ('NONE','FEATURE_INFO','DETAIL_API','CLIENT_PICK')",
+            name="ck_gis_layer_registry_identify_mode",
+        ),
+        CheckConstraint(
+            "default_opacity >= 0 AND default_opacity <= 1",
+            name="ck_gis_layer_registry_opacity",
+        ),
+        UniqueConstraint("layer_key", name="uq_gis_layer_registry_layer_key"),
+        Index(
+            "uq_gis_layer_registry_qgis_short_name",
+            "qgis_short_name",
+            unique=True,
+            postgresql_where="qgis_short_name IS NOT NULL",
+        ),
+        Index("ix_gis_layer_registry_active_order", "active", "display_order"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    layer_key: Mapped[str] = mapped_column(String(63), nullable=False)
+    title: Mapped[str] = mapped_column(String(128), nullable=False)
+    group_key: Mapped[str] = mapped_column(String(63), nullable=False)
+    source_schema: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_relation: Mapped[str] = mapped_column(String(63), nullable=False)
+    geometry_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    native_crs: Mapped[str] = mapped_column(String(16), nullable=False)
+    qgis_short_name: Mapped[str | None] = mapped_column(String(63))
+    service_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    render_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    dataset_filter_field: Mapped[str | None] = mapped_column(String(63))
+    identify_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    legend_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    search_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
+    capabilities: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
+    feature_info_fields: Mapped[list[str]] = mapped_column(JSONB, nullable=False, server_default="[]")
+    cache_mode: Mapped[str] = mapped_column(String(24), nullable=False, server_default="NONE")
+    identify_mode: Mapped[str] = mapped_column(String(24), nullable=False, server_default="NONE")
+    detail_route_key: Mapped[str | None] = mapped_column(String(63))
+    model_entity_type: Mapped[str | None] = mapped_column(String(63))
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    default_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    default_opacity: Mapped[float] = mapped_column(Float, nullable=False, server_default="1")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False, server_default="migration")
+    updated_by: Mapped[str] = mapped_column(String(64), nullable=False, server_default="migration")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class BasemapRegistry(Base):
+    """Register deployment-owned basemap endpoint keys without storing arbitrary URLs."""
+
+    __tablename__ = "basemap_registry"
+    __table_args__ = (
+        CheckConstraint(
+            "basemap_key ~ '^[a-z][a-z0-9_]{1,62}$'",
+            name="ck_basemap_registry_key",
+        ),
+        CheckConstraint(
+            "basemap_type IN ('XYZ','WMS','WMTS','COG','MVT','ARCGIS_REST')",
+            name="ck_basemap_registry_type",
+        ),
+        CheckConstraint(
+            "endpoint_key ~ '^[a-z][a-z0-9_]{1,62}$'",
+            name="ck_basemap_registry_endpoint_key",
+        ),
+        CheckConstraint(
+            "native_crs ~ '^EPSG:[0-9]{4,6}$'",
+            name="ck_basemap_registry_native_crs",
+        ),
+        CheckConstraint(
+            "default_opacity >= 0 AND default_opacity <= 1",
+            name="ck_basemap_registry_opacity",
+        ),
+        UniqueConstraint("basemap_key", name="uq_basemap_registry_key"),
+        UniqueConstraint("endpoint_key", name="uq_basemap_registry_endpoint_key"),
+        Index("ix_basemap_registry_active_order", "active", "display_order"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    basemap_key: Mapped[str] = mapped_column(String(63), nullable=False)
+    title: Mapped[str] = mapped_column(String(128), nullable=False)
+    basemap_type: Mapped[str] = mapped_column(String(24), nullable=False)
+    endpoint_key: Mapped[str] = mapped_column(String(63), nullable=False)
+    native_crs: Mapped[str] = mapped_column(String(16), nullable=False)
+    credit: Mapped[str] = mapped_column(String(256), nullable=False)
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    default_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    default_opacity: Mapped[float] = mapped_column(Float, nullable=False, server_default="1")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False, server_default="migration")
+    updated_by: Mapped[str] = mapped_column(String(64), nullable=False, server_default="migration")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class GISImportBatch(Base):
     """Track one immutable source landing and its controlled governance lifecycle."""
 
@@ -704,6 +860,7 @@ class CrossSection(Base):
     __table_args__ = (
         CheckConstraint("station >= 0", name="ck_cross_section_station_nonnegative"),
         CheckConstraint("roughness > 0", name="ck_cross_section_roughness_positive"),
+        UniqueConstraint("id", "dataset_version_id", name="uq_cross_section_id_version"),
         UniqueConstraint(
             "dataset_version_id", "section_code", name="uq_cross_section_version_code"
         ),
@@ -738,6 +895,87 @@ class CrossSection(Base):
     )
 
     river: Mapped[River] = relationship(back_populates="cross_sections")
+
+
+class CrossSectionLocation(Base):
+    """Additive surveyed location for a legacy cross-section point contract."""
+
+    __tablename__ = "cross_section_location"
+    __table_args__ = (
+        UniqueConstraint("cross_section_id", name="uq_cross_section_location_section"),
+        ForeignKeyConstraint(["cross_section_id", "dataset_version_id"], ["cross_section.id", "cross_section.dataset_version_id"], name="fk_cross_section_location_section_version", ondelete="CASCADE"),
+        Index("ix_cross_section_location_geometry_gist", "geometry", postgresql_using="gist"),
+        Index("ix_cross_section_location_version", "dataset_version_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cross_section_id: Mapped[int] = mapped_column(nullable=False)
+    dataset_version_id: Mapped[int] = mapped_column(nullable=False)
+    geometry: Mapped[Any] = mapped_column(Geometry(geometry_type="POINT", srid=4490, spatial_index=False), nullable=False)
+    survey_method: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class CrossSectionAxis(Base):
+    """Optional mapped axis and bank positions; legacy geometry remains Point."""
+
+    __tablename__ = "cross_section_axis"
+    __table_args__ = (
+        UniqueConstraint("cross_section_id", name="uq_cross_section_axis_section"),
+        ForeignKeyConstraint(["cross_section_id", "dataset_version_id"], ["cross_section.id", "cross_section.dataset_version_id"], name="fk_cross_section_axis_section_version", ondelete="CASCADE"),
+        Index("ix_cross_section_axis_geometry_gist", "geometry", postgresql_using="gist"),
+        Index("ix_cross_section_axis_version", "dataset_version_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cross_section_id: Mapped[int] = mapped_column(nullable=False)
+    dataset_version_id: Mapped[int] = mapped_column(nullable=False)
+    geometry: Mapped[Any] = mapped_column(Geometry(geometry_type="LINESTRING", srid=4490, spatial_index=False), nullable=False)
+    left_bank: Mapped[Any | None] = mapped_column(Geometry(geometry_type="POINT", srid=4490, spatial_index=False))
+    right_bank: Mapped[Any | None] = mapped_column(Geometry(geometry_type="POINT", srid=4490, spatial_index=False))
+    vertical_datum: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class CrossSectionPoint(Base):
+    """Optional normalized profile point preserving business-significant order."""
+
+    __tablename__ = "cross_section_point"
+    __table_args__ = (
+        CheckConstraint("point_order >= 0", name="ck_cross_section_point_order"),
+        UniqueConstraint("cross_section_id", "point_order", name="uq_cross_section_point_order"),
+        ForeignKeyConstraint(["cross_section_id", "dataset_version_id"], ["cross_section.id", "cross_section.dataset_version_id"], name="fk_cross_section_point_section_version", ondelete="CASCADE"),
+        Index("ix_cross_section_point_geometry_gist", "geometry", postgresql_using="gist"),
+        Index("ix_cross_section_point_version", "dataset_version_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cross_section_id: Mapped[int] = mapped_column(nullable=False)
+    dataset_version_id: Mapped[int] = mapped_column(nullable=False)
+    point_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    offset: Mapped[float] = mapped_column(Float, nullable=False)
+    elevation: Mapped[float] = mapped_column(Float, nullable=False)
+    geometry: Mapped[Any | None] = mapped_column(Geometry(geometry_type="POINT", srid=4490, spatial_index=False))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class CrossSectionProfile(Base):
+    """Optional versioned profile metadata for GIS consumers and future adapters."""
+
+    __tablename__ = "cross_section_profile"
+    __table_args__ = (
+        UniqueConstraint("cross_section_id", name="uq_cross_section_profile_section"),
+        ForeignKeyConstraint(["cross_section_id", "dataset_version_id"], ["cross_section.id", "cross_section.dataset_version_id"], name="fk_cross_section_profile_section_version", ondelete="CASCADE"),
+        Index("ix_cross_section_profile_version", "dataset_version_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cross_section_id: Mapped[int] = mapped_column(nullable=False)
+    dataset_version_id: Mapped[int] = mapped_column(nullable=False)
+    profile: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    vertical_datum: Mapped[str | None] = mapped_column(String(64))
+    source_revision: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class Gate(Base):
