@@ -48,6 +48,8 @@ const requiredPaths = [
   '/api/v1/gis/rivers', '/api/v1/gis/interaction-frame', '/api/v1/rivers', '/api/v1/cross-sections',
   '/api/v1/gates', '/api/v1/pumps', '/api/v1/import/excel',
   '/api/v1/validation/run', '/api/v1/model-data/dataset-versions',
+  '/api/v1/model-data/parameters', '/api/v1/model-data/boundary-conditions',
+  '/api/v1/model-data/simulation-cases',
   '/api/v1/model-data/simulation-cases/{case_id}/input',
   '/api/v1/model/tasks', '/api/v1/model/tasks/{task_id}/run',
   '/api/v1/model/tasks/{task_id}', '/api/v1/model/results/{task_id}',
@@ -335,9 +337,21 @@ export const updatePumpRecord = (id: number, body: PumpUpdate, baseUrl = '') => 
 export const deletePumpRecord = (id: number, baseUrl = '') => requestJson<void>(\`/api/v1/pumps/\${id}\`, { method: 'DELETE' }, baseUrl);
 
 export const getDatasetVersions = (baseUrl = '') => requestJson<Array<DatasetVersionRecord>>('/api/v1/model-data/dataset-versions', {}, baseUrl);
+export const createDatasetVersion = (body: DatasetVersionCreate, baseUrl = '') => requestJson<DatasetVersionRecord>('/api/v1/model-data/dataset-versions', jsonOptions('POST', body), baseUrl);
+export const updateDatasetVersion = (versionId: number, body: DatasetVersionUpdate, baseUrl = '') => requestJson<DatasetVersionRecord>(\`/api/v1/model-data/dataset-versions/\${versionId}\`, jsonOptions('PUT', body), baseUrl);
+export const deleteDatasetVersion = (versionId: number, baseUrl = '') => requestJson<void>(\`/api/v1/model-data/dataset-versions/\${versionId}\`, { method: 'DELETE' }, baseUrl);
 export const getModelParameters = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<ModelParameterRecord>>(\`/api/v1/model-data/parameters\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const createModelParameter = (body: ModelParameterCreate, baseUrl = '') => requestJson<ModelParameterRecord>('/api/v1/model-data/parameters', jsonOptions('POST', body), baseUrl);
+export const updateModelParameter = (parameterId: number, body: ModelParameterUpdate, baseUrl = '') => requestJson<ModelParameterRecord>(\`/api/v1/model-data/parameters/\${parameterId}\`, jsonOptions('PUT', body), baseUrl);
+export const deleteModelParameter = (parameterId: number, baseUrl = '') => requestJson<void>(\`/api/v1/model-data/parameters/\${parameterId}\`, { method: 'DELETE' }, baseUrl);
 export const getBoundaryConditions = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<BoundaryConditionRecord>>(\`/api/v1/model-data/boundary-conditions\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const createBoundaryCondition = (body: BoundaryConditionCreate, baseUrl = '') => requestJson<BoundaryConditionRecord>('/api/v1/model-data/boundary-conditions', jsonOptions('POST', body), baseUrl);
+export const updateBoundaryCondition = (boundaryId: number, body: BoundaryConditionUpdate, baseUrl = '') => requestJson<BoundaryConditionRecord>(\`/api/v1/model-data/boundary-conditions/\${boundaryId}\`, jsonOptions('PUT', body), baseUrl);
+export const deleteBoundaryCondition = (boundaryId: number, baseUrl = '') => requestJson<void>(\`/api/v1/model-data/boundary-conditions/\${boundaryId}\`, { method: 'DELETE' }, baseUrl);
 export const getSimulationCases = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<SimulationCaseRecord>>(\`/api/v1/model-data/simulation-cases\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const createSimulationCase = (body: SimulationCaseCreate, baseUrl = '') => requestJson<SimulationCaseRecord>('/api/v1/model-data/simulation-cases', jsonOptions('POST', body), baseUrl);
+export const updateSimulationCase = (caseId: number, body: SimulationCaseUpdate, baseUrl = '') => requestJson<SimulationCaseRecord>(\`/api/v1/model-data/simulation-cases/\${caseId}\`, jsonOptions('PUT', body), baseUrl);
+export const deleteSimulationCase = (caseId: number, baseUrl = '') => requestJson<void>(\`/api/v1/model-data/simulation-cases/\${caseId}\`, { method: 'DELETE' }, baseUrl);
 export const getModelInput = (caseId: number, baseUrl = '') => requestJson<ModelInputSnapshot>(\`/api/v1/model-data/simulation-cases/\${caseId}/input\`, {}, baseUrl);
 export const runValidation = (datasetVersionId: number, baseUrl = '') => requestJson<ValidationReport>('/api/v1/validation/run', jsonOptions('POST', { dataset_version_id: datasetVersionId }), baseUrl);
 

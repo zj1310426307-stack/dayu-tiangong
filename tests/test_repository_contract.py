@@ -158,7 +158,6 @@ def test_dgis_postgis_ui_forwards_governance_provenance() -> None:
     generated_client = (
         REPOSITORY_ROOT / "frontend/src/api/generated/client.ts"
     ).read_text(encoding="utf-8")
-
     for entity_type in ["river", "cross_section", "gate", "pump"]:
         assert f"value: '{entity_type}'" in data_manager
     for field in ["entityType", "parentVersionId", "operator"]:
@@ -168,3 +167,89 @@ def test_dgis_postgis_ui_forwards_governance_provenance() -> None:
         assert f"fields.{form_field}" in generated_client
     assert "optionsOrTargetSrid?: DGISPostGISImportOptions | number" in generator
     assert "optionsOrTargetSrid?: DGISPostGISImportOptions | number" in generated_client
+
+
+def test_frontend_dataset_lifecycle_is_reachable_and_fail_safe() -> None:
+    """The web app must expose a draft workflow while keeping frozen versions read-only."""
+
+    context_source = (
+        REPOSITORY_ROOT / "frontend/src/context/DatasetVersionContext.tsx"
+    ).read_text(encoding="utf-8")
+    layout_source = (
+        REPOSITORY_ROOT / "frontend/src/layout/MainLayout.tsx"
+    ).read_text(encoding="utf-8")
+    data_pages = (
+        REPOSITORY_ROOT / "frontend/src/pages/data-center/DataCenterPages.tsx"
+    ).read_text(encoding="utf-8")
+    hydraulic_pages = (
+        REPOSITORY_ROOT / "frontend/src/pages/hydraulic/HydraulicPages.tsx"
+    ).read_text(encoding="utf-8")
+    optimization_pages = (
+        REPOSITORY_ROOT / "frontend/src/pages/optimization/OptimizationPages.tsx"
+    ).read_text(encoding="utf-8")
+    dispatch_pages = (
+        REPOSITORY_ROOT / "frontend/src/pages/dispatch/DispatchPages.tsx"
+    ).read_text(encoding="utf-8")
+    router_source = (
+        REPOSITORY_ROOT / "frontend/src/router/index.tsx"
+    ).read_text(encoding="utf-8")
+    home_source = (
+        REPOSITORY_ROOT / "frontend/src/pages/HomePage.tsx"
+    ).read_text(encoding="utf-8")
+    water_trend_source = (
+        REPOSITORY_ROOT / "frontend/src/components/WaterTrendChart.tsx"
+    ).read_text(encoding="utf-8")
+    gis_source = (
+        REPOSITORY_ROOT / "frontend/src/pages/GisPage.tsx"
+    ).read_text(encoding="utf-8")
+    three_d_source = (
+        REPOSITORY_ROOT / "frontend/src/components/dgis/ThreeDViewer.tsx"
+    ).read_text(encoding="utf-8")
+    generator = (
+        REPOSITORY_ROOT / "frontend/scripts/update-openapi.mjs"
+    ).read_text(encoding="utf-8")
+    generated_client = (
+        REPOSITORY_ROOT / "frontend/src/api/generated/client.ts"
+    ).read_text(encoding="utf-8")
+    nginx_source = (
+        REPOSITORY_ROOT / "docker/nginx.conf"
+    ).read_text(encoding="utf-8")
+
+    for token in ["currentVersion", "isMutable", "refreshVersions", "item.status === 'published'"]:
+        assert token in context_source
+    assert "createDatasetVersion(values)" in layout_source
+    assert "新建草稿" in layout_source
+    assert "datasetVersionId ?? 1" not in data_pages
+    assert "DatasetWriteNotice" in data_pages
+    assert "Boolean(datasetVersionId)" in data_pages
+    assert "getSimulationCases(datasetVersionId)" in hydraulic_pages
+    assert "getSimulationCases(datasetVersionId)" in optimization_pages
+    assert "暂无计算方案" in dispatch_pages
+    assert "errorElement: <RouteErrorPage />" in router_source
+    assert "components/gis/CesiumMap" not in home_source
+    assert "echarts" not in water_trend_source
+    assert '<svg className="trend-chart"' in water_trend_source
+    assert "lazy(() => import('../components/gis/CesiumMap')" in gis_source
+    assert "加载 GIS 三维地图" in gis_source
+    assert "import type { Cesium3DTileset }" in three_d_source
+    assert "void import('cesium')" in three_d_source
+    assert "location = /index.html" in nginx_source
+    assert 'Cache-Control "no-store, no-cache, must-revalidate"' in nginx_source
+
+    generated_functions = [
+        "createDatasetVersion",
+        "updateDatasetVersion",
+        "deleteDatasetVersion",
+        "createModelParameter",
+        "updateModelParameter",
+        "deleteModelParameter",
+        "createBoundaryCondition",
+        "updateBoundaryCondition",
+        "deleteBoundaryCondition",
+        "createSimulationCase",
+        "updateSimulationCase",
+        "deleteSimulationCase",
+    ]
+    for function_name in generated_functions:
+        assert f"export const {function_name}" in generator
+        assert f"export const {function_name}" in generated_client

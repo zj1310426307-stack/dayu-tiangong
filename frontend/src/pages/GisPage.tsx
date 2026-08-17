@@ -1,6 +1,6 @@
 import { Alert, Button, Collapse, Select, Space, Tag } from 'antd';
 import { type Cesium3DTileset } from 'cesium';
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   getGeoServerHealth,
@@ -15,7 +15,6 @@ import {
   type GISInteractionFrame,
   type SpatialFeature,
 } from '../api/generated/client';
-import { CesiumMap } from '../components/gis/CesiumMap';
 import { Catalog } from '../components/dgis/Catalog';
 import { DataManager } from '../components/dgis/DataManager';
 import { LayerTree } from '../components/dgis/LayerTree';
@@ -26,6 +25,10 @@ import { VectorTileLayer } from '../components/dgis/VectorTileLayer';
 import { SpatialAnalysis } from '../components/gis/SpatialAnalysis';
 import { TimelineController } from '../components/gis/TimelineController';
 import { useDatasetVersion } from '../context/DatasetVersionContext';
+
+// Cesium is intentionally kept behind a user action so the GIS shell and
+// diagnostics remain usable even when WebGL initialization is slow or fails.
+const CesiumMap = lazy(() => import('../components/gis/CesiumMap').then((module) => ({ default: module.CesiumMap })));
 
 type ServiceState = 'checking' | 'online' | 'offline';
 
@@ -57,6 +60,7 @@ export function GisPage() {
   const [selectedThreeDId, setSelectedThreeDId] = useState<number | null>(null);
   const [threeDAssets, setThreeDAssets] = useState<Awaited<ReturnType<typeof getDGISThreeDTiles>>>([]);
   const [threeDTilesets, setThreeDTilesets] = useState<Cesium3DTileset[]>([]);
+  const [mapEnabled, setMapEnabled] = useState(false);
   const [replayedStates, setReplayedStates] = useState<FeatureStateCollection | null>(null);
   const [viewportBbox, setViewportBbox] = useState<[number, number, number, number]>([120, 30, 120.6, 30.5]);
   const [services, setServices] = useState<Record<'postgis' | 'qgis' | 'geoserver' | 'cesium', ServiceState>>({
@@ -226,20 +230,32 @@ export function GisPage() {
         },
       ]} />
       <div className="gis-workspace-shell">
-        <CesiumMap
-          variant="workspace"
-          datasetVersionId={datasetVersionId}
-          interactionFrame={interactionFrame}
-          dynamicLoading={interactionLoading}
-          selectedAsset={selectedAsset}
-          analysisFeatures={analysisFeatures}
-          comparisonFrame={comparisonFrame}
-          dgisVectorTileSource={selectedVectorSource}
-          dgisRasterTileUrl={selectedRasterId === null ? null : `/api/v1/dgis/raster/${selectedRasterId}/{z}/{x}/{y}.png`}
-          dgisThreeDTilesets={threeDTilesets}
-          onViewportChange={handleViewportChange}
-          onCesiumStatusChange={handleCesiumStatusChange}
-        />
+        {mapEnabled ? (
+          <Suspense fallback={<section className="map-card map-card--workspace panel-surface map-card--waiting">正在加载 Cesium 三维地图…</section>}>
+            <CesiumMap
+              variant="workspace"
+              datasetVersionId={datasetVersionId}
+              interactionFrame={interactionFrame}
+              dynamicLoading={interactionLoading}
+              selectedAsset={selectedAsset}
+              analysisFeatures={analysisFeatures}
+              comparisonFrame={comparisonFrame}
+              dgisVectorTileSource={selectedVectorSource}
+              dgisRasterTileUrl={selectedRasterId === null ? null : `/api/v1/dgis/raster/${selectedRasterId}/{z}/{x}/{y}.png`}
+              dgisThreeDTilesets={threeDTilesets}
+              onViewportChange={handleViewportChange}
+              onCesiumStatusChange={handleCesiumStatusChange}
+            />
+          </Suspense>
+        ) : (
+          <section className="map-card map-card--workspace panel-surface map-card--waiting">
+            <Space direction="vertical" align="center" size="middle">
+              <strong>GIS 工作区已就绪，三维地图尚未加载</strong>
+              <span>服务状态、图层目录与分析工具可先使用；需要地图时再启动 Cesium，避免 WebGL 初始化阻塞整个模块。</span>
+              <Button type="primary" onClick={() => setMapEnabled(true)}>加载 GIS 三维地图</Button>
+            </Space>
+          </section>
+        )}
         <SpatialAnalysis
           datasetVersionId={datasetVersionId!}
           timeSeconds={interactionFrame?.selected_time_seconds ?? requestedTime}

@@ -1,5 +1,5 @@
 import { Card, Select, Space, Switch, Tag } from 'antd';
-import { Cesium3DTileset } from 'cesium';
+import type { Cesium3DTileset } from 'cesium';
 import { useEffect } from 'react';
 
 import type { ThreeDTilesAsset } from '../../api/generated/client';
@@ -22,9 +22,11 @@ export function ThreeDViewer({ assets, selectedId, onChange, onTilesetsChange }:
       onTilesetsChange([]);
       return undefined;
     }
-    void Cesium3DTileset.fromUrl(selected.tileset_url, {
+    // Do not load the 4 MB Cesium runtime merely to render the DGIS catalog.
+    // It is fetched only after an operator explicitly enables a 3D Tiles asset.
+    void import('cesium').then(({ Cesium3DTileset }) => Cesium3DTileset.fromUrl(selected.tileset_url, {
       maximumScreenSpaceError: selected.maximum_screen_space_error,
-    }).then((tileset) => {
+    })).then((tileset) => {
       if (!disposed) onTilesetsChange([tileset]);
     }).catch(() => { if (!disposed) onTilesetsChange([]); });
     return () => { disposed = true; onTilesetsChange([]); };

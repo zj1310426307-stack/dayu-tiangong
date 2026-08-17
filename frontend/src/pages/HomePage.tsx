@@ -1,7 +1,24 @@
-import { ArrowUpOutlined, DatabaseOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
-import { CesiumMap } from '../components/gis/CesiumMap';
+import { ArrowUpOutlined, DatabaseOutlined, GlobalOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
+import { Button, Space } from 'antd';
+import { useNavigate } from 'react-router-dom';
 import { StatusPanel } from '../components/StatusPanel';
 import { WaterTrendChart } from '../components/WaterTrendChart';
+
+/** 首页保持纯业务摘要，三维运行时只允许在独立 GIS 工作区启动。 */
+function DashboardMap() {
+  const navigate = useNavigate();
+  return (
+    <section className="map-card map-card--dashboard panel-surface map-card--waiting">
+      <div>
+        <strong>GIS 三维能力已与首页隔离</strong>
+        <p>首页不初始化 Cesium、WebGL 或地图画布；进入独立工作区后再按需加载三维地图。</p>
+        <Space>
+          <Button type="primary" icon={<GlobalOutlined />} onClick={() => navigate('/gis')}>进入 GIS 一张图</Button>
+        </Space>
+      </div>
+    </section>
+  );
+}
 
 // 组合首页态势摘要、真实空间一张图与数据库统计，保持信息层级清晰。
 export function HomePage() {
@@ -20,7 +37,7 @@ export function HomePage() {
       </header>
 
       <div className="dashboard-grid">
-        <CesiumMap />
+        <DashboardMap />
         <StatusPanel />
       </div>
 

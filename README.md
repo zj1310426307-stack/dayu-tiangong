@@ -48,6 +48,10 @@ docker compose -p dayu-tiangong-phase1 -f docker/docker-compose.yml up --build
 - QGIS Server 证据健康：`GET /api/v1/gis/qgis-server/health`
 - QGIS WMS 安全网关：`/qgis-server/wms`（浏览器不能提交 `MAP/FILTER/SQL`）
 
+Web 工作台顶部版本选择器会显示版本生命周期。首次进入默认选择最新 `published` 版本并以只读方式浏览；河道、断面、闸泵、数据导入和模型配置只有在显式创建或选择 `draft` 后才开放写操作。顶部“新建草稿”是 Web 编辑入口，页面不再把缺失版本隐式回退到版本 1。水动力、调度和优化的计算方案查询均绑定当前版本，避免跨版本混用。
+
+首页完全不导入 Cesium、WebGL 或 ECharts Canvas，只显示原生 SVG 趋势和业务摘要；三维能力统一从独立 GIS 工作区进入，并仅在点击“加载 GIS 三维地图”后初始化。3D Tiles 运行时同样只在明确选择资产后加载。动态模块加载失败会进入可恢复错误页，而不是无限停留在“正在加载”。
+
 ## Phase 1D GIS 空间工作台
 
 - WMS：`/geoserver/dayu/wms`
