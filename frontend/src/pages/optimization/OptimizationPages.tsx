@@ -31,7 +31,6 @@ import {
   cancelOptimizationTask,
   createOptimizationTask,
   explainOptimizationRecommendation,
-  getDatasetVersions,
   getOptimizationCandidates,
   getOptimizationPareto,
   getOptimizationRecommendation,
@@ -45,6 +44,7 @@ import {
   type ParetoCandidateRecord,
   type RecommendationResponse,
 } from '../../api/generated/client';
+import { datasetVersionStatusLabel, useDatasetVersion } from '../../context/DatasetVersionContext';
 
 const { Paragraph, Title } = Typography;
 
@@ -78,22 +78,27 @@ function objective(candidate: ParetoCandidateRecord, key: string): number {
 
 export function OptimizationHomePage() {
   const navigate = useNavigate();
+  const { versions, datasetVersionId, setDatasetVersionId } = useDatasetVersion();
   const [form] = Form.useForm();
-  const [versions, setVersions] = useState<Array<{ id: number; name: string }>>([]);
   const [cases, setCases] = useState<Array<{ id: number; name: string; dataset_version_id: number }>>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    void Promise.all([getDatasetVersions(), getSimulationCases()])
-      .then(([versionRows, caseRows]) => {
-        setVersions(versionRows);
+    if (!datasetVersionId) {
+      setCases([]);
+      return;
+    }
+    form.setFieldValue('dataset_version_id', datasetVersionId);
+    form.setFieldValue('simulation_case_id', undefined);
+    void getSimulationCases(datasetVersionId)
+      .then((caseRows) => {
         setCases(caseRows);
-        if (versionRows[0]) form.setFieldValue('dataset_version_id', versionRows[0].id);
         if (caseRows[0]) form.setFieldValue('simulation_case_id', caseRows[0].id);
+        setError('');
       })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '模型数据加载失败'));
-  }, [form]);
+  }, [datasetVersionId, form]);
 
   const create = async (values: Record<string, number | string>) => {
     setSubmitting(true);
@@ -144,7 +149,7 @@ export function OptimizationHomePage() {
         <Form form={form} layout="vertical" initialValues={{ name: `联合调度优化-${new Date().toLocaleDateString()}`, flood_risk: 0.5, energy_cost: 0.3, operation_cost: 0.2, particle_count: 4, max_iterations: 3, duration_seconds: 600 }} onFinish={(values) => void create(values)}>
           <Row gutter={16}>
             <Col xs={24} md={8}><Form.Item name="name" label="任务名称" rules={[{ required: true }]}><Input /></Form.Item></Col>
-            <Col xs={12} md={8}><Form.Item name="dataset_version_id" label="数据版本" rules={[{ required: true }]}><Select options={versions.map((item) => ({ value: item.id, label: `${item.name} · #${item.id}` }))} /></Form.Item></Col>
+            <Col xs={12} md={8}><Form.Item name="dataset_version_id" label="数据版本" rules={[{ required: true }]}><Select onChange={setDatasetVersionId} options={versions.map((item) => ({ value: item.id, label: `${item.name} · #${item.id} · ${datasetVersionStatusLabel(item.status)}` }))} /></Form.Item></Col>
             <Col xs={12} md={8}><Form.Item name="simulation_case_id" label="计算方案" rules={[{ required: true }]}><Select options={cases.map((item) => ({ value: item.id, label: `${item.name} · #${item.id}` }))} /></Form.Item></Col>
           </Row>
           <Row gutter={16}>
@@ -159,7 +164,7 @@ export function OptimizationHomePage() {
             <Col xs={8} md={6}><Form.Item name="max_iterations" label="迭代数"><InputNumber min={1} max={25} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
             <Col xs={8} md={6}><Form.Item name="duration_seconds" label="仿真时长（s）"><InputNumber min={60} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
           </Row>
-          <Button type="primary" size="large" icon={<PlayCircleOutlined />} htmlType="submit" loading={submitting}>创建并运行优化</Button>
+          <Button type="primary" size="large" icon={<PlayCircleOutlined />} htmlType="submit" loading={submitting} disabled={!datasetVersionId || cases.length === 0}>创建并运行优化</Button>
         </Form>
       </Card>
     </div>

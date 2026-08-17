@@ -221,6 +221,15 @@ export function DispatchPlanListPage() {
         action={<Space><Button onClick={() => navigate(`/dispatch/runs?datasetVersionId=${datasetVersionId}`)}>运行中心</Button><Button type="primary" icon={<PlusOutlined />} disabled={!cases.length} onClick={() => { form.setFieldsValue({ simulation_case_id: cases[0]?.id, duration_seconds: 7200, storage_level: 'key_sections', evaluation_config: { warning_level: 200 } }); setOpen(true); }}>新建计划</Button></Space>}
       />
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}
+      {!loading && datasetVersionId && cases.length === 0 && !error && (
+        <Alert
+          className="data-alert"
+          type="warning"
+          showIcon
+          message={`数据版本 #${datasetVersionId} 暂无计算方案`}
+          description="请在顶部切换到包含模型数据的版本，或先在草稿版本的“模型数据”中配置参数、边界条件和计算方案；未绑定方案时不会创建不可运行的调度计划。"
+        />
+      )}
       <Card className="data-card" title={`当前数据版本 · ${datasetVersionId ?? '—'}`} extra={<Button icon={<ReloadOutlined />} onClick={() => void reload()} />}>
         <Table rowKey="id" loading={loading} dataSource={plans} columns={columns} scroll={{ x: 1500 }} pagination={{ pageSize: 12 }} />
       </Card>

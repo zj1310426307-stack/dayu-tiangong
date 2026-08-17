@@ -12,8 +12,9 @@ import {
   PartitionOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
+import { Button, Result } from 'antd';
 import { lazy, Suspense } from 'react';
-import { createBrowserRouter, Navigate } from 'react-router-dom';
+import { createBrowserRouter, Navigate, useRouteError } from 'react-router-dom';
 import { MainLayout } from '../layout/MainLayout';
 import type { NavigationItem } from '../types/navigation';
 import { DatasetVersionProvider } from '../context/DatasetVersionContext';
@@ -51,6 +52,23 @@ function RouteLoading({ label }: { label: string }) {
       <span className="route-loading__pulse" />
       <strong>{label}</strong>
     </div>
+  );
+}
+
+/** 捕获路由渲染和动态代码块加载错误，提供可见原因与恢复入口。 */
+function RouteErrorPage() {
+  const error = useRouteError();
+  const detail = error instanceof Error ? error.message : '页面资源加载失败或当前模块发生异常。';
+  return (
+    <Result
+      status="error"
+      title="模块加载失败"
+      subTitle={detail}
+      extra={[
+        <Button key="reload" type="primary" onClick={() => window.location.reload()}>重新加载</Button>,
+        <Button key="home" onClick={() => window.location.assign('/')}>返回首页</Button>,
+      ]}
+    />
   );
 }
 
@@ -167,6 +185,7 @@ export const appRouter = createBrowserRouter([
   {
     path: '/',
     element: <DatasetVersionProvider><MainLayout /></DatasetVersionProvider>,
+    errorElement: <RouteErrorPage />,
     children: [
       {
         index: true,

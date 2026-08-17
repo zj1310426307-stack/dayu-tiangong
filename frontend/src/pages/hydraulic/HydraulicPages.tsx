@@ -37,6 +37,7 @@ import {
   type SimulationTaskCreate,
   type SimulationTaskRecord,
 } from '../../api/generated/client';
+import { useDatasetVersion } from '../../context/DatasetVersionContext';
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -71,6 +72,7 @@ function statusTag(status: SimulationTaskRecord['status']) {
 
 export function HydraulicConfigPage() {
   const navigate = useNavigate();
+  const { datasetVersionId } = useDatasetVersion();
   const [form] = Form.useForm<SimulationTaskCreate>();
   const [cases, setCases] = useState<Array<{ id: number; name: string }>>([]);
   const [loadingCases, setLoadingCases] = useState(true);
@@ -78,14 +80,22 @@ export function HydraulicConfigPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    void getSimulationCases()
+    if (!datasetVersionId) {
+      setCases([]);
+      setLoadingCases(false);
+      return;
+    }
+    setLoadingCases(true);
+    form.setFieldValue('case_id', undefined);
+    void getSimulationCases(datasetVersionId)
       .then((items) => {
         setCases(items.map((item) => ({ id: item.id, name: item.name })));
         if (items[0]) form.setFieldValue('case_id', items[0].id);
+        setError('');
       })
       .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '计算方案加载失败'))
       .finally(() => setLoadingCases(false));
-  }, [form]);
+  }, [datasetVersionId, form]);
 
   const submit = async (values: SimulationTaskCreate) => {
     setSubmitting(true);
@@ -111,6 +121,9 @@ export function HydraulicConfigPage() {
         action={<Button onClick={() => navigate('/hydraulic/tasks')}>查看任务监控</Button>}
       />
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}
+      {!loadingCases && datasetVersionId && cases.length === 0 && (
+        <Alert className="data-alert" type="warning" showIcon message="当前版本没有可运行的计算方案" description="请切换到包含模型参数和边界条件的已发布版本，或先在草稿中完善模型数据。" />
+      )}
       <Card className="data-card hydraulic-config-card" title="计算参数">
         <Alert
           showIcon
@@ -189,6 +202,7 @@ export function HydraulicConfigPage() {
             icon={<PlayCircleOutlined />}
             htmlType="submit"
             loading={submitting}
+            disabled={!datasetVersionId || cases.length === 0}
           >
             创建并运行模拟
           </Button>
