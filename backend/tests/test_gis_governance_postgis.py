@@ -244,7 +244,7 @@ def test_revision_0012_creates_governance_schemas_tables_views_and_indexes(
 ) -> None:
     """Inspect physical PostGIS catalog objects rather than trusting ORM metadata."""
 
-    assert db_session.scalar(text("SELECT version_num FROM alembic_version")) == "20260817_0015"
+    assert db_session.scalar(text("SELECT version_num FROM alembic_version")) == "20260817_0018"
 
     schemas = set(
         db_session.scalars(

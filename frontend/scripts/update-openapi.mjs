@@ -70,7 +70,7 @@ const requiredPaths = [
   '/api/v1/gis/geoserver/health', '/api/v1/gis/geoserver/layers',
   '/api/v1/gis/geoserver/config',
   '/api/v1/gis/catalog', '/api/v1/gis/layers', '/api/v1/gis/ogc/wms',
-  '/api/v1/gis/feature-info',
+  '/api/v1/gis/feature-info', '/api/v1/gis/basemaps/{basemap_key}/tiles/{z}/{y}/{x}.jpeg',
   '/api/v1/gis-analysis/layers', '/api/v1/gis-analysis/annotations',
   '/api/v1/gis-analysis/search',
   '/api/v1/gis-analysis/annotations/{annotation_id}', '/api/v1/gis-analysis/trace',
@@ -206,6 +206,7 @@ export const getGeoServerConfig = (baseUrl = '') => requestJson<GeoServerConfigR
 export const getGISCatalog = (datasetVersionId: number, baseUrl = '') => requestJson<GISCatalogResponse>(\`/api/v1/gis/catalog\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
 export const getGISLayers = (datasetVersionId: number, baseUrl = '') => requestJson<Array<CatalogLayer>>(\`/api/v1/gis/layers\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
 export const getGISFeatureInfo = (params: GISFeatureInfoQuery, baseUrl = '') => requestJson<GISFeatureInfoResponse>(\`/api/v1/gis/feature-info\${toQuery(params)}\`, {}, baseUrl);
+export const getGISBasemapTile = (basemapKey: string, z: number, y: number, x: number, baseUrl = '') => requestBlob(\`/api/v1/gis/basemaps/\${encodeURIComponent(basemapKey)}/tiles/\${z}/\${y}/\${x}.jpeg\`, {}, baseUrl);
 export const getRivers = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/rivers\${toQuery(params)}\`, {}, baseUrl);
 export const getRiver = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<GeoJSONFeature>(\`/api/v1/gis/rivers/\${id}\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
 export const getGates = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/gates\${toQuery(params)}\`, {}, baseUrl);

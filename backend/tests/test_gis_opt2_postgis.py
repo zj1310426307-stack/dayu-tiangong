@@ -21,12 +21,40 @@ pytestmark = pytest.mark.skipif(
 
 def test_catalog_sources_and_geoserver_permissions_are_live() -> None:
     with SessionLocal() as session:
-        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260817_0015"
-        assert session.scalar(text("SELECT count(*) FROM gis_layer_registry WHERE active")) == 12
+        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260817_0018"
+        assert session.scalar(text("SELECT count(*) FROM gis_layer_registry WHERE active")) == 9
         assert validate_gis_catalog(
             session,
             geoserver_role=os.getenv("GEOSERVER_DB_USER", "dayu_geoserver"),
-        ) == {"sources": 12, "geoserver_permissions": 12}
+        ) == {"sources": 9, "geoserver_permissions": 9}
+
+
+def test_open_reference_render_labels_are_chinese_first() -> None:
+    """All emitted labels must contain Chinese and raw romanization stays separate."""
+
+    with SessionLocal() as session:
+        assert session.scalar(
+            text(
+                "SELECT count(*) = count(name_zh) "
+                "AND bool_and(name_zh ~ '[一-龥]') "
+                "FROM publish.administrative_area_open"
+            )
+        ) is True
+        for relation in ("road_open", "waterway_open"):
+            assert session.scalar(
+                text(
+                    f"SELECT coalesce(bool_and(name_zh ~ '[一-龥]'), true) "
+                    f"FROM publish.{relation} WHERE name_zh IS NOT NULL"
+                )
+            ) is True
+            assert session.scalar(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.columns "
+                    "WHERE table_schema = 'publish' AND table_name = :relation "
+                    "AND column_name = 'name_zh')"
+                ),
+                {"relation": relation},
+            ) is True
 
 
 def test_cross_section_spatial_rows_cannot_cross_dataset_versions() -> None:

@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.geoserver import service as geoserver_service
-from app.gis.models import DatasetVersion, GISCatalogLayer
+from app.gis.models import BasemapRegistry, DatasetVersion, GISCatalogLayer
 from app.gis_catalog.schemas import (
     CatalogBasemap,
     CatalogCapabilities,
@@ -39,6 +39,23 @@ GROUP_TITLES = {
 }
 SAFE_PROPERTY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
 WEB_MERCATOR_LIMIT = 20_037_508.35
+BASEMAP_SOURCES = {
+    "esri_world_imagery": {
+        "url": "https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        "min_zoom": 0,
+        "max_zoom": 20,
+    },
+    "nasa_gibs_blue_marble": {
+        "url": "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/BlueMarble_NextGeneration/default/2004-08-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpeg",
+        "min_zoom": 0,
+        "max_zoom": 8,
+    },
+    "nasa_gibs_viirs_20260816": {
+        "url": "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_NOAA21_CorrectedReflectance_TrueColor/default/2026-08-16/GoogleMapsCompatible_Level9/{z}/{y}/{x}.jpeg",
+        "min_zoom": 0,
+        "max_zoom": 9,
+    },
+}
 
 
 def _error(code: str, message: str, *, status_code: int, **context: Any) -> GovernanceError:
@@ -70,6 +87,34 @@ def _catalog_rows(session: Session) -> list[GISCatalogLayer]:
             .order_by(GISCatalogLayer.display_order, GISCatalogLayer.layer_key)
         ).all()
     )
+
+
+def _catalog_basemaps(session: Session) -> list[CatalogBasemap]:
+    """Expose only deployment-owned basemap keys through same-origin tile URLs."""
+
+    rows = session.scalars(
+        select(BasemapRegistry)
+        .where(BasemapRegistry.active.is_(True))
+        .order_by(BasemapRegistry.display_order, BasemapRegistry.basemap_key)
+    ).all()
+    basemaps: list[CatalogBasemap] = []
+    for row in rows:
+        source = BASEMAP_SOURCES.get(row.endpoint_key)
+        if row.basemap_type != "XYZ" or source is None:
+            continue
+        basemaps.append(
+            CatalogBasemap(
+                basemap_key=row.basemap_key,
+                title=row.title,
+                endpoint=f"/api/v1/gis/basemaps/{row.basemap_key}/tiles/{{z}}/{{y}}/{{x}}.jpeg",
+                visible=row.default_visible,
+                opacity=row.default_opacity,
+                min_zoom=int(source["min_zoom"]),
+                max_zoom=int(source["max_zoom"]),
+                credit=row.credit,
+            )
+        )
+    return basemaps
 
 
 def _geoserver_healthy() -> bool:
@@ -149,7 +194,7 @@ def build_catalog(session: Session, dataset_version_id: int) -> tuple[GISCatalog
         services=[CatalogService(healthy=healthy)],
         groups=sorted(groups.values(), key=lambda item: (item.order, item.group_key)),
         layers=layers,
-        basemaps=[CatalogBasemap()],
+        basemaps=_catalog_basemaps(session),
     )
     revision_input = payload.model_dump(mode="json", exclude={"catalog_revision", "generated_at"})
     digest = hashlib.sha256(json.dumps(revision_input, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
@@ -226,14 +271,16 @@ def render_wms_map(
     media_type = image_format.lower()
     if media_type not in {"image/png", "image/jpeg"}:
         raise _error("GIS_IMAGE_FORMAT_INVALID", "Only PNG and JPEG map images are supported.", status_code=422)
-    response = _upstream_get(
-        {
+    params = {
             "SERVICE": "WMS", "VERSION": "1.1.1", "REQUEST": "GetMap",
             "LAYERS": f"dayu:{layer.source_relation}", "STYLES": "", "SRS": "EPSG:3857",
             "BBOX": ",".join(str(value) for value in extent), "WIDTH": str(width), "HEIGHT": str(height),
             "FORMAT": media_type, "TRANSPARENT": "TRUE" if transparent else "FALSE",
-            "CQL_FILTER": f"dataset_version_id={dataset_version_id}",
-        },
+        }
+    if layer.dataset_filter_field == "dataset_version_id":
+        params["CQL_FILTER"] = f"dataset_version_id={dataset_version_id}"
+    response = _upstream_get(
+        params,
         expected={"image/png", "image/jpeg"},
         limit=10_000_000,
     )
@@ -258,15 +305,17 @@ def feature_info(
     extent = _bbox(bbox)
     if not 1 <= width <= 2048 or not 1 <= height <= 2048 or not 0 <= x < width or not 0 <= y < height:
         raise _error("GIS_FEATURE_INFO_PIXEL_INVALID", "FeatureInfo pixel is outside the map image.", status_code=422)
-    response = _upstream_get(
-        {
+    params = {
             "SERVICE": "WMS", "VERSION": "1.1.1", "REQUEST": "GetFeatureInfo",
             "LAYERS": f"dayu:{layer.source_relation}", "QUERY_LAYERS": f"dayu:{layer.source_relation}",
             "STYLES": "", "SRS": "EPSG:3857", "BBOX": ",".join(str(value) for value in extent),
             "WIDTH": str(width), "HEIGHT": str(height), "X": str(x), "Y": str(y),
             "INFO_FORMAT": "application/json", "FEATURE_COUNT": "10",
-            "CQL_FILTER": f"dataset_version_id={dataset_version_id}",
-        },
+        }
+    if layer.dataset_filter_field == "dataset_version_id":
+        params["CQL_FILTER"] = f"dataset_version_id={dataset_version_id}"
+    response = _upstream_get(
+        params,
         expected={"application/json"},
         limit=2_000_000,
     )
@@ -294,3 +343,43 @@ def feature_info(
             )
         )
     return GISFeatureInfoResponse(layer_key=layer_key, dataset_version_id=dataset_version_id, features=features)
+
+
+def fetch_basemap_tile(
+    session: Session, *, basemap_key: str, z: int, y: int, x: int
+) -> tuple[bytes, str]:
+    """Fetch one bounded external imagery tile through an allow-listed registry row."""
+
+    if not re.fullmatch(r"[a-z][a-z0-9_]{1,62}", basemap_key):
+        raise _error("BASEMAP_INVALID", "Basemap key is invalid.", status_code=422)
+    row = session.scalar(
+        select(BasemapRegistry).where(
+            BasemapRegistry.basemap_key == basemap_key,
+            BasemapRegistry.active.is_(True),
+        )
+    )
+    source = BASEMAP_SOURCES.get(row.endpoint_key) if row is not None else None
+    if row is None or row.basemap_type != "XYZ" or source is None:
+        raise _error("BASEMAP_NOT_FOUND", "Basemap is not active.", status_code=404)
+    min_zoom, max_zoom = int(source["min_zoom"]), int(source["max_zoom"])
+    tile_limit = 1 << z if 0 <= z <= 22 else 0
+    if not min_zoom <= z <= max_zoom or not 0 <= x < tile_limit or not 0 <= y < tile_limit:
+        raise _error(
+            "BASEMAP_TILE_INVALID",
+            "Basemap tile coordinates are outside the supported matrix.",
+            status_code=404,
+            basemap_key=basemap_key,
+            z=z,
+            y=y,
+            x=x,
+        )
+    url = str(source["url"]).format(z=z, y=y, x=x)
+    try:
+        response = httpx.get(url, timeout=20.0, follow_redirects=False)
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise _error("BASEMAP_UNAVAILABLE", "Imagery service is unavailable.", status_code=503) from exc
+    media_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+    if media_type != "image/jpeg" or len(response.content) > 2_000_000:
+        raise _error("BASEMAP_RESPONSE_BLOCKED", "Imagery tile failed content validation.", status_code=502)
+    return response.content, media_type

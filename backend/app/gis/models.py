@@ -208,10 +208,6 @@ class GISCatalogLayer(Base):
             name="ck_gis_catalog_active_render",
         ),
         CheckConstraint(
-            "active IS NOT TRUE OR dataset_filter_field = 'dataset_version_id'",
-            name="ck_gis_catalog_active_version_filter",
-        ),
-        CheckConstraint(
             "dataset_filter_field IS NULL OR dataset_filter_field = 'dataset_version_id'",
             name="ck_gis_layer_registry_filter_field",
         ),
@@ -321,6 +317,81 @@ class BasemapRegistry(Base):
     updated_by: Mapped[str] = mapped_column(String(64), nullable=False, server_default="migration")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class OpenAdministrativeArea(Base):
+    """Store globally reusable open administrative boundaries with provenance."""
+
+    __tablename__ = "administrative_area"
+    __table_args__ = (
+        UniqueConstraint("source", "source_id", name="uq_reference_administrative_area_source_id"),
+        Index("ix_reference_administrative_area_geometry_gist", "geometry", postgresql_using="gist"),
+        {"schema": "reference_data"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    source_snapshot: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    name_zh: Mapped[str] = mapped_column(String(256), nullable=False)
+    address: Mapped[str | None] = mapped_column(String(256))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
+    geometry: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="MULTIPOLYGON", srid=4490, spatial_index=False), nullable=False
+    )
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    administrative_level: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class OpenRoad(Base):
+    """Store version-independent OpenStreetMap road centerlines for reference rendering."""
+
+    __tablename__ = "road"
+    __table_args__ = (
+        UniqueConstraint("source", "source_id", name="uq_reference_road_source_id"),
+        Index("ix_reference_road_geometry_gist", "geometry", postgresql_using="gist"),
+        {"schema": "reference_data"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    source_snapshot: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    name_zh: Mapped[str | None] = mapped_column(String(256))
+    address: Mapped[str | None] = mapped_column(String(256))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
+    geometry: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="MULTILINESTRING", srid=4490, spatial_index=False), nullable=False
+    )
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    road_type: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class OpenWaterway(Base):
+    """Store version-independent OpenStreetMap waterway centerlines for reference rendering."""
+
+    __tablename__ = "waterway"
+    __table_args__ = (
+        UniqueConstraint("source", "source_id", name="uq_reference_waterway_source_id"),
+        Index("ix_reference_waterway_geometry_gist", "geometry", postgresql_using="gist"),
+        {"schema": "reference_data"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    source_snapshot: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    name_zh: Mapped[str | None] = mapped_column(String(256))
+    address: Mapped[str | None] = mapped_column(String(256))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
+    geometry: Mapped[Any] = mapped_column(
+        Geometry(geometry_type="MULTILINESTRING", srid=4490, spatial_index=False), nullable=False
+    )
+    imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    waterway_type: Mapped[str] = mapped_column(String(32), nullable=False)
 
 
 class GISImportBatch(Base):

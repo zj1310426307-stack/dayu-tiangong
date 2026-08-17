@@ -51,6 +51,35 @@ def read_layers(
         _raise(exc)
 
 
+@router.get(
+    "/basemaps/{basemap_key}/tiles/{z}/{y}/{x}.jpeg",
+    responses={200: {"content": {"image/jpeg": {}}}},
+)
+def read_basemap_tile(
+    basemap_key: str,
+    z: int,
+    y: int,
+    x: int,
+    session: SessionDependency,
+) -> Response:
+    """Proxy one allow-listed imagery tile without exposing arbitrary URLs."""
+
+    try:
+        content, media_type = service.fetch_basemap_tile(
+            session, basemap_key=basemap_key, z=z, y=y, x=x
+        )
+    except GovernanceError as exc:
+        _raise(exc)
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "public, max-age=86400, immutable",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.get("/ogc/wms", responses={200: {"content": {"image/png": {}, "image/jpeg": {}}}})
 def read_wms_map(
     session: SessionDependency,

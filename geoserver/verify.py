@@ -16,9 +16,9 @@ GEOSERVER_URL = os.getenv("GEOSERVER_VERIFY_URL", "http://127.0.0.1:8081/geoserv
 BACKEND_URL = os.getenv("BACKEND_VERIFY_URL", "http://127.0.0.1:8001").rstrip("/")
 LAYERS = (
     "river", "river_segment", "river_node", "cross_section", "gate", "pump",
-    "map_annotation", "administrative_area", "road", "place_name", "water_name", "poi",
+    "administrative_area_open", "road_open", "waterway_open",
 )
-CACHED = ("river", "river_segment", "gate", "pump", "road", "place_name", "water_name")
+CACHED = ("river", "river_segment", "gate", "pump")
 DATASET_VERSION_ID = int(os.getenv("GIS_VERIFY_DATASET_VERSION_ID", "1"))
 
 
@@ -49,7 +49,7 @@ def _capabilities(service: str, path: str, version: str) -> str:
 
 
 def _verify_catalog_and_images() -> None:
-    """Check the twelve-layer catalog, basemap group, imagery, and Basic WFS reads."""
+    """Check the nine-layer catalog, Guangdong references, and Basic WFS reads."""
 
     wms = _capabilities("WMS", "/dayu/wms", "1.3.0")
     wmts = _capabilities("WMTS", "/gwc/service/wmts", "1.0.0")
@@ -67,24 +67,25 @@ def _verify_catalog_and_images() -> None:
     }
     assert not ({"Transaction", "LockFeature"} & operations)
 
-    annotation_query = urllib.parse.urlencode(
+    reference_query = urllib.parse.urlencode(
         {
             "service": "WFS",
             "version": "2.0.0",
             "request": "GetFeature",
-            "typeNames": "dayu:map_annotation",
+            "typeNames": "dayu:administrative_area_open",
             "count": 1,
             "outputFormat": "application/json",
-            "CQL_FILTER": f"dataset_version_id={DATASET_VERSION_ID}",
         }
     )
-    media_type, annotation_payload, _ = _get(
-        f"{GEOSERVER_URL}/dayu/ows?{annotation_query}"
+    media_type, reference_payload, _ = _get(
+        f"{GEOSERVER_URL}/dayu/ows?{reference_query}"
     )
     assert media_type == "application/json"
-    annotation_collection = json.loads(annotation_payload)
-    assert annotation_collection["numberReturned"] == 1
-    assert len(annotation_collection["features"]) == 1
+    reference_collection = json.loads(reference_payload)
+    assert reference_collection["numberReturned"] == 1
+    assert len(reference_collection["features"]) == 1
+    chinese_name = reference_collection["features"][0]["properties"]["name_zh"]
+    assert chinese_name and any("\u3400" <= char <= "\u9fff" for char in chinese_name)
 
     wms_query = urllib.parse.urlencode(
         {
@@ -114,7 +115,6 @@ def _verify_catalog_and_images() -> None:
             "layers": "dayu:dayu_basemap", "styles": "", "srs": "EPSG:4490",
             "bbox": "113.10,22.95,113.55,23.35", "width": 512, "height": 384,
             "format": "image/png", "transparent": "true",
-            "CQL_FILTER": f"dataset_version_id={DATASET_VERSION_ID}",
         }
     )
     media_type, basemap_png, _ = _get(f"{GEOSERVER_URL}/dayu/wms?{basemap_query}")
@@ -190,10 +190,23 @@ def _verify_backend() -> None:
 
     _, payload, _ = _get(f"{BACKEND_URL}/api/v1/gis/geoserver/health")
     health = json.loads(payload)
-    assert health["status"] == "healthy" and health["layers"] == 12
+    assert health["status"] == "healthy" and health["layers"] == 9
     assert health["basemap_group"] == "dayu_basemap"
     _, payload, _ = _get(f"{BACKEND_URL}/api/v1/gis/geoserver/layers")
-    assert len(json.loads(payload)) == 12
+    assert len(json.loads(payload)) == 9
+    _, catalog_payload, _ = _get(
+        f"{BACKEND_URL}/api/v1/gis/catalog?dataset_version_id={DATASET_VERSION_ID}"
+    )
+    catalog = json.loads(catalog_payload)
+    assert len(catalog["basemaps"]) == 3
+    assert all(item["endpoint"].startswith("/api/v1/gis/basemaps/") for item in catalog["basemaps"])
+    high_resolution = next(
+        item for item in catalog["basemaps"] if item["basemap_key"] == "esri_world_imagery"
+    )
+    assert high_resolution["visible"] is True and high_resolution["max_zoom"] >= 18
+    tile_path = high_resolution["endpoint"].format(z=18, y=113752, x=213548)
+    tile_type, tile_payload, _ = _get(f"{BACKEND_URL}{tile_path}")
+    assert tile_type == "image/jpeg" and len(tile_payload) > 1_000
     rivers_query = urllib.parse.urlencode(
         {"dataset_version_id": DATASET_VERSION_ID, "limit": 1}
     )
@@ -208,8 +221,8 @@ def main() -> None:
     _verify_read_only_role()
     _verify_backend()
     print(
-        "Phase 1D live verification passed: dayu_basemap, twelve-layer catalog, annotation WFS, "
-        "version-filtered WMS/WMTS, read-only role, FastAPI"
+        "Guangdong open-data verification passed: building-scale Esri imagery, NASA fallbacks, nine-layer catalog, "
+        "reference WFS, version-filtered core WMS/WMTS, read-only role, FastAPI"
     )
 
 

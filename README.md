@@ -8,6 +8,7 @@ GIS-RESET-01 已将运行架构收敛为一条链路：
 QGIS Desktop → staging_qgis → 质检/审核/版本晋级 → publish
                                                        ↓
 OpenLayers → FastAPI 安全边界 → GeoServer → PostGIS
+          └→ FastAPI 影像代理 → Esri World Imagery / NASA GIBS
 ```
 
 ## GIS 核心结论
@@ -25,8 +26,8 @@ OpenLayers → FastAPI 安全边界 → GeoServer → PostGIS
 | 组件 | 职责 |
 |---|---|
 | PostGIS / TimescaleDB | 权威 GIS、治理、模型和时序数据 |
-| GeoServer | 12 个 `publish` 图层的 WMS、WMTS、Basic WFS 与样式发布 |
-| FastAPI | Catalog、版本门禁、WMS/FeatureInfo 安全代理和业务 API |
+| GeoServer | 6 个版本化业务层与 3 个广东开放参考层的 WMS、WMTS、Basic WFS 与样式发布 |
+| FastAPI | Catalog、版本门禁、WMS/FeatureInfo、白名单在线影像瓦片安全代理和业务 API |
 | OpenLayers | EPSG:3857 Web 地图、图层控制和属性点选 |
 | QGIS Desktop | EPSG:4490 暂存编辑、拓扑检查和专业生产 |
 | Redis / Worker | 模型、调度和后台任务 |
@@ -58,11 +59,28 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 - `GET /api/v1/gis/layers?dataset_version_id=...`
 - `GET /api/v1/gis/ogc/wms`（受控 GeoServer GetMap）
 - `GET /api/v1/gis/feature-info`（受控 GeoServer GetFeatureInfo）
+- `GET /api/v1/gis/basemaps/{key}/tiles/{z}/{y}/{x}.jpeg`（受控高分辨率/后备影像瓦片）
 - `GET /api/v1/gis/rivers|cross_sections|gates|pumps`
 - `POST /api/v1/gis-governance/batches/...`（暂存、质检、审核、晋级）
 - `POST /api/v1/gis-governance/versions/{id}/publish|retire`
 
 前端调用必须来自 `frontend/src/api/generated/client.ts`，该文件由 `npm run openapi:update` 从当前 FastAPI OpenAPI 生成。
+
+## 广东开放参考数据
+
+- 行政区：geoBoundaries 中国 ADM1/ADM2，经广东范围筛选后导入 `reference_data.administrative_area`。
+- 道路、水系：OpenStreetMap 广东快照，经广东边界裁剪后导入 `reference_data.road|waterway`。
+- 地图标注统一读取审核后的 `name_zh`：93 个行政区全部使用中文名；道路和水系只显示可确认的中文名或标准中文路线编号，未知外文名与“未命名”占位符不进入地图。原始 `name` 保留用于来源追溯。
+- GeoServer 镜像内置 Noto Sans CJK SC，避免服务端 WMS 标注出现方框、乱码或缺字。
+- 高分辨率影像：Esri World Imagery 作为默认底图，支持放大到建筑可辨的层级；NASA Blue Marble/VIIRS 作为后备，默认关闭。
+- 浏览器只访问同源 FastAPI 代理。Esri World Imagery 是在线授权服务而非开放数据，不做离线导出；页面必须保留 Esri 及其数据提供方署名。
+- 三类参考数据不绑定 Dataset Version；六类水利核心层继续按已发布版本过滤。
+
+来源、许可、快照哈希和处理结果见项目外层 `03_参考资料/2026-08-17_GIS开放数据/manifests/SOURCE_MANIFEST.md`。
+
+## 地图坐标定位
+
+GIS 一张图顶部提供“图层管理”和“坐标定位”两个工具菜单，默认均收起；点击按钮展开，再次点击收起，切换工具时始终只打开一个面板。面板只隐藏而不卸载，因此图层开关、坐标输入和定位结果都会保留。坐标工具提供三种模式：EPSG:4326 十进制度的“经度、纬度”、当前 WebGIS 投影 EPSG:3857 米制的“Web XY”，以及 CGCS2000 三度带高斯-克吕格坐标。CGCS2000 模式按常用 GIS 顺序输入 `X=东坐标`、`Y=北坐标`，并要求明确选择 111°E（EPSG:4546）、114°E（EPSG:4547）或 117°E（EPSG:4548）中央经线；定位后同时显示转换得到的经纬度。地图会平滑放大到 17 级并显示临时红色标记；点击“清除”只移除标记，不修改发布图层或权威数据。地图左下角随鼠标同时显示经纬度和 Web XY。
 
 ## QGIS 生产端
 

@@ -1,24 +1,58 @@
-import { Alert, Spin } from 'antd';
+import { AimOutlined, AppstoreOutlined } from '@ant-design/icons';
+import { Alert, Button, Spin } from 'antd';
 import OlMap from 'ol/Map';
 import View from 'ol/View';
+import proj4 from 'proj4';
+import Feature from 'ol/Feature';
+import Point from 'ol/geom/Point';
 import TileLayer from 'ol/layer/Tile';
+import VectorLayer from 'ol/layer/Vector';
 import TileWMS from 'ol/source/TileWMS';
+import VectorSource from 'ol/source/Vector';
+import XYZ from 'ol/source/XYZ';
 import { defaults as defaultControls, ScaleLine } from 'ol/control';
+import { fromLonLat, toLonLat, transform } from 'ol/proj';
+import { register } from 'ol/proj/proj4';
+import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style';
 import type { MapBrowserEvent } from 'ol';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import 'ol/ol.css';
 import { getGISCatalog, getGISFeatureInfo, type GISCatalogResponse } from '../api/generated/client';
 import { Coordinate } from './Coordinate';
+import { CoordinateLocator, type CgcsCentralMeridian, type CoordinateInputMode } from './CoordinateLocator';
 import { LayerManager, type WebLayerState } from './LayerManager';
 import { Popup, type PopupSelection } from './Popup';
 
 interface RuntimeLayer {
   state: WebLayerState;
-  layer: TileLayer<TileWMS>;
+  layer: TileLayer<TileWMS | XYZ>;
 }
 
-/** Create one version-filtered GeoServer WMS source through the FastAPI gateway. */
+type MapTool = 'layers' | 'coordinates';
+
+const CGCS2000_GAUSS_KRUGER: Record<CgcsCentralMeridian, { code: string; definition: string }> = {
+  111: { code: 'EPSG:4546', definition: '+proj=tmerc +lat_0=0 +lon_0=111 +k=1 +x_0=500000 +y_0=0 +ellps=GRS80 +units=m +no_defs +type=crs' },
+  114: { code: 'EPSG:4547', definition: '+proj=tmerc +lat_0=0 +lon_0=114 +k=1 +x_0=500000 +y_0=0 +ellps=GRS80 +units=m +no_defs +type=crs' },
+  117: { code: 'EPSG:4548', definition: '+proj=tmerc +lat_0=0 +lon_0=117 +k=1 +x_0=500000 +y_0=0 +ellps=GRS80 +units=m +no_defs +type=crs' },
+};
+
+Object.values(CGCS2000_GAUSS_KRUGER).forEach(({ code, definition }) => proj4.defs(code, definition));
+register(proj4);
+
+/** Create one allow-listed imagery basemap or version-aware GeoServer WMS layer. */
 function createRuntimeLayer(catalog: GISCatalogResponse, layerState: WebLayerState): RuntimeLayer {
+  const basemap = catalog.basemaps.find((item) => `basemap:${item.basemap_key}` === layerState.key);
+  if (basemap) {
+    const source = new XYZ({
+      url: basemap.endpoint,
+      projection: 'EPSG:3857',
+      minZoom: basemap.min_zoom,
+      maxZoom: basemap.max_zoom,
+      attributions: [basemap.credit],
+      transition: 150,
+    });
+    return { state: layerState, layer: new TileLayer({ source }) };
+  }
   const descriptor = catalog.layers.find((item) => item.key === layerState.key);
   if (!descriptor) throw new Error(`Catalog 图层不存在：${layerState.key}`);
   const source = new TileWMS({
@@ -42,13 +76,17 @@ export function MapView({ datasetVersionId }: { datasetVersionId: number }) {
   const targetRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<OlMap | null>(null);
   const runtimeRef = useRef<Map<string, RuntimeLayer>>(new Map());
+  const locatorSourceRef = useRef<VectorSource | null>(null);
+  const locatorLayerRef = useRef<VectorLayer<VectorSource> | null>(null);
   const identifyRef = useRef<(event: MapBrowserEvent<PointerEvent | KeyboardEvent | WheelEvent>) => void>(() => undefined);
   const [catalog, setCatalog] = useState<GISCatalogResponse | null>(null);
   const [layers, setLayers] = useState<WebLayerState[]>([]);
-  const [coordinate, setCoordinate] = useState<[number, number] | null>(null);
+  const [longitudeLatitude, setLongitudeLatitude] = useState<[number, number] | null>(null);
+  const [xy, setXy] = useState<[number, number] | null>(null);
   const [selection, setSelection] = useState<PopupSelection | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [activeTool, setActiveTool] = useState<MapTool | null>(null);
 
   useEffect(() => {
     if (!targetRef.current) return;
@@ -56,12 +94,36 @@ export function MapView({ datasetVersionId }: { datasetVersionId: number }) {
       target: targetRef.current,
       layers: [],
       controls: defaultControls({ rotate: false }).extend([new ScaleLine({ units: 'metric' })]),
-      view: new View({ center: [13_355_200, 3_543_900], zoom: 10, minZoom: 3, maxZoom: 20, projection: 'EPSG:3857' }),
+      view: new View({ center: fromLonLat([113.27, 23.13]), zoom: 7, minZoom: 3, maxZoom: 20, projection: 'EPSG:3857' }),
     });
-    map.on('pointermove', (event) => setCoordinate([event.coordinate[0], event.coordinate[1]]));
+    const locatorSource = new VectorSource();
+    const locatorLayer = new VectorLayer({
+      source: locatorSource,
+      style: new Style({
+        image: new CircleStyle({
+          radius: 9,
+          fill: new Fill({ color: 'rgba(255, 74, 92, 0.88)' }),
+          stroke: new Stroke({ color: '#ffffff', width: 3 }),
+        }),
+      }),
+    });
+    locatorLayer.setZIndex(10_000);
+    locatorSourceRef.current = locatorSource;
+    locatorLayerRef.current = locatorLayer;
+    map.addLayer(locatorLayer);
+    map.on('pointermove', (event) => {
+      const [longitude, latitude] = toLonLat(event.coordinate);
+      setLongitudeLatitude([longitude, latitude]);
+      setXy([event.coordinate[0], event.coordinate[1]]);
+    });
     map.on('singleclick', (event) => identifyRef.current(event));
     mapRef.current = map;
-    return () => { map.setTarget(undefined); mapRef.current = null; };
+    return () => {
+      map.setTarget(undefined);
+      mapRef.current = null;
+      locatorSourceRef.current = null;
+      locatorLayerRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -72,26 +134,26 @@ export function MapView({ datasetVersionId }: { datasetVersionId: number }) {
     void getGISCatalog(datasetVersionId)
       .then((nextCatalog) => {
         if (cancelled) return;
-        const basemapOpacity = new Map<string, number>();
-        nextCatalog.basemaps.forEach((item) => {
-          if (item.layer_key) basemapOpacity.set(item.layer_key, item.opacity ?? 1);
-        });
-        const initialLayers = [...nextCatalog.layers]
-          .sort((left, right) => {
-            if (basemapOpacity.has(left.key)) return -1;
-            if (basemapOpacity.has(right.key)) return 1;
-            return left.order - right.order;
-          })
+        const basemapLayers = nextCatalog.basemaps.map<WebLayerState>((item) => ({
+          key: `basemap:${item.basemap_key}`,
+          title: item.title,
+          groupTitle: '影像底图',
+          visible: item.visible ?? true,
+          opacity: item.opacity ?? 1,
+          identifyEnabled: false,
+        }));
+        const businessLayers = [...nextCatalog.layers]
+          .sort((left, right) => left.order - right.order)
           .map<WebLayerState>((layer) => ({
             key: layer.key,
             title: layer.title,
             groupTitle: layer.group_title,
-            visible: basemapOpacity.has(layer.key) || layer.default_visible,
-            opacity: basemapOpacity.get(layer.key) ?? layer.default_opacity,
+            visible: layer.default_visible,
+            opacity: layer.default_opacity,
             identifyEnabled: layer.identify_enabled,
           }));
         setCatalog(nextCatalog);
-        setLayers(initialLayers);
+        setLayers([...basemapLayers, ...businessLayers]);
       })
       .catch((reason: unknown) => { if (!cancelled) setError(reason instanceof Error ? reason.message : 'GIS Catalog 加载失败'); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -111,6 +173,8 @@ export function MapView({ datasetVersionId }: { datasetVersionId: number }) {
       runtimeRef.current.set(state.key, runtime);
       map.addLayer(runtime.layer);
     });
+    const locatorLayer = locatorLayerRef.current;
+    if (locatorLayer) map.addLayer(locatorLayer);
   }, [catalog, datasetVersionId]);
 
   useEffect(() => {
@@ -170,20 +234,67 @@ export function MapView({ datasetVersionId }: { datasetVersionId: number }) {
     });
   }, []);
 
+  /** Convert the selected CRS to the Web view; UI CGCS2000 input uses X=easting, Y=northing. */
+  const locateCoordinate = useCallback((first: number, second: number, mode: CoordinateInputMode, centralMeridian: CgcsCentralMeridian) => {
+    const map = mapRef.current;
+    const source = locatorSourceRef.current;
+    if (!map || !source) return null;
+    const cgcsProjection = CGCS2000_GAUSS_KRUGER[centralMeridian].code;
+    const center = mode === 'lonlat'
+      ? fromLonLat([first, second])
+      : mode === 'webmercator'
+        ? [first, second]
+        : transform([first, second], cgcsProjection, 'EPSG:3857');
+    source.clear();
+    source.addFeature(new Feature({ geometry: new Point(center) }));
+    setSelection(null);
+    map.getView().animate({ center, zoom: 17, duration: 700 });
+    const [longitude, latitude] = toLonLat(center);
+    return [longitude, latitude] as [number, number];
+  }, []);
+
+  /** Clear the locator overlay without changing the current view or published layers. */
+  const clearCoordinate = useCallback(() => locatorSourceRef.current?.clear(), []);
+
+  /** Keep one compact map tool open at a time while preserving each mounted tool's state. */
+  const toggleTool = useCallback((tool: MapTool) => {
+    setActiveTool((current) => current === tool ? null : tool);
+  }, []);
+
   return (
     <section className="ol-map-shell panel-surface">
       <div ref={targetRef} className="ol-map" aria-label="OpenLayers GIS 地图" />
       {loading && <div className="ol-map-state"><Spin /><span>正在加载 PostGIS Catalog…</span></div>}
       {error && <Alert className="ol-map-error" type="error" showIcon message="WebGIS 加载失败" description={error} />}
+      {!loading && !error && <nav className="ol-map-tool-menu" aria-label="地图工具菜单">
+        <Button
+          size="small"
+          type={activeTool === 'layers' ? 'primary' : 'default'}
+          icon={<AppstoreOutlined />}
+          aria-controls="gis-layer-tool"
+          aria-expanded={activeTool === 'layers'}
+          onClick={() => toggleTool('layers')}
+        >图层管理</Button>
+        <Button
+          size="small"
+          type={activeTool === 'coordinates' ? 'primary' : 'default'}
+          icon={<AimOutlined />}
+          aria-controls="gis-coordinate-tool"
+          aria-expanded={activeTool === 'coordinates'}
+          onClick={() => toggleTool('coordinates')}
+        >坐标定位</Button>
+      </nav>}
       {!loading && !error && <LayerManager
         layers={layers}
         onVisibility={(key, visible) => updateLayer(key, (layer) => ({ ...layer, visible }))}
         onOpacity={(key, opacity) => updateLayer(key, (layer) => ({ ...layer, opacity }))}
         onMove={moveLayer}
+        hidden={activeTool !== 'layers'}
       />}
-      <Coordinate coordinate={coordinate} />
+      {!loading && !error && <CoordinateLocator hidden={activeTool !== 'coordinates'} onLocate={locateCoordinate} onClear={clearCoordinate} />}
+      <Coordinate longitudeLatitude={longitudeLatitude} xy={xy} />
       <Popup selection={selection} onClose={() => setSelection(null)} />
-      <div className="ol-map-contract">PostGIS · GeoServer · OpenLayers | Web CRS EPSG:3857</div>
+      <div className="ol-map-contract">Esri · Vantor · Earthstar Geographics · GIS User Community · © OpenStreetMap contributors · geoBoundaries · NASA GIBS</div>
     </section>
   );
 }
