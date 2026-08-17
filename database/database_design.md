@@ -1,7 +1,7 @@
 # 数据库设计基线
 
-更新日期：2026-08-17
-权威迁移头：`20260817_0015`
+更新日期：2026-08-18
+权威迁移头：`20260817_0018`
 
 ## 单库原则
 
@@ -12,6 +12,7 @@
 | `public` | Dataset Version、河道、断面、闸、泵、模型、治理、调度和 AI 元数据 |
 | `imports` | 原始 GDAL 落地区，每批次不可变物理表 |
 | `staging_qgis` | QGIS 可编辑的四张强类型暂存表 |
+| `reference_data` | 与 Dataset Version 解耦的广东开放行政区、道路和水系快照 |
 | `publish` | GeoServer 和 QGIS 复核读取的版本过滤只读视图 |
 | TimescaleDB hypertable | 观测、仿真和调度动态状态 |
 
@@ -51,13 +52,17 @@ Alembic 是部署结构的唯一权威来源。`database/schema.sql` 与 `databa
 
 `staging_qgis.river|cross_section|gate|pump` 保留强类型业务字段、几何、批次身份、操作类型和权威来源字段。编辑者只有列级业务写权限；`source_crs`、`source_hash`、`operator`、质量状态和审计时间由批次溯源触发器维护。
 
+### 广东开放参考数据
+
+`reference_data.administrative_area|road|waterway` 保存来源、来源对象 ID、快照 SHA-256、原始名称 `name`、中文展示名 `name_zh`、类型、原始属性 JSON 和 EPSG:4490 几何。行政区为 `MULTIPOLYGON`，道路/水系为 `MULTILINESTRING`，均有来源唯一约束和 GiST 索引。行政区 `name_zh` 必填，道路/水系允许为空；数据库约束保证每个非空展示名至少含一个中文字符。导入器使用临时表、数量门禁和单事务替换，避免失败时留下半批数据。
+
 ### 发布视图
 
-`publish` 中 12 个视图显式暴露 `dataset_version_id`，只读取 `dataset_version.status='published'` 的版本。GeoServer 的 `dayu_postgis` store 使用该 schema，并通过 `dayu_geoserver` 只读账号访问。
+Catalog 激活的 9 个 `publish` 视图包括 6 个显式暴露 `dataset_version_id`、只读取 `dataset_version.status='published'` 的业务视图，以及 3 个不绑定版本的广东开放参考视图。GeoServer 的 `dayu_postgis` store 使用该 schema，并通过 `dayu_geoserver` 只读账号访问。
 
 ### PostGIS Catalog
 
-历史物理表 `gis_layer_registry` 为避免复制而保留，但运行模型名为 `GISCatalogLayer`。迁移 0015 只激活 12 个 `publish` / `GEOSERVER_WMS` / `RASTER_WMS` 行；其他历史渲染行保持 inactive，只服务于可逆 downgrade。
+历史物理表 `gis_layer_registry` 为避免复制而保留，但运行模型名为 `GISCatalogLayer`。迁移 0016 激活 9 个 `publish` / `GEOSERVER_WMS` / `RASTER_WMS` 行；迁移 0017 在 `basemap_registry` 增加默认可见的 Esri World Imagery 高分辨率 endpoint，并把 2 个 NASA GIBS endpoint 调整为默认关闭的后备；迁移 0018 将三类参考层的 FeatureInfo 展示字段切换为 `name_zh`。其他历史渲染行保持 inactive，只服务于可逆 downgrade。
 
 ## 角色矩阵
 
@@ -74,7 +79,7 @@ Alembic 是部署结构的唯一权威来源。`database/schema.sql` 与 `databa
 
 ## 迁移与回退
 
-- 新环境：`alembic upgrade head`，然后运行 demo seed、QGIS/App bootstrap、GeoServer bootstrap 和 Catalog seed。
+- 新环境：`alembic upgrade head`，然后运行 demo seed、广东开放参考数据导入、QGIS/App bootstrap、GeoServer bootstrap 和 Catalog seed。
 - 升级前必须备份数据库并盘点历史版本状态/content_hash。
 - downgrade 会删除该迁移新增或接管的结构/状态，不能作为生产数据恢复方案。
 - upgrade/downgrade/upgrade 只能先在一次性空库或恢复副本上演练。

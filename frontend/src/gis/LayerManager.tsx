@@ -16,12 +16,13 @@ interface LayerManagerProps {
   onVisibility: (key: string, visible: boolean) => void;
   onOpacity: (key: string, opacity: number) => void;
   onMove: (key: string, direction: -1 | 1) => void;
+  hidden?: boolean;
 }
 
 /** Control only presentation state; sources and styles remain Catalog-owned. */
-export function LayerManager({ layers, onVisibility, onOpacity, onMove }: LayerManagerProps) {
+export function LayerManager({ layers, onVisibility, onOpacity, onMove, hidden = false }: LayerManagerProps) {
   return (
-    <aside className="ol-layer-manager" aria-label="图层管理">
+    <aside id="gis-layer-tool" className="ol-layer-manager" aria-label="图层管理" hidden={hidden}>
       <header><strong>图层管理</strong><span>{layers.filter((item) => item.visible).length}/{layers.length}</span></header>
       <div className="ol-layer-manager__list">
         {[...layers].reverse().map((layer, reverseIndex) => {

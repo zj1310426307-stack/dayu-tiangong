@@ -8,6 +8,16 @@ export interface PopupSelection {
   features: CatalogFeature[];
 }
 
+const PROPERTY_LABELS: Record<string, string> = {
+  source: '数据来源',
+  source_id: '来源编号',
+  name_zh: '中文名称',
+  administrative_level: '行政层级',
+  road_type: '道路等级',
+  waterway_type: '水系类型',
+  dataset_version_id: '数据版本',
+};
+
 /** Render bounded, sanitized attributes returned by the FastAPI gateway. */
 export function Popup({ selection, onClose }: { selection: PopupSelection | null; onClose: () => void }) {
   if (!selection) return null;
@@ -23,7 +33,7 @@ export function Popup({ selection, onClose }: { selection: PopupSelection | null
         <dl>
           <div><dt>ID</dt><dd>{feature.id}</dd></div>
           {Object.entries(feature.properties).slice(0, 30).map(([key, value]) => (
-            <div key={key}><dt>{key}</dt><dd>{typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value ?? '—')}</dd></div>
+            <div key={key}><dt>{PROPERTY_LABELS[key] ?? key}</dt><dd>{typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value ?? '—')}</dd></div>
           ))}
         </dl>
       )}

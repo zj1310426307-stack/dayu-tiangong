@@ -287,15 +287,16 @@ export interface BufferAnalysisResponse {
 }
 
 export interface CatalogBasemap {
-  "basemap_key"?: "dayu_reference";
-  "title"?: "行政区参考底图";
-  "type"?: "WMS";
-  "endpoint"?: "/api/v1/gis/ogc/wms";
-  "layer_key"?: "administrative_area";
-  "layer_name"?: "dayu:administrative_area";
+  "basemap_key": string;
+  "title": string;
+  "type"?: "XYZ";
+  "endpoint": string;
   "crs"?: "EPSG:3857";
   "visible"?: boolean;
   "opacity"?: number;
+  "min_zoom"?: number;
+  "max_zoom": number;
+  "credit": string;
 }
 
 export interface CatalogCapabilities {
@@ -841,7 +842,7 @@ export interface GeoServerLayerRecord {
   "name": string;
   "qualified_name": string;
   "title": string;
-  "geometry_type": "LineString" | "Point" | "Polygon";
+  "geometry_type": "LineString" | "Point" | "Polygon" | "MultiPolygon";
   "style": string;
   "wms_enabled"?: true;
   "wmts_cached": boolean;
@@ -1812,6 +1813,7 @@ export const getGeoServerConfig = (baseUrl = '') => requestJson<GeoServerConfigR
 export const getGISCatalog = (datasetVersionId: number, baseUrl = '') => requestJson<GISCatalogResponse>(`/api/v1/gis/catalog${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
 export const getGISLayers = (datasetVersionId: number, baseUrl = '') => requestJson<Array<CatalogLayer>>(`/api/v1/gis/layers${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
 export const getGISFeatureInfo = (params: GISFeatureInfoQuery, baseUrl = '') => requestJson<GISFeatureInfoResponse>(`/api/v1/gis/feature-info${toQuery(params)}`, {}, baseUrl);
+export const getGISBasemapTile = (basemapKey: string, z: number, y: number, x: number, baseUrl = '') => requestBlob(`/api/v1/gis/basemaps/${encodeURIComponent(basemapKey)}/tiles/${z}/${y}/${x}.jpeg`, {}, baseUrl);
 export const getRivers = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(`/api/v1/gis/rivers${toQuery(params)}`, {}, baseUrl);
 export const getRiver = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<GeoJSONFeature>(`/api/v1/gis/rivers/${id}${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
 export const getGates = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(`/api/v1/gis/gates${toQuery(params)}`, {}, baseUrl);

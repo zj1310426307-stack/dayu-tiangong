@@ -133,7 +133,7 @@ def test_database_srid_geometry_types_migration_and_gist_indexes() -> None:
 
     with SessionLocal() as session:
         revision = session.scalar(text("SELECT version_num FROM alembic_version"))
-        assert revision == "20260817_0015"
+        assert revision == "20260817_0018"
 
         geometries = session.execute(
             text(

@@ -24,12 +24,9 @@ EXPECTED_LAYERS: tuple[GeoServerLayerRecord, ...] = (
     GeoServerLayerRecord(name="cross_section", qualified_name="dayu:cross_section", title="横断面", geometry_type="Point", style="cross_section", wmts_cached=False),
     GeoServerLayerRecord(name="gate", qualified_name="dayu:gate", title="闸门", geometry_type="Point", style="gate", wmts_cached=True),
     GeoServerLayerRecord(name="pump", qualified_name="dayu:pump", title="泵站", geometry_type="Point", style="pump", wmts_cached=True),
-    GeoServerLayerRecord(name="map_annotation", qualified_name="dayu:map_annotation", title="地点注记", geometry_type="Point", style="map_annotation", wmts_cached=False),
-    GeoServerLayerRecord(name="administrative_area", qualified_name="dayu:administrative_area", title="行政区", geometry_type="Polygon", style="administrative_area", wmts_cached=False),
-    GeoServerLayerRecord(name="road", qualified_name="dayu:road", title="道路", geometry_type="LineString", style="road", wmts_cached=True),
-    GeoServerLayerRecord(name="place_name", qualified_name="dayu:place_name", title="地名", geometry_type="Point", style="place_name", wmts_cached=True),
-    GeoServerLayerRecord(name="water_name", qualified_name="dayu:water_name", title="水名", geometry_type="Point", style="water_name", wmts_cached=True),
-    GeoServerLayerRecord(name="poi", qualified_name="dayu:poi", title="公共设施与 POI", geometry_type="Point", style="poi", wmts_cached=False),
+    GeoServerLayerRecord(name="administrative_area_open", qualified_name="dayu:administrative_area_open", title="广东行政区（开放数据）", geometry_type="MultiPolygon", style="administrative_area_open", wmts_cached=False),
+    GeoServerLayerRecord(name="road_open", qualified_name="dayu:road_open", title="广东主要道路（OpenStreetMap）", geometry_type="MultiLineString", style="road_open", wmts_cached=False),
+    GeoServerLayerRecord(name="waterway_open", qualified_name="dayu:waterway_open", title="广东主要水系（OpenStreetMap）", geometry_type="MultiLineString", style="waterway_open", wmts_cached=False),
 )
 
 

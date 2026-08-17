@@ -29,7 +29,7 @@ STYLE_DIRECTORY = Path(__file__).resolve().parent / "styles"
 SRID = 4490
 BASEMAP_GROUP = "dayu_basemap"
 BASEMAP_LAYERS = (
-    "administrative_area", "road", "place_name", "water_name", "poi",
+    "administrative_area_open", "road_open", "waterway_open",
 )
 
 LAYER_TITLES = {
@@ -39,14 +39,11 @@ LAYER_TITLES = {
     "cross_section": "横断面",
     "gate": "闸门",
     "pump": "泵站",
-    "map_annotation": "地点注记",
-    "administrative_area": "行政区",
-    "road": "道路",
-    "place_name": "地名",
-    "water_name": "水名",
-    "poi": "公共设施与 POI",
+    "administrative_area_open": "广东行政区（开放数据）",
+    "road_open": "广东主要道路（OpenStreetMap）",
+    "waterway_open": "广东主要水系（OpenStreetMap）",
 }
-CACHED_LAYERS = {"river", "river_segment", "gate", "pump", "road", "place_name", "water_name"}
+CACHED_LAYERS = {"river", "river_segment", "gate", "pump"}
 
 
 def _require_identifier(value: str, label: str) -> str:

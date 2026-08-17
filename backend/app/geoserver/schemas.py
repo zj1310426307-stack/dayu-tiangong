@@ -13,7 +13,7 @@ class GeoServerLayerRecord(BaseModel):
     name: str
     qualified_name: str
     title: str
-    geometry_type: Literal["LineString", "Point", "Polygon"]
+    geometry_type: Literal["LineString", "MultiLineString", "Point", "Polygon", "MultiPolygon"]
     style: str
     wms_enabled: Literal[True] = True
     wmts_cached: bool

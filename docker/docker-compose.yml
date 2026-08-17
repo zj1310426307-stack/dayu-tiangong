@@ -96,7 +96,10 @@ services:
         condition: service_completed_successfully
 
   geoserver:
-    image: docker.osgeo.org/geoserver:2.28.0
+    build:
+      context: ..
+      dockerfile: docker/geoserver.Dockerfile
+    image: dayu-geoserver:2.28.0-cjk
     environment:
       GEOSERVER_ADMIN_USER: ${GEOSERVER_ADMIN_USER:-admin}
       GEOSERVER_ADMIN_PASSWORD: ${GEOSERVER_ADMIN_PASSWORD:?set GEOSERVER_ADMIN_PASSWORD in an ignored .env file}

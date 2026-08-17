@@ -96,18 +96,19 @@ class CatalogLayer(BaseModel):
 
 
 class CatalogBasemap(BaseModel):
-    """Use a GeoServer-published reference layer as the minimal local basemap."""
+    """Describe one allow-listed same-origin imagery tile source."""
 
     model_config = ConfigDict(extra="forbid")
-    basemap_key: Literal["dayu_reference"] = "dayu_reference"
-    title: Literal["行政区参考底图"] = "行政区参考底图"
-    type: Literal["WMS"] = "WMS"
-    endpoint: Literal["/api/v1/gis/ogc/wms"] = "/api/v1/gis/ogc/wms"
-    layer_key: Literal["administrative_area"] = "administrative_area"
-    layer_name: Literal["dayu:administrative_area"] = "dayu:administrative_area"
+    basemap_key: str
+    title: str
+    type: Literal["XYZ"] = "XYZ"
+    endpoint: str
     crs: Literal["EPSG:3857"] = "EPSG:3857"
     visible: bool = True
-    opacity: float = Field(default=0.45, ge=0, le=1)
+    opacity: float = Field(default=1.0, ge=0, le=1)
+    min_zoom: int = Field(default=0, ge=0, le=22)
+    max_zoom: int = Field(ge=0, le=22)
+    credit: str
 
 
 class GISCatalogResponse(BaseModel):
