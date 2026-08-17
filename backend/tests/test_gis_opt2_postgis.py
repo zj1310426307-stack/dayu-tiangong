@@ -1,4 +1,4 @@
-"""Live PostGIS gates for the GIS-OPT-2 registry and additive geometry model."""
+"""Live PostGIS gates for the unified GeoServer Catalog and geometry model."""
 
 from __future__ import annotations
 
@@ -10,24 +10,23 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app.database.session import SessionLocal
-from database.seed.gis_registry import validate_gis_registry
+from database.seed.gis_catalog import validate_gis_catalog
 
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RUN_POSTGIS_TESTS") != "1",
-    reason="requires migrated PostGIS, registry seed, and QGIS role bootstrap",
+    reason="requires migrated PostGIS, Catalog seed, and GeoServer role bootstrap",
 )
 
 
-def test_registry_sources_and_qgis_renderer_permissions_are_live() -> None:
+def test_catalog_sources_and_geoserver_permissions_are_live() -> None:
     with SessionLocal() as session:
-        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260815_0014"
-        assert session.scalar(text("SELECT count(*) FROM gis_layer_registry WHERE active")) == 22
-        assert session.scalar(text("SELECT count(*) FROM basemap_registry WHERE active")) == 1
-        assert validate_gis_registry(
+        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260817_0015"
+        assert session.scalar(text("SELECT count(*) FROM gis_layer_registry WHERE active")) == 12
+        assert validate_gis_catalog(
             session,
-            qgis_server_role=os.getenv("QGIS_SERVER_DB_USER", "dayu_qgis_server"),
-        ) == {"sources": 22, "qgis_permissions": 4}
+            geoserver_role=os.getenv("GEOSERVER_DB_USER", "dayu_geoserver"),
+        ) == {"sources": 12, "geoserver_permissions": 12}
 
 
 def test_cross_section_spatial_rows_cannot_cross_dataset_versions() -> None:

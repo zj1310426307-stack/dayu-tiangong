@@ -1,5 +1,7 @@
 # GIS-OPT-2 Final Review
 
+> 历史基线：本报告记录 2026-08-16 的 GIS-OPT-2 验收。2026-08-17 起当前架构以 ADR-0014 和 `GIS_RESET_COMPLETION_REPORT.md` 为准。
+
 日期：2026-08-16
 
 分支：`agent/gis-opt2-full-remediation`

@@ -91,7 +91,7 @@ POST /api/v1/gis-governance/batches/{id}/promote
 
 调用 `POST /api/v1/gis-governance/versions/{version_id}/publish` 写入发布者和服务清单。`publish.*` 随版本状态只读暴露已发布数据。
 
-GeoServer 12 层已经切换到 `publish.*`。每次发布验收仍应明确验证：新旧 `dataset_version_id` 均可读取、GeoServer 保持 Basic WFS 且无 Transaction/LockFeature、Martin/TiTiler/Cesium 行为未退化、旧模型快照仍引用旧版本。
+GeoServer 12 层已经切换到 `publish.*`。每次发布验收仍应明确验证：新旧 `dataset_version_id` 均可读取、GeoServer 保持 Basic WFS 且无 Transaction/LockFeature、OpenLayers 目录/WMS/FeatureInfo 正常、旧模型快照仍引用旧版本。
 
 ## 人工 DEMO 验收
 

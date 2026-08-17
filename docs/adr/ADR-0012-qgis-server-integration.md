@@ -1,5 +1,7 @@
 # ADR-0012：QGIS Server 只读集成与版本安全网关
 
+> 状态：2026-08-17 已被 ADR-0014 取代。本文仅保留为 GIS-OPT-2 历史设计记录，不代表当前运行架构。
+
 - Status：Accepted
 - Date：2026-08-15
 - Decision baseline：远端 `main` / `f72b675e4681823e35cf74219a0721825dca8082`

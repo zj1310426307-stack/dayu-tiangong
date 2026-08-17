@@ -32,7 +32,6 @@ def require_live_role_passwords() -> None:
         for name in (
             "QGIS_EDITOR_DB_PASSWORD",
             "QGIS_REVIEWER_DB_PASSWORD",
-            "QGIS_SERVER_DB_PASSWORD",
         )
         if not os.getenv(name)
     ]
@@ -103,7 +102,6 @@ def test_qgis_role_attributes_and_exact_privilege_matrix() -> None:
     editor = _role("QGIS_EDITOR_DB_USER", "dayu_qgis_editor")
     reviewer = _role("QGIS_REVIEWER_DB_USER", "dayu_qgis_reviewer")
     publisher = _role("QGIS_PUBLISHER_DB_USER", "dayu_publisher")
-    qgis_server = _role("QGIS_SERVER_DB_USER", "dayu_qgis_server")
     with SessionLocal() as session:
         attributes = {
             row.rolname: row
@@ -111,16 +109,15 @@ def test_qgis_role_attributes_and_exact_privilege_matrix() -> None:
                 text(
                     "SELECT rolname, rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
                     "rolreplication, rolbypassrls FROM pg_roles "
-                    "WHERE rolname IN (:editor, :reviewer, :publisher, :qgis_server)"
+                    "WHERE rolname IN (:editor, :reviewer, :publisher)"
                 ),
-                {"editor": editor, "reviewer": reviewer, "publisher": publisher, "qgis_server": qgis_server},
+                {"editor": editor, "reviewer": reviewer, "publisher": publisher},
             )
         }
-        assert set(attributes) == {editor, reviewer, publisher, qgis_server}
+        assert set(attributes) == {editor, reviewer, publisher}
         assert attributes[editor].rolcanlogin is True
         assert attributes[reviewer].rolcanlogin is True
         assert attributes[publisher].rolcanlogin is False
-        assert attributes[qgis_server].rolcanlogin is True
         for role in attributes.values():
             assert not any(
                 (
@@ -138,10 +135,10 @@ def test_qgis_role_attributes_and_exact_privilege_matrix() -> None:
                 "FROM pg_auth_members membership "
                 "JOIN pg_roles parent ON parent.oid = membership.roleid "
                 "JOIN pg_roles member ON member.oid = membership.member "
-                "WHERE parent.rolname IN (:editor, :reviewer, :publisher, :qgis_server) "
-                "OR member.rolname IN (:editor, :reviewer, :publisher, :qgis_server)"
+                "WHERE parent.rolname IN (:editor, :reviewer, :publisher) "
+                "OR member.rolname IN (:editor, :reviewer, :publisher)"
             ),
-            {"editor": editor, "reviewer": reviewer, "publisher": publisher, "qgis_server": qgis_server},
+            {"editor": editor, "reviewer": reviewer, "publisher": publisher},
         ).all()
         backend_role = _role("BACKEND_DB_USER", "dayu_backend")
         assert memberships == [(publisher, backend_role)]
@@ -207,11 +204,6 @@ def test_qgis_role_attributes_and_exact_privilege_matrix() -> None:
         assert allowed(publisher, "public.gis_publication", "UPDATE")
         assert allowed(publisher, "publish.river", "SELECT")
 
-        for relation in ("river", "cross_section", "gate", "pump"):
-            assert allowed(qgis_server, f"publish.{relation}", "SELECT")
-        assert not allowed(qgis_server, "public.river", "SELECT")
-        assert not allowed(qgis_server, "staging_qgis.river", "SELECT")
-        assert not allowed(qgis_server, "public.gis_import_batch", "SELECT")
 
 
 @requires_postgis
@@ -320,39 +312,3 @@ def test_reviewer_and_geoserver_are_read_only_and_publish_is_visible() -> None:
             text("SELECT has_table_privilege(:role, 'gis_import_batch', 'SELECT')"),
             {"role": geoserver},
         )
-
-
-@requires_postgis
-def test_qgis_server_can_read_only_exact_publish_allowlist() -> None:
-    """Prove the headless renderer cannot read core/staging or mutate a view."""
-
-    qgis_server = _role("QGIS_SERVER_DB_USER", "dayu_qgis_server")
-    with _role_connection(qgis_server, "QGIS_SERVER_DB_PASSWORD") as connection:
-        with connection.cursor() as cursor:
-            cursor.execute("SHOW default_transaction_read_only")
-            assert cursor.fetchone()[0] == "on"
-            cursor.execute("SHOW search_path")
-            assert cursor.fetchone()[0] == "publish, public, pg_catalog"
-            cursor.execute("SELECT count(*) FROM publish.river")
-            assert cursor.fetchone()[0] >= 0
-            cursor.execute(
-                "SELECT ST_SRID(geometry) FROM publish.river "
-                "WHERE geometry IS NOT NULL LIMIT 1"
-            )
-            srid = cursor.fetchone()
-            assert srid is None or srid[0] == 4490
-            with pytest.raises(psycopg.errors.InsufficientPrivilege):
-                cursor.execute("SELECT count(*) FROM public.river")
-            connection.rollback()
-            with pytest.raises(psycopg.errors.InsufficientPrivilege):
-                cursor.execute("SELECT count(*) FROM staging_qgis.river")
-            connection.rollback()
-            with pytest.raises(
-                (
-                    psycopg.errors.ReadOnlySqlTransaction,
-                    psycopg.errors.InsufficientPrivilege,
-                    psycopg.errors.ObjectNotInPrerequisiteState,
-                )
-            ):
-                cursor.execute("UPDATE publish.river SET name = name WHERE false")
-            connection.rollback()

@@ -1,4 +1,4 @@
-# Phase 2 本地水利数据库部署编排；生产环境必须通过密钥管理替换示例数据库口令。
+# GIS-RESET-01 unified runtime: PostGIS + GeoServer + FastAPI + OpenLayers/Nginx.
 name: dayu-tiangong-phase1
 
 services:
@@ -51,10 +51,6 @@ services:
       AI_LLM_BASE_URL: ${AI_LLM_BASE_URL:-}
       AI_LLM_MODEL: ${AI_LLM_MODEL:-}
       AI_LLM_API_KEY: ${AI_LLM_API_KEY:-}
-      MARTIN_INTERNAL_URL: http://martin:3000
-      TITILER_INTERNAL_URL: http://titiler:8000
-      GEONODE_INTERNAL_URL: ${GEONODE_INTERNAL_URL:-}
-      GEONODE_PUBLIC_URL: ${GEONODE_PUBLIC_URL:-http://127.0.0.1:8082/}
     depends_on:
       database:
         condition: service_healthy
@@ -69,33 +65,6 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  dgis-bootstrap:
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
-    command: ["python", "../database/bootstrap_dgis.py"]
-    environment:
-      <<: *backend_environment
-      MARTIN_DB_USER: ${MARTIN_DB_USER:-dayu_martin}
-      MARTIN_DB_PASSWORD: ${MARTIN_DB_PASSWORD:?set MARTIN_DB_PASSWORD in an ignored .env file}
-    depends_on:
-      app-bootstrap:
-        condition: service_completed_successfully
-
-  gis-registry-seed:
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
-    command: ["python", "../database/seed/gis_registry.py"]
-    environment:
-      <<: *backend_environment
-      QGIS_SERVER_DB_USER: ${QGIS_SERVER_DB_USER:-dayu_qgis_server}
-    depends_on:
-      seed:
-        condition: service_completed_successfully
-      qgis-bootstrap:
-        condition: service_completed_successfully
-
   qgis-bootstrap:
     build:
       context: ..
@@ -108,8 +77,6 @@ services:
       QGIS_REVIEWER_DB_USER: ${QGIS_REVIEWER_DB_USER:-dayu_qgis_reviewer}
       QGIS_REVIEWER_DB_PASSWORD: ${QGIS_REVIEWER_DB_PASSWORD:?set QGIS_REVIEWER_DB_PASSWORD in an ignored .env file}
       QGIS_PUBLISHER_DB_USER: ${QGIS_PUBLISHER_DB_USER:-dayu_publisher}
-      QGIS_SERVER_DB_USER: ${QGIS_SERVER_DB_USER:-dayu_qgis_server}
-      QGIS_SERVER_DB_PASSWORD: ${QGIS_SERVER_DB_PASSWORD:?set QGIS_SERVER_DB_PASSWORD in an ignored .env file}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -127,55 +94,6 @@ services:
     depends_on:
       qgis-bootstrap:
         condition: service_completed_successfully
-
-  dgis-assets:
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
-    command: ["python", "../database/seed/dgis_assets.py"]
-    volumes:
-      - dayu_dgis_raster_data:/data
-      - dayu_dgis_3d_data:/3d
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-
-  martin:
-    image: ghcr.io/maplibre/martin:1.11.0
-    command: ["--config", "/config/config.yaml"]
-    environment:
-      DATABASE_URL: postgresql://${MARTIN_DB_USER:-dayu_martin}:${MARTIN_DB_PASSWORD:?set MARTIN_DB_PASSWORD in an ignored .env file}@database:5432/${POSTGRES_DB:-dayu_tiangong}
-    ports:
-      - "127.0.0.1:${MARTIN_PORT:-3000}:3000"
-    volumes:
-      - ./martin-config.yaml:/config/config.yaml:ro
-    depends_on:
-      dgis-bootstrap:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD", "martin", "--version"]
-      interval: 10s
-      timeout: 5s
-      retries: 8
-
-  titiler:
-    image: ghcr.io/developmentseed/titiler:2.2.0
-    command: ["uvicorn", "titiler.application.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
-    environment:
-      TITILER_API_DISABLE_STAC: "true"
-      TITILER_API_DISABLE_MOSAIC: "true"
-      TITILER_API_CACHECONTROL: "private, max-age=300"
-      GDAL_DISABLE_READDIR_ON_OPEN: EMPTY_DIR
-    volumes:
-      - dayu_dgis_raster_data:/data:ro
-    depends_on:
-      dgis-assets:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
-      interval: 10s
-      timeout: 5s
-      retries: 8
 
   geoserver:
     image: docker.osgeo.org/geoserver:2.28.0
@@ -218,53 +136,18 @@ services:
         condition: service_completed_successfully
       app-bootstrap:
         condition: service_completed_successfully
-      dgis-bootstrap:
-        condition: service_completed_successfully
 
-  qgis-server:
-    image: qgis/qgis-server:3.44.12-trixie
-    command:
-      - /bin/bash
-      - -lc
-      - |
-        umask 077
-        printf 'database:5432:%s:%s:%s\n' "$${POSTGRES_DB}" "$${QGIS_SERVER_DB_USER}" "$$(cat /run/secrets/qgis_server_db_password)" > /tmp/dayu_qgis_server.pgpass
-        chown www-data:www-data /tmp/dayu_qgis_server.pgpass
-        exec /usr/local/bin/start-xvfb-nginx.sh
+  gis-catalog-seed:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    command: ["python", "../database/seed/gis_catalog.py"]
     environment:
-      QGIS_PROJECT_FILE: /srv/qgis/dayu_tiangong_server.qgz
-      PGSERVICEFILE: /srv/qgis/pg_service.server.conf
-      POSTGRES_DB: ${POSTGRES_DB:-dayu_tiangong}
-      QGIS_SERVER_DB_USER: ${QGIS_SERVER_DB_USER:-dayu_qgis_server}
-      QGIS_SERVER_DISABLE_GETPRINT: "true"
-      QGIS_SERVER_FORCE_READONLY_LAYERS: "true"
-      QGIS_SERVER_IGNORE_BAD_LAYERS: "false"
-      QGIS_SERVER_LOG_LEVEL: "1"
-      QGIS_SERVER_PROJECT_CACHE_STRATEGY: filesystem
-      QGIS_SERVER_WMS_MAX_WIDTH: "4096"
-      QGIS_SERVER_WMS_MAX_HEIGHT: "4096"
-    volumes:
-      - ../qgis/server/generated/dayu_tiangong_server.qgz:/srv/qgis/dayu_tiangong_server.qgz:ro
-      - ../qgis/server/pg_service.server.conf:/srv/qgis/pg_service.server.conf:ro
-      - ../qgis/server/nginx/dayu-qgis.conf:/etc/nginx/qgis.d/dayu-qgis.conf:ro
-    secrets:
-      - qgis_server_db_password
+      <<: *backend_environment
+      GEOSERVER_DB_USER: ${GEOSERVER_DB_USER:-dayu_geoserver}
     depends_on:
-      gis-registry-seed:
+      geoserver-init:
         condition: service_completed_successfully
-      qgis-bootstrap:
-        condition: service_completed_successfully
-    expose:
-      - "80"
-    read_only: true
-    tmpfs:
-      - /tmp
-      - /var/tmp
-      - /run
-      - /var/lib/nginx
-      - /var/cache/nginx
-      - /var/cache/fontconfig
-      - /var/log/nginx
 
   backend:
     build:
@@ -275,36 +158,23 @@ services:
       POSTGRES_USER: ${BACKEND_DB_USER:-dayu_backend}
       POSTGRES_PASSWORD: ${BACKEND_DB_PASSWORD:?set BACKEND_DB_PASSWORD in an ignored .env file}
       GEOSERVER_INTERNAL_URL: http://geoserver:8080/geoserver
+      # GeoServer diagnostics retain the direct same-origin OGC path; the
+      # OpenLayers Catalog independently uses the allow-listed FastAPI WMS gateway.
       GEOSERVER_PUBLIC_WMS_URL: /geoserver/dayu/wms
       GEOSERVER_PUBLIC_WMTS_URL: /geoserver/gwc/service/wmts
       GEOSERVER_PUBLIC_WFS_URL: /geoserver/dayu/ows
       GEOSERVER_WORKSPACE: dayu
-      QGIS_SERVER_INTERNAL_URL: http://qgis-server/dayu-ows/
-      QGIS_SERVER_MANIFEST_PATH: /srv/qgis/dayu_tiangong_server.manifest.json
-      GIS_CATALOG_MODE: ${GIS_CATALOG_MODE:-catalog}
-      BASEMAP_WORLD_IMAGERY_URL: ${BASEMAP_WORLD_IMAGERY_URL:-https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer}
     ports:
       - "${BACKEND_PORT:-8001}:8000"
     volumes:
       - ../backend/storage:/app/backend/storage
-      - ../qgis/server/generated:/srv/qgis:ro
     depends_on:
-      geoserver-init:
-        condition: service_completed_successfully
-      qgis-bootstrap:
+      gis-catalog-seed:
         condition: service_completed_successfully
       app-bootstrap:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
-      martin:
-        condition: service_healthy
-      titiler:
-        condition: service_healthy
-      qgis-server:
-        condition: service_started
-      gis-registry-seed:
-        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/gis/health', timeout=2)"]
       interval: 10s
@@ -340,107 +210,13 @@ services:
       dockerfile: docker/frontend.Dockerfile
     ports:
       - "${FRONTEND_PORT:-8080}:80"
-    volumes:
-      - dayu_dgis_3d_data:/usr/share/nginx/html/3d:ro
     depends_on:
       backend:
         condition: service_healthy
       geoserver-init:
         condition: service_completed_successfully
 
-  geonode-init:
-    profiles: ["geonode"]
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
-    command: ["python", "../database/bootstrap_geonode.py"]
-    environment:
-      <<: *backend_environment
-      GEONODE_DATABASE: ${GEONODE_DATABASE:-dayu_geonode}
-      GEONODE_DB_USER: ${GEONODE_DB_USER:-dayu_geonode}
-      GEONODE_DB_PASSWORD: ${GEONODE_DB_PASSWORD:?set GEONODE_DB_PASSWORD in an ignored .env file}
-      GEONODE_DATA_DB_USER: ${GEONODE_DATA_DB_USER:-dayu_geonode_data}
-      GEONODE_DATA_DB_PASSWORD: ${GEONODE_DATA_DB_PASSWORD:?set GEONODE_DATA_DB_PASSWORD in an ignored .env file}
-    depends_on:
-      database:
-        condition: service_healthy
-
-  geonode:
-    profiles: ["geonode"]
-    build:
-      context: ..
-      dockerfile: docker/geonode.Dockerfile
-    entrypoint: ["/usr/src/geonode/entrypoint.sh"]
-    command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
-    working_dir: /usr/src/geonode
-    environment:
-      DOCKER_ENV: development
-      DEBUG: "True"
-      IS_CELERY: "False"
-      FORCE_REINIT: "False"
-      DJANGO_SETTINGS_MODULE: geonode.settings
-      GEONODE_INSTANCE_NAME: dayu_tiangong
-      POSTGRES_USER: ${POSTGRES_USER:-dayu}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dayu_dev}
-      GEONODE_DATABASE: ${GEONODE_DATABASE:-dayu_geonode}
-      GEONODE_DATABASE_USER: ${GEONODE_DB_USER:-dayu_geonode}
-      GEONODE_DATABASE_PASSWORD: ${GEONODE_DB_PASSWORD:?set GEONODE_DB_PASSWORD in an ignored .env file}
-      GEONODE_GEODATABASE: ${POSTGRES_DB:-dayu_tiangong}
-      GEONODE_GEODATABASE_USER: ${GEONODE_DATA_DB_USER:-dayu_geonode_data}
-      GEONODE_GEODATABASE_PASSWORD: ${GEONODE_DATA_DB_PASSWORD:?set GEONODE_DATA_DB_PASSWORD in an ignored .env file}
-      GEONODE_DATABASE_SCHEMA: public
-      GEONODE_GEODATABASE_SCHEMA: geonode_assets
-      DATABASE_HOST: database
-      DATABASE_PORT: 5432
-      DATABASE_URL: postgis://${GEONODE_DB_USER:-dayu_geonode}:${GEONODE_DB_PASSWORD:?set GEONODE_DB_PASSWORD}@database:5432/${GEONODE_DATABASE:-dayu_geonode}
-      GEODATABASE_URL: postgis://${GEONODE_DATA_DB_USER:-dayu_geonode_data}:${GEONODE_DATA_DB_PASSWORD:?set GEONODE_DATA_DB_PASSWORD}@database:5432/${POSTGRES_DB:-dayu_tiangong}
-      BROKER_URL: redis://redis:6379/2
-      CELERY_RESULT_BACKEND: redis://redis:6379/3
-      SITEURL: http://127.0.0.1:${GEONODE_PORT:-8082}/
-      ALLOWED_HOSTS: "['geonode','localhost','127.0.0.1']"
-      GEOSERVER_LB_HOST_IP: geoserver
-      GEOSERVER_LB_PORT: 8080
-      GEOSERVER_LOCATION: http://geoserver:8080/geoserver/
-      GEOSERVER_PUBLIC_LOCATION: http://127.0.0.1:${GEOSERVER_PORT:-8081}/geoserver/
-      GEOSERVER_WEB_UI_LOCATION: http://127.0.0.1:${GEOSERVER_PORT:-8081}/geoserver/
-      GEOSERVER_ADMIN_USER: ${GEOSERVER_ADMIN_USER:-admin}
-      GEOSERVER_ADMIN_PASSWORD: ${GEOSERVER_ADMIN_PASSWORD:?set GEOSERVER_ADMIN_PASSWORD in an ignored .env file}
-      ADMIN_USERNAME: ${GEONODE_ADMIN_USER:-admin}
-      ADMIN_PASSWORD: ${GEONODE_ADMIN_PASSWORD:?set GEONODE_ADMIN_PASSWORD in an ignored .env file}
-      ADMIN_EMAIL: ${GEONODE_ADMIN_EMAIL:-admin@example.invalid}
-      SECRET_KEY: ${GEONODE_SECRET_KEY:?set GEONODE_SECRET_KEY in an ignored .env file}
-      OAUTH2_CLIENT_ID: ${GEONODE_OAUTH2_CLIENT_ID:?set GEONODE_OAUTH2_CLIENT_ID in an ignored .env file}
-      OAUTH2_CLIENT_SECRET: ${GEONODE_OAUTH2_CLIENT_SECRET:?set GEONODE_OAUTH2_CLIENT_SECRET in an ignored .env file}
-      EMAIL_ENABLE: "False"
-      ACCOUNT_OPEN_SIGNUP: "False"
-      DEFAULT_BACKEND_DATASTORE: datastore
-      ASYNC_SIGNALS: "False"
-    ports:
-      - "127.0.0.1:${GEONODE_PORT:-8082}:8000"
-    volumes:
-      - dayu_geonode_statics:/mnt/volumes/statics
-    depends_on:
-      geonode-init:
-        condition: service_completed_successfully
-      geoserver:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=5)"]
-      start_period: 120s
-      interval: 30s
-      timeout: 10s
-      retries: 10
-
 volumes:
   dayu_postgres_data:
   dayu_redis_data:
   dayu_geoserver_data:
-  dayu_dgis_raster_data:
-  dayu_dgis_3d_data:
-  dayu_geonode_statics:
-
-secrets:
-  qgis_server_db_password:
-    file: ${QGIS_SERVER_DB_PASSWORD_FILE:-../qgis/server/generated/qgis_server_db_password.secret}

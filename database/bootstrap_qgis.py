@@ -80,7 +80,6 @@ PROMOTION_CORE_TABLES = (
     "gate",
     "pump",
 )
-QGIS_SERVER_RELATIONS = ("river", "cross_section", "gate", "pump")
 
 
 def _identifier(value: str, label: str) -> str:
@@ -386,40 +385,8 @@ def _configure_publisher(
     )
 
 
-def _configure_qgis_server(
-    cursor: psycopg.Cursor[tuple[object, ...]],
-    *,
-    database: str,
-    role_name: str,
-) -> None:
-    """Grant the headless renderer only the four project allow-list views."""
-
-    role = sql.Identifier(role_name)
-    cursor.execute(
-        sql.SQL("ALTER ROLE {} SET default_transaction_read_only = on").format(role)
-    )
-    cursor.execute(
-        sql.SQL("ALTER ROLE {} SET search_path = publish, public, pg_catalog").format(role)
-    )
-    cursor.execute(
-        sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
-            sql.Identifier(database), role
-        )
-    )
-    cursor.execute(sql.SQL("GRANT USAGE ON SCHEMA publish TO {}").format(role))
-    # QGIS' PostgreSQL provider discovers PostGIS metadata and invokes extension
-    # functions by their unqualified names.  Schema USAGE does not grant access
-    # to core tables, so the renderer remains constrained to the explicit views.
-    cursor.execute(sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(role))
-    cursor.execute(
-        sql.SQL("GRANT SELECT ON TABLE {} TO {}").format(
-            _qualified_identifiers("publish", QGIS_SERVER_RELATIONS), role
-        )
-    )
-
-
 def main() -> None:
-    """Create or rotate QGIS roles and reapply the complete privilege allow-list."""
+    """Create the QGIS Desktop production roles and reapply their allow-lists."""
 
     owner = _identifier(os.getenv("POSTGRES_USER", "dayu"), "POSTGRES_USER")
     database = _identifier(os.getenv("POSTGRES_DB", "dayu_tiangong"), "POSTGRES_DB")
@@ -434,11 +401,7 @@ def main() -> None:
         os.getenv("QGIS_PUBLISHER_DB_USER", "dayu_publisher"),
         "QGIS_PUBLISHER_DB_USER",
     )
-    qgis_server = _identifier(
-        os.getenv("QGIS_SERVER_DB_USER", "dayu_qgis_server"),
-        "QGIS_SERVER_DB_USER",
-    )
-    if len({owner, editor, reviewer, publisher, qgis_server}) != 5:
+    if len({owner, editor, reviewer, publisher}) != 4:
         raise ValueError("QGIS database roles and POSTGRES_USER must be distinct")
 
     connection = psycopg.connect(
@@ -452,10 +415,9 @@ def main() -> None:
     with connection, connection.cursor() as cursor:
         _ensure_login_role(cursor, editor, os.environ["QGIS_EDITOR_DB_PASSWORD"])
         _ensure_login_role(cursor, reviewer, os.environ["QGIS_REVIEWER_DB_PASSWORD"])
-        _ensure_login_role(cursor, qgis_server, os.environ["QGIS_SERVER_DB_PASSWORD"])
         _ensure_group_role(cursor, publisher)
         cursor.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
-        for role_name in (editor, reviewer, publisher, qgis_server):
+        for role_name in (editor, reviewer, publisher):
             _reset_role_privileges(
                 cursor, owner=owner, database=database, role_name=role_name
             )
@@ -468,11 +430,10 @@ def main() -> None:
         _configure_publisher(
             cursor, owner=owner, database=database, role_name=publisher
         )
-        _configure_qgis_server(cursor, database=database, role_name=qgis_server)
     print(
         "QGIS bootstrap complete: "
         f"editor={editor}, reviewer={reviewer}, publisher={publisher}, "
-        f"qgis_server={qgis_server}, database={database}"
+        f"database={database}"
     )
 
 

@@ -1,147 +1,108 @@
-# 大禹·天工当前系统架构
+# 大禹·天工当前架构
 
-本文只描述仓库当前实现。未来扩展进入工作计划或阶段建议，不与当前能力混写。
+更新日期：2026-08-17
+架构基线：GIS-RESET-01
 
-## 总体链路
+## 1. 总体结构
 
 ```mermaid
 flowchart LR
-  SRC["CAD / SHP / GPKG / GeoJSON / GeoTIFF / 测量资料"]
-  QGIS["QGIS 3.44 LTR"]
-  GDAL["GDAL / OGR"]
-  RAW["imports / raw<br/>批次不可变表"]
-  STG["staging_qgis<br/>四类专业暂存表"]
-  VAL["FastAPI validation<br/>持久化 run / issue"]
-  REV["Human review<br/>批准绑定质检哈希"]
-  CORE["dataset_version / core<br/>不可变权威版本"]
-  PUB["publish<br/>已发布版本只读视图"]
-  BUILDER["确定性 QGIS Builder<br/>Server QGZ + Manifest"]
-  QSERVER["QGIS Server 3.44 LTR<br/>独立只读账号"]
-  GATEWAY["FastAPI Safe WMS Gateway<br/>服务端版本过滤"]
-  REGISTRY["GIS Layer Registry<br/>业务图层身份"]
-  CATALOG["Unified GIS Catalog<br/>Registry + Manifest + Runtime + Version"]
-  GS["GeoServer<br/>WMS / WMTS / Basic WFS"]
-  MARTIN["Martin<br/>tiles.* MVT"]
-  TITILER["TiTiler<br/>COG"]
-  CESIUM["Cesium<br/>展示 / 查询 / 回放"]
-  MODEL["Hydraulic Model<br/>冻结输入快照"]
-  DISPATCH["Dispatch / Optimization"]
-  AI["AI Assistant<br/>只读解释"]
-  TS["TimescaleDB<br/>feature_state"]
-
-  SRC --> QGIS
-  SRC --> GDAL
-  GDAL --> RAW
-  RAW --> STG
-  QGIS --> STG
-  STG --> VAL
-  VAL --> REV
-  REV --> CORE
-  CORE --> PUB
-  QGIS --> BUILDER
-  BUILDER --> QSERVER
-  PUB --> QSERVER
-  QSERVER --> GATEWAY
-  REGISTRY --> BUILDER
-  REGISTRY --> CATALOG
-  GATEWAY --> CATALOG
-  CORE --> CATALOG
-  CATALOG --> CESIUM
-  CORE --> MARTIN
-  CORE --> TITILER
-  PUB --> GS
-  GS --> CESIUM
-  MARTIN --> CESIUM
-  TITILER --> CESIUM
-  CORE --> MODEL
-  MODEL --> DISPATCH
-  CORE --> AI
-  TS --> CESIUM
-  TS --> AI
+  QGIS["QGIS Desktop 3.44 LTR<br/>专业数据生产"] --> STAGING["staging_qgis<br/>四类强类型暂存表"]
+  STAGING --> GOV["FastAPI 治理链<br/>质检 · 审核 · 晋级 · 发布"]
+  GOV --> CORE["PostGIS 核心表<br/>Dataset Version"]
+  CORE --> PUBLISH["publish<br/>版本过滤只读视图"]
+  PUBLISH --> GEOSERVER["GeoServer<br/>唯一 GIS 服务"]
+  OPENLAYERS["OpenLayers<br/>唯一 WebGIS"] --> API["FastAPI<br/>Catalog / WMS / FeatureInfo"]
+  API --> GEOSERVER
+  GEOSERVER --> PUBLISH
+  CORE --> MODEL["水动力 / 调度 / 优化 / AI"]
+  MODEL --> REDIS["Redis / Worker"]
 ```
 
-`dayu_tiangong` PostGIS 是唯一业务空间事实源。`imports`、`staging_qgis`、核心 `public` 表、`publish` 和 `tiles` 都在同一业务数据库内按 schema/权限分工，不建立第二套 GIS 数据库。可选 GeoNode profile 使用同一 PostgreSQL 服务和隔离的目录/资产边界，不成为权威业务空间库，也不参与 GIS-OPT-1 的必要运行路径。
+PostGIS 是唯一空间事实源。`imports`、`staging_qgis`、`public` 核心表、`publish`、治理表和 TimescaleDB 时序表均在同一数据库内按 schema 和角色隔离，不创建第二套 GIS 数据库。
 
-## 职责与所有权
+## 2. 权威边界
 
-| 层 | 当前责任 |
-|---|---|
-| QGIS 3.44 LTR | 专业桌面生产；加载参考层、四类暂存编辑层和发布审阅层；不拥有审批或晋级权 |
-| GDAL/OGR | 文件检查、格式/坐标转换、不可变原始落地区；不把 `imports` 直接变为权威数据 |
-| `backend/app/gis_governance` | 批次状态、质检、问题、审核、差异、原子晋级、内容哈希和发布清单 |
-| `backend/app/api` | 薄路由、输入输出和事务错误映射；业务状态转换在 service 层 |
-| PostGIS | 约束、空间检查、版本化核心对象、发布视图与权限隔离 |
-| `model/` | 框架无关的几何、边界、网格、求解、闸泵、控制、指标与 v1/v2 契约 |
-| `backend/app/model_engine` | 创建时冻结模型输入、任务查询、结果持久化；历史快照继续绑定原 `dataset_version_id` |
-| `backend/app/dispatch` | 计划、动作、规则、冻结、对比和审计 |
-| `backend/app/worker` | 原子认领、心跳、协作取消、重试与僵尸恢复 |
-| `optimization/` / `backend/app/optimization` | PSO、多目标、候选仿真、约束、Pareto 和人工推荐，不修改模型权威数据 |
-| `ai/` / `backend/app/ai` | 来源约束生成、RAG、知识、只读工具、安全护栏、报告和审计 |
-| `frontend/src/api/generated` | 前后端唯一接口边界 |
-| `qgis/server` | 从 Desktop 主工程和 Registry snapshot 确定性生成只读 Server QGZ 与 canonical manifest |
-| `backend/app/qgis_server` | 限定 WMS 操作和浏览器参数，服务端合成版本过滤，分项报告运行证据 |
-| `backend/app/gis_catalog` | 合并 Registry、QGIS manifest、服务健康和 Dataset Version，只返回 browser-safe DTO |
-| `frontend/src/gis` | 仅按 `service_mode + render_mode` 选择 QGIS WMS、legacy WMS/WMTS、Martin、TiTiler、dynamic 或 3D adapter |
-| QGIS Bridge | 只调用 FastAPI 治理路由，显示 validation/review/publish 并以临时 memory layer 定位 issue |
-| `geoserver/` | 只读 PostGIS 连接、SLD、WMS、WMTS、Basic WFS；不提供 WFS-T 写入口 |
-| Martin | 调用 `tiles.*` 版本过滤函数发布 MVT，不替换 GeoServer |
-| TiTiler | 只读提供登记过的 COG 元数据与瓦片，不自研栅格服务器 |
-| Cesium | Web 二三维展示、查询、版本切换、时间回放和模型结果，不承担桌面 GIS 编辑 |
-| TimescaleDB | `feature_state` 追加式时态状态，不回写闸泵静态设计字段 |
+| 边界 | 当前职责 | 明确禁止 |
+|---|---|---|
+| QGIS Desktop | 暂存编辑、拓扑、表单、专业质检辅助 | 直写核心表、保存凭据、Web 发布 |
+| FastAPI 治理链 | 批次、校验哈希、审核、晋级、发布、退役 | 绕过状态机写已冻结版本 |
+| PostGIS Catalog | 12 个活动 GeoServer 图层的唯一目录 | 浏览器自带业务图层清单 |
+| GeoServer | `publish` WMS/WMTS/Basic WFS/GetFeatureInfo | WFS-T、读取 staging、核心 DML |
+| FastAPI GIS 网关 | 版本门禁、layer allow-list、BBOX/尺寸/类型限制 | 接收任意 GeoServer 层名、SQL/CQL |
+| OpenLayers | EPSG:3857 浏览、图层开关/透明度/顺序、点选 | 数据编辑、业务样式权威、直接访问数据库 |
 
-## QGIS 受控生产面
-
-QGIS 工程基准为 EPSG:4490，数据源只引用 `service='dayu_qgis'`，不嵌入主机密码、个人绝对路径或 token。工程分组固定为：
-
-- `01_REFERENCE_READONLY`：已发布/核心参考河道、节点、河段及基础地图对象；
-- `02_EDIT_STAGING`：`staging_qgis.river`、`cross_section`、`gate`、`pump`；
-- `03_PUBLISH_READONLY`：`publish.river`、`cross_section`、`gate`、`pump`。
-
-编辑者的数据库权限只允许四张暂存表 DML 和必要参考/治理读取；审阅者设置 `default_transaction_read_only=on`；`dayu_publisher` 是 `NOLOGIN` 发布组，非 owner 的 `dayu_backend` 已成为其成员并承载 backend/worker。迁移、seed 和权限引导仍由独立的一次性 owner 任务执行。
-
-## 数据治理状态
-
-批次、一次质检、一次审核和权威版本是四种独立状态：
+## 3. 数据生产与发布
 
 ```text
-created → staged → validating → validation_failed | validated
-validated → in_review → changes_requested | rejected | approved
-approved → promoting → promoted → published → retired
+原始资料 / QGIS
+  → imports 或 staging_qgis
+  → 内容哈希与规则质检
+  → 人工提交审核
+  → approve / reject / request_changes
+  → 单事务晋级 Dataset Version
+  → publish
+  → GeoServer 读取 publish 视图
+  → OpenLayers 按 dataset_version_id 浏览
 ```
 
-- `gis_import_batch.status` 表示批次处理阶段；
-- `gis_validation_run.status` 只表示一次规则执行结果，问题写入 `gis_validation_issue`；
-- `gis_review.decision` 是绑定 `validation_run_id` 和暂存内容哈希的追加式人工决定；
-- `dataset_version.status` 表示权威版本生命周期，晋级和发布不是同一个动作。
+状态分为批次状态和数据版本状态。已发布版本可进入 `retired`，但历史版本重新发布和一键回滚仍是后续能力。QGIS 在审核阶段之后由数据库触发器/RLS 和晋级时哈希复核共同阻止内容漂移。
 
-校验后如果暂存业务内容变化，哈希会失效，必须重新质检和提交审核。晋级锁定批次，在一个数据库事务内克隆父版本、应用 `upsert/delete`、重建河网拓扑、计算与自然行顺序和自增 ID 无关的 SHA-256，并创建唯一 `source_batch_id` 的新版本；失败时事务整体回滚，重复请求返回同一版本。
+## 4. 坐标系
 
-Web 工作台显式区分阅读与编辑状态。首次进入默认选择 ID 最大的 `published` 版本；顶部版本选择器同时显示生命周期状态。`published/approved/retired` 只能查询、校验和生成快照，河道、断面、闸泵、导入与模型配置写按钮全部禁用。操作者必须通过顶部“新建草稿”创建独立 `draft` 并切换后，才能维护四类核心对象、模型参数、边界条件和计算方案。前端在版本身份确认前不发送无版本过滤的数据查询，也不再使用版本 1 作为隐式写入回退值。
+- 权威数据、QGIS 工程和 PostGIS 几何：CGCS2000 `EPSG:4490`。
+- Web 地图、WMS 视图和 OpenLayers：Web Mercator `EPSG:3857`。
+- 度量分析必须使用经批准的 CGCS2000 投影坐标系，不用经纬度差代替米。
+- 浏览器不改写权威几何；GeoServer 负责发布投影转换。
 
-水动力模拟、调度和优化继续允许读取已发布版本，但计算方案查询必须绑定当前 `dataset_version_id`；没有计算方案时页面明确说明切换版本或补齐模型数据，不把安全门禁伪装成模块故障。所有版本和模型数据写请求均通过 OpenAPI 生成客户端调用；动态路由加载失败由统一错误页显示原因并提供重新加载入口。首页不依赖 Cesium/WebGL 或 ECharts Canvas，水位示意图使用原生 SVG；GIS 工作区先呈现诊断外壳，Cesium 仅在用户点击后加载，3D Tiles 仅在选择资产后加载。
+## 5. 在线 GIS 运行时
 
-## 发布通道与兼容边界
+核心 Compose 服务只有：
 
-`publish.*` 视图只选择 `dataset_version.status='published'` 的权威对象，并保留稳定 `id`、`dataset_version_id`、版本号和内容哈希。0012 将河道/拓扑/断面/闸泵/注记/基础地图对象补齐为 12 个 GeoServer 兼容视图；GeoServer、QGIS reviewer 和发布角色只读这些视图。
+- `database`
+- `redis`
+- `migrate` / `seed`
+- `qgis-bootstrap` / `app-bootstrap`
+- `geoserver` / `geoserver-init`
+- `gis-catalog-seed`
+- `backend` / `worker`
+- `frontend`（Nginx + OpenLayers 构建产物）
 
-GeoServer 的 `dayu_postgis` store 已切换到 `publish`，数据库账号已撤销 `public` 核心表读取；12 层仍按 `dataset_version_id` 提供 WMS/WMTS/Basic WFS/GetFeatureInfo 与 Cesium 兼容行为。Martin 继续读取 `tiles.*`，TiTiler 继续读取登记的 COG，二者均未被替换。
+QGIS Server、Martin、TiTiler、GeoNode 和 Cesium 已退出核心编排。旧迁移数据行仅以 inactive 形式保留用于可逆回退，不参与当前 Catalog 或浏览器运行路径。
 
-GIS-OPT-2 新增的 QGIS Server 只发布 `river/cross_section/gate/pump`，使用不具备核心/暂存读取权的 `dayu_qgis_server`。容器不映射宿主端口，浏览器只能通过 `/qgis-server/wms` 访问 FastAPI；Gateway 拒绝 `MAP/FILTER/SQL/CQL/datasource/URL` 和未知 vendor 参数，并从受控 Registry 解析 short name 和 `dataset_version_id`。GetPrint 在真实双版本图像/FeatureInfo 隔离与打印内容检查通过前保持禁用。
+## 6. Catalog 与 WebGIS
 
-`gis_layer_registry` 是图层稳定身份与服务/渲染方式的权威源；`basemap_registry` 仅存 deployment-owned endpoint key。Catalog 不返回 schema/relation/internal URL/DSN/project path，并在 manifest 漂移或服务不健康时缩减能力。旧 `/api/v1/gis-analysis/layers` 和 `/api/v1/dgis/catalog` 保留兼容，不再驱动主地图业务图层树。
+`gis_layer_registry` 沿用历史物理表名以避免复制数据，ORM 与运行概念已经改为 `GISCatalogLayer`。迁移 `20260817_0015` 强制所有 active 行满足：
 
-## 横断面加法空间模型
+- `source_schema = 'publish'`
+- `service_mode = 'GEOSERVER_WMS'`
+- `render_mode = 'RASTER_WMS'`
+- `dataset_filter_field = 'dataset_version_id'`
 
-0014 保留 `cross_section.geometry=Point`、`points` JSON、`station` 和原主键，另行新增 `cross_section_location`、`cross_section_axis`、`cross_section_point`、`cross_section_profile`。新表与旧断面通过 `(cross_section_id,dataset_version_id)` 复合外键绑定，因此不能跨版本挂载空间或高程数据。旧水动力 solver 输入完全不变；新 GIS 消费者通过 `publish.cross_section_spatial` 逐步接入。
+前端先读取 `/api/v1/gis/catalog`，再为每个图层创建同源 TileWMS。浏览器只提交 `dataset_version_id` 和受控 `layer_key`；FastAPI 再构造 GeoServer 图层名及版本过滤。点选属性同样通过 `/api/v1/gis/feature-info`，不会直接拼接 GeoServer 查询。
 
-## 模型、调度、优化与 AI 一致性
+## 7. 数据库角色
 
-模型任务创建时冻结规范 JSON、输入 SHA-256、引擎版本与提交来源。治理晋级只创建新 GIS 权威版本，不重写旧版本，不移动历史模型快照，也不伪造新版本的边界条件或率定状态。
+| 角色 | 类型 | 权限摘要 |
+|---|---|---|
+| owner | LOGIN | 迁移和初始化，不用于 API 常驻运行 |
+| `dayu_backend` | LOGIN | API/Worker 非 owner 运行账号，继承发布组 |
+| `dayu_publisher` | NOLOGIN | 受控晋级/发布组角色 |
+| `dayu_geoserver` | LOGIN | 只读 `publish` 图层 |
+| `dayu_qgis_editor` | LOGIN | 列级写四张暂存表，读参考/发布层 |
+| `dayu_qgis_reviewer` | LOGIN | 暂存、问题、核心和发布层只读 |
 
-优化候选继续产生独立仿真任务；只有成功并满足后置约束的候选进入 Pareto 前沿，推荐不等于执行授权。AI 只读取权威模型、优化和空间结果，固定使用只读工具，回答与报告没有设备执行权限。
+统一 IAM 仍未完成；本地 actor/reviewer 字段用于开发审计，不等同生产身份认证。
 
-## 身份与运行边界
+## 8. 模型与动态状态
 
-数据库角色已形成 editor/reviewer/publisher/backend/GeoServer/Martin 的授权边界，backend/worker 已脱离 owner。请求合同保留 actor 字段，批次 operator、reviewer、creator、published_by 等信息会进入治理记录；但平台统一 OIDC/OAuth2 身份和端点级 RBAC 尚未完成，因此 mutation API 仍只能作为受控开发/验收控制面，不能据此宣称生产身份安全闭环。
+Dataset Version 仍是 GIS、模型、调度和 AI 的共同版本身份。静态权威对象冻结后不可原地修改；动态 `feature_state` 是时序事实追加，不改写静态设计参数。
 
-系统数据仍为 DEMO，水动力模型未经真实工程率定，不连接实时 PLC/SCADA，也不具备自动控制设备权限。QGIS 生产链完成不等于生产级数字孪生完成。
+GIS 晋级只保证空间核心数据的治理与发布，不伪造模型参数、边界条件或率定状态。模型任务只能选择满足其独立完整性条件的版本。
+
+## 9. 当前限制
+
+- 现有 12 个 GeoServer 图层均来自 `publish`，WFS 为 Basic read-only。
+- 本阶段没有 Web 编辑、WFS-T、QGIS Server、三维或栅格瓦片运行时。
+- 生产 TLS、密钥托管、统一 IAM、灾备/高可用尚未完成。
+- PLC/SCADA 未接入，仿真和调度输出不得直接下发真实设备。
