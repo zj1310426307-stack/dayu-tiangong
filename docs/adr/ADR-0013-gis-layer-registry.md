@@ -1,5 +1,7 @@
 # ADR-0013：GIS Layer Registry 与多服务统一目录
 
+> 状态：2026-08-17 已被 ADR-0014 部分取代。稳定 `layer_key` 和 PostGIS Catalog 保留，多渲染矩阵不再是当前运行合同。
+
 - Status：Accepted
 - Date：2026-08-15
 - Decision baseline：远端 `main` / `f72b675e4681823e35cf74219a0721825dca8082`

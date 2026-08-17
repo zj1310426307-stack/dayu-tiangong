@@ -1,69 +1,55 @@
-"""Merge Registry, QGIS manifest, runtime evidence, and Dataset Version safely."""
+"""Build the PostGIS Catalog and proxy only allow-listed GeoServer requests."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 import hashlib
 import json
+import math
 import os
+import re
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.gis.models import BasemapRegistry, DatasetVersion, GISLayerRegistry
 from app.geoserver import service as geoserver_service
+from app.gis.models import DatasetVersion, GISCatalogLayer
 from app.gis_catalog.schemas import (
     CatalogBasemap,
     CatalogCapabilities,
     CatalogDataset,
+    CatalogFeature,
     CatalogGroup,
     CatalogLayer,
     CatalogProject,
     CatalogService,
     GISCatalogResponse,
+    GISFeatureInfoResponse,
 )
 from app.gis_governance.errors import GovernanceError
-from app.qgis_server import service as qgis_service
 
 
 GROUP_TITLES = {
     "01_HYDROGRAPHY": "水系",
     "02_HYDRAULIC_MODEL": "水动力模型",
     "03_ENGINEERING": "水工建筑物",
-    "05_SIMULATION": "仿真与调度结果",
     "90_REFERENCE": "基础参考",
 }
-SERVICE_KEYS = {
-    "QGIS_WMS": "qgis_wms_primary",
-    "GEOSERVER_WMS_LEGACY": "geoserver_wms_legacy",
-    "MARTIN_MVT": "martin_mvt",
-    "TITILER": "titiler",
-    "FASTAPI": "fastapi_gis",
-    "CESIUM_DYNAMIC": "cesium_dynamic",
-    "THREE_D_TILES": "three_d_tiles",
-}
-PUBLIC_ENDPOINTS = {
-    "QGIS_WMS": "/qgis-server/wms",
-    "GEOSERVER_WMS_LEGACY": "/geoserver/dayu/wms",
-    "MARTIN_MVT": "/vector",
-    "TITILER": "/api/v1/dgis/raster",
-    "FASTAPI": "/api/v1/gis",
-    "CESIUM_DYNAMIC": "/api/v1/gis/interaction-frame",
-    "THREE_D_TILES": "/3d",
-}
-BASEMAP_ENDPOINTS = {
-    "world_imagery_proxy": "/api/v1/gis/basemaps/world_imagery/{z}/{y}/{x}",
-}
+SAFE_PROPERTY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+WEB_MERCATOR_LIMIT = 20_037_508.35
 
 
 def _error(code: str, message: str, *, status_code: int, **context: Any) -> GovernanceError:
+    """Create one structured GIS boundary error."""
+
     return GovernanceError(code, message, status_code=status_code, context=context)
 
 
 def _public_version(session: Session, version_id: int) -> DatasetVersion:
+    """Require one immutable public dataset version before any map read."""
+
     version = session.get(DatasetVersion, version_id)
     if version is None:
         raise _error("DATASET_VERSION_NOT_FOUND", "Dataset version does not exist.", status_code=404, dataset_version_id=version_id)
@@ -74,145 +60,96 @@ def _public_version(session: Session, version_id: int) -> DatasetVersion:
     return version
 
 
-def _manifest() -> dict[str, Any]:
+def _catalog_rows(session: Session) -> list[GISCatalogLayer]:
+    """Read active GeoServer rows from the only PostGIS Catalog."""
+
+    return list(
+        session.scalars(
+            select(GISCatalogLayer)
+            .where(GISCatalogLayer.active.is_(True))
+            .order_by(GISCatalogLayer.display_order, GISCatalogLayer.layer_key)
+        ).all()
+    )
+
+
+def _geoserver_healthy() -> bool:
+    """Keep external health evidence separate from Catalog existence."""
+
     try:
-        return qgis_service.read_manifest()
-    except (OSError, ValueError, json.JSONDecodeError):
-        return {}
-
-
-def _runtime_health(modes: set[str], *, qgis_healthy: bool) -> dict[str, bool]:
-    """Probe external renderers and keep in-process adapters explicit."""
-
-    evidence = {
-        "QGIS_WMS": qgis_healthy,
-        "FASTAPI": True,
-        "CESIUM_DYNAMIC": True,
-        "THREE_D_TILES": True,
-        "TITILER": False,
-        "GEOSERVER_WMS_LEGACY": False,
-        "MARTIN_MVT": False,
-    }
-    if "GEOSERVER_WMS_LEGACY" in modes:
-        try:
-            evidence["GEOSERVER_WMS_LEGACY"] = (
-                geoserver_service.get_health().status == "healthy"
-            )
-        except Exception:
-            evidence["GEOSERVER_WMS_LEGACY"] = False
-    for mode, url in (
-        ("MARTIN_MVT", f"{os.getenv('MARTIN_INTERNAL_URL', 'http://martin:3000').rstrip('/')}/health"),
-        ("TITILER", f"{os.getenv('TITILER_INTERNAL_URL', 'http://titiler:8000').rstrip('/')}/healthz"),
-    ):
-        if mode not in modes:
-            continue
-        try:
-            response = httpx.get(url, timeout=2.0, follow_redirects=False)
-            evidence[mode] = 200 <= response.status_code < 300
-        except httpx.HTTPError:
-            evidence[mode] = False
-    return evidence
-
-
-def _services(
-    modes: set[str], *, runtime_health: dict[str, bool], project_revision: str | None
-) -> list[CatalogService]:
-    rows: list[CatalogService] = []
-    for mode in sorted(modes):
-        endpoint = PUBLIC_ENDPOINTS[mode]
-        values: dict[str, Any] = {
-            "service_key": SERVICE_KEYS[mode], "service_mode": mode,
-            "endpoint": endpoint, "healthy": runtime_health.get(mode, False),
-            "revision": project_revision if mode == "QGIS_WMS" else None,
-        }
-        if mode == "QGIS_WMS":
-            values.update(wms_version="1.3.0", gateway_contract_version="qgis-wms-gateway/v1alpha1")
-        elif mode == "GEOSERVER_WMS_LEGACY":
-            values.update(wms_version="1.1.1", wmts_endpoint="/geoserver/gwc/service/wmts")
-        elif mode == "MARTIN_MVT":
-            values.update(tile_template="/vector/{source}/{z}/{x}/{y}?dataset_version_id={dataset_version_id}", min_zoom=0, max_zoom=18)
-        elif mode in {"FASTAPI", "CESIUM_DYNAMIC"}:
-            values.update(endpoint_key=SERVICE_KEYS[mode])
-        rows.append(CatalogService(**values))
-    return rows
+        return geoserver_service.get_health().status == "healthy"
+    except Exception:
+        return False
 
 
 def build_catalog(session: Session, dataset_version_id: int) -> tuple[GISCatalogResponse, str]:
-    """Build a deterministic safe DTO; internal relations never enter the response."""
+    """Build a deterministic GeoServer-only Catalog with no internal URL or SQL leakage."""
 
     version = _public_version(session, dataset_version_id)
-    registry = list(session.scalars(select(GISLayerRegistry).where(GISLayerRegistry.active.is_(True)).order_by(GISLayerRegistry.display_order, GISLayerRegistry.layer_key)).all())
-    manifest = _manifest()
-    manifest_layers = {str(item.get("layer_key")): item for item in manifest.get("layers", []) if item.get("layer_key")}
-    qgis_short_names = [item.get("qgis_short_name") for item in manifest.get("layers", [])]
-    manifest_safe = bool(manifest and qgis_short_names and len(qgis_short_names) == len(set(qgis_short_names)))
-    try:
-        health = qgis_service.health(session)
-        qgis_healthy = health.process.passed and health.project_valid.passed and health.database_read.passed and health.wms_capabilities.passed
-    except Exception:
-        qgis_healthy = False
-    runtime_health = _runtime_health(
-        {str(row.service_mode) for row in registry}, qgis_healthy=qgis_healthy
-    )
-    project_revision = str(manifest.get("project_revision") or "legacy-catalog")
-
-    groups_by_key: dict[str, CatalogGroup] = {}
+    rows = _catalog_rows(session)
+    healthy = _geoserver_healthy()
+    groups: dict[str, CatalogGroup] = {}
     layers: list[CatalogLayer] = []
-    for row in registry:
-        group = groups_by_key.setdefault(
+    for row in rows:
+        group = groups.setdefault(
             row.group_key,
-            CatalogGroup(group_key=row.group_key, title=GROUP_TITLES.get(row.group_key, row.group_key), order=row.display_order, collapsed=row.group_key == "90_REFERENCE"),
+            CatalogGroup(
+                group_key=row.group_key,
+                title=GROUP_TITLES.get(row.group_key, row.group_key),
+                order=row.display_order,
+                collapsed=row.group_key == "90_REFERENCE",
+            ),
         )
-        entry = manifest_layers.get(row.layer_key) if row.service_mode == "QGIS_WMS" else None
-        qgis_contract_ok = row.service_mode != "QGIS_WMS" or bool(
-            manifest_safe and entry and entry.get("qgis_short_name") == row.qgis_short_name and entry.get("dataset_filter_field") == "dataset_version_id"
+        layers.append(
+            CatalogLayer(
+                key=row.layer_key,
+                title=row.title,
+                group_key=row.group_key,
+                group_title=group.title,
+                order=row.display_order,
+                z_index=row.display_order,
+                geometry_type=row.geometry_type,
+                layer_name=f"dayu:{row.source_relation}",
+                dataset_version_id=version.id,
+                default_visible=row.default_visible,
+                default_opacity=row.default_opacity,
+                identify_enabled=bool(row.identify_enabled and healthy),
+                legend_enabled=bool(row.legend_enabled and healthy),
+                search_enabled=bool(row.search_enabled and healthy),
+                detail_route_key=row.detail_route_key,
+                model_entity_type=row.model_entity_type,
+                cache_mode=row.cache_mode,
+                capabilities={
+                    "render": healthy,
+                    "identify": bool(row.identify_enabled and healthy),
+                    "legend": bool(row.legend_enabled and healthy),
+                    "print": False,
+                },
+            )
         )
-        render_enabled = qgis_contract_ok and runtime_health.get(row.service_mode, False)
-        identify_enabled = bool(row.identify_enabled and render_enabled)
-        legend_enabled = bool(row.legend_enabled and render_enabled)
-        service: dict[str, Any] = {"kind": row.service_mode, "endpoint": PUBLIC_ENDPOINTS[row.service_mode], "layer_key": row.layer_key}
-        if row.service_mode == "MARTIN_MVT":
-            service["source"] = row.source_relation
-        legend = {"mode": "WMS_LEGEND", "endpoint": PUBLIC_ENDPOINTS[row.service_mode], "layer_key": row.layer_key} if legend_enabled and row.render_mode == "RASTER_WMS" else None
-        identify = {"mode": row.identify_mode, "identity_fields": ["feature_id", "dataset_version_id"], "detail_route_key": row.detail_route_key}
-        layers.append(CatalogLayer(
-            key=row.layer_key, title=row.title,
-            display_title=str(entry.get("display_title") if entry else row.title),
-            group_key=row.group_key, group_title=group.title,
-            order=int(entry.get("order") if entry else row.display_order),
-            z_index=int(entry.get("order") if entry else row.display_order),
-            geometry_type=row.geometry_type, service_key=SERVICE_KEYS[row.service_mode],
-            service_mode=row.service_mode, render_mode=row.render_mode,
-            dataset_version_id=version.id, dataset_filter_field=row.dataset_filter_field,
-            default_visible=row.default_visible, default_opacity=row.default_opacity,
-            min_scale=float(entry["min_scale"]) if entry and entry.get("min_scale") else None,
-            max_scale=float(entry["max_scale"]) if entry and entry.get("max_scale") else None,
-            identify_enabled=identify_enabled, legend_enabled=legend_enabled,
-            search_enabled=bool(row.search_enabled and render_enabled),
-            qgis_short_name=row.qgis_short_name, model_entity_type=row.model_entity_type,
-            service=service, legend=legend, identify=identify, cache_mode=row.cache_mode,
-            capabilities={"render": render_enabled, "identify": identify_enabled, "legend": legend_enabled, "print": False},
-        ))
 
-    basemaps = [
-        CatalogBasemap(
-            basemap_key=row.basemap_key, title=row.title, type=row.basemap_type,
-            endpoint=BASEMAP_ENDPOINTS[row.endpoint_key], credit=row.credit,
-            crs=row.native_crs, visible=row.default_visible, opacity=row.default_opacity,
-        )
-        for row in session.scalars(select(BasemapRegistry).where(BasemapRegistry.active.is_(True), BasemapRegistry.endpoint_key.in_(BASEMAP_ENDPOINTS)).order_by(BasemapRegistry.display_order)).all()
-    ]
-    services = _services(
-        {row.service_mode for row in registry},
-        runtime_health=runtime_health,
-        project_revision=project_revision,
-    )
     payload = GISCatalogResponse(
-        catalog_revision="pending", generated_at=datetime.now(UTC),
-        project=CatalogProject(project_key="dayu_tiangong", title="大禹·天工", crs=str(manifest.get("project_crs") or "EPSG:4490"), project_revision=project_revision, qgis_project_hash=manifest.get("qgis_project_hash"), qgis_version=manifest.get("qgis_version"), extent=None),
-        dataset=CatalogDataset(dataset_version_id=version.id, version=version.version, name=version.name, status="published", content_hash=version.content_hash, published_at=version.published_at, change_summary=version.change_summary),
-        capabilities=CatalogCapabilities(identify=any(layer.identify_enabled for layer in layers), legend=any(layer.legend_enabled for layer in layers), print=False, measure=True, version_switch=True, external_basemap_registration=False, editing=False),
-        services=services, groups=sorted(groups_by_key.values(), key=lambda item: (item.order, item.group_key)), layers=layers, basemaps=basemaps,
+        catalog_revision="pending",
+        generated_at=datetime.now(UTC),
+        project=CatalogProject(project_key="dayu_tiangong", title="大禹·天工"),
+        dataset=CatalogDataset(
+            dataset_version_id=version.id,
+            version=version.version,
+            name=version.name,
+            status="published",
+            content_hash=version.content_hash,
+            published_at=version.published_at,
+            change_summary=version.change_summary,
+        ),
+        capabilities=CatalogCapabilities(
+            identify=any(layer.identify_enabled for layer in layers),
+            legend=any(layer.legend_enabled for layer in layers),
+            measure=True,
+            version_switch=True,
+        ),
+        services=[CatalogService(healthy=healthy)],
+        groups=sorted(groups.values(), key=lambda item: (item.order, item.group_key)),
+        layers=layers,
+        basemaps=[CatalogBasemap()],
     )
     revision_input = payload.model_dump(mode="json", exclude={"catalog_revision", "generated_at"})
     digest = hashlib.sha256(json.dumps(revision_input, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
@@ -220,22 +157,140 @@ def build_catalog(session: Session, dataset_version_id: int) -> tuple[GISCatalog
     return payload, f'"{digest}"'
 
 
-def proxy_world_imagery(z: int, y: int, x: int) -> tuple[bytes, str]:
-    """Proxy one tile from a deployment-fixed HTTPS host with strict bounds."""
+def list_catalog_layers(session: Session, dataset_version_id: int) -> list[CatalogLayer]:
+    """Expose the layer portion as the stable minimal `/layers` API."""
 
-    if not 0 <= z <= 22 or not 0 <= x < 2**z or not 0 <= y < 2**z:
-        raise _error("BASEMAP_TILE_INVALID", "Tile coordinate is outside the supported range.", status_code=422)
-    base = os.getenv("BASEMAP_WORLD_IMAGERY_URL", "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer").rstrip("/")
-    parsed = urlparse(base)
-    allowed_hosts = {host.strip().lower() for host in os.getenv("BASEMAP_ALLOWED_HOSTS", "server.arcgisonline.com").split(",") if host.strip()}
-    if parsed.scheme != "https" or parsed.hostname not in allowed_hosts or parsed.username or parsed.password or parsed.port not in {None, 443}:
-        raise _error("BASEMAP_ENDPOINT_BLOCKED", "Configured basemap endpoint is outside the deployment allow-list.", status_code=503)
+    catalog, _ = build_catalog(session, dataset_version_id)
+    return catalog.layers
+
+
+def _catalog_layer(session: Session, layer_key: str) -> GISCatalogLayer:
+    """Resolve one active layer key without accepting arbitrary GeoServer names."""
+
+    if not re.fullmatch(r"[a-z][a-z0-9_]{1,62}", layer_key):
+        raise _error("GIS_LAYER_INVALID", "Layer key is invalid.", status_code=422)
+    layer = session.scalar(select(GISCatalogLayer).where(GISCatalogLayer.layer_key == layer_key, GISCatalogLayer.active.is_(True)))
+    if layer is None:
+        raise _error("GIS_LAYER_NOT_FOUND", "Layer is not in the active Catalog.", status_code=404, layer_key=layer_key)
+    return layer
+
+
+def _bbox(raw: str) -> tuple[float, float, float, float]:
+    """Validate an EPSG:3857 map extent before forwarding it to GeoServer."""
+
     try:
-        response = httpx.get(f"{base}/tile/{z}/{y}/{x}", timeout=8.0, follow_redirects=False)
+        values = tuple(float(value.strip()) for value in raw.split(","))
+    except ValueError as exc:
+        raise _error("GIS_BBOX_INVALID", "BBOX must contain four numbers.", status_code=422) from exc
+    if len(values) != 4 or not all(math.isfinite(value) for value in values):
+        raise _error("GIS_BBOX_INVALID", "BBOX must contain four finite numbers.", status_code=422)
+    min_x, min_y, max_x, max_y = values
+    if not (-WEB_MERCATOR_LIMIT <= min_x < max_x <= WEB_MERCATOR_LIMIT and -WEB_MERCATOR_LIMIT <= min_y < max_y <= WEB_MERCATOR_LIMIT):
+        raise _error("GIS_BBOX_INVALID", "BBOX is outside EPSG:3857 or has invalid ordering.", status_code=422)
+    return values
+
+
+def _upstream_get(params: dict[str, str], *, expected: set[str], limit: int) -> httpx.Response:
+    """Call private GeoServer with bounded time, status, media type, and size."""
+
+    base = os.getenv("GEOSERVER_INTERNAL_URL", "http://geoserver:8080/geoserver").rstrip("/")
+    try:
+        response = httpx.get(f"{base}/dayu/wms", params=params, timeout=10.0, follow_redirects=False)
         response.raise_for_status()
     except httpx.HTTPError as exc:
-        raise _error("BASEMAP_UNAVAILABLE", "Configured basemap service is unavailable.", status_code=503) from exc
+        raise _error("GEOSERVER_UNAVAILABLE", "GeoServer map service is unavailable.", status_code=503) from exc
     content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
-    if content_type not in {"image/jpeg", "image/png"} or len(response.content) > 5_000_000:
-        raise _error("BASEMAP_RESPONSE_BLOCKED", "Basemap response failed content validation.", status_code=502)
-    return response.content, content_type
+    if content_type not in expected or len(response.content) > limit:
+        raise _error("GEOSERVER_RESPONSE_BLOCKED", "GeoServer response failed content validation.", status_code=502)
+    return response
+
+
+def render_wms_map(
+    session: Session,
+    *,
+    dataset_version_id: int,
+    layer_key: str,
+    bbox: str,
+    width: int,
+    height: int,
+    image_format: str,
+    transparent: bool,
+) -> tuple[bytes, str]:
+    """Render one allow-listed, version-filtered WMS image through GeoServer."""
+
+    _public_version(session, dataset_version_id)
+    layer = _catalog_layer(session, layer_key)
+    extent = _bbox(bbox)
+    if not 1 <= width <= 2048 or not 1 <= height <= 2048:
+        raise _error("GIS_IMAGE_SIZE_INVALID", "Map dimensions must be between 1 and 2048.", status_code=422)
+    media_type = image_format.lower()
+    if media_type not in {"image/png", "image/jpeg"}:
+        raise _error("GIS_IMAGE_FORMAT_INVALID", "Only PNG and JPEG map images are supported.", status_code=422)
+    response = _upstream_get(
+        {
+            "SERVICE": "WMS", "VERSION": "1.1.1", "REQUEST": "GetMap",
+            "LAYERS": f"dayu:{layer.source_relation}", "STYLES": "", "SRS": "EPSG:3857",
+            "BBOX": ",".join(str(value) for value in extent), "WIDTH": str(width), "HEIGHT": str(height),
+            "FORMAT": media_type, "TRANSPARENT": "TRUE" if transparent else "FALSE",
+            "CQL_FILTER": f"dataset_version_id={dataset_version_id}",
+        },
+        expected={"image/png", "image/jpeg"},
+        limit=10_000_000,
+    )
+    return response.content, response.headers.get("content-type", media_type).split(";", 1)[0]
+
+
+def feature_info(
+    session: Session,
+    *,
+    dataset_version_id: int,
+    layer_key: str,
+    bbox: str,
+    width: int,
+    height: int,
+    x: int,
+    y: int,
+) -> GISFeatureInfoResponse:
+    """Return sanitized attributes for one OpenLayers map click."""
+
+    _public_version(session, dataset_version_id)
+    layer = _catalog_layer(session, layer_key)
+    extent = _bbox(bbox)
+    if not 1 <= width <= 2048 or not 1 <= height <= 2048 or not 0 <= x < width or not 0 <= y < height:
+        raise _error("GIS_FEATURE_INFO_PIXEL_INVALID", "FeatureInfo pixel is outside the map image.", status_code=422)
+    response = _upstream_get(
+        {
+            "SERVICE": "WMS", "VERSION": "1.1.1", "REQUEST": "GetFeatureInfo",
+            "LAYERS": f"dayu:{layer.source_relation}", "QUERY_LAYERS": f"dayu:{layer.source_relation}",
+            "STYLES": "", "SRS": "EPSG:3857", "BBOX": ",".join(str(value) for value in extent),
+            "WIDTH": str(width), "HEIGHT": str(height), "X": str(x), "Y": str(y),
+            "INFO_FORMAT": "application/json", "FEATURE_COUNT": "10",
+            "CQL_FILTER": f"dataset_version_id={dataset_version_id}",
+        },
+        expected={"application/json"},
+        limit=2_000_000,
+    )
+    try:
+        raw = response.json()
+    except ValueError as exc:
+        raise _error("GEOSERVER_RESPONSE_INVALID", "GeoServer FeatureInfo is not valid JSON.", status_code=502) from exc
+    items = raw.get("features", []) if isinstance(raw, dict) else []
+    features: list[CatalogFeature] = []
+    for item in items[:10] if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        properties = item.get("properties") if isinstance(item.get("properties"), dict) else {}
+        safe_properties = {
+            str(key): value
+            for key, value in list(properties.items())[:50]
+            if SAFE_PROPERTY.fullmatch(str(key)) and isinstance(value, (str, int, float, bool, type(None), list, dict))
+        }
+        raw_geometry = item.get("geometry")
+        features.append(
+            CatalogFeature(
+                id=str(item.get("id") or safe_properties.get("id") or "unknown"),
+                geometry=raw_geometry if isinstance(raw_geometry, dict) else None,
+                properties=safe_properties,
+            )
+        )
+    return GISFeatureInfoResponse(layer_key=layer_key, dataset_version_id=dataset_version_id, features=features)

@@ -1,72 +1,70 @@
-"""Static gates for the Catalog-driven frontend cutover."""
+"""Static gates for the OpenLayers-only WebGIS cutover."""
 
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CESIUM = ROOT / "frontend/src/components/gis/CesiumMap.tsx"
+MAP_VIEW = ROOT / "frontend/src/gis/MapView.tsx"
 GIS_PAGE = ROOT / "frontend/src/pages/GisPage.tsx"
-LAYER_MANAGER = ROOT / "frontend/src/components/gis/LayerManager.tsx"
+LAYER_MANAGER = ROOT / "frontend/src/gis/LayerManager.tsx"
+GENERATED = ROOT / "frontend/src/api/generated/client.ts"
+GENERATOR = ROOT / "frontend/scripts/update-openapi.mjs"
 
 
-def test_three_map_components_do_not_own_business_layer_catalogs() -> None:
-    combined = "\n".join(path.read_text(encoding="utf-8") for path in (CESIUM, GIS_PAGE, LAYER_MANAGER))
+def test_minimal_openlayers_components_exist_and_use_catalog() -> None:
+    for relative in (
+        "frontend/src/gis/MapView.tsx",
+        "frontend/src/gis/LayerManager.tsx",
+        "frontend/src/gis/Popup.tsx",
+        "frontend/src/gis/StyleManager.ts",
+        "frontend/src/gis/Coordinate.tsx",
+    ):
+        assert (ROOT / relative).is_file()
+    map_source = MAP_VIEW.read_text(encoding="utf-8")
+    assert "from 'ol/Map'" in map_source
+    assert "new TileWMS" in map_source
+    assert "projection: 'EPSG:3857'" in map_source
+    assert "getGISCatalog" in map_source
+    assert "getGISFeatureInfo" in map_source
+    assert "fetch(" not in map_source
+
+
+def test_frontend_has_one_renderer_and_no_business_layer_catalog() -> None:
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in (MAP_VIEW, GIS_PAGE, LAYER_MANAGER))
     for forbidden in (
-        "staticLayerKeys", "dynamicLayerKeys", "layerLabels", "layerGroups",
-        "CACHED_LAYERS", "WORLD_IMAGERY_URL", "services.arcgisonline.com",
-        "versionFilter(",
+        "Cesium",
+        "QGIS Server",
+        "MARTIN_MVT",
+        "TITILER",
+        "WORLD_IMAGERY_URL",
+        "services.arcgisonline.com",
+        "staticLayerKeys",
     ):
         assert forbidden not in combined
-    assert "getGISCatalog" in CESIUM.read_text(encoding="utf-8")
-    assert "items.map" in LAYER_MANAGER.read_text(encoding="utf-8")
+    assert "nextCatalog.layers" in MAP_VIEW.read_text(encoding="utf-8")
+    assert "layers].reverse().map" in LAYER_MANAGER.read_text(encoding="utf-8")
 
 
-def test_adapter_selection_is_protocol_based_and_exhaustive() -> None:
-    registry = (ROOT / "frontend/src/gis/adapters/registry.ts").read_text(encoding="utf-8")
-    expected = {
-        "QGIS_WMS|RASTER_WMS", "GEOSERVER_WMS_LEGACY|RASTER_WMS",
-        "GEOSERVER_WMS_LEGACY|RASTER_TILE", "MARTIN_MVT|VECTOR_TILE",
-        "TITILER|RASTER_TILE", "FASTAPI|DYNAMIC_PRIMITIVE",
-        "CESIUM_DYNAMIC|DYNAMIC_PRIMITIVE", "THREE_D_TILES|THREE_D",
-    }
-    for key in expected:
-        assert key in registry
-    assert "UNSUPPORTED_GIS_ADAPTER" in registry
-    assert "layer.key ===" not in registry
+def test_layer_controls_cover_visibility_opacity_order_and_identify() -> None:
+    manager = LAYER_MANAGER.read_text(encoding="utf-8")
+    map_source = MAP_VIEW.read_text(encoding="utf-8")
+    for token in ("onVisibility", "onOpacity", "onMove"):
+        assert token in manager
+    assert "setVisible" in map_source
+    assert "setOpacity" in map_source
+    assert "setZIndex" in map_source
+    assert "singleclick" in map_source
+    assert "response.features" in map_source
 
 
-def test_levee_fixture_requires_no_change_to_three_components() -> None:
-    runtime = (ROOT / "frontend/src/gis/catalog/runtime.ts").read_text(encoding="utf-8")
-    for path in (CESIUM, GIS_PAGE, LAYER_MANAGER):
-        assert "levee" not in path.read_text(encoding="utf-8").lower()
-    assert "catalog.layers.map" in runtime
-    assert "layer.service_mode" in runtime and "layer.render_mode" in runtime
-
-
-def test_runtime_has_race_and_symmetric_resource_guards() -> None:
-    manager = (ROOT / "frontend/src/gis/runtime/manager.ts").read_text(encoding="utf-8")
-    assert "const generation = ++this.generation" in manager
-    assert "generation !== this.generation" in manager
-    assert "Promise.allSettled" in manager
-    assert "adapter.destroy" in manager
-    assert "this.errors.set(layer.key" in manager
-
-
-def test_openapi_generator_owns_catalog_client() -> None:
-    generator = (ROOT / "frontend/scripts/update-openapi.mjs").read_text(encoding="utf-8")
-    generated = (ROOT / "frontend/src/api/generated/client.ts").read_text(encoding="utf-8")
-    for value in ("/api/v1/gis/catalog", "getGISCatalog", "GISCatalogResponse"):
-        assert value in generator or value in generated
-    assert "export const getGISCatalog" in generator
-    assert "export const getGISCatalog" in generated
-
-
-def test_qgis_feature_info_uses_generated_safe_gateway_client() -> None:
-    helper = (ROOT / "frontend/src/gis/adapters/qgisFeatureInfo.ts").read_text(encoding="utf-8")
-    generated = (ROOT / "frontend/src/api/generated/client.ts").read_text(encoding="utf-8")
-    map_source = CESIUM.read_text(encoding="utf-8")
-    assert "getQgisWmsFeatureInfo" in helper
-    assert "request: 'GetFeatureInfo'" in helper
-    assert "FILTER:" not in helper and "MAP:" not in helper
-    assert "export const getQgisWmsFeatureInfo" in generated
-    assert "identifyQgisLayer" in map_source
+def test_openapi_generator_owns_catalog_and_feature_info_clients() -> None:
+    generator = GENERATOR.read_text(encoding="utf-8")
+    generated = GENERATED.read_text(encoding="utf-8")
+    for path in ("/api/v1/gis/catalog", "/api/v1/gis/layers", "/api/v1/gis/feature-info"):
+        assert path in generator and path in generated
+    for function_name in ("getGISCatalog", "getGISLayers", "getGISFeatureInfo"):
+        assert f"export const {function_name}" in generator
+        assert f"export const {function_name}" in generated
+    for forbidden in ("getQgisServerHealth", "getQgisWmsFeatureInfo", "/qgis-server/wms"):
+        assert forbidden not in generator
+        assert forbidden not in generated

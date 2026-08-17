@@ -43,9 +43,12 @@ def test_required_phase1_files_exist() -> None:
         "database/migrations/versions/20260812_0004_phase4_dispatch.py",
         "database/migrations/versions/20260814_0011_qgis_governance.py",
         "database/migrations/versions/20260814_0012_publish_geoserver_boundary.py",
+        "database/migrations/versions/20260817_0015_gis_reset_geoserver_catalog.py",
         "database/bootstrap_qgis.py",
         "database/bootstrap_app.py",
         "database/seed/demo_data.py",
+        "database/seed/gis_catalog.py",
+        "database/gis/schema.sql",
         "database/schema.sql",
         "database/database_design.md",
         "model/hydraulic_model.py",
@@ -66,6 +69,11 @@ def test_required_phase1_files_exist() -> None:
         "backend/app/ai/router.py",
         "backend/app/ai/service.py",
         "frontend/src/pages/ai/AIAssistantPage.tsx",
+        "frontend/src/gis/MapView.tsx",
+        "frontend/src/gis/LayerManager.tsx",
+        "frontend/src/gis/Popup.tsx",
+        "frontend/src/gis/StyleManager.ts",
+        "frontend/src/gis/Coordinate.tsx",
         "docs/project_introduction.md",
         "docs/architecture.md",
         "docs/coordinate_system.md",
@@ -97,7 +105,7 @@ def test_frontend_and_database_static_contracts() -> None:
     schema_source = (REPOSITORY_ROOT / "database/schema.sql").read_text(
         encoding="utf-8"
     ).lower()
-    cesium_source = (REPOSITORY_ROOT / "frontend/src/components/gis/CesiumMap.tsx").read_text(
+    map_source = (REPOSITORY_ROOT / "frontend/src/gis/MapView.tsx").read_text(
         encoding="utf-8"
     )
     generated_client = (
@@ -111,26 +119,15 @@ def test_frontend_and_database_static_contracts() -> None:
     for table_name in ["river", "cross_section", "gate", "pump"]:
         assert f"create table {table_name}" in schema_source
 
-    assert "MapPlaceholder" not in cesium_source
-    assert "GisAdapterRuntime" in cesium_source
-    assert "getGISCatalog" in cesium_source
-    adapter_source = (
-        REPOSITORY_ROOT / "frontend/src/gis/adapters/imagery.ts"
-    ).read_text(encoding="utf-8")
-    assert "WebMapServiceImageryProvider" in adapter_source
-    assert "QgisWmsAdapter" in adapter_source
-    assert "WebMapTileServiceImageryProvider" in adapter_source
-    assert "ArcGisMapServerImageryProvider.fromUrl" not in cesium_source
-    assert "World_Imagery/MapServer" not in cesium_source
-    assert "getGeoServerConfig" not in cesium_source
-    selection_source = (
-        REPOSITORY_ROOT / "frontend/src/gis/selection/identity.ts"
-    ).read_text(encoding="utf-8")
-    assert "getRiver" in selection_source
-    assert "getCrossSection" in selection_source
+    assert "new OlMap" in map_source
+    assert "new TileWMS" in map_source
+    assert "getGISCatalog" in map_source
+    assert "getGISFeatureInfo" in map_source
+    assert "projection: 'EPSG:3857'" in map_source
+    assert "Cesium" not in map_source
     assert "/api/v1/gis/rivers" in generated_client
     assert "/api/v1/gis/geoserver/health" in generated_client
-    assert "fetch(" not in cesium_source
+    assert "fetch(" not in map_source
     assert "/api/v1/rivers" in generated_client
     assert "/api/v1/import/${kind}" in generated_client
     assert "/api/v1/validation/run" in generated_client
@@ -202,9 +199,6 @@ def test_frontend_dataset_lifecycle_is_reachable_and_fail_safe() -> None:
     gis_source = (
         REPOSITORY_ROOT / "frontend/src/pages/GisPage.tsx"
     ).read_text(encoding="utf-8")
-    three_d_source = (
-        REPOSITORY_ROOT / "frontend/src/components/dgis/ThreeDViewer.tsx"
-    ).read_text(encoding="utf-8")
     generator = (
         REPOSITORY_ROOT / "frontend/scripts/update-openapi.mjs"
     ).read_text(encoding="utf-8")
@@ -229,10 +223,9 @@ def test_frontend_dataset_lifecycle_is_reachable_and_fail_safe() -> None:
     assert "components/gis/CesiumMap" not in home_source
     assert "echarts" not in water_trend_source
     assert '<svg className="trend-chart"' in water_trend_source
-    assert "lazy(() => import('../components/gis/CesiumMap')" in gis_source
-    assert "加载 GIS 三维地图" in gis_source
-    assert "import type { Cesium3DTileset }" in three_d_source
-    assert "void import('cesium')" in three_d_source
+    assert "from '../gis/MapView'" in gis_source
+    assert "PostGIS 是唯一数据中心" in gis_source
+    assert "QGIS Desktop 仅用于受控数据生产" in gis_source
     assert "location = /index.html" in nginx_source
     assert 'Cache-Control "no-store, no-cache, must-revalidate"' in nginx_source
 

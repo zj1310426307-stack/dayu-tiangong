@@ -168,8 +168,13 @@ class DatasetVersion(Base):
     )
 
 
-class GISLayerRegistry(Base):
-    """Allow-listed logical GIS layer contract shared by server and web clients."""
+class GISCatalogLayer(Base):
+    """Store the PostGIS-owned allow-list for GeoServer-published map layers.
+
+    The physical table name is retained for a no-copy migration from GIS-OPT-2,
+    but active rows now describe one renderer only: GeoServer WMS over the
+    version-filtered ``publish`` schema.
+    """
 
     __tablename__ = "gis_layer_registry"
     __table_args__ = (
@@ -178,8 +183,8 @@ class GISLayerRegistry(Base):
             name="ck_gis_layer_registry_layer_key",
         ),
         CheckConstraint(
-            "source_schema IN ('publish','tiles')",
-            name="ck_gis_layer_registry_source_schema",
+            "active IS NOT TRUE OR source_schema = 'publish'",
+            name="ck_gis_catalog_active_source",
         ),
         CheckConstraint(
             "source_relation ~ '^[a-z][a-z0-9_]{1,62}$'",
@@ -195,28 +200,16 @@ class GISLayerRegistry(Base):
             name="ck_gis_layer_registry_native_crs",
         ),
         CheckConstraint(
-            "service_mode IN ('QGIS_WMS','GEOSERVER_WMS_LEGACY','MARTIN_MVT',"
-            "'TITILER','FASTAPI','CESIUM_DYNAMIC','THREE_D_TILES')",
-            name="ck_gis_layer_registry_service_mode",
+            "active IS NOT TRUE OR service_mode = 'GEOSERVER_WMS'",
+            name="ck_gis_catalog_active_service",
         ),
         CheckConstraint(
-            "render_mode IN ('RASTER_WMS','VECTOR_TILE','RASTER_TILE',"
-            "'DYNAMIC_PRIMITIVE','THREE_D')",
-            name="ck_gis_layer_registry_render_mode",
+            "active IS NOT TRUE OR render_mode = 'RASTER_WMS'",
+            name="ck_gis_catalog_active_render",
         ),
         CheckConstraint(
-            "(service_mode = 'QGIS_WMS' AND render_mode = 'RASTER_WMS') OR "
-            "(service_mode = 'GEOSERVER_WMS_LEGACY' AND render_mode IN ('RASTER_WMS','RASTER_TILE')) OR "
-            "(service_mode = 'MARTIN_MVT' AND render_mode = 'VECTOR_TILE') OR "
-            "(service_mode = 'TITILER' AND render_mode = 'RASTER_TILE') OR "
-            "(service_mode IN ('FASTAPI','CESIUM_DYNAMIC') AND render_mode = 'DYNAMIC_PRIMITIVE') OR "
-            "(service_mode = 'THREE_D_TILES' AND render_mode = 'THREE_D')",
-            name="ck_gis_layer_registry_service_render",
-        ),
-        CheckConstraint(
-            "service_mode <> 'QGIS_WMS' OR (qgis_short_name IS NOT NULL AND "
-            "dataset_filter_field = 'dataset_version_id' AND source_schema = 'publish')",
-            name="ck_gis_layer_registry_qgis_contract",
+            "active IS NOT TRUE OR dataset_filter_field = 'dataset_version_id'",
+            name="ck_gis_catalog_active_version_filter",
         ),
         CheckConstraint(
             "dataset_filter_field IS NULL OR dataset_filter_field = 'dataset_version_id'",
@@ -274,6 +267,12 @@ class GISLayerRegistry(Base):
     updated_by: Mapped[str] = mapped_column(String(64), nullable=False, server_default="migration")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+# Compatibility alias for migrations and older offline tooling. Runtime code
+# imports ``GISCatalogLayer`` so the deprecated Registry concept cannot become
+# a second browser-facing source of truth again.
+GISLayerRegistry = GISCatalogLayer
 
 
 class BasemapRegistry(Base):

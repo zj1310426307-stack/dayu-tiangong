@@ -17,7 +17,6 @@ from app.geoserver.router import router as geoserver_router
 from app.import_service.router import router as import_router
 from app.model_engine.router import router as model_engine_router
 from app.optimization.router import router as optimization_router
-from app.qgis_server.router import router as qgis_server_router
 from app.river.router import router as river_router
 from app.structure.router import router as structure_router
 from app.validation.router import router as validation_router
@@ -28,7 +27,6 @@ api_router = APIRouter()
 api_router.include_router(system.router)
 api_router.include_router(gis_router)
 api_router.include_router(gis_catalog_router)
-api_router.include_router(qgis_server_router)
 api_router.include_router(gis_governance_router)
 api_router.include_router(gis_analysis_router)
 api_router.include_router(dgis_router)

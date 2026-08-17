@@ -1,8 +1,6 @@
-"""Browser-safe Catalog status, revision, and merge contracts."""
+"""Browser-safe GeoServer Catalog and gateway contracts."""
 
 from datetime import UTC, datetime
-import json
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -10,10 +8,9 @@ import pytest
 from app.gis_governance.errors import GovernanceError
 
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
 class ScalarRows:
+    """Mimic SQLAlchemy scalar rows for deterministic unit tests."""
+
     def __init__(self, rows: list[object]) -> None:
         self.rows = rows
 
@@ -22,19 +19,48 @@ class ScalarRows:
 
 
 class CatalogSession:
-    def __init__(self, version: object | None, registry: list[object] | None = None, basemaps: list[object] | None = None) -> None:
-        self.version = version
-        self.results = iter((registry or [], basemaps or []))
+    """Provide the two read operations used by the Catalog service."""
 
-    def get(self, model: object, identity: int) -> object | None:
+    def __init__(self, version: object | None, rows: list[object] | None = None) -> None:
+        self.version = version
+        self.rows = rows or []
+
+    def get(self, _model: object, _identity: int) -> object | None:
         return self.version
 
-    def scalars(self, statement: object) -> ScalarRows:
-        return ScalarRows(next(self.results))
+    def scalars(self, _statement: object) -> ScalarRows:
+        return ScalarRows(self.rows)
 
 
 def _version(status: str = "published", content_hash: str | None = "a" * 64) -> SimpleNamespace:
-    return SimpleNamespace(id=7, version="V7", name="Version 7", status=status, content_hash=content_hash, published_at=datetime(2026, 8, 15, tzinfo=UTC), change_summary="reviewed")
+    return SimpleNamespace(
+        id=7,
+        version="V7",
+        name="Version 7",
+        status=status,
+        content_hash=content_hash,
+        published_at=datetime(2026, 8, 15, tzinfo=UTC),
+        change_summary="reviewed",
+    )
+
+
+def _row() -> SimpleNamespace:
+    return SimpleNamespace(
+        layer_key="river",
+        title="河道",
+        group_key="01_HYDROGRAPHY",
+        geometry_type="LINESTRING",
+        source_relation="river",
+        identify_enabled=True,
+        legend_enabled=True,
+        search_enabled=True,
+        default_visible=True,
+        default_opacity=1.0,
+        detail_route_key="river_detail",
+        model_entity_type="river",
+        cache_mode="CLIENT_PRIVATE",
+        display_order=10,
+    )
 
 
 def test_catalog_version_status_matrix() -> None:
@@ -52,37 +78,44 @@ def test_catalog_version_status_matrix() -> None:
     assert (retired.value.status_code, retired.value.code) == (410, "DATASET_VERSION_RETIRED")
 
 
-def test_catalog_is_deterministic_and_does_not_leak_internal_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_catalog_is_deterministic_and_geoserver_only(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.gis_catalog import service
 
-    manifest = json.loads((ROOT / "qgis/server/generated/dayu_tiangong_server.manifest.json").read_text(encoding="utf-8"))
-    monkeypatch.setattr(service, "_manifest", lambda: manifest)
-    monkeypatch.setattr(service.qgis_service, "health", lambda session: SimpleNamespace(process=SimpleNamespace(passed=True), project_valid=SimpleNamespace(passed=True), database_read=SimpleNamespace(passed=True), wms_capabilities=SimpleNamespace(passed=True)))
-    monkeypatch.setattr(service, "_runtime_health", lambda modes, qgis_healthy: {mode: True for mode in modes})
-    registry = [SimpleNamespace(
-        layer_key="river", title="河道", group_key="01_HYDROGRAPHY",
-        service_mode="QGIS_WMS", render_mode="RASTER_WMS", source_relation="river",
-        geometry_type="LINESTRING", dataset_filter_field="dataset_version_id",
-        identify_enabled=True, legend_enabled=True, search_enabled=True,
-        default_visible=True, default_opacity=1.0, qgis_short_name="river",
-        model_entity_type="river", identify_mode="FEATURE_INFO",
-        detail_route_key="river_detail", cache_mode="CLIENT_PRIVATE", display_order=10,
-    )]
-    basemaps = [SimpleNamespace(basemap_key="world_imagery", title="影像底图", basemap_type="ARCGIS_REST", endpoint_key="world_imagery_proxy", credit="controlled", native_crs="EPSG:3857", default_visible=True, default_opacity=1.0)]
-    first, etag1 = service.build_catalog(CatalogSession(_version(), registry, basemaps), 7)
-    second, etag2 = service.build_catalog(CatalogSession(_version(), registry, basemaps), 7)
+    monkeypatch.setattr(service, "_geoserver_healthy", lambda: True)
+    session = CatalogSession(_version(), [_row()])
+    first, etag1 = service.build_catalog(session, 7)
+    second, etag2 = service.build_catalog(session, 7)
     assert etag1 == etag2 and first.catalog_revision == second.catalog_revision
+    assert [item.service_mode for item in first.services] == ["GEOSERVER_WMS"]
+    assert first.layers[0].service_mode == "GEOSERVER_WMS"
+    assert first.layers[0].layer_name == "dayu:river"
+    assert first.project.native_crs == "EPSG:4490"
+    assert first.project.web_crs == "EPSG:3857"
     value = first.model_dump_json()
-    for forbidden in ("source_schema", "source_relation", "internal_url", "dsn", "MAP", "FILTER", "password", "project_path"):
+    for forbidden in (
+        "source_schema",
+        "internal_url",
+        "dsn",
+        "password",
+        "project_path",
+        "QGIS_WMS",
+        "MARTIN_MVT",
+        "TITILER",
+        "CESIUM_DYNAMIC",
+    ):
         assert forbidden not in value
-    assert first.layers[0].service["endpoint"] == "/qgis-server/wms"
-    assert first.basemaps[0].endpoint.startswith("/api/v1/gis/basemaps/")
 
 
-def test_catalog_openapi_path_and_structured_errors() -> None:
+def test_catalog_openapi_exposes_only_safe_webgis_boundary() -> None:
     from app.main import create_app
 
-    schema = create_app().openapi()
-    assert "/api/v1/gis/catalog" in schema["paths"]
-    assert "/api/v1/gis/qgis-server/health" in schema["paths"]
-    assert "/qgis-server/wms" in schema["paths"]
+    paths = create_app().openapi()["paths"]
+    for path in (
+        "/api/v1/gis/catalog",
+        "/api/v1/gis/layers",
+        "/api/v1/gis/ogc/wms",
+        "/api/v1/gis/feature-info",
+    ):
+        assert path in paths
+    assert "/api/v1/gis/qgis-server/health" not in paths
+    assert "/qgis-server/wms" not in paths
