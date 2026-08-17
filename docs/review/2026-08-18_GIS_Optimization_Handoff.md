@@ -4,6 +4,7 @@
 项目：`project-003-大禹天工`
 仓库：`zj1310426307-stack/dayu-tiangong`
 当前交付分支：`agent/gis-open-data-guangdong`
+GitHub Draft PR：[#8](https://github.com/zj1310426307-stack/dayu-tiangong/pull/8)
 
 ## 1. 新窗口读取顺序
 
@@ -167,14 +168,16 @@ npm.cmd run build
 
 ## 7. Git 状态与保护要求
 
-编写本交接文件前的本地状态：
+本次 GitHub 发布状态：
 
 - 当前分支：`agent/gis-open-data-guangdong`
-- 当前基线提交：`479b9fe`。
+- 功能提交：`c3ecfc9`（`feat(gis): add Guangdong data and coordinate tools`）。
 - 远端 `main`：`4d0c851`。
 - `479b9fe` 与远端 `main` 的文件树一致；远端 `main` 多一个普通合并提交，因此当前差异可以形成干净 PR。
-- 本轮涉及约 34 个已跟踪修改文件和 11 个新增文件。
-- 远端核验为仅保留 `main`；本地仍保留历史分支引用，不能把本地分支数量误报为 GitHub 远端分支数量。
+- Draft PR：[#8](https://github.com/zj1310426307-stack/dayu-tiangong/pull/8)，目标分支 `main`。
+- PR 实时核验：46 个文件，3,041 行新增、168 行删除，`mergeable=true`、`mergeable_state=clean`。
+- GitHub 当前无已上报的自动 checks；不能把“0 checks”写成“CI 已通过”，应以本文件记录的本地/运行验证为证据并继续人工审查。
+- 远端原先仅保留 `main`；推送后临时增加本 PR 工作分支。PR 合并后可按用户授权删除该远端工作分支。
 
 保护要求：
 
@@ -198,7 +201,7 @@ npm.cmd run build
 3. 打开 GIS 页面，人工检查工具菜单、中文标注、影像和 CGCS2000 定位。
 4. 若继续界面优化，优先处理移动端布局、菜单键盘操作和业务方视觉反馈；不得改变 Catalog 或 Dataset Version 语义。
 5. 获取用户测量资料中的中央经线/分带信息，确认本次 X/Y 唯一正确位置。
-6. 若进入 Git 发布流程，先审查完整 PR 差异和 CI，再决定是否转 Ready 并合入 `main`。
+6. 审查 Draft PR #8 的完整差异；确认无误后转为 Ready，再决定是否合入 `main` 并删除远端工作分支。
 
 ## 10. 给新窗口 Codex 的直接要求
 
@@ -207,5 +210,5 @@ npm.cmd run build
 先核对工作树、Docker 和真实页面，不要重置或重做已经完成的内容。
 保持 PostGIS → GeoServer → FastAPI → OpenLayers 单一 WebGIS 链路。
 优先处理用户新反馈，并同步架构、验证和交付文档。
-任何提交、PR、合并或远端分支删除都必须基于实时 GitHub 状态执行并复核。
+当前工作入口是 GitHub Draft PR #8。任何后续提交、转 Ready、合并或远端分支删除都必须基于实时 GitHub 状态执行并复核。
 ```
