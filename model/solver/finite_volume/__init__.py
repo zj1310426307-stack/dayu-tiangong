@@ -69,7 +69,9 @@ from model.solver.finite_volume.solver import (
 from model.solver.finite_volume.state import HydraulicState, SolverDiagnostics
 from model.solver.finite_volume.structures import (
     FixedGate,
+    OneShotStageThreshold,
     OnOffPump,
+    StructureControlEvent,
     StructureStageContext,
     StructureStageFlow,
 )
@@ -95,6 +97,7 @@ __all__ = [
     "NodeSolver",
     "NumericalFlux",
     "NumericalStateError",
+    "OneShotStageThreshold",
     "OnOffPump",
     "QualityGateResult",
     "RoughnessZoneSolver",
@@ -107,6 +110,7 @@ __all__ = [
     "StepBudget",
     "StepResult",
     "StructureSolver",
+    "StructureControlEvent",
     "StructureStageContext",
     "StructureStageFlow",
     "UpstreamDischargeBoundary",

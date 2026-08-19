@@ -320,8 +320,27 @@ class GateFaceBinding(StrictContractModel):
         return self
 
 
+class FixedStructureControlInput(StrictContractModel):
+    """Select the existing fixed command semantics without a controller latch."""
+
+    type: Literal["fixed"] = "fixed"
+
+
+class OneShotStageAboveControlInput(StrictContractModel):
+    """Latch one action when an accepted absolute stage exceeds a threshold."""
+
+    type: Literal["one-shot-stage-above"]
+    threshold_water_level_m: FiniteNumber
+
+
+StructureControlInput = Annotated[
+    FixedStructureControlInput | OneShotStageAboveControlInput,
+    Field(discriminator="type"),
+]
+
+
 class FixedGateInput(StrictContractModel):
-    """Describe the single optional fixed-opening Gate supported by the MVP."""
+    """Describe one fixed or explicitly threshold-controlled MVP Gate."""
 
     identity: GateIdentity
     branch_id: PositiveId
@@ -331,6 +350,7 @@ class FixedGateInput(StrictContractModel):
     height_m: PositiveFinite
     discharge_coefficient: Annotated[FiniteNumber, Field(gt=0.0, le=1.0)]
     allow_reverse_flow: Annotated[bool, Field(strict=True)]
+    control: StructureControlInput = Field(default_factory=FixedStructureControlInput)
 
     @model_validator(mode="after")
     def validate_opening(self) -> Self:
@@ -340,6 +360,11 @@ class FixedGateInput(StrictContractModel):
             raise ValueError("v4-lite does not support Gate reverse flow")
         if self.opening_m > self.height_m:
             raise ValueError("gate opening_m must not exceed height_m")
+        if (
+            isinstance(self.control, OneShotStageAboveControlInput)
+            and self.opening_m <= 0.0
+        ):
+            raise ValueError("threshold-controlled Gate target opening_m must be positive")
         return self
 
 
@@ -351,7 +376,7 @@ class PumpIdentity(StrictContractModel):
 
 
 class ExternalPumpInput(StrictContractModel):
-    """Describe the single optional ON/OFF Pump as an external cell sink."""
+    """Describe one fixed or explicitly threshold-controlled external Pump."""
 
     identity: PumpIdentity
     branch_id: PositiveId
@@ -359,6 +384,18 @@ class ExternalPumpInput(StrictContractModel):
     outlet: Literal["external"]
     status: Literal["on", "off"]
     design_flow_m3_s: PositiveFinite
+    control: StructureControlInput = Field(default_factory=FixedStructureControlInput)
+
+    @model_validator(mode="after")
+    def validate_control_initial_state(self) -> Self:
+        """Keep the threshold latch as the only authority that can start a Pump."""
+
+        if (
+            isinstance(self.control, OneShotStageAboveControlInput)
+            and self.status != "off"
+        ):
+            raise ValueError("threshold-controlled Pump must have initial status 'off'")
+        return self
 
 
 class V4LiteStructures(StrictContractModel):
@@ -514,6 +551,7 @@ class V4LiteInput(StrictContractModel):
         """Resolve structure bindings without chainage or nearest-neighbour guessing."""
 
         known_sections = set(section_ids)
+        section_by_id = {section.section_id: section for section in self.sections}
         for gate in self.structures.gates:
             if gate.branch_id != self.river.branch_id:
                 raise ValueError("Gate references an unknown Branch identity")
@@ -524,11 +562,39 @@ class V4LiteInput(StrictContractModel):
             adjacent_pairs = set(zip(section_ids, section_ids[1:]))
             if pair not in adjacent_pairs:
                 raise ValueError("Gate interface must use adjacent ordered section identities")
+            if isinstance(gate.control, OneShotStageAboveControlInput):
+                monitored = section_by_id[gate.interface.upstream_section_id]
+                self._validate_control_threshold(
+                    gate.control,
+                    monitored,
+                    "Gate upstream section",
+                )
         for pump in self.structures.pumps:
             if pump.branch_id != self.river.branch_id:
                 raise ValueError("Pump references an unknown Branch identity")
             if pump.section_id not in known_sections:
                 raise ValueError("Pump references an unknown section identity")
+            if isinstance(pump.control, OneShotStageAboveControlInput):
+                self._validate_control_threshold(
+                    pump.control,
+                    section_by_id[pump.section_id],
+                    "Pump section",
+                )
+
+    @staticmethod
+    def _validate_control_threshold(
+        control: OneShotStageAboveControlInput,
+        section: V4LiteSection,
+        label: str,
+    ) -> None:
+        """Keep a strict-above threshold inside its monitored Profile range."""
+
+        threshold = control.threshold_water_level_m
+        if not section.minimum_stage_m <= threshold < section.maximum_stage_m:
+            raise ValueError(
+                f"{label} control threshold must satisfy minimum_stage_m <= "
+                "threshold_water_level_m < maximum_stage_m"
+            )
 
 
 def _require_unique(values: Any, label: str) -> None:
@@ -561,8 +627,11 @@ __all__ = [
     "DownstreamStageSeries",
     "ExternalPumpInput",
     "FixedGateInput",
+    "FixedStructureControlInput",
+    "OneShotStageAboveControlInput",
     "ProfilePoint",
     "SectionInitialValue",
+    "StructureControlInput",
     "UniformInitialState",
     "UpstreamDischargeSeries",
     "V4LiteBoundary",

@@ -6,14 +6,14 @@
 
 ## 1. 测试分层
 
-本报告把软件回归、MVP 行为和科学候选门分开计数。`skip` 和 `xfail` 不计入通过数。
+本报告把软件回归、MVP 行为和限定科学门分开计数。`skip` 不计入通过数。
 
 | 范围 | 结果 | 说明 |
 |---|---:|---|
-| `tests/model02` | 73 passed, 1 xfailed | 新数值核心、合同、示例、Benchmark |
-| `tests` | 238 passed, 1 skipped, 1 xfailed | 仓库根测试，包含 MODEL-02 |
+| `tests/model02` | 107 passed | 新数值核心、合同、示例、Benchmark、阈值控制 |
+| `tests` | 272 passed, 1 skipped | 仓库根测试，包含 MODEL-02 |
 | `backend/tests` | 143 passed, 70 skipped | 后端回归；本阶段未改 API/DB |
-| 不重叠总计 | 381 passed, 71 skipped, 1 xfailed | 0 failed |
+| 不重叠总计 | 415 passed, 71 skipped | 0 failed / 0 xfailed |
 
 精确命令：
 
@@ -38,6 +38,8 @@ backend\.venv\Scripts\python.exe -m pytest -c backend\pyproject.toml -p no:cache
 - 调用方在求解过程中修改原始 dict 时，结果仍对应运行前独立快照及 hash。
 - 实际 Profile points 变化会改变 mesh hash，即使调用方伪造相同 `profile_hash`。
 - v4-lite 传入 legacy overrides、cancel 或 progress callback 时明确拒绝，不静默忽略。
+- 固定结构物输入仍产生原有 JSON 形状；阈值输入才增加 typed control events。
+- 阈值动作只在初始或已接受状态原子提交；RK stage 和失败重试只读既有命令。
 
 ## 3. 数值质量门
 
@@ -79,12 +81,12 @@ backend\.venv\Scripts\python.exe examples\hydraulic\saint-venant-mvp\run_demo.py
 
 | 项目 | 状态 | 原因 |
 |---|---|---|
-| Case 002 0.1% Manning 候选线 | XFAIL / NO-GO | 流量误差约 3.71% |
+| Case 002 默认 standard / v4-lite 坡床端到端 | PARTIAL / NO-GO | standard 仍约 3.71%；v4-lite 尚不允许竖向平移 Profile |
 | 非棱柱静水 | BLOCKED | 几何源项未实现，输入已 fail-closed |
 | 湿干溃坝/收敛阶 | NOT RUN | 无解析/高分辨率冻结参考 |
 | Gate 强动量/能头耦合 | NOT IMPLEMENTED | 当前只有 mass flux |
 | Pump Q-H/Q-η/内部转输 | NOT IMPLEMENTED | 当前只有定流量 external sink |
-| 自动阈值调度 | NOT IMPLEMENTED | 本阶段不猜测控制合同 |
+| 连续阈值 crossing 定位 | NOT IMPLEMENTED | 当前是接受步离散一次性 latch，并强制输出诊断 |
 | HTTP/Celery/DB 持久化 | NOT RUN | direct-engine-only |
 | HEC-RAS/MIKE11 结果级对比 | NOT RUN | 无冻结外部参考包 |
 | 真实工程率定/浏览器闭环 | NOT RUN | 不在该 MVP 证据范围 |
@@ -92,5 +94,5 @@ backend\.venv\Scripts\python.exe examples\hydraulic\saint-venant-mvp\run_demo.py
 ## 6. 验收判定
 
 - 代码与合成软件 MVP：`GO`。
-- MODEL-02-B 任务书的科学 Benchmark 全绿：`PARTIAL`。
+- MODEL-02-B 五个冻结场景：`GO`；Case 002 只在显式严格参考子集通过。
 - 实际工程/生产 Saint-Venant：`NO-GO`。

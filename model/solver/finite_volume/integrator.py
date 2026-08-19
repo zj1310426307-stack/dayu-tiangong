@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Literal, Sequence
+from typing import Literal, Mapping, Sequence
 
 from model.solver.finite_volume.boundary import BoundaryPair
 from model.solver.finite_volume.diagnostics import NumericalStateError, StabilityError
@@ -21,6 +21,19 @@ from model.solver.finite_volume.structures import (
 )
 
 _EPSILON = 1.0e-12
+
+
+def _committed_structure_state(
+    states: Mapping[str, object], structure_id: str
+) -> Mapping[str, object] | None:
+    """Return one immutable accepted command without interpreting trial heads."""
+
+    value = states.get(structure_id)
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("committed structure state must be a mapping")
+    return value
 
 
 @dataclass(frozen=True)
@@ -163,7 +176,7 @@ def _pump_context(
     )
 
 
-def forward_euler_stage(
+def _forward_euler_stage_raw(
     *,
     mesh: FiniteVolumeMesh,
     state: HydraulicState,
@@ -174,7 +187,7 @@ def forward_euler_stage(
     pumps: Sequence[OnOffPump] = (),
     scheme: Literal["hll", "rusanov"] = "hll",
 ) -> EulerStageResult:
-    """Evaluate flux, boundary, Gate, Pump and friction at one RK stage.
+    """Evaluate the uncorrected flux/source map for one Euler stage.
 
     Gate flow replaces only the common mass flux of its bound internal face;
     the default hydrostatic HLL momentum terms are retained and reported by
@@ -251,7 +264,8 @@ def forward_euler_stage(
                 left_index=gate.face_index,
                 right_index=gate.face_index + 1,
                 dt=dt,
-            )
+            ),
+            _committed_structure_state(state.gate_state, gate.gate_id),
         )
         gate_flows.append(result)
         gate_state[gate.gate_id] = result.state
@@ -269,7 +283,8 @@ def forward_euler_stage(
         if pump.cell_index >= len(mesh.cells):
             raise ValueError(f"pump {pump.pump_id} cell_index is outside the mesh")
         result = pump.evaluate_stage(
-            _pump_context(state=state, cell_index=pump.cell_index, dt=dt)
+            _pump_context(state=state, cell_index=pump.cell_index, dt=dt),
+            _committed_structure_state(state.pump_state, pump.pump_id),
         )
         if result.flow < 0.0:
             raise ValueError("MVP external pump sink flow must be non-negative")
@@ -333,6 +348,106 @@ def forward_euler_stage(
     )
 
 
+def forward_euler_stage(
+    *,
+    mesh: FiniteVolumeMesh,
+    state: HydraulicState,
+    dt: float,
+    dry_depth: float,
+    boundaries: BoundaryPair,
+    gates: Sequence[FixedGate] = (),
+    pumps: Sequence[OnOffPump] = (),
+    scheme: Literal["hll", "rusanov"] = "hll",
+    equilibrium_reference: HydraulicState | None = None,
+) -> EulerStageResult:
+    """Evaluate one Euler stage, optionally in residual-equilibrium form.
+
+    The optional reference is deliberately not inferred here.  The branch
+    orchestrator may supply it only after validating an analytic steady-state
+    contract.  For the same discrete Euler map ``Phi`` we advance deviations
+    as ``U + (Phi(U)-U) - (Phi(Ueq)-Ueq)``.  Consequently the verified
+    reference has exactly zero discrete residual, while a perturbation still
+    evolves under the original HLL/hydrostatic/Manning operator.
+
+    This is a deviation well-balancing correction, not a replacement flux and
+    not permission to freeze an arbitrary initial state.  Structures are
+    excluded because their steady momentum/energy contracts are not closed in
+    the MVP.
+    """
+
+    raw = _forward_euler_stage_raw(
+        mesh=mesh,
+        state=state,
+        dt=dt,
+        dry_depth=dry_depth,
+        boundaries=boundaries,
+        gates=gates,
+        pumps=pumps,
+        scheme=scheme,
+    )
+    if equilibrium_reference is None:
+        return raw
+    if gates or pumps:
+        raise ValueError(
+            "residual-equilibrium correction does not support MVP structures"
+        )
+    if len(equilibrium_reference.area) != len(mesh.cells):
+        raise ValueError("equilibrium reference cell count must match the mesh")
+
+    try:
+        reference_at_time = HydraulicState.from_conserved(
+            mesh=mesh,
+            time=state.time,
+            area=equilibrium_reference.area,
+            discharge=equilibrium_reference.discharge,
+            dry_depth=dry_depth,
+            diagnostics=equilibrium_reference.diagnostics,
+        )
+        raw_reference = _forward_euler_stage_raw(
+            mesh=mesh,
+            state=reference_at_time,
+            dt=dt,
+            dry_depth=dry_depth,
+            boundaries=boundaries,
+            scheme=scheme,
+        )
+        corrected_area = tuple(
+            current
+            + (advanced - current)
+            - (reference_advanced - reference)
+            for current, advanced, reference, reference_advanced in zip(
+                state.area,
+                raw.state.area,
+                reference_at_time.area,
+                raw_reference.state.area,
+            )
+        )
+        corrected_discharge = tuple(
+            current
+            + (advanced - current)
+            - (reference_advanced - reference)
+            for current, advanced, reference, reference_advanced in zip(
+                state.discharge,
+                raw.state.discharge,
+                reference_at_time.discharge,
+                raw_reference.state.discharge,
+            )
+        )
+        corrected = HydraulicState.from_conserved(
+            mesh=mesh,
+            time=state.time + dt,
+            area=corrected_area,
+            discharge=corrected_discharge,
+            dry_depth=dry_depth,
+            gate_state=raw.state.gate_state,
+            pump_state=raw.state.pump_state,
+            diagnostics=state.diagnostics,
+        )
+    except ValueError as exc:
+        raise NumericalStateError(str(exc)) from exc
+    return EulerStageResult(state=corrected, budget=raw.budget)
+
+
 def ssp_rk2_step(
     *,
     mesh: FiniteVolumeMesh,
@@ -344,6 +459,7 @@ def ssp_rk2_step(
     gates: Sequence[FixedGate] = (),
     pumps: Sequence[OnOffPump] = (),
     scheme: Literal["hll", "rusanov"] = "hll",
+    equilibrium_reference: HydraulicState | None = None,
 ) -> StepResult:
     """Advance one SSP-RK2 step, recomputing all stage-dependent inputs."""
 
@@ -359,6 +475,7 @@ def ssp_rk2_step(
         gates=gates,
         pumps=pumps,
         scheme=scheme,
+        equilibrium_reference=equilibrium_reference,
     )
     stage_cfl = cfl_number_for_step(mesh=mesh, state=first.state, dt=dt)
     maximum_cfl = max(initial_cfl, stage_cfl)
@@ -373,6 +490,7 @@ def ssp_rk2_step(
         gates=gates,
         pumps=pumps,
         scheme=scheme,
+        equilibrium_reference=equilibrium_reference,
     )
     final_area = tuple(
         0.5 * (original + evolved)
@@ -412,10 +530,16 @@ def ssp_rk2_step(
         )
 
     average_gate = average_flows(first.budget.gate_flows, second.budget.gate_flows)
-    flags = (
-        ("structure_momentum_closure_mass_only_mvp",)
-        if gates
-        else ()
+    flags = tuple(
+        flag
+        for enabled, flag in (
+            (bool(gates), "structure_momentum_closure_mass_only_mvp"),
+            (
+                equilibrium_reference is not None,
+                "moving_uniform_manning_residual_equilibrium_v1",
+            ),
+        )
+        if enabled
     )
     return StepResult(
         state=final_state,
@@ -454,6 +578,7 @@ def advance_with_retries(
     gates: Sequence[FixedGate] = (),
     pumps: Sequence[OnOffPump] = (),
     scheme: Literal["hll", "rusanov"] = "hll",
+    equilibrium_reference: HydraulicState | None = None,
 ) -> StepResult:
     """Reduce to the CFL step and retry rejected positivity/stability attempts."""
 
@@ -482,6 +607,7 @@ def advance_with_retries(
                 gates=gates,
                 pumps=pumps,
                 scheme=scheme,
+                equilibrium_reference=equilibrium_reference,
             )
         except (NumericalStateError, StabilityError):
             if retries >= maximum_retries:

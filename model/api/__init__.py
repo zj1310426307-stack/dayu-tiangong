@@ -3,6 +3,9 @@
 from model.api.contracts import build_solver_config
 from model.api.v4_lite import (
     MODEL_INPUT_V4_LITE,
+    FixedStructureControlInput,
+    OneShotStageAboveControlInput,
+    StructureControlInput,
     V4_LITE_SOLVER_TUPLE,
     V4LiteInput,
     parse_v4_lite_input,
@@ -10,6 +13,9 @@ from model.api.v4_lite import (
 
 __all__ = [
     "MODEL_INPUT_V4_LITE",
+    "FixedStructureControlInput",
+    "OneShotStageAboveControlInput",
+    "StructureControlInput",
     "V4_LITE_SOLVER_TUPLE",
     "V4LiteInput",
     "build_solver_config",

@@ -7,13 +7,19 @@ import math
 from collections.abc import Mapping
 from typing import Any
 
-from model.api.v4_lite import BySectionInitialState, V4LiteInput, parse_v4_lite_input
+from model.api.v4_lite import (
+    BySectionInitialState,
+    OneShotStageAboveControlInput,
+    V4LiteInput,
+    parse_v4_lite_input,
+)
 from model.core.errors import HydraulicInputError
 from model.geometry.sections import TabulatedSectionGeometry
 from model.provenance import canonical_json, snapshot_hash
 from model.result.mvp import (
     HYDRAULIC_RESULT_MVP,
     MvpDiagnostics,
+    MvpControlEvent,
     MvpGateSeries,
     MvpHydraulicResult,
     MvpPumpSeries,
@@ -29,6 +35,7 @@ from model.solver.finite_volume import (
     FiniteVolumeMesh,
     FixedGate,
     HydraulicState,
+    OneShotStageThreshold,
     OnOffPump,
     SingleBranchConfig,
     SingleBranchResult,
@@ -204,6 +211,11 @@ def _structures(
             height=gate.height_m,
             discharge_coefficient=gate.discharge_coefficient,
             allow_reverse=gate.allow_reverse_flow,
+            control=(
+                OneShotStageThreshold(gate.control.threshold_water_level_m)
+                if isinstance(gate.control, OneShotStageAboveControlInput)
+                else None
+            ),
         )
         for gate in model_input.structures.gates
     )
@@ -213,6 +225,11 @@ def _structures(
             cell_index=index_by_section[pump.section_id],
             design_flow=pump.design_flow_m3_s,
             enabled=pump.status == "on",
+            control=(
+                OneShotStageThreshold(pump.control.threshold_water_level_m)
+                if isinstance(pump.control, OneShotStageAboveControlInput)
+                else None
+            ),
         )
         for pump in model_input.structures.pumps
     )
@@ -225,17 +242,27 @@ def _gate_series(
     mesh: FiniteVolumeMesh,
     gates: tuple[FixedGate, ...],
 ) -> tuple[MvpGateSeries, ...]:
-    """Evaluate fixed Gate flow from each accepted output state's current heads."""
+    """Project accepted actual opening and current-head flow at output times."""
 
     if not gates:
         return ()
     gate = gates[0]
     source = model_input.structures.gates[0]
     time = tuple(state.time for state in runtime.states)
+    opening: list[float] = []
     flow: list[float] = []
     for state in runtime.states:
         left = gate.face_index
         right = left + 1
+        control_state = state.gate_state.get(gate.gate_id)
+        if not isinstance(control_state, Mapping):
+            raise HydraulicInputError("runtime Gate state is missing or malformed")
+        actual_opening = control_state.get("opening")
+        if isinstance(actual_opening, bool) or not isinstance(
+            actual_opening, (int, float)
+        ):
+            raise HydraulicInputError("runtime Gate opening is not numeric")
+        opening.append(float(actual_opening))
         flow.append(
             gate.evaluate_stage(
                 StructureStageContext(
@@ -251,14 +278,15 @@ def _gate_series(
                     downstream_area=state.area[right],
                     upstream_discharge=state.discharge[left],
                     downstream_discharge=state.discharge[right],
-                )
+                ),
+                control_state,
             ).flow
         )
     return (
         MvpGateSeries(
             gate_id=source.identity.id,
             time=time,
-            opening=tuple(source.opening_m for _ in time),
+            opening=tuple(opening),
             flow=tuple(flow),
         ),
     )
@@ -268,19 +296,27 @@ def _pump_series(
     model_input: V4LiteInput,
     runtime: SingleBranchResult,
 ) -> tuple[MvpPumpSeries, ...]:
-    """Project the fixed ON/OFF external Pump contract onto output times."""
+    """Project each accepted actual Pump command onto the output time axis."""
 
     if not model_input.structures.pumps:
         return ()
     pump = model_input.structures.pumps[0]
     time = tuple(state.time for state in runtime.states)
-    flow = pump.design_flow_m3_s if pump.status == "on" else 0.0
+    enabled: list[bool] = []
+    for state in runtime.states:
+        control_state = state.pump_state.get(str(pump.identity.id))
+        if not isinstance(control_state, Mapping):
+            raise HydraulicInputError("runtime Pump state is missing or malformed")
+        actual_enabled = control_state.get("enabled")
+        if not isinstance(actual_enabled, bool):
+            raise HydraulicInputError("runtime Pump enabled state is not boolean")
+        enabled.append(actual_enabled)
     return (
         MvpPumpSeries(
             pump_id=pump.identity.id,
             time=time,
-            status=tuple(pump.status for _ in time),
-            flow=tuple(flow for _ in time),
+            status=tuple("on" if item else "off" for item in enabled),
+            flow=tuple(pump.design_flow_m3_s if item else 0.0 for item in enabled),
         ),
     )
 
@@ -316,6 +352,17 @@ def _result(
         sections=sections,
         gates=_gate_series(model_input, runtime, mesh, gates),
         pumps=_pump_series(model_input, runtime),
+        control_events=tuple(
+            MvpControlEvent(
+                time=event.time,
+                structure_id=int(event.structure_id),
+                structure_type=event.structure_type,
+                action=event.action,
+                threshold_water_level=event.threshold_water_level,
+                observed_water_level=event.observed_water_level,
+            )
+            for event in runtime.control_events
+        ),
         water_balance=MvpWaterBalance(
             initial_storage=evidence.initial_storage,
             final_storage=evidence.final_storage,

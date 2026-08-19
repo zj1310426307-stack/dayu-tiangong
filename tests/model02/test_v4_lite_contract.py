@@ -264,3 +264,79 @@ def test_input_parser_does_not_mutate_the_untrusted_mapping() -> None:
     parse_v4_lite_input(payload)
 
     assert payload == before
+
+
+def test_one_shot_structure_control_is_explicit_and_mutually_exclusive() -> None:
+    """A discriminator selects fixed or one-shot control with no guessed fallback."""
+
+    payload = make_v4_lite_payload()
+    payload["structures"]["gates"][0]["control"] = {
+        "type": "one-shot-stage-above",
+        "threshold_water_level_m": 10.25,
+    }
+    payload["structures"]["pumps"][0]["status"] = "off"
+    payload["structures"]["pumps"][0]["control"] = {
+        "type": "one-shot-stage-above",
+        "threshold_water_level_m": 10.5,
+    }
+
+    parsed = parse_v4_lite_input(payload)
+
+    assert parsed.structures.gates[0].control.type == "one-shot-stage-above"
+    assert parsed.structures.pumps[0].control.type == "one-shot-stage-above"
+
+    payload["structures"]["gates"][0]["control"]["type"] = "threshold"
+    with pytest.raises(HydraulicInputError):
+        parse_v4_lite_input(payload)
+
+
+@pytest.mark.parametrize(
+    ("structure", "mutation", "message"),
+    [
+        (
+            "gate",
+            {"opening_m": 0.0, "threshold_water_level_m": 10.0},
+            "target opening_m must be positive",
+        ),
+        (
+            "gate",
+            {"opening_m": 1.0, "threshold_water_level_m": 12.0},
+            "control threshold must satisfy",
+        ),
+        (
+            "pump",
+            {"status": "on", "threshold_water_level_m": 10.0},
+            "initial status 'off'",
+        ),
+        (
+            "pump",
+            {"status": "off", "threshold_water_level_m": 8.0},
+            "control threshold must satisfy",
+        ),
+    ],
+)
+def test_one_shot_structure_control_fails_closed(
+    structure: str,
+    mutation: dict[str, object],
+    message: str,
+) -> None:
+    """Contradictory commands and unreachable Profile thresholds are rejected."""
+
+    payload = make_v4_lite_payload()
+    key = "gates" if structure == "gate" else "pumps"
+    item = payload["structures"][key][0]
+    threshold = mutation["threshold_water_level_m"]
+    item.update(
+        {
+            field: value
+            for field, value in mutation.items()
+            if field != "threshold_water_level_m"
+        }
+    )
+    item["control"] = {
+        "type": "one-shot-stage-above",
+        "threshold_water_level_m": threshold,
+    }
+
+    with pytest.raises(HydraulicInputError, match=message):
+        parse_v4_lite_input(payload)

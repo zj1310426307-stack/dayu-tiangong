@@ -39,7 +39,7 @@ v4-lite 当前只允许一组有证据支持的软件 MVP 组合：
 - 可使用单槽非矩形 Profile，但沿横向必须向唯一连续槽底单调收敛，且各 cell 必须是完全相同的棱柱断面；
 - 显式初态，不从边界或默认水深猜测；
 - 上游 Q(t) + 下游 H(t)，必须完整覆盖时域，禁止外推；
-- 最多 1 座固定开度 Gate 和 1 座定流量外排 Pump；
+- 最多 1 座固定或接受步一次性阈值 Gate，以及 1 座固定或一次性阈值定流量外排 Pump；
 - 唯一数值元组：`saint-venant / finite-volume-hll / ssp-rk2`。
 
 禁止非棱柱 Profile 是显式的 fail-closed 门禁：当前 hydrostatic reconstruction 尚没有一般非棱柱几何源项，不允许在水量账平衡时仍产生伪静水而被误报通过。
@@ -52,7 +52,7 @@ v4-lite 本阶段是框架无关的 Python 引擎直连路由。HTTP 任务 DTO�
 
 - 旧路径回归：`PASS`。
 - v4-lite 软件 MVP 路由：`PASS`。
-- 恒定均匀流 0.1% 科学候选线：`XFAIL / NO-GO`。
+- 恒定均匀流 0.1% 科学候选线：显式 `uniform-manning-reference` 内核子集 `PASS`；默认 `standard` 和 v4-lite 坡床端到端仍 `NO-GO`。
 - 非棱柱断面、节点求解、闸泵强动量耦合、外部模型对比和生产率定：`NOT IMPLEMENTED / NO-GO`。
 
 因此，本阶段可称为“大禹自主单河 Saint-Venant 软件 MVP 可运行”，不得称为 HEC-RAS/MIKE11 等级、实际工程率定或生产验收通过。

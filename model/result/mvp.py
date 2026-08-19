@@ -76,7 +76,7 @@ class MvpSectionSeries(StrictResultModel):
 
 
 class MvpGateSeries(StrictResultModel):
-    """Store the fixed opening and coupled Gate flow at each reported time."""
+    """Store the accepted actual opening and coupled Gate flow at output times."""
 
     gate_id: PositiveId
     time: tuple[NonNegativeFinite, ...] = Field(min_length=2)
@@ -88,11 +88,16 @@ class MvpGateSeries(StrictResultModel):
         """Require Gate opening and flow arrays to align with their own time axis."""
 
         _validate_aligned_series(self.time, (self.opening, self.flow), "Gate")
+        if any(
+            opening == 0.0 and flow != 0.0
+            for opening, flow in zip(self.opening, self.flow)
+        ):
+            raise ValueError("Gate result flow must be zero while opening is zero")
         return self
 
 
 class MvpPumpSeries(StrictResultModel):
-    """Store ON/OFF state and external Pump flow at each reported time."""
+    """Store the accepted actual Pump state and external flow at output times."""
 
     pump_id: PositiveId
     time: tuple[NonNegativeFinite, ...] = Field(min_length=2)
@@ -104,6 +109,40 @@ class MvpPumpSeries(StrictResultModel):
         """Require Pump state and flow arrays to align with their own time axis."""
 
         _validate_aligned_series(self.time, (self.status, self.flow), "Pump")
+        for status, flow in zip(self.status, self.flow):
+            if status == "off" and flow != 0.0:
+                raise ValueError("Pump result flow must be zero while status is off")
+            if status == "on" and flow <= 0.0:
+                raise ValueError("Pump result flow must be positive while status is on")
+        on_flows = {
+            flow for status, flow in zip(self.status, self.flow) if status == "on"
+        }
+        if len(on_flows) > 1:
+            raise ValueError("Pump design flow must remain constant while status is on")
+        return self
+
+
+class MvpControlEvent(StrictResultModel):
+    """Expose one accepted-state threshold action independently of device state."""
+
+    time: NonNegativeFinite
+    structure_id: PositiveId
+    structure_type: Literal["gate", "pump"]
+    action: Literal["open", "start"]
+    threshold_water_level: FiniteNumber
+    observed_water_level: FiniteNumber
+
+    @model_validator(mode="after")
+    def validate_causal_action(self) -> Self:
+        """Require a strict crossing and the action defined for that device type."""
+
+        if self.observed_water_level <= self.threshold_water_level:
+            raise ValueError("control event observed level must exceed its threshold")
+        if (self.structure_type, self.action) not in {
+            ("gate", "open"),
+            ("pump", "start"),
+        }:
+            raise ValueError("control event action does not match structure_type")
         return self
 
 
@@ -213,6 +252,7 @@ class MvpHydraulicResult(StrictResultModel):
     sections: tuple[MvpSectionSeries, ...] = Field(min_length=3)
     gates: tuple[MvpGateSeries, ...] = Field(max_length=1)
     pumps: tuple[MvpPumpSeries, ...] = Field(max_length=1)
+    control_events: tuple[MvpControlEvent, ...] = ()
     water_balance: MvpWaterBalance
     diagnostics: MvpDiagnostics
     provenance: MvpResultProvenance
@@ -232,12 +272,82 @@ class MvpHydraulicResult(StrictResultModel):
             raise ValueError(
                 "all Gate and Pump results must use the common section output time axis"
             )
+        event_times = tuple(item.time for item in self.control_events)
+        if any(right < left for left, right in zip(event_times, event_times[1:])):
+            raise ValueError("control events must be ordered by accepted-state time")
+        if any(
+            item.time < expected_time[0] or item.time > expected_time[-1]
+            for item in self.control_events
+        ):
+            raise ValueError("control event time lies outside the result interval")
+        event_keys = tuple(
+            (item.structure_type, item.structure_id) for item in self.control_events
+        )
+        _require_unique(event_keys, "one-shot control event structure identity")
+        event_key_set = set(event_keys)
+        gate_ids = {item.gate_id for item in self.gates}
+        pump_ids = {item.pump_id for item in self.pumps}
+        for event in self.control_events:
+            known_ids = gate_ids if event.structure_type == "gate" else pump_ids
+            if event.structure_id not in known_ids:
+                raise ValueError("control event references an unknown result structure")
+            if event.structure_type == "gate":
+                series = next(
+                    item for item in self.gates if item.gate_id == event.structure_id
+                )
+                before = tuple(
+                    opening
+                    for time, opening in zip(series.time, series.opening)
+                    if time < event.time
+                )
+                after = tuple(
+                    opening
+                    for time, opening in zip(series.time, series.opening)
+                    if time >= event.time
+                )
+                if any(opening != 0.0 for opening in before) or any(
+                    opening <= 0.0 for opening in after
+                ):
+                    raise ValueError("Gate event contradicts its accepted opening series")
+                if len(set(after)) != 1:
+                    raise ValueError("Gate target opening changes after its one-shot event")
+            else:
+                series = next(
+                    item for item in self.pumps if item.pump_id == event.structure_id
+                )
+                before = tuple(
+                    status
+                    for time, status in zip(series.time, series.status)
+                    if time < event.time
+                )
+                after = tuple(
+                    status
+                    for time, status in zip(series.time, series.status)
+                    if time >= event.time
+                )
+                if any(status != "off" for status in before) or any(
+                    status != "on" for status in after
+                ):
+                    raise ValueError("Pump event contradicts its accepted status series")
+        for gate in self.gates:
+            if ("gate", gate.gate_id) not in event_key_set and len(
+                set(gate.opening)
+            ) != 1:
+                raise ValueError("Gate opening changes without a control event")
+        for pump in self.pumps:
+            if ("pump", pump.pump_id) not in event_key_set and len(
+                set(pump.status)
+            ) != 1:
+                raise ValueError("Pump status changes without a control event")
         return self
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the stable JSON-ready MVP result without legacy projection."""
+        """Return JSON while preserving the pre-control fixed-result shape."""
 
-        return self.model_dump(mode="json")
+        payload = self.model_dump(mode="json")
+        if not self.control_events:
+            payload.pop("control_events")
+        return payload
 
 
 def _require_unique(values: Any, label: str) -> None:
@@ -250,6 +360,7 @@ def _require_unique(values: Any, label: str) -> None:
 
 __all__ = [
     "HYDRAULIC_RESULT_MVP",
+    "MvpControlEvent",
     "MvpDiagnostics",
     "MvpGateSeries",
     "MvpHydraulicResult",

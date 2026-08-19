@@ -106,6 +106,7 @@ def test_v4_lite_result_closes_time_water_structure_and_provenance_contracts() -
     assert document["gates"][0]["opening"] == [1.0, 1.0, 1.0]
     assert document["pumps"][0]["status"] == ["on", "on", "on"]
     assert document["pumps"][0]["flow"] == [1.5, 1.5, 1.5]
+    assert "control_events" not in document
     assert (
         "structure_momentum_closure_mass_only_mvp"
         in document["diagnostics"]["diagnostic_flags"]
@@ -118,6 +119,39 @@ def test_v4_lite_result_closes_time_water_structure_and_provenance_contracts() -
     reference = HydraulicEngine().run(constant_stage).to_dict()
     assert document["sections"][-1]["water_level"][-1] != pytest.approx(
         reference["sections"][-1]["water_level"][-1]
+    )
+
+
+def test_v4_lite_threshold_actions_are_typed_and_project_actual_commands() -> None:
+    """An initial accepted exceedance opens/starts once and is not reconstructed."""
+
+    payload = make_short_v4_lite_payload()
+    payload["structures"]["gates"][0]["control"] = {
+        "type": "one-shot-stage-above",
+        "threshold_water_level_m": 9.5,
+    }
+    payload["structures"]["pumps"][0]["status"] = "off"
+    payload["structures"]["pumps"][0]["control"] = {
+        "type": "one-shot-stage-above",
+        "threshold_water_level_m": 9.5,
+    }
+
+    document = HydraulicEngine().run(payload).to_dict()
+
+    assert document["gates"][0]["opening"] == [1.0, 1.0, 1.0]
+    assert document["pumps"][0]["status"] == ["on", "on", "on"]
+    assert document["pumps"][0]["flow"] == [1.5, 1.5, 1.5]
+    assert [
+        (event["time"], event["structure_type"], event["action"])
+        for event in document["control_events"]
+    ] == [(0.0, "gate", "open"), (0.0, "pump", "start")]
+    assert all(
+        event["observed_water_level"] > event["threshold_water_level"]
+        for event in document["control_events"]
+    )
+    assert (
+        "structure_control_one_shot_accepted_state_discrete"
+        in document["diagnostics"]["diagnostic_flags"]
     )
 
 

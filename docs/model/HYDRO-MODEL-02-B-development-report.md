@@ -16,7 +16,7 @@ cell-centred finite-volume mesh + U=(A,Q)
         ↓
 HLL + hydrostatic reconstruction + SSP-RK2 + Manning
         ↓
-Q(t)/H(t) + fixed Gate + ON/OFF external Pump
+Q(t)/H(t) + fixed/one-shot-threshold Gate/Pump
         ↓
 dayu.hydraulic-result.mvp
 ```
@@ -50,6 +50,7 @@ I1(H) = 1/2 ∫ max(H-z(x), 0)^2 dx
 - SSP-RK2 每个 stage 重新评价边界、通量、摩阻和结构物。
 - CFL 自动缩步，步长精确落在边界折点、输出时刻和结束时刻。
 - Manning 摩阻采用每 SSP stage 的半隐式处理，禁止流量因摩阻翻转符号。
+- 显式 `uniform-manning-reference` 模式只接受经解析验证的均匀棱柱、线性坡、常 Q/H/n 亚临界平衡，并用同一离散算子扣除参考残差；默认仍为 `standard`。
 
 ## 3. 边界与结构物
 
@@ -57,7 +58,7 @@ I1(H) = 1/2 ∫ max(H-z(x), 0)^2 dx
 - Gate 在每个 RK stage 使用当前上下游水位重算定开度质量通量。它尚未闭合结构力/局损动量，因此强制输出 `structure_momentum_closure_mass_only_mvp`。
 - Pump 是单 cell 的 ON/OFF 定流量外排源汇，移除对应质量与局部平流动量，外排体积进入全局水量账。
 
-Case 004/005 只对固定开/关状态做对照。任务书同时写了“固定开度/ON-OFF”与“超阈动作”，但没有冻结控制规则合同；本阶段没有暗造阈值或回填动作时间，自动调度留给 MODEL-02-C。
+Case 004/005 保留固定开/关对照，并增加显式 `one-shot-stage-above` 合同。Gate/Pump 使用同一接受态水位独立判定，在成功步末原子锁存一次；两个 RK stage 和失败重试不推进控制状态。事件时刻是接受步离散时刻，不宣称连续 crossing 已精确定位。
 
 ## 4. 输入与结果合同
 
@@ -70,6 +71,7 @@ Case 004/005 只对固定开/关状态做对照。任务书同时写了“固定
 - 单槽、单调岸坡且各 cell 完全相同的棱柱非规则断面限制；
 - 边界类型、两端节点、唯一身份和时域覆盖；
 - Gate 相邻 face 绑定和 Pump 明确 external outlet；
+- 固定与一次性阈值控制使用互斥、可辨别合同；阈值必须位于被监测 Profile 范围内；
 - 唯一 solver tuple。
 
 引擎入口先把 JSON 规范化成独立快照并预计算 hash，之后的解析、求解和结果均使用该副本，阻断运行中调用方修改导致的 TOCTOU 证据错配。
@@ -80,6 +82,7 @@ MVP 结果是独立 DTO，不继承 `EngineResult`，包含：
 
 - 逐 Section 的 time/water_level/flow/velocity；
 - Gate opening/flow 和 Pump status/flow；
+- 可选的 typed Gate/Pump 接受态控制事件；固定输入仍保持原 JSON 输出形状；
 - 动态初末库容、边界体积、Pump 外排体积及归一化误差；
 - maximum CFL、minimum dt、retry/step count 和强制诊断；
 - 输入快照 hash 和实际消费几何的 mesh hash。
@@ -107,19 +110,19 @@ mesh hash 包含实际 Profile points、dx、Manning n、几何处理策略和�
 | 非规则断面 I1 | PASS | 分段解析积分；棱柱子集静水通过 |
 | 单河非恒定流 | PASS (MVP) | 洪峰传播行为通过，无解析精度声明 |
 | Q(t)/H(t) | PASS | 插值、折点对齐、禁止外推 |
-| Gate/Pump | PASS (MVP) | 固定质量通量/外排源汇，非强耦合/非 Q-H 工作点 |
+| Gate/Pump | PASS (MVP) | 固定或接受步一次性阈值质量通量/外排源汇，非强耦合/非 Q-H 工作点 |
 | 结果过程线 | PASS | 独立 `hydraulic-result.mvp` |
-| Case 001–005 场景 | PASS/PARTIAL | 5 个 MVP 场景通过；Case 002 严格科学门 XFAIL |
+| Case 001–005 场景 | PASS | Case 002 仅在显式严格参考子集通过；Case 004/005 为离散一次性阈值行为 |
 | 多河网预留 | PASS | 5 个 Protocol，无伪实现 |
 | HTTP/Celery/DB 闭环 | NOT IN THIS STAGE | 仅 direct engine，不对外写成已通过 |
 
 ## 7. 已知限制和下一阶段
 
-1. Case 002 恒定均匀流当前流量最大相对误差约 3.71%，未达 0.1% 候选科学线。
+1. Case 002 只在显式 `uniform-manning-reference` 内核子集达到 0.1% 候选线；默认 standard 仍约 3.71%，且 v4-lite 尚不能表达坡床端到端输入。
 2. Q/H 边界的 companion 量仍是亚临界 MVP 零梯度闭合，尚无特征边界和流态相容性判定。
 3. 非棱柱几何源项和多湿区复式断面未实现，v4-lite 已 fail-closed 到单槽、完全相同 Profile。
-4. Gate 结构力/局损动量闭合、Pump Q-H/Q-η 工作点和阈值调度未实现。
+4. Gate 结构力/局损动量闭合、Pump Q-H/Q-η 工作点和连续阈值 crossing 定位未实现。
 5. 湿干前沿、溃坝解析解、网格收敛阶、HEC-RAS/MIKE11 结果级对比和真实率定未运行。
 6. 直连输入中的 `engine_version/engine_commit` 是调用方声明，未经任务系统运行时证明；持久化阶段必须与 Worker 运行时元数据做等值校验。
 
-MODEL-02-C 应优先关闭 Case 002、特征边界、非棱柱源项和结构物强耦合，再扩展 Branch/Junction 河网。
+MODEL-02-C 应优先实现特征边界、非棱柱源项、结构物强耦合和连续事件定位，再扩展 Branch/Junction 河网；Case 002 的参考模式不得被外推为上述能力已完成。

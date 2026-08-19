@@ -1,7 +1,7 @@
 """HYDRO-MODEL-02-B 五个分级合成 Benchmark。
 
-Case 001 是变床矩形河道的严格静水科学门；Case 002 同时
-保留可执行的 MVP 行为回归与不得误报通过的科学候选门。
+Case 001 是变床矩形河道的严格静水科学门；Case 002 使用
+显式、严格校验的 uniform-Manning residual-equilibrium 模式。
 Case 003--005 只验证 MVP 传播、结构源汇和质量记账行为，
 不代表外部模型精度、强动量耦合或泵站 Q-H 工作点验收。
 """
@@ -9,6 +9,7 @@ Case 003--005 只验证 MVP 传播、结构源汇和质量记账行为，
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 
 import pytest
 
@@ -26,6 +27,7 @@ from model.solver.finite_volume import (
     SingleBranchConfig,
     SingleBranchResult,
     UpstreamDischargeBoundary,
+    forward_euler_stage,
     solve_single_branch,
 )
 
@@ -260,6 +262,7 @@ def _case002_manning_run() -> tuple[
         maximum_dt=2.0,
         output_interval=60.0,
         cfl_number=0.5,
+        equilibrium_mode="uniform-manning-reference",
     )
     result = solve_single_branch(
         mesh=mesh,
@@ -318,14 +321,6 @@ def test_case002_mvp_behavior_manning_flow_remains_bounded(
     assert all(value > 0.0 for value in result.states[-1].discharge[2:-2])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "MVP subcritical boundary closure and per-stage friction are not yet the "
-        "frozen characteristic/IMEX scientific scheme; current Q=50 case remains "
-        "outside the 0.1% Manning candidate threshold"
-    ),
-)
 def test_case002_scientific_candidate_manning_normal_depth(
     _case002_manning_run: tuple[
         SingleBranchResult,
@@ -335,7 +330,7 @@ def test_case002_scientific_candidate_manning_normal_depth(
         float,
     ],
 ) -> None:
-    """保留候选科学门，不把 5% 行为容差宣称为正常水深验证。"""
+    """显式移动稳态模式必须满足冻结的 0.1% Manning 科学门。"""
 
     result, _, _, _, _ = _case002_manning_run
     flow_error, depth_error, relative_depth_error = _case002_errors(
@@ -345,6 +340,258 @@ def test_case002_scientific_candidate_manning_normal_depth(
     assert depth_error <= 0.01
     assert relative_depth_error <= 1.0e-3
     assert result.diagnostics.relative_water_balance_error <= 1.0e-6
+    assert (
+        "moving_uniform_manning_residual_equilibrium_v1"
+        in result.diagnostics.diagnostic_flags
+    )
+
+
+def test_case002_standard_operator_residual_matches_hydrostatic_source_bias(
+    _case002_manning_run: tuple[
+        SingleBranchResult,
+        FiniteVolumeMesh,
+        SingleBranchConfig,
+        float,
+        float,
+    ],
+) -> None:
+    """量化 standard HR 床坡源与 cell-center Manning 源的离散失配。"""
+
+    result, mesh, config, discharge, normal_depth = _case002_manning_run
+    reference = result.states[0]
+    boundaries = _boundaries(
+        times=(0.0, config.end_time),
+        discharges=(discharge, discharge),
+        stages=(mesh.cells[-1].bed_elevation + normal_depth,) * 2,
+    )
+    diagnostic_dt = 1.0e-5
+    standard = forward_euler_stage(
+        mesh=mesh,
+        state=reference,
+        dt=diagnostic_dt,
+        dry_depth=config.dry_depth,
+        boundaries=boundaries,
+    )
+    index = len(mesh.cells) // 2
+    observed_rate = (
+        standard.state.discharge[index] - reference.discharge[index]
+    ) / diagnostic_dt
+    cell = mesh.cells[index]
+    downstream = mesh.cells[index + 1]
+    bed_drop = cell.bed_elevation - downstream.bed_elevation
+    width = cell.geometry.width
+    hydrostatic_bed_force = (
+        GRAVITY
+        * width
+        * (normal_depth * bed_drop - 0.5 * bed_drop * bed_drop)
+        / cell.dx
+    )
+    area = reference.area[index]
+    radius = cell.geometry.hydraulic_radius(
+        cell.geometry.stage_from_area(area)
+    )
+    manning_force = (
+        GRAVITY
+        * cell.manning_n
+        * cell.manning_n
+        * discharge
+        * abs(discharge)
+        / (area * radius ** (4.0 / 3.0))
+    )
+    expected_residual = hydrostatic_bed_force - manning_force
+    assert observed_rate == pytest.approx(expected_residual, abs=2.0e-6)
+    assert expected_residual == pytest.approx(-0.0299765864, abs=1.0e-9)
+
+
+def test_case002_standard_mode_preserves_the_uncorrected_baseline(
+    _case002_manning_run: tuple[
+        SingleBranchResult,
+        FiniteVolumeMesh,
+        SingleBranchConfig,
+        float,
+        float,
+    ],
+) -> None:
+    """The new equilibrium correction must remain an explicit opt-in."""
+
+    corrected, mesh, config, discharge, normal_depth = _case002_manning_run
+    initial = corrected.states[0]
+    standard = solve_single_branch(
+        mesh=mesh,
+        initial_state=initial,
+        boundaries=_boundaries(
+            times=(0.0, config.end_time),
+            discharges=(discharge, discharge),
+            stages=(mesh.cells[-1].bed_elevation + normal_depth,) * 2,
+        ),
+        config=replace(config, equilibrium_mode="standard"),
+    )
+    flow_error, depth_error, _ = _case002_errors(
+        (standard, mesh, config, discharge, normal_depth)
+    )
+
+    assert flow_error == pytest.approx(0.03706990577480354, abs=1.0e-12)
+    assert depth_error == pytest.approx(0.04483645895285715, abs=1.0e-12)
+    assert (
+        "moving_uniform_manning_residual_equilibrium_v1"
+        not in standard.diagnostics.diagnostic_flags
+    )
+
+
+def test_case002_residual_reference_does_not_freeze_a_perturbation(
+    _case002_manning_run: tuple[
+        SingleBranchResult,
+        FiniteVolumeMesh,
+        SingleBranchConfig,
+        float,
+        float,
+    ],
+) -> None:
+    """同一离散参考残差应保持解析稳态，但仍推进偏离参考的状态。"""
+
+    result, mesh, config, discharge, normal_depth = _case002_manning_run
+    reference = result.states[0]
+    boundaries = _boundaries(
+        times=(0.0, config.end_time),
+        discharges=(discharge, discharge),
+        stages=(mesh.cells[-1].bed_elevation + normal_depth,) * 2,
+    )
+    exact = forward_euler_stage(
+        mesh=mesh,
+        state=reference,
+        dt=1.0,
+        dry_depth=config.dry_depth,
+        boundaries=boundaries,
+        equilibrium_reference=reference,
+    )
+    assert exact.state.area == pytest.approx(reference.area, abs=1.0e-14)
+    assert exact.state.discharge == pytest.approx(reference.discharge, abs=1.0e-14)
+
+    perturbed_area = list(reference.area)
+    perturbed_area[len(perturbed_area) // 2] *= 1.001
+    perturbation = HydraulicState.from_conserved(
+        mesh=mesh,
+        time=reference.time,
+        area=perturbed_area,
+        discharge=reference.discharge,
+        dry_depth=config.dry_depth,
+    )
+    evolved = forward_euler_stage(
+        mesh=mesh,
+        state=perturbation,
+        dt=1.0,
+        dry_depth=config.dry_depth,
+        boundaries=boundaries,
+        equilibrium_reference=reference,
+    )
+    assert max(
+        abs(after - before)
+        for after, before in zip(evolved.state.area, perturbation.area)
+    ) > 1.0e-8
+    assert max(
+        abs(after - before)
+        for after, before in zip(evolved.state.discharge, perturbation.discharge)
+    ) > 1.0e-8
+
+
+def test_case002_uniform_manning_opt_in_rejects_non_equilibrium_initial_state(
+    _case002_manning_run: tuple[
+        SingleBranchResult,
+        FiniteVolumeMesh,
+        SingleBranchConfig,
+        float,
+        float,
+    ],
+) -> None:
+    """显式模式不得把带扰动的任意初态静默冻结为参考稳态。"""
+
+    result, mesh, config, discharge, normal_depth = _case002_manning_run
+    reference = result.states[0]
+    perturbed_area = list(reference.area)
+    perturbed_area[len(perturbed_area) // 2] *= 1.001
+    perturbation = HydraulicState.from_conserved(
+        mesh=mesh,
+        time=0.0,
+        area=perturbed_area,
+        discharge=reference.discharge,
+        dry_depth=config.dry_depth,
+    )
+    boundaries = _boundaries(
+        times=(0.0, config.end_time),
+        discharges=(discharge, discharge),
+        stages=(mesh.cells[-1].bed_elevation + normal_depth,) * 2,
+    )
+    with pytest.raises(ValueError, match="constant initial area"):
+        solve_single_branch(
+            mesh=mesh,
+            initial_state=perturbation,
+            boundaries=boundaries,
+            config=config,
+        )
+
+
+def test_case002_uniform_manning_opt_in_rejects_dynamic_boundary(
+    _case002_manning_run: tuple[
+        SingleBranchResult,
+        FiniteVolumeMesh,
+        SingleBranchConfig,
+        float,
+        float,
+    ],
+) -> None:
+    """移动稳态参考不得与变动 Q 边界混用。"""
+
+    result, mesh, config, discharge, normal_depth = _case002_manning_run
+    with pytest.raises(ValueError, match="constant upstream Q boundary"):
+        solve_single_branch(
+            mesh=mesh,
+            initial_state=result.states[0],
+            boundaries=_boundaries(
+                times=(0.0, config.end_time),
+                discharges=(discharge, discharge * 1.001),
+                stages=(mesh.cells[-1].bed_elevation + normal_depth,) * 2,
+            ),
+            config=config,
+        )
+
+
+def test_case002_uniform_manning_opt_in_rejects_wrong_friction_balance(
+    _case002_manning_run: tuple[
+        SingleBranchResult,
+        FiniteVolumeMesh,
+        SingleBranchConfig,
+        float,
+        float,
+    ],
+) -> None:
+    """常值初态也必须真正满足 Manning 床坡平衡。"""
+
+    result, mesh, config, discharge, normal_depth = _case002_manning_run
+    wrong_friction_mesh = FiniteVolumeMesh(
+        tuple(
+            FiniteVolumeCell(
+                cell_id=cell.cell_id,
+                dx=cell.dx,
+                section_id=cell.section_id,
+                bed_elevation=cell.bed_elevation,
+                geometry=cell.geometry,
+                manning_n=cell.manning_n * 1.001,
+            )
+            for cell in mesh.cells
+        ),
+        branch_id=mesh.branch_id,
+    )
+    with pytest.raises(ValueError, match="does not satisfy Manning equilibrium"):
+        solve_single_branch(
+            mesh=wrong_friction_mesh,
+            initial_state=result.states[0],
+            boundaries=_boundaries(
+                times=(0.0, config.end_time),
+                discharges=(discharge, discharge),
+                stages=(mesh.cells[-1].bed_elevation + normal_depth,) * 2,
+            ),
+            config=config,
+        )
 
 
 def test_case003_mvp_behavior_flood_peak_propagates_downstream() -> None:

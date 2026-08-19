@@ -96,7 +96,7 @@ HYDRO-MODEL-02-A 审查确认：仓库中的 v1 单河路径包含一阶 Rusanov
 - [验证门禁](docs/model/HYDRO-MODEL-02-validation.md)
 - [迁移与回退](docs/model/HYDRO-MODEL-02-migration-report.md)
 
-HYDRO-MODEL-02-B 已在独立分支实现首个可运行的 `dayu.model-input.v4-lite` 单河有限体积 MVP：HLL、hydrostatic reconstruction、SSP-RK2、CFL、半隐式 Manning、动态 Q(t)/H(t)、固定 Gate、ON/OFF 外排 Pump 和独立 `dayu.hydraulic-result.mvp`。当前对外只允许相同非规则 Profile 的棱柱单河，并仅提供 Python 引擎直连路由。
+HYDRO-MODEL-02-B 已在独立分支实现首个可运行的 `dayu.model-input.v4-lite` 单河有限体积 MVP：HLL、hydrostatic reconstruction、SSP-RK2、CFL、半隐式 Manning、动态 Q(t)/H(t)、固定或接受步一次性阈值 Gate/Pump，以及独立 `dayu.hydraulic-result.mvp`。当前对外只允许相同非规则 Profile 的棱柱单河，并仅提供 Python 引擎直连路由。
 
 - [MODEL-02-B 求解器基线](docs/review/HYDRO-MODEL-02-B-solver-baseline.md)
 - [MODEL-02-B 开发报告](docs/model/HYDRO-MODEL-02-B-development-report.md)
@@ -104,7 +104,7 @@ HYDRO-MODEL-02-B 已在独立分支实现首个可运行的 `dayu.model-input.v4
 - [MODEL-02-B Benchmark 报告](docs/model/HYDRO-MODEL-02-B-benchmark-report.md)
 - [MODEL-02-B 可运行示例](examples/hydraulic/saint-venant-mvp/README.md)
 
-当前 Case 002 恒定均匀流仅通过 MVP 有界性回归，0.1% 科学候选线仍为 `XFAIL/NO-GO`；非棱柱源项、特征边界、闸泵动量/能头强耦合、后端任务持久化、外部模型对比和真实工程率定均未通过。
+Case 002 已在显式 `uniform-manning-reference` 内核模式下通过 0.1% 候选线：Q 相对误差为 0，水深误差约 `8.88e-16 m`。该结论只适用于严格校验的棱柱、线性坡、常 A/Q/H/n、亚临界 Manning 平衡参考；默认 `standard` 模式仍复现约 3.71% 的离散偏差，且 v4-lite 端到端尚不能表达坡床参考。非棱柱源项、特征边界、闸泵动量/能头强耦合、后端任务持久化、外部模型对比和真实工程率定仍未通过。
 
 ## 广东开放参考数据
 
