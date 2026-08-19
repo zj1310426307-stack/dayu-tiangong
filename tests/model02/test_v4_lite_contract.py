@@ -1,0 +1,266 @@
+"""Contract gates for the direct-engine-only v4-lite input."""
+
+from __future__ import annotations
+
+import copy
+
+import pytest
+
+from model.api import V4_LITE_SOLVER_TUPLE, V4LiteInput, parse_v4_lite_input
+from model.core.errors import HydraulicInputError
+
+
+def make_v4_lite_payload() -> dict:
+    """Return one complete single-Branch JSON fixture with explicit identities."""
+
+    sections = []
+    for index, chainage in enumerate((0, 500, 1000), start=1):
+        sections.append(
+            {
+                "section_id": index,
+                "section_code": f"CS{index:03d}",
+                "branch_id": 21,
+                "chainage_m": chainage,
+                "profile_id": 100 + index,
+                "profile_hash": f"{index:064x}",
+                "default_manning_n": 0.035,
+                "points": [
+                    {"offset_m": 0, "elevation_m": 12},
+                    {"offset_m": 10, "elevation_m": 9},
+                    {"offset_m": 20, "elevation_m": 12},
+                ],
+            }
+        )
+    return {
+        "schema_version": "dayu.model-input.v4-lite",
+        "dataset_version": {"id": 1, "content_hash": "a" * 64},
+        "coordinate_reference": {
+            "engineering_crs": "EPSG:4547",
+            "horizontal_unit": "m",
+            "vertical_datum": "1985 National Height Datum",
+            "vertical_unit": "m",
+        },
+        "solver": {
+            "type": "saint-venant",
+            "scheme": "finite-volume-hll",
+            "time_integrator": "ssp-rk2",
+            "friction_method": "manning-semi-implicit",
+            "duration_seconds": 3600,
+            "maximum_time_step_seconds": 10,
+            "minimum_time_step_seconds": 0.001,
+            "output_interval_seconds": 60,
+            "cfl_number": 0.7,
+            "dry_depth_m": 0.001,
+            "maximum_retries": 8,
+            "maximum_steps": 100000,
+            "water_balance_tolerance": 0.01,
+        },
+        "river": {
+            "network_id": 11,
+            "branch_id": 21,
+            "branch_code": "B-001",
+            "upstream_node_id": 31,
+            "downstream_node_id": 32,
+            "start_chainage_m": 0,
+            "end_chainage_m": 1000,
+            "direction_status": "confirmed",
+        },
+        "sections": sections,
+        "initial_state": {
+            "type": "uniform",
+            "water_level_m": 10,
+            "discharge_m3_s": 5,
+        },
+        "boundary": {
+            "upstream": {
+                "identity": {"namespace": "public.boundary_condition", "id": 41},
+                "type": "discharge-series",
+                "target_node_id": 31,
+                "time_seconds": [0, 1800, 3600],
+                "flow_m3_s": [5, 10, 5],
+                "interpolation": "linear",
+                "extrapolation": "error",
+            },
+            "downstream": {
+                "identity": {"namespace": "public.boundary_condition", "id": 42},
+                "type": "stage-series",
+                "target_node_id": 32,
+                "time_seconds": [0, 3600],
+                "water_level_m": [10, 10.5],
+                "interpolation": "linear",
+                "extrapolation": "error",
+            },
+        },
+        "structures": {
+            "gates": [
+                {
+                    "identity": {"namespace": "public.gate", "id": 51},
+                    "branch_id": 21,
+                    "interface": {
+                        "upstream_section_id": 1,
+                        "downstream_section_id": 2,
+                    },
+                    "opening_m": 1,
+                    "width_m": 4,
+                    "height_m": 2,
+                    "discharge_coefficient": 0.62,
+                    "allow_reverse_flow": False,
+                }
+            ],
+            "pumps": [
+                {
+                    "identity": {"namespace": "public.pump", "id": 61},
+                    "branch_id": 21,
+                    "section_id": 3,
+                    "outlet": "external",
+                    "status": "on",
+                    "design_flow_m3_s": 1.5,
+                }
+            ],
+        },
+        "provenance": {
+            "engine_version": "dayu-hydraulic-mvp",
+            "engine_commit": "test-commit",
+            "validation_policy_version": "v4-lite-1",
+        },
+    }
+
+
+def test_valid_contract_is_frozen_and_uses_the_only_solver_tuple() -> None:
+    """A JSON-shaped payload validates without legacy projection or coercion surprises."""
+
+    parsed = parse_v4_lite_input(make_v4_lite_payload())
+
+    assert isinstance(parsed, V4LiteInput)
+    assert (
+        parsed.schema_version,
+        parsed.solver.type,
+        parsed.solver.scheme,
+        parsed.solver.time_integrator,
+    ) == V4_LITE_SOLVER_TUPLE
+    assert isinstance(parsed.sections, tuple)
+    assert parsed.sections[0].chainage_m == 0.0
+    assert parsed.structures.gates[0].identity.id == 51
+    with pytest.raises(Exception):
+        parsed.river.branch_id = 99
+
+
+def test_by_section_initial_state_must_cover_exact_section_identities() -> None:
+    """Explicit by-section initialization cannot omit or invent a section identity."""
+
+    payload = make_v4_lite_payload()
+    payload["initial_state"] = {
+        "type": "by-section",
+        "values": [
+            {"section_id": index, "water_level_m": 10, "discharge_m3_s": 5}
+            for index in (1, 2, 3)
+        ],
+    }
+    assert parse_v4_lite_input(payload).initial_state.type == "by-section"
+
+    payload["initial_state"]["values"][-1]["section_id"] = 999
+    with pytest.raises(HydraulicInputError, match=r"unknown=\[999\]"):
+        parse_v4_lite_input(payload)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "unknown_schema",
+        "unknown_solver",
+        "extra_key",
+        "legacy_gate_mirror",
+        "numeric_string",
+        "nonfinite",
+        "wrong_branch",
+        "non_prismatic_profile",
+        "disconnected_wet_regions",
+        "unordered_sections",
+        "incomplete_boundary",
+        "boundary_extrapolation",
+        "wrong_boundary_node",
+        "duplicate_boundary_identity",
+        "unknown_gate_namespace",
+        "nonadjacent_gate",
+        "unknown_pump_section",
+        "second_gate",
+    ],
+)
+def test_untrusted_or_ambiguous_input_fails_closed(case: str) -> None:
+    """Unsupported semantics never fall through to a legacy or guessed interpretation."""
+
+    payload = copy.deepcopy(make_v4_lite_payload())
+    if case == "unknown_schema":
+        payload["schema_version"] = "dayu.model-input.v5"
+    elif case == "unknown_solver":
+        payload["solver"]["scheme"] = "continuity-manning"
+    elif case == "extra_key":
+        payload["river"]["legacy_river_id"] = 7
+    elif case == "legacy_gate_mirror":
+        payload["gates"] = payload["structures"]["gates"]
+    elif case == "numeric_string":
+        payload["solver"]["cfl_number"] = "0.7"
+    elif case == "nonfinite":
+        payload["sections"][0]["points"][1]["elevation_m"] = float("nan")
+    elif case == "wrong_branch":
+        payload["sections"][1]["branch_id"] = 999
+    elif case == "non_prismatic_profile":
+        payload["sections"][1]["points"][1]["elevation_m"] = 8.5
+    elif case == "disconnected_wet_regions":
+        for section in payload["sections"]:
+            section["points"] = [
+                {"offset_m": 0, "elevation_m": 12},
+                {"offset_m": 5, "elevation_m": 9},
+                {"offset_m": 10, "elevation_m": 11},
+                {"offset_m": 15, "elevation_m": 9},
+                {"offset_m": 20, "elevation_m": 12},
+            ]
+    elif case == "unordered_sections":
+        payload["sections"][1]["chainage_m"] = 0
+    elif case == "incomplete_boundary":
+        payload["boundary"]["upstream"]["time_seconds"][-1] = 3599
+    elif case == "boundary_extrapolation":
+        payload["boundary"]["downstream"]["extrapolation"] = "hold"
+    elif case == "wrong_boundary_node":
+        payload["boundary"]["upstream"]["target_node_id"] = 999
+    elif case == "duplicate_boundary_identity":
+        payload["boundary"]["downstream"]["identity"]["id"] = 41
+    elif case == "unknown_gate_namespace":
+        payload["structures"]["gates"][0]["identity"]["namespace"] = "hydraulic.gate"
+    elif case == "nonadjacent_gate":
+        payload["structures"]["gates"][0]["interface"]["downstream_section_id"] = 3
+    elif case == "unknown_pump_section":
+        payload["structures"]["pumps"][0]["section_id"] = 999
+    elif case == "second_gate":
+        payload["structures"]["gates"].append(
+            copy.deepcopy(payload["structures"]["gates"][0])
+        )
+
+    with pytest.raises(HydraulicInputError):
+        parse_v4_lite_input(payload)
+
+
+def test_profile_range_and_dry_state_are_validated_before_meshing() -> None:
+    """Profile extrapolation and non-zero dry discharge are rejected at the contract edge."""
+
+    payload = make_v4_lite_payload()
+    payload["initial_state"]["water_level_m"] = 13
+    with pytest.raises(HydraulicInputError, match="outside its Profile range"):
+        parse_v4_lite_input(payload)
+
+    payload = make_v4_lite_payload()
+    payload["initial_state"]["water_level_m"] = 9
+    payload["initial_state"]["discharge_m3_s"] = 1
+    with pytest.raises(HydraulicInputError, match="zero initial discharge"):
+        parse_v4_lite_input(payload)
+
+
+def test_input_parser_does_not_mutate_the_untrusted_mapping() -> None:
+    """Validation is observational and leaves frozen-input hashing to the caller."""
+
+    payload = make_v4_lite_payload()
+    before = copy.deepcopy(payload)
+
+    parse_v4_lite_input(payload)
+
+    assert payload == before

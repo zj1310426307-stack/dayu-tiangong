@@ -1,0 +1,139 @@
+{
+  "schema_version": "dayu.model-input.v4-lite",
+  "dataset_version": {
+    "id": 1,
+    "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "coordinate_reference": {
+    "engineering_crs": "EPSG:4547",
+    "horizontal_unit": "m",
+    "vertical_datum": "synthetic-local-datum",
+    "vertical_unit": "m"
+  },
+  "solver": {
+    "type": "saint-venant",
+    "scheme": "finite-volume-hll",
+    "time_integrator": "ssp-rk2",
+    "friction_method": "manning-semi-implicit",
+    "duration_seconds": 120,
+    "maximum_time_step_seconds": 10,
+    "minimum_time_step_seconds": 0.001,
+    "output_interval_seconds": 60,
+    "cfl_number": 0.7,
+    "dry_depth_m": 0.001,
+    "maximum_retries": 8,
+    "maximum_steps": 100000,
+    "water_balance_tolerance": 0.01
+  },
+  "river": {
+    "network_id": 11,
+    "branch_id": 21,
+    "branch_code": "SYNTHETIC-B01",
+    "upstream_node_id": 31,
+    "downstream_node_id": 32,
+    "start_chainage_m": 0,
+    "end_chainage_m": 1000,
+    "direction_status": "confirmed"
+  },
+  "sections": [
+    {
+      "section_id": 1,
+      "section_code": "CS001",
+      "branch_id": 21,
+      "chainage_m": 0,
+      "profile_id": 101,
+      "profile_hash": "0000000000000000000000000000000000000000000000000000000000000001",
+      "default_manning_n": 0.035,
+      "points": [
+        {"offset_m": 0, "elevation_m": 12},
+        {"offset_m": 10, "elevation_m": 9},
+        {"offset_m": 20, "elevation_m": 12}
+      ]
+    },
+    {
+      "section_id": 2,
+      "section_code": "CS002",
+      "branch_id": 21,
+      "chainage_m": 500,
+      "profile_id": 102,
+      "profile_hash": "0000000000000000000000000000000000000000000000000000000000000002",
+      "default_manning_n": 0.035,
+      "points": [
+        {"offset_m": 0, "elevation_m": 12},
+        {"offset_m": 10, "elevation_m": 9},
+        {"offset_m": 20, "elevation_m": 12}
+      ]
+    },
+    {
+      "section_id": 3,
+      "section_code": "CS003",
+      "branch_id": 21,
+      "chainage_m": 1000,
+      "profile_id": 103,
+      "profile_hash": "0000000000000000000000000000000000000000000000000000000000000003",
+      "default_manning_n": 0.035,
+      "points": [
+        {"offset_m": 0, "elevation_m": 12},
+        {"offset_m": 10, "elevation_m": 9},
+        {"offset_m": 20, "elevation_m": 12}
+      ]
+    }
+  ],
+  "initial_state": {
+    "type": "uniform",
+    "water_level_m": 10,
+    "discharge_m3_s": 5
+  },
+  "boundary": {
+    "upstream": {
+      "identity": {"namespace": "public.boundary_condition", "id": 41},
+      "type": "discharge-series",
+      "target_node_id": 31,
+      "time_seconds": [0, 60, 120],
+      "flow_m3_s": [5, 7, 5],
+      "interpolation": "linear",
+      "extrapolation": "error"
+    },
+    "downstream": {
+      "identity": {"namespace": "public.boundary_condition", "id": 42},
+      "type": "stage-series",
+      "target_node_id": 32,
+      "time_seconds": [0, 120],
+      "water_level_m": [10, 10.1],
+      "interpolation": "linear",
+      "extrapolation": "error"
+    }
+  },
+  "structures": {
+    "gates": [
+      {
+        "identity": {"namespace": "public.gate", "id": 51},
+        "branch_id": 21,
+        "interface": {
+          "upstream_section_id": 1,
+          "downstream_section_id": 2
+        },
+        "opening_m": 1,
+        "width_m": 4,
+        "height_m": 2,
+        "discharge_coefficient": 0.62,
+        "allow_reverse_flow": false
+      }
+    ],
+    "pumps": [
+      {
+        "identity": {"namespace": "public.pump", "id": 61},
+        "branch_id": 21,
+        "section_id": 3,
+        "outlet": "external",
+        "status": "on",
+        "design_flow_m3_s": 1.5
+      }
+    ]
+  },
+  "provenance": {
+    "engine_version": "dayu-hydraulic-mvp",
+    "engine_commit": "synthetic-example-not-a-git-sha",
+    "validation_policy_version": "v4-lite-1"
+  }
+}

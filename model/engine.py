@@ -15,7 +15,8 @@ from model.network import build_network_mesh, solve_network
 from model.solver.saint_venant import solve_river
 from model.structure.gate import gate_discharge
 from model.structure.pump import pump_discharge
-from model.adapters import adapt_v3_to_v2
+from model.adapters import adapt_v3_to_v2, run_v4_lite
+from model.result.mvp import MvpHydraulicResult
 
 
 class HydraulicEngine:
@@ -28,11 +29,22 @@ class HydraulicEngine:
         *,
         cancel_check: Any | None = None,
         progress_callback: Any | None = None,
-    ) -> EngineResult:
+    ) -> EngineResult | MvpHydraulicResult:
         """Run a versioned Phase 2 snapshot and return serialisable time series."""
 
         if not isinstance(snapshot, Mapping):
             raise TypeError("snapshot must be a mapping")
+        if snapshot.get("schema_version") == "dayu.model-input.v4-lite":
+            if overrides:
+                raise HydraulicInputError(
+                    "v4-lite snapshot is frozen and does not accept legacy overrides"
+                )
+            if cancel_check is not None or progress_callback is not None:
+                raise HydraulicInputError(
+                    "v4-lite direct execution does not yet support cancellation "
+                    "or progress callbacks"
+                )
+            return run_v4_lite(snapshot)
         if snapshot.get("schema_version") == "dayu.model-input.v3":
             snapshot = adapt_v3_to_v2(snapshot)
         if snapshot.get("schema_version") == "dayu.model-input.v2":
@@ -41,6 +53,12 @@ class HydraulicEngine:
                 overrides,
                 cancel_check=cancel_check,
                 progress_callback=progress_callback,
+            )
+        if snapshot.get("schema_version") != "dayu.model-input.v1":
+            raise HydraulicInputError(
+                "unsupported model input schema: "
+                f"{snapshot.get('schema_version')!r}; expected dayu.model-input.v1, "
+                "dayu.model-input.v2, dayu.model-input.v3, or dayu.model-input.v4-lite"
             )
         mesh_result = build_river_meshes(snapshot)
         config = build_solver_config(snapshot, overrides)
