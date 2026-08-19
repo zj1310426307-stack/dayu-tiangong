@@ -1,0 +1,90 @@
+schema_version: 1
+
+publication:
+  mode: sanitized_public_template
+  controlled_evidence_published: false
+  private_overlay_required: true
+  note: >-
+    本文件不包含真实工程、企业、河流、文件、坐标、桩号或断面映射。
+    受控证据保留在本地未发布归档中。
+
+project:
+  name: 受控真实工程数据验证（公开模板）
+  code: HYDRO-DATA-02-PUBLIC-TEMPLATE
+  province: null
+  river: []
+
+runtime:
+  case_root_env: HYDRO_VALIDATION_CASE_ROOT
+  raw_files_committed: false
+  fail_if_env_missing: true
+  verify_private_manifest_sha256_before_use: true
+
+dataset:
+  source: 受控外部工程资料（本地未发布）
+  survey_date: null
+  survey_date_status: controlled_local_metadata
+  survey_company: null
+  survey_company_status: controlled_local_metadata
+  classification: controlled_engineering_data
+
+coordinate:
+  horizontal:
+    crs: configured_in_private_overlay
+    axis:
+      x: easting
+      y: northing
+    unit: metre
+  vertical:
+    datum: configured_in_private_overlay
+    unit: metre
+  display_crs: EPSG:4490
+  specification: coordinate.yaml
+
+hydraulic:
+  model_type:
+    - one_dimensional
+  branch_candidates:
+    count: 3
+    lengths_m: null
+    provenance: controlled_local_mapping_not_published
+  river_length_m: null
+  river_length_status: controlled_local_evidence_not_published
+  cross_section_count: null
+  cross_section_count_status: controlled_local_evidence_not_published
+  structure_count: null
+  structure_count_status: pending_extraction_and_hydraulic_confirmation
+
+boundary:
+  upstream:
+    type: null
+    value_source: hydraulic_boundary_source
+    status: source_reviewed_current_case_binding_pending
+  downstream:
+    type: null
+    value_source: hydraulic_boundary_source
+    status: source_reviewed_current_case_binding_pending
+
+expected:
+  branch_count: null
+  reach_count: null
+  cross_section_count: null
+  profile_group_count: null
+  control_structure_count: null
+  note: >-
+    数量与映射保留在本地受控证据中。已确认的公开科学结论是实际拓扑包含
+    3 个不连通分量，不满足标准验收要求的汇流节点；流向、建筑物和边界仍须人工复核。
+
+acceptance:
+  real_source_inventory: passed_in_controlled_local_environment
+  coordinate_control_point_test: blocked_no_authoritative_controls
+  network_topology: failed_disconnected_components_3
+  branch_direction: pending
+  chainage_continuity: passed_for_each_admitted_fragment
+  cross_section_profile: passed_for_controlled_admitted_subset
+  roughness_zoning: provisional_single_zone_only
+  model_input_v3: blocked_missing_authoritative_case_and_boundaries
+  one_dimensional_solver: not_run
+  gis_display: pending
+  database_migration: passed_in_controlled_postgresql_postgis_environment
+  production_accepted: false

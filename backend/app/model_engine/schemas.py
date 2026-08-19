@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat
 
 
 TaskStatus = Literal[
@@ -17,14 +17,16 @@ class SimulationTaskCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     case_id: int = Field(gt=0)
-    duration_seconds: float | None = Field(default=None, gt=0)
-    time_step_seconds: float | None = Field(default=None, gt=0)
-    output_interval_seconds: float | None = Field(default=None, gt=0)
-    cfl_number: float | None = Field(default=None, gt=0, le=1)
-    initial_water_level: float | None = None
-    initial_flow: float | None = None
-    minimum_depth: float | None = Field(default=None, gt=0)
-    input_schema_version: Literal["dayu.model-input.v1", "dayu.model-input.v2"] = (
+    duration_seconds: FiniteFloat | None = Field(default=None, gt=0)
+    time_step_seconds: FiniteFloat | None = Field(default=None, gt=0)
+    output_interval_seconds: FiniteFloat | None = Field(default=None, gt=0)
+    cfl_number: FiniteFloat | None = Field(default=None, gt=0, le=1)
+    initial_water_level: FiniteFloat | None = None
+    initial_flow: FiniteFloat | None = None
+    minimum_depth: FiniteFloat | None = Field(default=None, gt=0)
+    input_schema_version: Literal[
+        "dayu.model-input.v1", "dayu.model-input.v2", "dayu.model-input.v3"
+    ] = (
         "dayu.model-input.v1"
     )
     allow_fallback_boundary: bool = False

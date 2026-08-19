@@ -799,6 +799,7 @@ class River(Base):
             name="ck_river_status",
         ),
         UniqueConstraint("dataset_version_id", "code", name="uq_river_version_code"),
+        UniqueConstraint("id", "dataset_version_id", name="uq_river_id_version"),
         Index("ix_river_geometry_gist", "geometry", postgresql_using="gist"),
         Index("ix_river_dataset_version_id", "dataset_version_id"),
     )
@@ -841,6 +842,7 @@ class RiverNode(Base):
             name="ck_river_node_type",
         ),
         UniqueConstraint("dataset_version_id", "node_code", name="uq_river_node_version_code"),
+        UniqueConstraint("id", "dataset_version_id", name="uq_river_node_id_version"),
         Index("ix_river_node_geometry_gist", "geometry", postgresql_using="gist"),
         Index("ix_river_node_dataset_version_id", "dataset_version_id"),
     )
@@ -864,6 +866,25 @@ class RiverSegment(Base):
     __tablename__ = "river_segment"
     __table_args__ = (
         CheckConstraint("length >= 0", name="ck_river_segment_length_nonnegative"),
+        ForeignKeyConstraint(
+            ["river_id", "dataset_version_id"],
+            ["river.id", "river.dataset_version_id"],
+            name="fk_river_segment_river_version",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["upstream_node_id", "dataset_version_id"],
+            ["river_node.id", "river_node.dataset_version_id"],
+            name="fk_river_segment_upstream_version",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["downstream_node_id", "dataset_version_id"],
+            ["river_node.id", "river_node.dataset_version_id"],
+            name="fk_river_segment_downstream_version",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("id", "dataset_version_id", name="uq_river_segment_id_version"),
         UniqueConstraint(
             "dataset_version_id", "segment_code", name="uq_river_segment_version_code"
         ),
@@ -875,14 +896,10 @@ class RiverSegment(Base):
     dataset_version_id: Mapped[int] = mapped_column(
         ForeignKey("dataset_version.id", ondelete="CASCADE"), nullable=False
     )
-    river_id: Mapped[int] = mapped_column(ForeignKey("river.id", ondelete="CASCADE"))
+    river_id: Mapped[int] = mapped_column()
     segment_code: Mapped[str] = mapped_column(String(64), nullable=False)
-    upstream_node_id: Mapped[int] = mapped_column(
-        ForeignKey("river_node.id", ondelete="RESTRICT"), nullable=False
-    )
-    downstream_node_id: Mapped[int] = mapped_column(
-        ForeignKey("river_node.id", ondelete="RESTRICT"), nullable=False
-    )
+    upstream_node_id: Mapped[int] = mapped_column(nullable=False)
+    downstream_node_id: Mapped[int] = mapped_column(nullable=False)
     length: Mapped[float] = mapped_column(Float, nullable=False)
     geometry: Mapped[Any] = mapped_column(
         Geometry(geometry_type="LINESTRING", srid=4490, spatial_index=False), nullable=False
@@ -896,6 +913,24 @@ class RiverConnection(Base):
 
     __tablename__ = "river_connection"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["from_node_id", "dataset_version_id"],
+            ["river_node.id", "river_node.dataset_version_id"],
+            name="fk_river_connection_from_version",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["to_node_id", "dataset_version_id"],
+            ["river_node.id", "river_node.dataset_version_id"],
+            name="fk_river_connection_to_version",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["river_id", "dataset_version_id"],
+            ["river.id", "river.dataset_version_id"],
+            name="fk_river_connection_river_version",
+            ondelete="CASCADE",
+        ),
         UniqueConstraint(
             "dataset_version_id",
             "from_node_id",
@@ -912,13 +947,9 @@ class RiverConnection(Base):
     dataset_version_id: Mapped[int] = mapped_column(
         ForeignKey("dataset_version.id", ondelete="CASCADE"), nullable=False
     )
-    from_node_id: Mapped[int] = mapped_column(
-        ForeignKey("river_node.id", ondelete="CASCADE"), nullable=False
-    )
-    to_node_id: Mapped[int] = mapped_column(
-        ForeignKey("river_node.id", ondelete="CASCADE"), nullable=False
-    )
-    river_id: Mapped[int] = mapped_column(ForeignKey("river.id", ondelete="CASCADE"))
+    from_node_id: Mapped[int] = mapped_column(nullable=False)
+    to_node_id: Mapped[int] = mapped_column(nullable=False)
+    river_id: Mapped[int] = mapped_column()
 
     river: Mapped[River] = relationship(back_populates="connections")
 
@@ -930,6 +961,12 @@ class CrossSection(Base):
     __table_args__ = (
         CheckConstraint("station >= 0", name="ck_cross_section_station_nonnegative"),
         CheckConstraint("roughness > 0", name="ck_cross_section_roughness_positive"),
+        ForeignKeyConstraint(
+            ["river_id", "dataset_version_id"],
+            ["river.id", "river.dataset_version_id"],
+            name="fk_cross_section_river_version",
+            ondelete="CASCADE",
+        ),
         UniqueConstraint("id", "dataset_version_id", name="uq_cross_section_id_version"),
         UniqueConstraint(
             "dataset_version_id", "section_code", name="uq_cross_section_version_code"
@@ -949,7 +986,7 @@ class CrossSection(Base):
     dataset_version_id: Mapped[int] = mapped_column(
         ForeignKey("dataset_version.id", ondelete="CASCADE"), nullable=False
     )
-    river_id: Mapped[int] = mapped_column(ForeignKey("river.id", ondelete="CASCADE"))
+    river_id: Mapped[int] = mapped_column()
     section_code: Mapped[str] = mapped_column(String(64), nullable=False)
     section_name: Mapped[str] = mapped_column(String(128), nullable=False)
     station: Mapped[float] = mapped_column(Float, nullable=False)

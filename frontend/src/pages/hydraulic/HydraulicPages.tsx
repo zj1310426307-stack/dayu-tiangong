@@ -101,7 +101,7 @@ export function HydraulicConfigPage() {
     setSubmitting(true);
     setError('');
     try {
-      const created = await createHydraulicTask({ ...values, input_schema_version: 'dayu.model-input.v2' });
+      const created = await createHydraulicTask({ ...values, input_schema_version: 'dayu.model-input.v3' });
       await enqueueHydraulicTask(created.id);
       message.success(`任务 #${created.id} 已进入 Celery/Redis 队列`);
       navigate('/hydraulic/tasks');
@@ -135,7 +135,7 @@ export function HydraulicConfigPage() {
           layout="vertical"
           className="hydraulic-form"
           initialValues={{
-            input_schema_version: 'dayu.model-input.v2',
+            input_schema_version: 'dayu.model-input.v3',
             storage_level: 'full',
             duration_seconds: 3600,
             time_step_seconds: 60,

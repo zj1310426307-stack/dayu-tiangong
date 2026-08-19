@@ -10,6 +10,9 @@ flowchart LR
   QGIS["QGIS Desktop 3.44 LTR<br/>专业数据生产"] --> STAGING["staging_qgis<br/>四类强类型暂存表"]
   STAGING --> GOV["FastAPI 治理链<br/>质检 · 审核 · 晋级 · 发布"]
   GOV --> CORE["PostGIS 核心表<br/>Dataset Version"]
+  EXCHANGE["FastAPI 水动力服务<br/>预览 · 拓扑 · 断面处理 · v3"] --> HYDRAULIC["hydraulic schema<br/>network · node · branch · reach · profile"]
+  EXCHANGE --> CORE
+  HYDRAULIC --> EXCHANGE
   CORE --> PUBLISH["publish<br/>版本过滤只读视图"]
   REFERENCE["reference_data<br/>广东行政区 · 道路 · 水系"] --> PUBLISH
   PUBLISH --> GEOSERVER["GeoServer<br/>唯一 GIS 服务"]
@@ -21,7 +24,7 @@ flowchart LR
   MODEL --> REDIS["Redis / Worker"]
 ```
 
-PostGIS 是唯一空间事实源。`imports`、`staging_qgis`、`reference_data`、`public` 核心表、`publish`、治理表和 TimescaleDB 时序表均在同一数据库内按 schema 和角色隔离，不创建第二套 GIS 数据库。
+PostGIS 是唯一空间事实源。`imports`、`staging_qgis`、`reference_data`、`hydraulic`、`public` 核心表、`publish`、治理表和 TimescaleDB 时序表均在同一数据库内按 schema 和角色隔离，不创建第二套 GIS 数据库。
 
 ## 2. 权威边界
 
@@ -32,6 +35,7 @@ PostGIS 是唯一空间事实源。`imports`、`staging_qgis`、`reference_data`
 | PostGIS Catalog | 9 个活动 GeoServer 图层和 3 个影像底图的唯一目录 | 浏览器自带业务图层清单 |
 | GeoServer | `publish` WMS/WMTS/Basic WFS/GetFeatureInfo | WFS-T、读取 staging、核心 DML |
 | FastAPI GIS 网关 | 版本门禁、layer allow-list、BBOX/尺寸/类型限制 | 接收任意 GeoServer 层名、SQL/CQL |
+| FastAPI 水动力交换 | 文件预览、标准化、校核、原子提交、导出与审计 | 无 CRS 入库、跨版本写入、将子集能力冒充为 DHI 原生兼容 |
 | OpenLayers | EPSG:3857 浏览、图层开关/透明度/顺序、点选 | 数据编辑、业务样式权威、直接访问数据库 |
 
 ## 3. 数据生产与发布
@@ -113,3 +117,11 @@ GIS 晋级只保证空间核心数据的治理与发布，不伪造模型参数�
 - 本阶段没有 Web 编辑、WFS-T、QGIS Server或三维运行时；广东高分辨率影像只通过 Esri 在线瓦片代理加载，NASA 为后备，不在本地复制或离线导出全省影像库。
 - 生产 TLS、密钥托管、统一 IAM、灾备/高可用尚未完成。
 - PLC/SCADA 未接入，仿真和调度输出不得直接下发真实设备。
+
+## 10. HYDRO-DATA-01 语义层
+
+迁移 `20260818_0019` 以加法方式建立 Network/Node/Branch/BranchVertex/Reach、CrossSection/Profile/Point/Roughness/Processing，并保留 `legacy_river_id` 和 `legacy_cross_section_id` 映射。`hydraulic.gis_river_adapter|gis_cross_section_adapter` 只提供受控读视图；正式拓扑同步投影到现有 `river_node|river_segment|river_connection`，不取代 GIS 核心表。
+
+`hydraulic.import_job` 保留文件 SHA-256、坐标/解析配置 hash、标准化 payload、变换证据、状态和错误；`validation_run|validation_result` 保留每次校核证据。预览不改变业务实体，只有针对 draft Dataset Version 且配置 hash 匹配的明确 commit 才会在单事务内落库。显示几何转换为 4490；所有吸附、距离和桩号运算必须使用明确确认的米制 4546–4549 engineering CRS。
+
+内置 NWK11/XNS11 适配器实现文档化、严格解析的 HYDRO-DATA-01 子集，只保证项目内往返一致性。常驻服务不依赖 DHI/mikeio；原生 NWK11/XNS11 读取、转换和目标版本验收均在授权外部适配环境执行。

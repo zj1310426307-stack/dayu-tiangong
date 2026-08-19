@@ -1,0 +1,71 @@
+schema_version: 1
+case_code: HYDRO-DATA-02-PUBLIC-TEMPLATE
+
+publication:
+  mode: sanitized_public_template
+  controlled_evidence_published: false
+  private_overlay_required: true
+  note: >-
+    真实工程的 CRS 代码、投影参数、控制点坐标和误差明细仅保存在本地受控证据中，
+    未发布到公开仓库。本文件只保留必须显式配置的字段和验收门禁。
+
+horizontal:
+  source_crs:
+    authority: null
+    code: null
+    name: null
+    central_meridian_deg: null
+    zone_width_deg: null
+    false_easting_m: null
+    false_northing_m: null
+    unit: metre
+    required: true
+  engineering_crs:
+    authority: null
+    code: null
+    unit: metre
+    required: true
+  display_crs:
+    authority: EPSG
+    code: 4490
+    name: China Geodetic Coordinate System 2000
+    axis: longitude_latitude
+    unit: degree
+  input_axis:
+    x: easting
+    y: northing
+    declaration: "X=东坐标；Y=北坐标"
+    automatic_guessing: forbidden
+  evidence:
+    status: retained_in_controlled_local_archive
+    published_components: []
+    note: >-
+      工程运行时必须从未发布的本地私有叠加层读取已核定 CRS 与投影参数；
+      不得依据坐标量级、文件名或公开模板自动猜测。
+
+vertical:
+  datum: null
+  unit: metre
+  required: true
+  evidence:
+    status: retained_in_controlled_local_archive
+  legacy_warning: >-
+    不同历史高程基准不得直接混用；必须取得权威转换关系并单独验证，
+    修改高程标签不能替代真实转换。
+
+transform_validation:
+  source_to_display: configured_in_private_overlay
+  required_control_point_count: configured_by_project_acceptance_contract
+  horizontal_error_threshold_m: configured_by_project_acceptance_contract
+  authoritative_control_point_count: 0
+  tested_control_point_count: 0
+  max_horizontal_error_m: null
+  result: NOT_EVALUATED
+  accepted: null
+  gate: >-
+    未取得合同要求数量的权威控制点并完成独立误差核验前，不得把绝对平面精度写为通过。
+  forbidden_shortcuts:
+    - do_not_guess_crs_from_coordinate_magnitude
+    - do_not_swap_x_y_silently
+    - do_not_relabel_srid_instead_of_transforming
+    - do_not_apply_manual_translation_to_hide_error

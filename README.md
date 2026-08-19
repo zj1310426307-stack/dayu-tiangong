@@ -25,7 +25,7 @@ OpenLayers → FastAPI 安全边界 → GeoServer → PostGIS
 
 | 组件 | 职责 |
 |---|---|
-| PostGIS / TimescaleDB | 权威 GIS、治理、模型和时序数据 |
+| PostGIS / TimescaleDB | 权威 GIS、水动力交换语义、治理、模型和时序数据 |
 | GeoServer | 6 个版本化业务层与 3 个广东开放参考层的 WMS、WMTS、Basic WFS 与样式发布 |
 | FastAPI | Catalog、版本门禁、WMS/FeatureInfo、白名单在线影像瓦片安全代理和业务 API |
 | OpenLayers | EPSG:3857 Web 地图、图层控制和属性点选 |
@@ -65,6 +65,24 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 - `POST /api/v1/gis-governance/versions/{id}/publish|retire`
 
 前端调用必须来自 `frontend/src/api/generated/client.ts`，该文件由 `npm run openapi:update` 从当前 FastAPI OpenAPI 生成。
+
+## 水动力数据交换
+
+`/data-center/hydraulic` 将 Network–Node–Branch–Reach–Chainage、断面多地形版本、糙率分区、水力查算、导入审计、校核与 MIKE11 交换能力收敛到一个管理页。导入使用“预览校验 → 配置 hash 确认提交”两阶段流程，并在同一数据库事务内写入 `hydraulic` 权威语义和现有 GIS 兼容投影。显示几何统一为 CGCS2000 `EPSG:4490`；拓扑、长度和桩号只能使用明确确认的米制 engineering CRS。
+
+- `POST /api/v1/hydraulic/imports/preview|commit`
+- `GET /api/v1/hydraulic/networks|cross-sections/{section_id}|imports`
+- `POST /api/v1/hydraulic/networks/{network_id}/topology`
+- `POST /api/v1/hydraulic/branches/{branch_id}/reverse|recalculate-chainage`
+- `POST /api/v1/hydraulic/cross-sections/{section_id}/locate`
+- `POST /api/v1/hydraulic/profiles/{profile_id}/process|process-batch`
+- `POST /api/v1/hydraulic/validation/run`
+- `GET /api/v1/hydraulic/validation/{run_code}`
+- `GET /api/v1/hydraulic/exports/network.nwk11|cross-sections.xns11`
+- `GET /api/v1/hydraulic/templates/river-network|cross-section`
+- `GET /api/v1/model-data/simulation-cases/{case_id}/input-v3`
+
+内置 `.nwk11`/`.xns11` 支持是 HYDRO-DATA-01 的确定性交换子集，能力状态固定标识为 `ROUNDTRIP_VALIDATED_ONLY`，不宣称已通过 DHI 商业软件原生验收。常驻后端不加载 DHI/mikeio 运行时；原生 NWK11/XNS11 读取、转换和验收属于授权外部适配环境。
 
 ## 广东开放参考数据
 

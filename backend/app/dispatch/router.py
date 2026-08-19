@@ -24,10 +24,12 @@ SessionDependency = Annotated[Session, Depends(get_database_session)]
 
 
 def _error(exc: Exception) -> HTTPException:
-    """把调度领域错误映射为稳定 404/409 语义。"""
+    """把调度领域错误映射为稳定 404/409/503 语义。"""
 
     if isinstance(exc, service.DispatchNotFoundError):
         return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, service.DispatchQueueError):
+        return HTTPException(status_code=503, detail=str(exc))
     return HTTPException(status_code=409, detail=str(exc))
 
 
@@ -209,7 +211,11 @@ def create_run(plan_id: int, session: SessionDependency) -> DispatchRunRecord:
 
     try:
         return service.create_run(session, plan_id)
-    except (service.DispatchNotFoundError, service.DispatchStateError) as exc:
+    except (
+        service.DispatchNotFoundError,
+        service.DispatchStateError,
+        service.DispatchQueueError,
+    ) as exc:
         raise _error(exc) from exc
 
 
@@ -263,7 +269,16 @@ def retry_run(run_id: int, session: SessionDependency) -> DispatchRunRecord:
         raise HTTPException(status_code=404, detail="dispatch run does not exist")
     if run.status not in {"failed", "cancelled"}:
         raise HTTPException(status_code=409, detail="only failed or cancelled runs can be retried")
-    return service.create_run(session, run.plan_id)
+    try:
+        return service.create_run(session, run.plan_id)
+    except (
+        service.DispatchNotFoundError,
+        service.DispatchStateError,
+        service.DispatchQueueError,
+        ValueError,
+    ) as exc:
+        session.rollback()
+        raise _error(exc) from exc
 
 
 @router.get("/runs/{run_id}/comparison", response_model=DispatchComparison)

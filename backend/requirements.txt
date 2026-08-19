@@ -14,6 +14,7 @@ redis==5.2.1
 
 # Excel 导入解析（模板文件由工作区统一制表工具生成）
 openpyxl==3.1.5
+PyYAML==6.0.3
 
 # Phase 6 PDF 知识文档文本提取；报告 PDF 由仓库内确定性渲染器生成
 pypdf==5.9.0

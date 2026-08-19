@@ -31,6 +31,47 @@ class GateControlState:
     last_change_time: float = -1.0e12
 
 
+@dataclass(frozen=True)
+class GateModel:
+    """Bind immutable gate design data while keeping ``evaluate_gate`` authoritative.
+
+    The façade gives callers the task-book ``GateModel`` vocabulary without
+    duplicating the hydraulic equation. Runtime opening remains an explicit
+    input because it belongs to one simulation, not to the static asset.
+    """
+
+    width: float
+    crest_elevation: float
+    discharge_coefficient: float = 0.62
+    weir_coefficient: float = 1.7
+    maximum_flow: float | None = None
+    allow_reverse_flow: bool = False
+
+    def evaluate(
+        self,
+        *,
+        requested_opening: float,
+        upstream_level: float,
+        downstream_level: float,
+        actual_opening: float | None = None,
+    ) -> GateHydraulicResult:
+        """Evaluate one instantaneous gate state through the shared equation."""
+
+        opening = requested_opening if actual_opening is None else actual_opening
+        return evaluate_gate(
+            width=self.width,
+            requested_opening=requested_opening,
+            actual_opening=opening,
+            upstream_level=upstream_level,
+            downstream_level=downstream_level,
+            crest_elevation=self.crest_elevation,
+            discharge_coefficient=self.discharge_coefficient,
+            weir_coefficient=self.weir_coefficient,
+            maximum_flow=self.maximum_flow,
+            allow_reverse_flow=self.allow_reverse_flow,
+        )
+
+
 def constrain_gate_opening(
     requested_opening: float,
     *,

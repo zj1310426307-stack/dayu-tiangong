@@ -20,7 +20,7 @@
 验收顺序：
 
 1. `database` 健康。
-2. 0018 `upgrade head` 成功，且 Alembic 只有一个 head。
+2. 0019 `upgrade head` 成功，且 Alembic 只有一个 head。
 3. demo seed 连续执行两次保持幂等。
 4. `qgis-bootstrap`、`app-bootstrap` 完成。
 5. 使用 `database/import_open_reference_data.py` 导入广东开放数据；最低门禁为行政区 20、道路 1000、水系 100，当前验证快照分别为 93、168554、19749。导入器同时写入中文展示字段 `name_zh`，不得覆盖用于溯源的原始 `name`。
@@ -31,6 +31,8 @@
 10. GeoServer 容器内 `fc-list :lang=zh` 可找到 Noto Sans CJK SC；三类参考图层 SLD 均读取 `name_zh`，WFS 返回的非空 `name_zh` 必须包含中文字符。
 11. 在同一隔离库演练 `downgrade 20260817_0017 → upgrade head`，再重跑数据导入、seed/bootstrap。
 12. 确认地图初始只显示顶部“图层管理/坐标定位”菜单，两面板均收起；验证按钮可展开、再次点击可收起、两个工具互斥打开且收起后状态保留。再分别用经纬度 `113.2644, 23.1291` 和 EPSG:3857 Web XY `12608535.333, 2647638.583` 定位广州，确认两种模式到达同一建筑位置；用 CGCS2000 `X=641444.743`、`Y=2464480.899` 验证中央经线切换与经纬度回显，并检查缺失输入、三套范围限制和“清除”按钮。
+13. 下载两份水动力 Excel 模板，完成预览、提交、河网树/断面曲线查看和校核；确认语义表与原有 GIS 表在单事务内同步，几何 SRID 为 4490。
+14. 导出内置 NWK11/XNS11 子集后重新解析，并核对能力响应为 `ROUNDTRIP_VALIDATED_ONLY`。如需声称 DHI 原生兼容，必须在授权 DHI 环境用真实样例另行验收。
 
 ## 3. 持久环境迁移
 
@@ -46,6 +48,10 @@ docker compose --env-file .env -f docker/docker-compose.yml ps -a
 
 0018 新增 `name_zh`、中文约束和中文优先发布视图。升级前应保留数据库备份；升级后确认行政区 93/93 有中文标注，道路和水系的非空展示值全部含中文。未知外文名称应保持 `name_zh IS NULL`，不能以拼音或来源编号回退显示。
 
+0019 以加法 schema 方式建立正式水动力语义、导入审计、校核结果和 GIS 兼容投影，不替换既有 River/CrossSection 表。升级后必须核对回填数量、`legacy_*_id` 映射、几何 SRID、拓扑投影和双写一致性。一次性 PostgreSQL 17/PostGIS 3.5 + TimescaleDB 隔离库已完成 `upgrade 0019 -> downgrade 0018 -> upgrade 0019` 和真实双写/拓扑测试；持久升级仍需单独的备份、维护窗口和授权，浏览器数据闭环也必须独立验收。
+
+常驻后端不安装或动态加载 DHI/mikeio。`/api/v1/hydraulic/capabilities` 必须明确报告原生 NWK11/XNS11 不可用；原生读取、转换与商业软件验收只在授权外部适配环境执行。
+
 不要输出展开后的完整 Compose 配置，以免把环境密码写入终端日志。
 
 ## 4. 验收地址
@@ -59,6 +65,11 @@ docker compose --env-file .env -f docker/docker-compose.yml ps -a
 - `/api/v1/gis/basemaps/nasa_blue_marble/tiles/7/55/104.jpeg`
 - `/api/v1/gis/basemaps/esri_world_imagery/tiles/18/113752/213548.jpeg`
 - `/gis?datasetVersionId=<published-id>`
+- `/api/v1/hydraulic/capabilities`
+- `/api/v1/hydraulic/networks?dataset_version_id=<draft-id>`
+- `/api/v1/hydraulic/templates/river-network`
+- `/api/v1/hydraulic/templates/cross-section`
+- `/data-center/hydraulic`
 
 页面应只显示 PostGIS、GeoServer、OpenLayers 三项在线状态。浏览器请求不应出现 `/qgis-server/`、`/vector/`、TiTiler 或 Cesium 静态资源。
 

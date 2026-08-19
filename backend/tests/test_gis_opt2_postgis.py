@@ -21,7 +21,7 @@ pytestmark = pytest.mark.skipif(
 
 def test_catalog_sources_and_geoserver_permissions_are_live() -> None:
     with SessionLocal() as session:
-        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260817_0018"
+        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260818_0019"
         assert session.scalar(text("SELECT count(*) FROM gis_layer_registry WHERE active")) == 9
         assert validate_gis_catalog(
             session,

@@ -15,6 +15,7 @@ from model.network import build_network_mesh, solve_network
 from model.solver.saint_venant import solve_river
 from model.structure.gate import gate_discharge
 from model.structure.pump import pump_discharge
+from model.adapters import adapt_v3_to_v2
 
 
 class HydraulicEngine:
@@ -32,6 +33,8 @@ class HydraulicEngine:
 
         if not isinstance(snapshot, Mapping):
             raise TypeError("snapshot must be a mapping")
+        if snapshot.get("schema_version") == "dayu.model-input.v3":
+            snapshot = adapt_v3_to_v2(snapshot)
         if snapshot.get("schema_version") == "dayu.model-input.v2":
             return self._run_network(
                 snapshot,
@@ -111,7 +114,9 @@ class HydraulicEngine:
             progress_callback=progress_callback,
         )
         provenance = dict(snapshot.get("provenance", {}))
-        provenance["input_schema_version"] = "dayu.model-input.v2"
+        provenance["input_schema_version"] = snapshot.get(
+            "_source_schema_version", "dayu.model-input.v2"
+        )
         plan = snapshot.get("dispatch_plan")
         evaluation_config = {}
         if isinstance(plan, Mapping):

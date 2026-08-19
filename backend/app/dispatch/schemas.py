@@ -1,15 +1,80 @@
 """调度计划、动作、规则、运行、事件和对比 HTTP 契约。"""
 
 from datetime import datetime
+import math
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    field_validator,
+    model_validator,
+)
 
 
 PlanStatus = Literal["draft", "validated", "frozen", "archived"]
 RunStatus = Literal[
     "pending", "queued", "running", "cancel_requested", "cancelled", "success", "failed"
 ]
+
+
+def _evaluation_config_path(parent: str, key: object) -> str:
+    """Render one deterministic nested path for an actionable validation error."""
+
+    if isinstance(key, str) and key.isidentifier():
+        return f"{parent}.{key}"
+    return f"{parent}[{key!r}]"
+
+
+def _validate_finite_evaluation_config(value: object, path: str) -> None:
+    """Reject non-finite floats anywhere in the JSON-like evaluation config tree."""
+
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"{path} must be finite, got {value!r}")
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _validate_finite_evaluation_config(
+                item, _evaluation_config_path(path, key)
+            )
+        return
+    if isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _validate_finite_evaluation_config(item, f"{path}[{index}]")
+
+
+def _validate_evaluation_config(value: dict[str, Any]) -> dict[str, Any]:
+    """Validate generic JSON plus the numeric flood-risk settings we consume."""
+
+    _validate_finite_evaluation_config(value, "evaluation_config")
+    for field_name in ("warning_level", "guarantee_level"):
+        if field_name not in value:
+            continue
+        setting = value[field_name]
+        if (
+            isinstance(setting, bool)
+            or not isinstance(setting, (int, float))
+            or not math.isfinite(float(setting))
+        ):
+            raise ValueError(f"evaluation_config.{field_name} must be a finite number")
+    return value
+
+
+def _reject_explicit_nulls(model: BaseModel, nullable_fields: set[str]) -> None:
+    """Keep PATCH from turning non-null database columns into runtime 500s."""
+
+    invalid = sorted(
+        field_name
+        for field_name in model.model_fields_set
+        if field_name not in nullable_fields and getattr(model, field_name) is None
+    )
+    if invalid:
+        raise ValueError(
+            "explicit null is not allowed for: " + ", ".join(invalid)
+        )
 
 
 def _validate_action_template(template: dict[str, Any]) -> dict[str, Any]:
@@ -31,7 +96,11 @@ def _validate_action_template(template: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("action_template structure_id must be a positive integer")
     if not isinstance(command_type, str):
         raise ValueError("action_template command_type must be a string")
-    if isinstance(target_value, bool) or not isinstance(target_value, (int, float)):
+    if (
+        isinstance(target_value, bool)
+        or not isinstance(target_value, (int, float))
+        or not math.isfinite(float(target_value))
+    ):
         raise ValueError("action_template target_value must be numeric")
     from model.control.constraints import command_matches_structure, validate_command_value
     if not command_matches_structure(structure_type, command_type):
@@ -50,10 +119,19 @@ class DispatchPlanCreate(BaseModel):
     simulation_case_id: int = Field(gt=0)
     name: str = Field(min_length=1, max_length=128)
     description: str | None = None
-    duration_seconds: float = Field(gt=0)
+    duration_seconds: FiniteFloat = Field(gt=0)
     evaluation_config: dict[str, Any] = Field(default_factory=dict)
     storage_level: Literal["summary", "key_sections", "full"] = "key_sections"
     created_by: str = Field(default="local-user", min_length=1, max_length=64)
+
+    @field_validator("evaluation_config")
+    @classmethod
+    def validate_evaluation_config(
+        cls, value: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Keep every nested numeric evaluation setting JSON/hash safe."""
+
+        return _validate_evaluation_config(value)
 
 
 class DispatchPlanUpdate(BaseModel):
@@ -62,10 +140,28 @@ class DispatchPlanUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=128)
     description: str | None = None
-    duration_seconds: float | None = Field(default=None, gt=0)
+    duration_seconds: FiniteFloat | None = Field(default=None, gt=0)
     evaluation_config: dict[str, Any] | None = None
     storage_level: Literal["summary", "key_sections", "full"] | None = None
     status: Literal["archived"] | None = None
+
+    @field_validator("evaluation_config")
+    @classmethod
+    def validate_evaluation_config(
+        cls, value: dict[str, Any] | None
+    ) -> dict[str, Any] | None:
+        """Apply the same recursive finite-value gate to partial plan updates."""
+
+        if value is not None:
+            _validate_evaluation_config(value)
+        return value
+
+    @model_validator(mode="after")
+    def reject_nonnullable_nulls(self) -> "DispatchPlanUpdate":
+        """Only description is nullable in the persisted plan contract."""
+
+        _reject_explicit_nulls(self, {"description"})
+        return self
 
 
 class DispatchPlanRecord(BaseModel):
@@ -96,7 +192,7 @@ class DispatchActionCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     sequence: int = Field(ge=0)
-    time_seconds: float = Field(ge=0)
+    time_seconds: FiniteFloat = Field(ge=0)
     structure_type: Literal["gate", "pump"]
     gate_id: int | None = Field(default=None, gt=0)
     pump_id: int | None = Field(default=None, gt=0)
@@ -104,7 +200,7 @@ class DispatchActionCreate(BaseModel):
         "gate_opening_m", "gate_opening_ratio", "pump_enabled",
         "pump_unit_count", "pump_target_flow",
     ]
-    target_value: float
+    target_value: FiniteFloat
     interpolation: Literal["step", "linear"] = "step"
     priority: int = 0
     note: str | None = None
@@ -134,15 +230,22 @@ class DispatchActionUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     sequence: int | None = Field(default=None, ge=0)
-    time_seconds: float | None = Field(default=None, ge=0)
+    time_seconds: FiniteFloat | None = Field(default=None, ge=0)
     command_type: Literal[
         "gate_opening_m", "gate_opening_ratio", "pump_enabled",
         "pump_unit_count", "pump_target_flow",
     ] | None = None
-    target_value: float | None = None
+    target_value: FiniteFloat | None = None
     interpolation: Literal["step", "linear"] | None = None
     priority: int | None = None
     note: str | None = None
+
+    @model_validator(mode="after")
+    def reject_nonnullable_nulls(self) -> "DispatchActionUpdate":
+        """Only note is nullable in the persisted action contract."""
+
+        _reject_explicit_nulls(self, {"note"})
+        return self
 
 
 class DispatchActionRecord(DispatchActionCreate):
@@ -164,10 +267,10 @@ class DispatchRuleCreate(BaseModel):
     ]
     observation_object_id: int | None = Field(default=None, gt=0)
     operator: Literal[">", ">=", "<", "<="]
-    threshold: float
-    hysteresis: float = Field(default=0, ge=0)
-    minimum_hold_seconds: float = Field(default=0, ge=0)
-    cooldown_seconds: float = Field(default=0, ge=0)
+    threshold: FiniteFloat
+    hysteresis: FiniteFloat = Field(default=0, ge=0)
+    minimum_hold_seconds: FiniteFloat = Field(default=0, ge=0)
+    cooldown_seconds: FiniteFloat = Field(default=0, ge=0)
     action_template: dict[str, Any]
     priority: int = 0
 
@@ -189,10 +292,10 @@ class DispatchRuleUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=128)
     enabled: bool | None = None
-    threshold: float | None = None
-    hysteresis: float | None = Field(default=None, ge=0)
-    minimum_hold_seconds: float | None = Field(default=None, ge=0)
-    cooldown_seconds: float | None = Field(default=None, ge=0)
+    threshold: FiniteFloat | None = None
+    hysteresis: FiniteFloat | None = Field(default=None, ge=0)
+    minimum_hold_seconds: FiniteFloat | None = Field(default=None, ge=0)
+    cooldown_seconds: FiniteFloat | None = Field(default=None, ge=0)
     action_template: dict[str, Any] | None = None
     priority: int | None = None
 
@@ -200,6 +303,7 @@ class DispatchRuleUpdate(BaseModel):
     def validate_action(self) -> "DispatchRuleUpdate":
         """Reject malformed replacement actions before they reach persistence."""
 
+        _reject_explicit_nulls(self, set())
         if self.action_template is not None:
             _validate_action_template(self.action_template)
         return self

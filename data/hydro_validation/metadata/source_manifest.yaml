@@ -1,0 +1,98 @@
+schema_version: 1
+case_code: HYDRO-DATA-02-PUBLIC-TEMPLATE
+captured_at: null
+
+publication:
+  mode: sanitized_public_template
+  controlled_evidence_published: false
+  private_manifest_required: true
+  note: >-
+    真实企业名称、工程名称、文件名、相对路径、文件大小、SHA-256、空间范围和组件清单
+    均留在本地受控清单中，未发布到公开仓库。
+
+root:
+  env_var: HYDRO_VALIDATION_CASE_ROOT
+  expected_basename: null
+  absolute_path_committed: false
+  fail_if_missing: true
+
+integrity:
+  algorithm: sha256
+  verify_before_read: true
+  reject_on_mismatch: true
+  expected_digest_source: controlled_local_manifest
+
+data_handling:
+  classification: controlled_engineering_data
+  raw_files_in_repository: prohibited
+  source_paths_in_repository: prohibited
+  digests_and_byte_sizes_in_repository: prohibited
+  exact_extents_in_repository: prohibited
+  case_specific_mapping_in_repository: prohibited
+  large_or_sensitive_outputs_in_repository: prohibited
+
+sources:
+  - id: cross_section_source
+    relative_path: null
+    format: cad_or_tabular
+    category: cross_section
+    expected_use: 断面轴线、桩号与 Profile 提取
+    required: true
+    byte_size: null
+    sha256: null
+    confidentiality: controlled_external
+    publication_status: metadata_redacted_private_manifest_only
+
+  - id: river_topography_source
+    relative_path: null
+    format: cad_or_vector
+    category: river
+    expected_use: 河道平面线位、地形和建筑物复核
+    required: true
+    byte_size: null
+    sha256: null
+    confidentiality: controlled_external
+    publication_status: metadata_redacted_private_manifest_only
+
+  - id: river_boundary_source
+    relative_path: null
+    format: vector_bundle
+    category: river
+    expected_use: 河道管理范围与岸线语义复核
+    required: false
+    byte_size: null
+    sha256: null
+    extent_xy: null
+    components: []
+    confidentiality: controlled_external
+    publication_status: metadata_redacted_private_manifest_only
+
+  - id: hydraulic_boundary_source
+    relative_path: null
+    format: report_or_timeseries
+    category: boundary
+    expected_use: 当前案例上下游边界候选来源
+    required: true
+    byte_size: null
+    sha256: null
+    current_case_binding_status: pending
+    confidentiality: controlled_external
+    publication_status: metadata_redacted_private_manifest_only
+
+  - id: model_comparison_source
+    relative_path: null
+    format: model_or_report
+    category: comparison
+    expected_use: 同断面、同工况结果对比
+    required: false
+    byte_size: null
+    sha256: null
+    current_case_binding_status: pending
+    confidentiality: controlled_external
+    publication_status: metadata_redacted_private_manifest_only
+
+known_but_excluded:
+  - source_ref: unpublished_legacy_horizontal_or_vertical_datum_source
+    reason: 坐标或高程基准未完成权威转换，不得作为生产输入
+  - source_ref: unpublished_unapproved_boundary_source
+    reason: 未公告或未批准资料不得作为权威生产边界

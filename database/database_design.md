@@ -1,7 +1,7 @@
 # 数据库设计基线
 
 更新日期：2026-08-18
-权威迁移头：`20260817_0018`
+权威迁移头：`20260818_0019`
 
 ## 单库原则
 
@@ -13,6 +13,7 @@
 | `imports` | 原始 GDAL 落地区，每批次不可变物理表 |
 | `staging_qgis` | QGIS 可编辑的四张强类型暂存表 |
 | `reference_data` | 与 Dataset Version 解耦的广东开放行政区、道路和水系快照 |
+| `hydraulic` | Network/Node/Branch/Reach/Vertex、断面 Profile/糙率/查算语义、导入审计与校核证据 |
 | `publish` | GeoServer 和 QGIS 复核读取的版本过滤只读视图 |
 | TimescaleDB hypertable | 观测、仿真和调度动态状态 |
 
@@ -63,6 +64,12 @@ Catalog 激活的 9 个 `publish` 视图包括 6 个显式暴露 `dataset_versio
 ### PostGIS Catalog
 
 历史物理表 `gis_layer_registry` 为避免复制而保留，但运行模型名为 `GISCatalogLayer`。迁移 0016 激活 9 个 `publish` / `GEOSERVER_WMS` / `RASTER_WMS` 行；迁移 0017 在 `basemap_registry` 增加默认可见的 Esri World Imagery 高分辨率 endpoint，并把 2 个 NASA GIBS endpoint 调整为默认关闭的后备；迁移 0018 将三类参考层的 FeatureInfo 展示字段切换为 `name_zh`。其他历史渲染行保持 inactive，只服务于可逆 downgrade。
+
+### 水动力交换语义
+
+迁移 0019 新增 `hydraulic.network|node|branch|branch_vertex|reach`、`cross_section|cross_section_profile|cross_section_point|cross_section_roughness_zone|cross_section_processing|cross_section_hydraulic_row`、导入/校核对象及 GIS 适配视图。`legacy_river_id` 与 `legacy_cross_section_id` 将正式水动力对象稳定映射到现有核心表；正式拓扑也投影到现有 Node/Segment/Connection。新导入和原有 CRUD 在同一业务事务内保持兼容，不把语义 schema 变成第二权威空间库。
+
+空间输入必须声明完整坐标契约；source 受控为 4326、4490 或 4546–4549，engineering CRS 必须为米制 4546–4549，标准化显示 geometry 固定为 4490。已发布/已退役版本不接受导入，文件预览不触发业务实体写入。
 
 ## 角色矩阵
 

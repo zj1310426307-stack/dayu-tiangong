@@ -7,6 +7,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.database.config import load_database_config
 from app.ai import models as ai_models  # noqa: F401
+from app.hydraulic import models as hydraulic_models  # noqa: F401
 from app.gis.models import Base
 
 

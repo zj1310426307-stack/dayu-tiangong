@@ -113,13 +113,29 @@ def detect_source_crs(metadata: dict[str, Any]) -> str:
     return "unknown"
 
 
-def vector_to_geojson(source: Path, target: Path, target_srid: int) -> None:
-    """Convert a vector dataset through ogr2ogr and normalize its target CRS."""
+def vector_to_geojson(
+    source: Path,
+    target: Path,
+    target_srid: int,
+    source_srid: int | None = None,
+    *,
+    rfc7946: bool = True,
+) -> None:
+    """Convert a vector dataset and optionally assign an explicit source CRS.
 
-    _run([
-        _executable("ogr2ogr"), "-f", "GeoJSON", "-t_srs", f"EPSG:{target_srid}",
-        "-lco", "RFC7946=YES", str(target), str(source),
+    CAD sources commonly omit CRS metadata.  The optional ``source_srid`` is
+    passed as a separate argument instead of being inferred from coordinate
+    magnitude, preserving the no-guessing import contract.
+    """
+
+    arguments = [_executable("ogr2ogr"), "-f", "GeoJSON"]
+    if source_srid is not None:
+        arguments.extend(["-s_srs", f"EPSG:{source_srid}"])
+    arguments.extend([
+        "-t_srs", f"EPSG:{target_srid}", "-lco", f"RFC7946={'YES' if rfc7946 else 'NO'}",
+        str(target), str(source),
     ])
+    _run(arguments)
 
 
 def raster_to_cog(source: Path, target: Path, target_srid: int) -> None:

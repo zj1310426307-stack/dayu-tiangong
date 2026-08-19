@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import math
 
 from model.control.policy import ControlTarget, HydraulicObservation
 
@@ -43,6 +44,20 @@ class ThresholdRule:
         required = {"structure_type", "structure_id", "command_type", "target_value"}
         if not required.issubset(self.action_template):
             raise ValueError("规则动作模板字段不完整")
+        numeric_fields = {
+            "threshold": self.threshold,
+            "hysteresis": self.hysteresis,
+            "minimum_hold_seconds": self.minimum_hold_seconds,
+            "cooldown_seconds": self.cooldown_seconds,
+            "target_value": self.action_template["target_value"],
+        }
+        for name, value in numeric_fields.items():
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"规则 {name} 必须是有限数值")
+            if not math.isfinite(float(value)):
+                raise ValueError(f"规则 {name} 必须是有限数值")
+        if self.hysteresis < 0 or self.minimum_hold_seconds < 0 or self.cooldown_seconds < 0:
+            raise ValueError("规则滞回、保持时间和冷却时间不得为负")
 
 
 @dataclass

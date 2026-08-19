@@ -1,0 +1,85 @@
+schema_version: 1
+case_code: HYDRO-DATA-02-PUBLIC-TEMPLATE
+
+publication:
+  mode: sanitized_public_template
+  controlled_evidence_published: false
+  private_mapping_required: true
+  note: >-
+    真实工程名称、测量日期、企业信息、源文件标识、空间范围、CAD ordinal、坐标选择阈值、
+    桩号区间和断面映射均只保存在本地受控证据中，未发布到公开仓库。
+
+survey:
+  subject: null
+  survey_date: null
+  survey_date_status: controlled_local_metadata
+  survey_company: null
+  survey_company_status: controlled_local_metadata
+  horizontal_crs: configured_in_private_overlay
+  horizontal_axis: "X=东坐标；Y=北坐标"
+  horizontal_unit: metre
+  vertical_datum: configured_in_private_overlay
+  vertical_unit: metre
+
+primary_sources:
+  - manifest_id: cross_section_source
+    role: cross_section_axis_and_profile_source
+  - manifest_id: river_topography_source
+    role: river_topography_and_plan_source
+  - manifest_id: river_boundary_source
+    role: river_management_boundary_source
+
+cad_inspection:
+  source_manifest_id: cross_section_source
+  source_sha256: null
+  source_format: configured_in_private_overlay
+  driver: approved_cad_or_gdal_driver
+  embedded_srs: null
+  extent_xy: null
+  mapping_scope: >-
+    案例专属人工审图映射只适用于经完整性校验的本地受控源文件；
+    公开模板不得作为其他 CAD 的图层、版式或坐标选择规则。
+
+  mapping_contract:
+    centerline_candidates:
+      selection_rule: controlled_local_mapping_required
+      published_ordinals: []
+      published_lengths_m: []
+      target: hydraulic.branch.centerline_candidate
+      direction_status: pending_hydraulic_confirmation
+    cross_section_axes:
+      selection_rule: controlled_local_mapping_required
+      published_coordinate_thresholds: []
+      target: hydraulic.cross_section.axis_staging
+      commit_gate: >-
+        所有候选均进入 QA；只有本地受控映射确认且通过几何门禁的轴线可以提交，
+        其余异常必须保留并报告，不能删除或隐藏。
+    chainage_labels:
+      grouping_rule: controlled_local_mapping_required
+      published_chainage_ranges: []
+      target: hydraulic.cross_section.chainage_staging
+    profile_points:
+      layout_mapping: controlled_local_mapping_required
+      published_coordinate_windows: []
+      target: hydraulic.cross_section_profile.point_staging
+      validation: >-
+        数值提取后必须检查横距递增、高程有限、最低点数和空间关系，并抽样回看源资料。
+
+quality_gates:
+  authoritative_control_points_available: false
+  coordinate_error_test_result: NOT_EVALUATED
+  horizontal_error_threshold_m: configured_by_project_acceptance_contract
+  cross_section_profile_geometry: passed_for_controlled_admitted_subset
+  rejected_or_reference_candidates_retained: true
+  postgis_import_validated: true
+  postgis_topology_result: failed_disconnected_components_3
+  branch_direction_validated: false
+  legacy_vertical_datum_transformed: false
+  production_accepted: false
+
+handling:
+  raw_distribution: prohibited
+  repository_content: sanitized_template_only
+  require_private_manifest_hash_match: true
+  require_explicit_private_layer_mapping: true
+  automatic_cad_layer_guessing: forbidden

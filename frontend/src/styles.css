@@ -363,6 +363,25 @@ button, input { font: inherit; }
 .hydraulic-stats .data-card { min-height: 118px; }
 .hydraulic-stats .ant-statistic-content-prefix { color: var(--cyan); }
 .hydraulic-result-chart { width: 100%; height: 680px; }
+.hydraulic-data-stats .data-card { min-height: 112px; }
+.hydraulic-tree-card { min-height: 430px; }
+.hydraulic-tree-card .ant-tree { background: transparent; }
+.hydraulic-tree-card .ant-tree-node-content-wrapper { min-height: 28px; line-height: 28px; }
+.hydraulic-data-empty { min-height: 280px; display: grid; place-items: center; color: var(--muted); text-align: center; }
+.section-profile-chart { width: 100%; min-height: 320px; overflow: hidden; }
+.section-profile-chart svg { width: 100%; min-width: 620px; color: #7898aa; font-size: 11px; }
+.section-profile-chart svg text { fill: #8faabd; }
+.profile-grid { stroke: rgba(120, 152, 170, 0.17); stroke-width: 1; }
+.profile-line { fill: none; stroke: var(--cyan); stroke-width: 3; stroke-linejoin: round; }
+.profile-point { fill: #102e42; stroke: #7bf7ea; stroke-width: 2; }
+.profile-axis-label { fill: #9cb3c2; font-size: 12px; font-weight: 600; }
+.hydraulic-compact-uploader { display: block; margin: 8px 0 16px; }
+.hydraulic-compact-uploader .ant-upload-drag { min-height: 132px; background: rgba(8, 26, 40, 0.44) !important; border-color: rgba(47, 230, 214, 0.22) !important; }
+.hydraulic-compact-uploader .ant-upload-drag-icon { margin-bottom: 5px !important; }
+.hydraulic-compact-uploader .ant-upload-drag-icon .anticon { color: var(--cyan) !important; font-size: 30px !important; }
+.hydraulic-preview-panel { display: grid; gap: 14px; margin-top: 18px; }
+.hydraulic-export-actions { margin-top: 18px; }
+.hydraulic-validation-summary { margin-bottom: 18px; }
 .hydraulic-diagnostics { max-height: 420px; margin: 0; padding: 16px; color: #86a8ba; background: rgba(4, 17, 28, 0.72); border: 1px solid var(--line); border-radius: 6px; overflow: auto; font: 11px/1.7 Consolas, monospace; }
 
 /* Phase 4 调度中心：计划、时间轴、异步运行与对比共用审计型信息密度。 */
@@ -372,6 +391,14 @@ button, input { font: inherit; }
 .dispatch-timeline > div { position: relative; height: 10px; background: linear-gradient(90deg, rgba(56, 168, 255, 0.25), rgba(47, 230, 214, 0.42)); border: 1px solid rgba(47, 230, 214, 0.2); border-radius: 99px; }
 .dispatch-timeline i { position: absolute; top: 50%; width: 11px; height: 11px; background: #ffc85c; border: 2px solid #081522; border-radius: 50%; box-shadow: 0 0 10px rgba(255, 200, 92, 0.7); transform: translate(-50%, -50%); }
 .dispatch-comparison-chart { width: 100%; height: 430px; }
+.dispatch-structure-chart { width: 100%; height: 820px; }
+.dispatch-milestones { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 16px; }
+.dispatch-milestones > div { display: grid; gap: 3px; padding: 10px 12px; color: #66869b; background: rgba(8, 26, 40, 0.5); border: 1px solid rgba(100, 151, 183, 0.14); border-radius: 6px; }
+.dispatch-milestones > div::before { content: ''; width: 8px; height: 8px; margin-bottom: 3px; background: #4d697b; border-radius: 50%; box-shadow: 0 0 0 3px rgba(77, 105, 123, 0.12); }
+.dispatch-milestones > div.is-covered { color: #9fb9c7; border-color: rgba(47, 230, 214, 0.28); }
+.dispatch-milestones > div.is-covered::before { background: var(--cyan); box-shadow: 0 0 12px rgba(47, 230, 214, 0.62); }
+.dispatch-milestones strong { color: inherit; font: 600 13px Consolas, monospace; }
+.dispatch-milestones span { font-size: 10px; }
 .dispatch-metrics .data-card { min-height: 120px; }
 .dispatch-metrics .ant-statistic-title { min-height: 38px; font: 9px/1.5 Consolas, monospace; overflow-wrap: anywhere; }
 .dispatch-map-state { position: absolute; bottom: 44px; left: 18px; z-index: 4; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; color: #9fb9c7; background: rgba(5, 20, 31, 0.88); border: 1px solid rgba(47, 230, 214, 0.24); border-radius: 6px; backdrop-filter: blur(9px); }
@@ -472,6 +499,8 @@ button, input { font: inherit; }
   .data-page__header { align-items: start; flex-direction: column; }
   .data-split { grid-template-columns: 1fr; }
   .hydraulic-result-chart { height: 590px; }
+  .dispatch-structure-chart { height: 720px; }
+  .dispatch-milestones { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ai-context-grid { grid-template-columns: 1fr; }
   .ai-upload-row, .ai-composer { align-items: stretch; flex-direction: column; }
   .feature-hero { min-height: 390px; padding: 35px 27px; }
