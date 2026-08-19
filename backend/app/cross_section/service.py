@@ -12,6 +12,7 @@ from app.cross_section.schemas import (
     CrossSectionUpdate,
 )
 from app.gis.models import CrossSection
+from app.hydraulic.compatibility import sync_legacy_cross_section
 
 
 def _record(session: Session, section: CrossSection) -> CrossSectionRecord:
@@ -84,6 +85,7 @@ def create_cross_section(session: Session, payload: CrossSectionCreate) -> Cross
     section = CrossSection(**values, geometry=geometry_expression(payload.geometry, "Point"))
     session.add(section)
     session.flush()
+    sync_legacy_cross_section(session, section)
     return _record(session, section)
 
 
@@ -100,6 +102,7 @@ def update_cross_section(
     if geometry is not None:
         section.geometry = geometry_expression(geometry, "Point")
     session.flush()
+    sync_legacy_cross_section(session, section)
     return _record(session, section)
 
 

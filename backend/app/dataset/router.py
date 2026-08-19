@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.common.http import commit_or_conflict, not_found
 from app.database.session import get_database_session
 from app.dataset import service
+from app.hydraulic.model_input import build_model_input_v3
 from app.dataset.schemas import (
     BoundaryConditionCreate,
     BoundaryConditionRecord,
@@ -185,6 +186,23 @@ def read_model_input(case_id: int, session: SessionDependency) -> ModelInputSnap
     """返回只读、可追溯、无计算结果的模型输入。"""
 
     snapshot = service.build_model_input(session, case_id)
+    if snapshot is None:
+        raise not_found("计算方案")
+    return snapshot
+
+
+@router.get(
+    "/simulation-cases/{case_id}/input-v3",
+    response_model=dict[str, object],
+    summary="生成正式河网与断面模型输入 v3",
+)
+def read_model_input_v3(case_id: int, session: SessionDependency) -> dict[str, object]:
+    """Return a solver-ready snapshot or a clear hydraulic readiness error."""
+
+    try:
+        snapshot = build_model_input_v3(session, case_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if snapshot is None:
         raise not_found("计算方案")
     return snapshot

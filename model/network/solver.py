@@ -19,7 +19,7 @@ from model.core.types import SectionSeries, SolverConfig
 from model.diagnostics import evaluate_water_balance
 from model.network.types import NetworkEdge, NetworkMesh, NetworkSolveResult
 from model.control.constraints import validate_control_target
-from model.control.policy import CompositeControlPolicy, HydraulicObservation
+from model.control.policy import CompositeControlPolicy, ControlTarget, HydraulicObservation
 from model.control.rules import ThresholdRule, ThresholdRulePolicy
 from model.control.schedule import ManualSchedulePolicy, ScheduledAction
 from model.structure.gate import GateControlState, constrain_gate_opening, evaluate_gate
@@ -216,6 +216,92 @@ def _build_control_policy(plan: Mapping[str, Any] | None) -> tuple[CompositeCont
     return CompositeControlPolicy(tuple(policies)), schedule.event_times
 
 
+def _fixed_gate_target(gate: Mapping[str, Any]) -> ControlTarget | None:
+    """Return an explicit fixed gate target without changing legacy baseline semantics."""
+
+    control_state = gate.get("control_state")
+    if not isinstance(control_state, Mapping) or control_state.get("mode") != "fixed":
+        return None
+    opening = control_state.get("opening")
+    if opening is None and (
+        control_state.get("state_source") == "uninitialized"
+        or control_state.get("status") == "uninitialized"
+    ):
+        return None
+    try:
+        target_value = float(opening)
+    except (TypeError, ValueError) as exc:
+        raise HydraulicInputError(
+            f"fixed gate {gate.get('id')} control_state requires opening"
+        ) from exc
+    if not math.isfinite(target_value):
+        raise HydraulicInputError(
+            f"fixed gate {gate.get('id')} control_state opening must be finite"
+        )
+    return ControlTarget(
+        "gate",
+        int(gate["id"]),
+        "gate_opening_m",
+        target_value,
+        -1,
+        "fixed",
+        None,
+    )
+
+
+def _fixed_pump_target(pump: Mapping[str, Any]) -> ControlTarget | None:
+    """Return an explicit fixed pump target while leaving unconfigured assets inert."""
+
+    control_state = pump.get("control_state")
+    if not isinstance(control_state, Mapping) or control_state.get("mode") != "fixed":
+        return None
+    if (
+        control_state.get("state_source") == "uninitialized"
+        or control_state.get("status") == "uninitialized"
+    ) and all(
+        control_state.get(key) is None
+        for key in ("running_units", "target_flow", "enabled")
+    ):
+        return None
+    if control_state.get("running_units") is not None:
+        command_type = "pump_unit_count"
+        raw_target = control_state["running_units"]
+    elif control_state.get("target_flow") is not None:
+        command_type = "pump_target_flow"
+        raw_target = control_state["target_flow"]
+    else:
+        status = str(control_state.get("status", "")).lower()
+        if status in {"running", "on", "enabled"}:
+            raw_target = 1.0
+        elif status in {"stopped", "off", "disabled"}:
+            raw_target = 0.0
+        else:
+            raise HydraulicInputError(
+                f"fixed pump {pump.get('id')} control_state requires status, "
+                "running_units, or target_flow"
+            )
+        command_type = "pump_enabled"
+    try:
+        target_value = float(raw_target)
+    except (TypeError, ValueError) as exc:
+        raise HydraulicInputError(
+            f"fixed pump {pump.get('id')} control target must be numeric"
+        ) from exc
+    if not math.isfinite(target_value):
+        raise HydraulicInputError(
+            f"fixed pump {pump.get('id')} control target must be finite"
+        )
+    return ControlTarget(
+        "pump",
+        int(pump["id"]),
+        command_type,
+        target_value,
+        -1,
+        "fixed",
+        None,
+    )
+
+
 def _structure_controls(
     snapshot: Mapping[str, Any],
     policy: CompositeControlPolicy,
@@ -283,7 +369,9 @@ def _structure_controls(
         # frozen dispatch plan actually addresses it.  The baseline task must
         # preserve the natural river connection for a fair comparison.
         if target is None and ratio_target is None:
-            continue
+            target = _fixed_gate_target(gate)
+            if target is None:
+                continue
         requested = state.opening
         if target is not None:
             requested = target.target_value
@@ -353,13 +441,21 @@ def _structure_controls(
         flow_target = by_asset.get(("pump", pump_id, "pump_target_flow"))
         target = unit_target or enabled_target or flow_target
         if target is None:
-            continue
+            target = _fixed_pump_target(pump)
+            if target is None:
+                continue
+            unit_target = target if target.command_type == "pump_unit_count" else None
+            enabled_target = target if target.command_type == "pump_enabled" else None
+            flow_target = target if target.command_type == "pump_target_flow" else None
+        valid, reason = validate_control_target(
+            target, str(pump.get("status", "offline"))
+        )
         requested_units = state.running_units
-        if unit_target is not None:
+        if valid and unit_target is not None:
             requested_units = int(round(unit_target.target_value))
-        elif enabled_target is not None:
+        elif valid and enabled_target is not None:
             requested_units = int(pump.get("maximum_running_units") or pump.get("unit_count") or 1) if enabled_target.target_value >= 0.5 else 0
-        elif flow_target is not None:
+        elif valid and flow_target is not None:
             requested_units = int(pump.get("maximum_running_units") or pump.get("unit_count") or 1)
         intake_level = levels[int(intake)] if intake in levels else None
         outlet_level = levels[int(outlet)] if outlet in levels else None
@@ -371,7 +467,7 @@ def _structure_controls(
         nominal_units = max(requested_units, 1)
         requested_flow = (
             max(float(flow_target.target_value), 0.0)
-            if flow_target is not None
+            if valid and flow_target is not None
             else nominal_units * float(pump.get("design_flow") or 0.0)
             / max(int(pump.get("unit_count") or 1), 1)
         )
@@ -391,7 +487,11 @@ def _structure_controls(
         head = static_head if static_head > 1.0e-9 else curve_head
         result = evaluate_pump(
             requested_units=requested_units,
-            target_flow=flow_target.target_value if flow_target is not None else None,
+            target_flow=(
+                flow_target.target_value
+                if valid and flow_target is not None
+                else None
+            ),
             design_flow_per_unit=float(pump.get("design_flow") or 0.0) / max(int(pump.get("unit_count") or 1), 1),
             head=head, elapsed_seconds=elapsed_seconds, state=state,
             availability=str(pump.get("status", "offline")),
@@ -442,8 +542,10 @@ def _structure_controls(
                 "source_id": target.source_id, "structure_type": "pump", "structure_id": pump_id,
                 "requested_command": {"command_type": target.command_type, "target_value": target.target_value},
                 "applied_command": {"unit_count": result.actual_units, "flow": result.flow},
-                "outcome": "limited" if result_flags else "applied",
-                "reason": ",".join(result_flags) if result_flags else None,
+                "outcome": (
+                    "rejected" if not valid else ("limited" if result_flags else "applied")
+                ),
+                "reason": reason or (",".join(result_flags) if result_flags else None),
             })
     return edge_overrides, dict(node_sources), structure_rows, events
 
@@ -494,6 +596,92 @@ def _network_cfl_step(network: NetworkMesh, config: SolverConfig) -> tuple[float
     return step, actual_cfl
 
 
+def _validate_network_time_axis(
+    config: SolverConfig, event_times: tuple[float, ...]
+) -> None:
+    """Reject non-finite solver controls and dispatch event times before iteration."""
+
+    controls = {
+        "duration_seconds": config.duration_seconds,
+        "time_step_seconds": config.requested_time_step,
+        "output_interval_seconds": config.output_interval,
+        "cfl_number": config.cfl_number,
+        "initial_flow": config.initial_flow,
+        "minimum_depth": config.minimum_depth,
+    }
+    if config.initial_water_level is not None:
+        controls["initial_water_level"] = config.initial_water_level
+    for label, value in controls.items():
+        if isinstance(value, bool) or not math.isfinite(float(value)):
+            raise HydraulicInputError(f"{label} must be finite")
+    if config.duration_seconds <= 0:
+        raise HydraulicInputError("duration_seconds 必须大于零")
+    if config.requested_time_step <= 0:
+        raise HydraulicInputError("time_step_seconds 必须大于零")
+    if config.output_interval <= 0:
+        raise HydraulicInputError("output_interval_seconds 必须大于零")
+    if not 0 < config.cfl_number <= 1:
+        raise HydraulicInputError("cfl_number 必须位于 (0, 1]")
+    if config.minimum_depth <= 0:
+        raise HydraulicInputError("minimum_depth 必须大于零")
+    for index, time_seconds in enumerate(event_times):
+        if isinstance(time_seconds, bool) or not math.isfinite(float(time_seconds)):
+            raise HydraulicInputError(
+                f"dispatch event time_seconds[{index}] must be finite"
+            )
+
+
+def _validate_network_boundary_contract(
+    network: NetworkMesh, config: SolverConfig, boundaries: BoundarySet
+) -> tuple[set[int], set[int]]:
+    """Require typed external boundaries whose series cover the full run window."""
+
+    source_nodes = {item.node_id for item in network.nodes if item.is_external_source}
+    sink_nodes = {item.node_id for item in network.nodes if item.is_external_sink}
+    missing_sources = [node for node in source_nodes if node not in boundaries.by_node]
+    missing_sinks = [node for node in sink_nodes if node not in boundaries.by_node]
+    if missing_sources or missing_sinks:
+        raise HydraulicInputError(
+            f"正式河网缺少外边界：source={missing_sources}, sink={missing_sinks}"
+        )
+    wrong_sources = [
+        node
+        for node in source_nodes
+        if boundaries.by_node[node].boundary_type != "upstream_flow"
+    ]
+    wrong_sinks = [
+        node
+        for node in sink_nodes
+        if boundaries.by_node[node].boundary_type != "downstream_water_level"
+    ]
+    if wrong_sources or wrong_sinks:
+        raise HydraulicInputError(
+            "正式河网外边界类型错误："
+            f"source_requires_upstream_flow={wrong_sources}, "
+            f"sink_requires_downstream_water_level={wrong_sinks}"
+        )
+
+    signals = {
+        id(signal): signal
+        for signal in (
+            *boundaries.by_node.values(),
+            *boundaries.upstream_flow.values(),
+            *boundaries.downstream_level.values(),
+        )
+    }
+    for signal in signals.values():
+        if len(signal.times) > 1 and (
+            signal.times[0] > 0.0
+            or signal.times[-1] < config.duration_seconds
+        ):
+            raise HydraulicInputError(
+                f"{signal.boundary_type} 序列必须覆盖求解时域 "
+                f"0..{config.duration_seconds} s，当前为 "
+                f"{signal.times[0]}..{signal.times[-1]} s"
+            )
+    return source_nodes, sink_nodes
+
+
 def solve_network(
     network: NetworkMesh,
     config: SolverConfig,
@@ -507,16 +695,13 @@ def solve_network(
     """在统一时刻计算河网流量、共同节点水位、断面状态和质量残差。"""
 
     order = _topological_order(network)
-    source_nodes = {item.node_id for item in network.nodes if item.is_external_source}
-    sink_nodes = {item.node_id for item in network.nodes if item.is_external_sink}
-    missing_sources = [node for node in source_nodes if node not in boundaries.by_node]
-    missing_sinks = [node for node in sink_nodes if node not in boundaries.by_node]
-    if missing_sources or missing_sinks:
-        raise HydraulicInputError(
-            f"正式河网缺少外边界：source={missing_sources}, sink={missing_sinks}"
-        )
     policy, plan_event_times = _build_control_policy(
         snapshot.get("dispatch_plan") if isinstance(snapshot, Mapping) else None
+    )
+    all_event_times = (*event_times, *plan_event_times)
+    _validate_network_time_axis(config, all_event_times)
+    source_nodes, sink_nodes = _validate_network_boundary_contract(
+        network, config, boundaries
     )
     times = {0.0, config.duration_seconds, *event_times, *plan_event_times}
     cursor = config.output_interval
@@ -544,6 +729,7 @@ def solve_network(
     structure_series: list[dict[str, Any]] = []
     dispatch_events: list[dict[str, Any]] = []
     emitted_event_signatures: set[tuple[Any, ...]] = set()
+    rule_event_generations: dict[int | None, int] = {}
     gate_states: dict[int, GateControlState] = {}
     pump_states: dict[int, PumpControlState] = {}
     node_bed_levels: dict[int, float] = {}
@@ -600,8 +786,21 @@ def solve_network(
         levels = _node_levels(network, order, boundaries, flows, time_seconds)
         structure_series.extend(structure_rows)
         for event in events:
+            source_id = event.get("source_id")
+            generation: int | None = None
+            lifecycle_time: float | None = None
+            if event.get("source_type") == "rule":
+                generation = rule_event_generations.get(source_id, 0)
+                if event.get("outcome") == "recovered":
+                    generation += 1
+                    rule_event_generations[source_id] = generation
+                if event.get("outcome") in {"triggered", "recovered"}:
+                    # Lifecycle events are edge-triggered.  Their time is part
+                    # of the audit identity, so a later high-low-high cycle is
+                    # never mistaken for the first trigger.
+                    lifecycle_time = float(event["time_seconds"])
             signature = (
-                event.get("source_type"), event.get("source_id"),
+                event.get("source_type"), source_id, generation, lifecycle_time,
                 event.get("structure_type"), event.get("structure_id"),
                 event.get("outcome"), event.get("reason"),
                 tuple(sorted((event.get("requested_command") or {}).items())),

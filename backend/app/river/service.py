@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.common.spatial import geometry_expression, geometry_json
 from app.dataset.lifecycle import assert_dataset_version_mutable
 from app.gis.models import River, RiverConnection, RiverNode, RiverSegment
+from app.hydraulic.compatibility import sync_legacy_river
 from app.river.schemas import (
     RiverCreate,
     RiverListResponse,
@@ -77,6 +78,7 @@ def create_river(session: Session, payload: RiverCreate) -> RiverRecord:
     river = River(**values, geometry=geometry_expression(payload.geometry, "LineString"))
     session.add(river)
     session.flush()
+    sync_legacy_river(session, river)
     return _record(session, river)
 
 
@@ -91,6 +93,7 @@ def update_river(session: Session, river: River, payload: RiverUpdate) -> RiverR
     if geometry is not None:
         river.geometry = geometry_expression(geometry, "LineString")
     session.flush()
+    sync_legacy_river(session, river)
     return _record(session, river)
 
 

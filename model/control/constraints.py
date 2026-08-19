@@ -1,5 +1,7 @@
 """控制命令与静态资产可用性的通用验证。"""
 
+import math
+
 from model.control.policy import ControlTarget
 
 
@@ -26,6 +28,8 @@ def command_matches_structure(structure_type: str, command_type: str) -> bool:
 def validate_command_value(command_type: str, value: float) -> tuple[bool, str | None]:
     """校验控制量的量纲域；设备上限由结构模型继续限幅。"""
 
+    if not math.isfinite(value):
+        return False, "control_target_must_be_finite"
     if command_type == "gate_opening_m" and value < 0:
         return False, "negative_gate_opening"
     if command_type == "gate_opening_ratio" and not 0.0 <= value <= 1.0:

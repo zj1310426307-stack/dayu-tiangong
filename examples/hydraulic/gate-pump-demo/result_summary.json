@@ -1,0 +1,34 @@
+{
+  "all_numeric_results_finite": true,
+  "dispatch_event_count": 4,
+  "dispatch_event_source_types": [
+    "rule"
+  ],
+  "duration_seconds": 86400.0,
+  "hydraulic_reach_count": 3,
+  "input_schema_version": "dayu.model-input.v3",
+  "output_frame_count": 25,
+  "production_calibrated": false,
+  "result_schema_version": "dayu.hydraulic-result.v2",
+  "rule_trigger_count": 2,
+  "scientific_scope": "quasi-steady software acceptance only",
+  "section_series_count": 20,
+  "solver": "synchronous-network-continuity-manning-v1",
+  "structure_result_count": 50,
+  "structure_types": [
+    "gate",
+    "pump"
+  ],
+  "water_balance": {
+    "balance_residual": 0.0,
+    "external_inflow_volume": 1728000.0,
+    "external_outflow_volume": 1728000.0,
+    "gate_transfer_volume": 1728000.0,
+    "lateral_sink_volume": 0.0,
+    "lateral_source_volume": 0.0,
+    "pump_transfer_volume": 172800.0,
+    "relative_balance_residual": 0.0,
+    "status": "pass",
+    "storage_change": 0.0
+  }
+}

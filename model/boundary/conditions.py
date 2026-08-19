@@ -2,10 +2,25 @@
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+import math
 from typing import Any
 
 from model.core.errors import HydraulicInputError
 from model.core.types import RiverMesh
+
+
+def _finite_number(value: Any, label: str) -> float:
+    """Return one finite numeric boundary value with a domain error on failure."""
+
+    if isinstance(value, bool):
+        raise HydraulicInputError(f"{label} 必须是有限数值")
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise HydraulicInputError(f"{label} 必须是有限数值") from exc
+    if not math.isfinite(number):
+        raise HydraulicInputError(f"{label} 必须是有限数值")
+    return number
 
 
 @dataclass(frozen=True)
@@ -18,21 +33,30 @@ class BoundarySignal:
     values: tuple[float, ...]
 
     def value_at(self, time_seconds: float) -> float:
-        """按时间返回常值或分段线性插值值。"""
+        """按有限时刻返回常值或覆盖域内的分段线性插值值。"""
 
-        if len(self.times) == 1 or time_seconds <= self.times[0]:
+        query_time = _finite_number(time_seconds, "边界求值 time_seconds")
+        if len(self.times) == 1:
             return self.values[0]
-        if time_seconds >= self.times[-1]:
+        if query_time < self.times[0] or query_time > self.times[-1]:
+            raise HydraulicInputError(
+                f"{self.boundary_type} 序列不覆盖 time_seconds={query_time}"
+            )
+        if query_time == self.times[0]:
+            return self.values[0]
+        if query_time == self.times[-1]:
             return self.values[-1]
         for index in range(1, len(self.times)):
-            if time_seconds <= self.times[index]:
+            if query_time <= self.times[index]:
                 left_time = self.times[index - 1]
                 right_time = self.times[index]
-                ratio = (time_seconds - left_time) / (right_time - left_time)
+                ratio = (query_time - left_time) / (right_time - left_time)
                 return self.values[index - 1] + ratio * (
                     self.values[index] - self.values[index - 1]
                 )
-        return self.values[-1]
+        raise HydraulicInputError(
+            f"{self.boundary_type} 序列无法求值 time_seconds={query_time}"
+        )
 
 
 @dataclass(frozen=True)
@@ -56,14 +80,27 @@ def _parse_values(
         if "value" not in payload:
             raise HydraulicInputError(f"常值边界 {boundary_type} 缺少 value")
         times = (0.0,)
-        values = (float(payload["value"]),)
+        values = (
+            _finite_number(payload["value"], f"常值边界 {boundary_type} value"),
+        )
     elif mode == "series":
         raw_times = payload.get("times")
         raw_values = payload.get("values")
-        if not isinstance(raw_times, Sequence) or not isinstance(raw_values, Sequence):
+        if (
+            not isinstance(raw_times, Sequence)
+            or isinstance(raw_times, (str, bytes))
+            or not isinstance(raw_values, Sequence)
+            or isinstance(raw_values, (str, bytes))
+        ):
             raise HydraulicInputError(f"序列边界 {boundary_type} 缺少 times/values")
-        times = tuple(float(value) for value in raw_times)
-        values = tuple(float(value) for value in raw_values)
+        times = tuple(
+            _finite_number(value, f"序列边界 {boundary_type} times[{index}]")
+            for index, value in enumerate(raw_times)
+        )
+        values = tuple(
+            _finite_number(value, f"序列边界 {boundary_type} values[{index}]")
+            for index, value in enumerate(raw_values)
+        )
         if len(times) < 2 or len(times) != len(values):
             raise HydraulicInputError(f"序列边界 {boundary_type} 时间和值数量不一致")
         if any(right <= left for left, right in zip(times, times[1:])):
@@ -100,6 +137,9 @@ def build_boundary_set(
                         if boundary_type == "upstream_flow"
                         else f"节点 {target_node_id} 存在重复水位边界"
                     )
+                raise HydraulicInputError(
+                    f"节点 {target_node_id} 不能同时配置流量和水位边界"
+                )
             by_node[target_node_id] = signal
         for mesh in meshes:
             if boundary_type == "upstream_flow" and (

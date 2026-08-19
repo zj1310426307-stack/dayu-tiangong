@@ -35,6 +35,95 @@ class DispatchStateError(RuntimeError):
     """操作与计划/运行状态不兼容。"""
 
 
+class DispatchQueueError(RuntimeError):
+    """基准/受控任务未能完整投递到计算队列。"""
+
+
+def _enqueue_run_tasks(
+    session: Session,
+    run: DispatchRun,
+    baseline: SimulationTask,
+    controlled: SimulationTask,
+) -> None:
+    """Durably record complete, failed, or partial two-task queue delivery."""
+
+    try:
+        baseline_job = run_hydraulic_task.delay(baseline.id)
+    except Exception as exc:
+        now = datetime.now(UTC)
+        message = "dispatch queue broker unavailable; no tasks were enqueued"
+        for task in (baseline, controlled):
+            task.status = "failed"
+            task.progress = 100
+            task.error_message = message
+            task.end_time = now
+        run.status = "failed"
+        run.progress = 100
+        run.error_message = message
+        run.end_time = now
+        session.commit()
+        raise DispatchQueueError(message) from exc
+
+    baseline.queue_job_id = str(baseline_job.id)
+    run.queue_job_id = str(baseline_job.id)
+    # The first externally visible delivery must be durable before the second
+    # broker call; otherwise a partial delivery would have no audit trail.
+    session.commit()
+
+    try:
+        controlled_job = run_hydraulic_task.delay(controlled.id)
+    except Exception as exc:
+        now = datetime.now(UTC)
+        message = (
+            "dispatch queue broker unavailable after baseline enqueue; "
+            f"baseline_job_id={baseline_job.id}, controlled task was not enqueued"
+        )
+        controlled.status = "failed"
+        controlled.progress = 100
+        controlled.error_message = message
+        controlled.end_time = now
+        run.status = "failed"
+        run.error_message = message
+        run.end_time = now
+        session.commit()
+        raise DispatchQueueError(message) from exc
+
+    controlled.queue_job_id = str(controlled_job.id)
+    run.queue_job_id = f"{baseline_job.id},{controlled_job.id}"
+    session.commit()
+
+
+def _freeze_run_snapshots(
+    session: Session,
+    plan: DispatchPlan,
+    config: dict[str, Any],
+    engine_commit: str,
+) -> tuple[dict[str, Any], str, dict[str, Any], str]:
+    """Freeze independent baseline/controlled v3 inputs through one identity boundary."""
+
+    try:
+        baseline_snapshot, baseline_hash = freeze_task_input(
+            session,
+            plan.simulation_case_id,
+            config,
+            schema_version="dayu.model-input.v3",
+            engine_commit=engine_commit,
+        )
+        controlled_snapshot, controlled_hash = freeze_task_input(
+            session,
+            plan.simulation_case_id,
+            config,
+            schema_version="dayu.model-input.v3",
+            engine_commit=engine_commit,
+            dispatch_plan=plan.frozen_snapshot,
+        )
+    except (LookupError, ValueError) as exc:
+        # The public router maps DispatchStateError to a stable 409.  A dataset
+        # that is not v3-ready is an actionable plan state, not an HTTP 500.
+        raise DispatchStateError(f"model-input.v3 is not ready: {exc}") from exc
+    return baseline_snapshot, baseline_hash, controlled_snapshot, controlled_hash
+
+
 def _plan_record(session: Session, plan: DispatchPlan) -> DispatchPlanRecord:
     """返回计划及实时动作/规则计数。"""
 
@@ -379,26 +468,26 @@ def create_run(session: Session, plan_id: int) -> DispatchRunRecord:
         "output_interval_seconds": 60.0,
         "storage_level": plan.storage_level,
         "allow_fallback_boundary": False,
-        "section_geometry": "rectangular",
+        "section_geometry": "tabulated",
     }
     commit = getenv("ENGINE_COMMIT", "uncommitted")
-    baseline_snapshot, baseline_hash = freeze_task_input(
-        session, plan.simulation_case_id, config,
-        schema_version="dayu.model-input.v2", engine_commit=commit,
+    (
+        baseline_snapshot,
+        baseline_hash,
+        controlled_snapshot,
+        controlled_hash,
+    ) = _freeze_run_snapshots(
+        session, plan, config, commit
     )
-    controlled_snapshot = dict(baseline_snapshot)
-    controlled_snapshot["dispatch_plan"] = plan.frozen_snapshot
-    from model.provenance import snapshot_hash
-    controlled_hash = snapshot_hash(controlled_snapshot)
     baseline = SimulationTask(
         case_id=plan.simulation_case_id, status="queued", progress=0, config=config,
-        input_schema_version="dayu.model-input.v2", input_snapshot=baseline_snapshot,
+        input_schema_version="dayu.model-input.v3", input_snapshot=baseline_snapshot,
         input_snapshot_hash=baseline_hash, engine_version=ENGINE_VERSION,
         engine_commit=commit, queued_time=datetime.now(UTC),
     )
     controlled = SimulationTask(
         case_id=plan.simulation_case_id, status="queued", progress=0, config=config,
-        input_schema_version="dayu.model-input.v2", input_snapshot=controlled_snapshot,
+        input_schema_version="dayu.model-input.v3", input_snapshot=controlled_snapshot,
         input_snapshot_hash=controlled_hash, engine_version=ENGINE_VERSION,
         engine_commit=commit, queued_time=datetime.now(UTC),
     )
@@ -410,12 +499,7 @@ def create_run(session: Session, plan_id: int) -> DispatchRunRecord:
     )
     session.add(run)
     session.commit()
-    baseline_job = run_hydraulic_task.delay(baseline.id)
-    controlled_job = run_hydraulic_task.delay(controlled.id)
-    baseline.queue_job_id = str(baseline_job.id)
-    controlled.queue_job_id = str(controlled_job.id)
-    run.queue_job_id = f"{baseline_job.id},{controlled_job.id}"
-    session.commit()
+    _enqueue_run_tasks(session, run, baseline, controlled)
     session.refresh(run)
     return DispatchRunRecord.model_validate(run)
 

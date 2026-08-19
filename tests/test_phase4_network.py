@@ -6,6 +6,7 @@ import math
 import pytest
 
 from model import HydraulicEngine
+from model.boundary.conditions import BoundarySignal
 from model.core.errors import HydraulicInputError
 
 
@@ -116,6 +117,85 @@ def test_network_boundary_mapping() -> None:
     snapshot = make_y_network()
     snapshot["boundary_conditions"] = snapshot["boundary_conditions"][:-1]
     with pytest.raises(HydraulicInputError, match="缺少外边界"):
+        HydraulicEngine().run(snapshot)
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"mode": "constant", "value": float("nan")},
+        {"mode": "constant", "value": float("inf")},
+        {"mode": "series", "times": [0.0, float("inf")], "values": [10.0, 10.0]},
+        {"mode": "series", "times": [0.0, 600.0], "values": [10.0, float("-inf")]},
+    ],
+)
+def test_network_boundary_numbers_must_be_finite(values: dict) -> None:
+    """NaN and either infinity are invalid boundary facts, never solver inputs."""
+
+    snapshot = make_y_network()
+    snapshot["boundary_conditions"][0]["values"] = values
+
+    with pytest.raises(HydraulicInputError, match="有限数值"):
+        HydraulicEngine().run(snapshot)
+
+
+def test_boundary_query_time_must_be_finite_but_constant_covers_all_finite_time() -> None:
+    """A constant is all-domain only for a finite simulation time coordinate."""
+
+    signal = BoundarySignal("upstream_flow", 1, (0.0,), (10.0,))
+
+    assert signal.value_at(1.0e12) == 10.0
+    with pytest.raises(HydraulicInputError, match="time_seconds"):
+        signal.value_at(float("inf"))
+
+
+def test_same_node_cannot_mix_flow_and_level_boundaries() -> None:
+    """A node has one authoritative boundary type; a later type may not overwrite it."""
+
+    snapshot = make_y_network()
+    snapshot["boundary_conditions"].append({
+        "boundary_type": "downstream_water_level",
+        "target_node_id": 1,
+        "values": {"mode": "constant", "value": 10.0},
+    })
+
+    with pytest.raises(HydraulicInputError, match="不能同时配置"):
+        HydraulicEngine().run(snapshot)
+
+
+@pytest.mark.parametrize(
+    ("boundary_index", "wrong_type", "match"),
+    [
+        (0, "downstream_water_level", "source_requires_upstream_flow"),
+        (-1, "upstream_flow", "sink_requires_downstream_water_level"),
+    ],
+)
+def test_external_nodes_require_the_correct_boundary_type(
+    boundary_index: int, wrong_type: str, match: str
+) -> None:
+    """Presence alone is insufficient: source/sink semantics must match the node role."""
+
+    snapshot = make_y_network()
+    snapshot["boundary_conditions"][boundary_index]["boundary_type"] = wrong_type
+
+    with pytest.raises(HydraulicInputError, match=match):
+        HydraulicEngine().run(snapshot)
+
+
+@pytest.mark.parametrize("times", [[1.0, 600.0], [0.0, 599.0]])
+def test_series_boundary_must_cover_the_complete_simulation_window(
+    times: list[float],
+) -> None:
+    """Series interpolation may not silently clamp before its start or after its end."""
+
+    snapshot = make_y_network()
+    snapshot["boundary_conditions"][0]["values"] = {
+        "mode": "series",
+        "times": times,
+        "values": [10.0, 10.0],
+    }
+
+    with pytest.raises(HydraulicInputError, match="必须覆盖求解时域"):
         HydraulicEngine().run(snapshot)
 
 

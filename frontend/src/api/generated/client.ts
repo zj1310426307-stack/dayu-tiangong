@@ -233,6 +233,24 @@ export interface Body_inspect_file_api_v1_dgis_conversions_inspect_post {
   "file": string;
 }
 
+export interface Body_preview_import_api_v1_hydraulic_imports_preview_post {
+  "dataset_version_id": number;
+  "file": string;
+  "source_crs": string;
+  "engineering_crs": string;
+  "coordinate_mode": string;
+  "axis_mapping": string;
+  "horizontal_unit": string;
+  "vertical_datum": string;
+  "central_meridian": number;
+  "zone_width": number;
+  "x_field"?: string;
+  "y_field"?: string;
+  "z_field"?: string | null;
+  "vertical_unit"?: string;
+  "zone_prefix_mode"?: string;
+}
+
 export interface Body_upload_document_api_v1_ai_knowledge_documents_post {
   "file": string;
   "category": string;
@@ -426,6 +444,22 @@ export interface ConversionJobResponse {
   "output_format": string;
   "output_name": string | null;
   "details": Record<string, unknown>;
+}
+
+export interface CoordinateReferenceSpec {
+  "source_crs": string;
+  "engineering_crs": string;
+  "coordinate_mode": "geographic" | "projected";
+  "axis_mapping": "x_easting_y_northing" | "x_northing_y_easting";
+  "x_field"?: string;
+  "y_field"?: string;
+  "z_field"?: string | null;
+  "horizontal_unit": "m" | "degree";
+  "vertical_unit"?: "m";
+  "vertical_datum": string;
+  "central_meridian": number;
+  "zone_width": 3;
+  "zone_prefix_mode"?: "none" | "included" | "stripped";
 }
 
 export interface CrossSectionCreate {
@@ -842,7 +876,7 @@ export interface GeoServerLayerRecord {
   "name": string;
   "qualified_name": string;
   "title": string;
-  "geometry_type": "LineString" | "Point" | "Polygon" | "MultiPolygon";
+  "geometry_type": "LineString" | "MultiLineString" | "Point" | "Polygon" | "MultiPolygon";
   "style": string;
   "wms_enabled"?: true;
   "wmts_cached": boolean;
@@ -958,10 +992,317 @@ export interface HTTPValidationError {
   "detail"?: Array<ValidationError>;
 }
 
+export interface HydraulicBatchProcessRequest {
+  "vertical_step_m"?: number;
+  "profile_ids": Array<number>;
+}
+
+export interface HydraulicBranchActionRecord {
+  "branch_id": number;
+  "direction_status": string;
+  "start_chainage_m": number;
+  "end_chainage_m": number;
+  "length_m": number;
+}
+
+export interface HydraulicBranchInput {
+  "code": string;
+  "river_name": string;
+  "branch_name": string;
+  "flow_direction"?: "forward" | "reverse" | "unknown";
+  "source_revision"?: string | null;
+  "points": Array<HydraulicChainageInput>;
+}
+
+export interface HydraulicBranchRecord {
+  "id": number;
+  "legacy_river_id": number | null;
+  "branch_code": string;
+  "river_name": string;
+  "branch_name": string;
+  "start_chainage": number;
+  "end_chainage": number;
+  "length_m": number;
+  "direction_status": string;
+  "upstream_node_id": number | null;
+  "downstream_node_id": number | null;
+  "section_count": number;
+  "reach_count": number;
+  "reaches"?: Array<HydraulicReachRecord>;
+  "sections"?: Array<HydraulicSectionSummary>;
+}
+
+export interface HydraulicCapabilityResponse {
+  "exchange_profile": string;
+  "native_xns11_available": boolean;
+  "native_nwk11_available": boolean;
+  "supported_imports": Array<string>;
+  "supported_exports": Array<string>;
+  "source_srids": Array<number>;
+  "engineering_srids": Array<number>;
+  "axis_mappings": Array<string>;
+  "limitation": string;
+}
+
+export interface HydraulicChainageInput {
+  "chainage": number;
+  "x": number;
+  "y": number;
+  "z"?: number | null;
+  "point_code"?: string | null;
+}
+
+export interface HydraulicCrossSectionInput {
+  "section_code": string;
+  "section_name"?: string | null;
+  "branch_code": string;
+  "chainage": number;
+  "topography_id"?: string;
+  "survey_date"?: string | null;
+  "survey_method"?: string | null;
+  "default_manning_n"?: number;
+  "location_x"?: number | null;
+  "location_y"?: number | null;
+  "axis_points"?: Array<Array<unknown>>;
+  "roughness_zones"?: Array<HydraulicRoughnessZoneInput>;
+  "points": Array<HydraulicSectionPointInput>;
+}
+
+export interface HydraulicExchangePayload {
+  "network_code": string;
+  "network_name": string;
+  "source_srid": number;
+  "source_kind": "mike11" | "excel" | "csv" | "geojson" | "shp" | "dxf" | "api";
+  "coordinate_reference"?: CoordinateReferenceSpec | null;
+  "branches"?: Array<HydraulicBranchInput>;
+  "sections"?: Array<HydraulicCrossSectionInput>;
+}
+
+export interface HydraulicHydraulicRowRecord {
+  "stage_m": number;
+  "area_m2": number;
+  "top_width_m": number;
+  "wetted_perimeter_m": number;
+  "hydraulic_radius_m": number;
+  "conveyance": number;
+}
+
+export interface HydraulicImportCommitRequest {
+  "job_code": string;
+  "preview_config_hash": string;
+}
+
+export interface HydraulicImportJobRecord {
+  "id": number;
+  "job_code": string;
+  "dataset_version_id": number;
+  "filename": string;
+  "source_format": string;
+  "source_srid": number;
+  "source_hash_sha256": string;
+  "config_hash": string;
+  "coordinate_reference": CoordinateReferenceSpec;
+  "transformation_evidence": Record<string, unknown>;
+  "parser_profile": string;
+  "status": string;
+  "record_counts": Record<string, number>;
+  "issues": Array<HydraulicIssue>;
+  "native_validation_status": string;
+  "created_at": string;
+  "completed_at": string | null;
+}
+
+export interface HydraulicImportPreview {
+  "job": HydraulicImportJobRecord;
+  "payload": HydraulicExchangePayload | null;
+}
+
+export interface HydraulicIssue {
+  "severity": "error" | "warning" | "info" | "passed";
+  "code": string;
+  "message": string;
+  "entity_type"?: string | null;
+  "entity_ref"?: string | null;
+  "context"?: Record<string, unknown>;
+}
+
 export interface HydraulicLimits {
   "maximum_water_level"?: number | null;
   "maximum_flow"?: number | null;
   "maximum_pump_power_kw"?: number | null;
+}
+
+export interface HydraulicLocateRequest {
+  "snap_tolerance_m"?: number;
+  "manual_chainage_m"?: number | null;
+  "override_reason"?: string | null;
+  "actor"?: string | null;
+}
+
+export interface HydraulicNetworkRecord {
+  "id": number;
+  "dataset_version_id": number;
+  "code": string;
+  "name": string;
+  "display_crs": string;
+  "engineering_crs": string | null;
+  "horizontal_unit": string;
+  "vertical_datum": string;
+  "vertical_unit": string;
+  "source_kind": string;
+  "branch_count": number;
+  "node_count": number;
+  "reach_count": number;
+  "nodes"?: Array<HydraulicNodeRecord>;
+  "branches"?: Array<HydraulicBranchRecord>;
+}
+
+export interface HydraulicNodeRecord {
+  "id": number;
+  "node_code": string;
+  "node_name": string | null;
+  "node_type": string;
+  "geometry": Record<string, unknown>;
+}
+
+export interface HydraulicProcessingRecord {
+  "id": number;
+  "profile_hash": string;
+  "processor_version": string;
+  "vertical_step_m": number;
+  "status": string;
+  "minimum_stage_m": number | null;
+  "maximum_stage_m": number | null;
+  "generated_at": string | null;
+  "diagnostics": Record<string, unknown>;
+  "rows"?: Array<HydraulicHydraulicRowRecord>;
+}
+
+export interface HydraulicProcessRequest {
+  "vertical_step_m"?: number;
+}
+
+export interface HydraulicProfileRecord {
+  "id": number;
+  "topography_id": string;
+  "survey_date": string | null;
+  "survey_method": string | null;
+  "vertical_datum": string;
+  "vertical_unit": string;
+  "default_manning_n": number;
+  "profile_hash": string;
+  "is_active": boolean;
+  "points": Array<HydraulicSectionPointRecord>;
+  "roughness_zones": Array<HydraulicRoughnessZoneRecord>;
+  "processing"?: HydraulicProcessingRecord | null;
+}
+
+export interface HydraulicReachRecord {
+  "id": number;
+  "reach_code": string;
+  "reach_type": string;
+  "start_chainage_m": number;
+  "end_chainage_m": number;
+  "upstream_node_id": number;
+  "downstream_node_id": number;
+  "length_m": number;
+  "geometry": Record<string, unknown>;
+}
+
+export interface HydraulicRoughnessZoneInput {
+  "zone_order": number;
+  "offset_start_m": number;
+  "offset_end_m": number;
+  "manning_n": number;
+  "zone_type"?: string;
+}
+
+export interface HydraulicRoughnessZoneRecord {
+  "zone_order": number;
+  "offset_start_m": number;
+  "offset_end_m": number;
+  "manning_n": number;
+  "zone_type": string;
+}
+
+export interface HydraulicSectionDetail {
+  "id": number;
+  "dataset_version_id": number;
+  "branch_id": number;
+  "branch_code": string;
+  "legacy_cross_section_id": number | null;
+  "section_code": string;
+  "section_name": string;
+  "chainage": number;
+  "computed_chainage_m": number | null;
+  "chainage_source": string;
+  "snap_distance_m": number | null;
+  "orientation_status": string;
+  "location_geometry": Record<string, unknown>;
+  "axis_geometry": Record<string, unknown> | null;
+  "profiles": Array<HydraulicProfileRecord>;
+}
+
+export interface HydraulicSectionPointInput {
+  "sequence": number;
+  "distance": number;
+  "elevation": number;
+  "marker_type"?: "none" | "left_bank" | "right_bank" | "left_levee" | "right_levee" | "low_flow_left" | "low_flow_right" | "thalweg";
+  "point_code"?: string | null;
+  "x"?: number | null;
+  "y"?: number | null;
+  "z"?: number | null;
+}
+
+export interface HydraulicSectionPointRecord {
+  "sequence": number;
+  "distance": number;
+  "elevation": number;
+  "marker_type": string;
+  "point_code": string | null;
+  "x"?: number | null;
+  "y"?: number | null;
+  "z"?: number | null;
+}
+
+export interface HydraulicSectionSummary {
+  "id": number;
+  "section_code": string;
+  "chainage": number;
+  "topography_id": string;
+  "profile_count": number;
+  "point_count": number;
+  "orientation_status": string;
+}
+
+export interface HydraulicTopologyBuildRequest {
+  "snap_tolerance_m"?: number;
+  "minimum_reach_length_m"?: number;
+}
+
+export interface HydraulicTopologyReport {
+  "network_id": number;
+  "engineering_crs": string;
+  "snap_tolerance_m": number;
+  "node_count": number;
+  "branch_count": number;
+  "reach_count": number;
+  "issues": Array<HydraulicIssue>;
+}
+
+export interface HydraulicValidationRequest {
+  "dataset_version_id": number;
+}
+
+export interface HydraulicValidationRunRecord {
+  "id": number;
+  "run_code": string;
+  "dataset_version_id": number;
+  "status": string;
+  "summary": Record<string, unknown>;
+  "created_at": string;
+  "completed_at": string | null;
+  "results": Array<HydraulicIssue>;
 }
 
 export interface ImportIssue {
@@ -1541,7 +1882,7 @@ export interface SimulationTaskCreate {
   "initial_water_level"?: number | null;
   "initial_flow"?: number | null;
   "minimum_depth"?: number | null;
-  "input_schema_version"?: "dayu.model-input.v1" | "dayu.model-input.v2";
+  "input_schema_version"?: "dayu.model-input.v1" | "dayu.model-input.v2" | "dayu.model-input.v3";
   "allow_fallback_boundary"?: boolean;
   "section_geometry"?: "rectangular" | "tabulated";
   "storage_level"?: "summary" | "key_sections" | "full";
@@ -1732,6 +2073,22 @@ export interface DGISReplayQuery { dataset_version_id: number; at: string; featu
 export interface DGISLayerQuery { dataset_version_id: number; layer_type?: string; task_id?: number; }
 export interface DatabaseListQuery { dataset_version_id?: number; river_id?: number; search?: string; limit?: number; offset?: number; }
 export interface DispatchListQuery { dataset_version_id?: number; plan_id?: number; status?: string; limit?: number; offset?: number; }
+export interface HydraulicExportQuery { dataset_version_id: number; network_id?: number; native?: boolean; }
+export interface HydraulicCoordinateOptions {
+  source_crs: string;
+  engineering_crs: string;
+  coordinate_mode: 'geographic' | 'projected';
+  axis_mapping: 'x_easting_y_northing' | 'x_northing_y_easting';
+  horizontal_unit: 'm' | 'degree';
+  vertical_datum: string;
+  x_field?: string;
+  y_field?: string;
+  z_field?: string;
+  vertical_unit?: 'm';
+  central_meridian: number;
+  zone_width: 3;
+  zone_prefix_mode?: 'none' | 'included' | 'stripped';
+}
 export interface PageResult<T> { items: T[]; total: number; limit: number; offset: number; }
 export type ImportResource = 'rivers' | 'cross_sections' | 'gates' | 'pumps';
 
@@ -1775,7 +2132,7 @@ function decodeApiError(payload: unknown): string | ApiErrorDetail | undefined {
 
 function toQuery<T extends object>(params: T): string {
   const query = new URLSearchParams();
-  Object.entries(params as Record<string, string | number | undefined>).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); });
+  Object.entries(params as Record<string, string | number | boolean | undefined>).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); });
   const value = query.toString();
   return value ? `?${value}` : '';
 }
@@ -1953,7 +2310,35 @@ export const createSimulationCase = (body: SimulationCaseCreate, baseUrl = '') =
 export const updateSimulationCase = (caseId: number, body: SimulationCaseUpdate, baseUrl = '') => requestJson<SimulationCaseRecord>(`/api/v1/model-data/simulation-cases/${caseId}`, jsonOptions('PUT', body), baseUrl);
 export const deleteSimulationCase = (caseId: number, baseUrl = '') => requestJson<void>(`/api/v1/model-data/simulation-cases/${caseId}`, { method: 'DELETE' }, baseUrl);
 export const getModelInput = (caseId: number, baseUrl = '') => requestJson<ModelInputSnapshot>(`/api/v1/model-data/simulation-cases/${caseId}/input`, {}, baseUrl);
+export const getModelInputV3 = (caseId: number, baseUrl = '') => requestJson<Record<string, unknown>>(`/api/v1/model-data/simulation-cases/${caseId}/input-v3`, {}, baseUrl);
 export const runValidation = (datasetVersionId: number, baseUrl = '') => requestJson<ValidationReport>('/api/v1/validation/run', jsonOptions('POST', { dataset_version_id: datasetVersionId }), baseUrl);
+
+export const getHydraulicCapabilities = (baseUrl = '') => requestJson<HydraulicCapabilityResponse>('/api/v1/hydraulic/capabilities', {}, baseUrl);
+export const listHydraulicNetworks = (datasetVersionId: number, baseUrl = '') => requestJson<Array<HydraulicNetworkRecord>>(`/api/v1/hydraulic/networks${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
+export const getHydraulicSection = (sectionId: number, baseUrl = '') => requestJson<HydraulicSectionDetail>(`/api/v1/hydraulic/cross-sections/${sectionId}`, {}, baseUrl);
+export const listHydraulicImportJobs = (datasetVersionId: number, baseUrl = '') => requestJson<Array<HydraulicImportJobRecord>>(`/api/v1/hydraulic/imports${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
+export const commitHydraulicImport = (jobCode: string, previewConfigHash: string, baseUrl = '') => requestJson<HydraulicImportJobRecord>('/api/v1/hydraulic/imports/commit', jsonOptions('POST', { job_code: jobCode, preview_config_hash: previewConfigHash }), baseUrl);
+export const buildHydraulicTopology = (networkId: number, body: HydraulicTopologyBuildRequest, baseUrl = '') => requestJson<HydraulicTopologyReport>(`/api/v1/hydraulic/networks/${networkId}/topology`, jsonOptions('POST', body), baseUrl);
+export const reverseHydraulicBranch = (branchId: number, baseUrl = '') => requestJson<HydraulicBranchActionRecord>(`/api/v1/hydraulic/branches/${branchId}/reverse`, { method: 'POST' }, baseUrl);
+export const recalculateHydraulicBranchChainage = (branchId: number, baseUrl = '') => requestJson<HydraulicBranchActionRecord>(`/api/v1/hydraulic/branches/${branchId}/recalculate-chainage`, { method: 'POST' }, baseUrl);
+export const locateHydraulicSection = (sectionId: number, body: HydraulicLocateRequest, baseUrl = '') => requestJson<HydraulicSectionDetail>(`/api/v1/hydraulic/cross-sections/${sectionId}/locate`, jsonOptions('POST', body), baseUrl);
+export const processHydraulicProfile = (profileId: number, body: HydraulicProcessRequest, baseUrl = '') => requestJson<HydraulicProcessingRecord>(`/api/v1/hydraulic/profiles/${profileId}/process`, jsonOptions('POST', body), baseUrl);
+export const batchProcessHydraulicProfiles = (body: HydraulicBatchProcessRequest, baseUrl = '') => requestJson<Array<HydraulicProcessingRecord>>('/api/v1/hydraulic/profiles/process-batch', jsonOptions('POST', body), baseUrl);
+export const runHydraulicDataValidation = (datasetVersionId: number, baseUrl = '') => requestJson<HydraulicValidationRunRecord>('/api/v1/hydraulic/validation/run', jsonOptions('POST', { dataset_version_id: datasetVersionId }), baseUrl);
+export const getHydraulicDataValidation = (runCode: string, baseUrl = '') => requestJson<HydraulicValidationRunRecord>(`/api/v1/hydraulic/validation/${encodeURIComponent(runCode)}`, {}, baseUrl);
+export const downloadHydraulicNetwork = (params: HydraulicExportQuery, baseUrl = '') => requestBlob(`/api/v1/hydraulic/exports/network.nwk11${toQuery({ dataset_version_id: params.dataset_version_id, network_id: params.network_id })}`, {}, baseUrl);
+export const downloadHydraulicSections = (params: HydraulicExportQuery, baseUrl = '') => requestBlob(`/api/v1/hydraulic/exports/cross-sections.xns11${toQuery(params)}`, {}, baseUrl);
+export const downloadHydraulicTemplate = (name: 'river-network' | 'cross-section', baseUrl = '') => requestBlob(`/api/v1/hydraulic/templates/${name}`, {}, baseUrl);
+
+export async function previewHydraulicImport(datasetVersionId: number, options: HydraulicCoordinateOptions, file: File, baseUrl = ''): Promise<HydraulicImportPreview> {
+  const body = new FormData();
+  body.set('dataset_version_id', String(datasetVersionId));
+  Object.entries(options).forEach(([key, value]) => {
+    if (value !== undefined && value !== '') body.set(key, String(value));
+  });
+  body.set('file', file);
+  return requestJson<HydraulicImportPreview>('/api/v1/hydraulic/imports/preview', { method: 'POST', body }, baseUrl);
+}
 
 export const createHydraulicTask = (body: SimulationTaskCreate, baseUrl = '') => requestJson<SimulationTaskRecord>('/api/v1/model/tasks', jsonOptions('POST', body), baseUrl);
 export const listHydraulicTasks = (baseUrl = '') => requestJson<Array<SimulationTaskRecord>>('/api/v1/model/tasks', {}, baseUrl);

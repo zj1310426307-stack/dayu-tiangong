@@ -1,0 +1,1667 @@
+{
+  "schema_version": "dayu.model-input.v3",
+  "dataset_version": {
+    "id": 1,
+    "version": "HYDRO-MODEL-01-DEMO"
+  },
+  "simulation_case": {
+    "id": 1,
+    "dataset_version_id": 1,
+    "name": "5km gate-pump 24h demo"
+  },
+  "coordinate_reference": {
+    "display_crs": "EPSG:4490",
+    "engineering_crs": "EPSG:4546",
+    "horizontal_unit": "m",
+    "vertical_datum": "1985 National Height Datum",
+    "vertical_unit": "m"
+  },
+  "networks": [
+    {
+      "id": 1,
+      "network_code": "HYDRO-MODEL-01-DEMO",
+      "network_name": "5 km gate-pump network"
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "node_code": "N-0000",
+      "node_type": "boundary",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          113,
+          23
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "node_code": "N-2500",
+      "node_type": "gate_control",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          113.025,
+          23
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "node_code": "N-4000",
+      "node_type": "pump_control",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          113.04,
+          23
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "node_code": "N-5000",
+      "node_type": "boundary",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          113.05,
+          23
+        ]
+      }
+    }
+  ],
+  "branches": [
+    {
+      "id": 1,
+      "legacy_river_id": 1,
+      "branch_code": "DEMO-RIVER",
+      "branch_name": "5 km demonstration river",
+      "river_name": "Demonstration River",
+      "upstream_node_id": 1,
+      "downstream_node_id": 4,
+      "start_chainage_m": 0,
+      "end_chainage_m": 5000,
+      "length_m": 5000,
+      "direction_status": "confirmed",
+      "centerline": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            113,
+            23
+          ],
+          [
+            113.025,
+            23
+          ],
+          [
+            113.04,
+            23
+          ],
+          [
+            113.05,
+            23
+          ]
+        ]
+      }
+    }
+  ],
+  "reaches": [
+    {
+      "id": 101,
+      "branch_id": 1,
+      "reach_code": "REACH-0000-2500",
+      "reach_type": "channel",
+      "start_chainage_m": 0,
+      "end_chainage_m": 2500,
+      "upstream_node_id": 1,
+      "downstream_node_id": 2,
+      "length_m": 2500,
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            113,
+            23
+          ],
+          [
+            113.025,
+            23
+          ]
+        ]
+      },
+      "parameters": {
+        "start_fraction": 0,
+        "end_fraction": 0.5
+      }
+    },
+    {
+      "id": 102,
+      "branch_id": 1,
+      "reach_code": "REACH-2500-4000",
+      "reach_type": "channel",
+      "start_chainage_m": 2500,
+      "end_chainage_m": 4000,
+      "upstream_node_id": 2,
+      "downstream_node_id": 3,
+      "length_m": 1500,
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            113.025,
+            23
+          ],
+          [
+            113.04,
+            23
+          ]
+        ]
+      },
+      "parameters": {
+        "start_fraction": 0.5,
+        "end_fraction": 0.8
+      }
+    },
+    {
+      "id": 103,
+      "branch_id": 1,
+      "reach_code": "REACH-4000-5000",
+      "reach_type": "channel",
+      "start_chainage_m": 4000,
+      "end_chainage_m": 5000,
+      "upstream_node_id": 3,
+      "downstream_node_id": 4,
+      "length_m": 1000,
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            113.04,
+            23
+          ],
+          [
+            113.05,
+            23
+          ]
+        ]
+      },
+      "parameters": {
+        "start_fraction": 0.8,
+        "end_fraction": 1
+      }
+    }
+  ],
+  "cross_sections": [
+    {
+      "id": 1,
+      "branch_id": 1,
+      "section_code": "CS-001",
+      "section_name": "CS-001",
+      "chainage_m": 0,
+      "active_profile_id": 1,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 2,
+      "branch_id": 1,
+      "section_code": "CS-002",
+      "section_name": "CS-002",
+      "chainage_m": 263.157895,
+      "active_profile_id": 2,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 3,
+      "branch_id": 1,
+      "section_code": "CS-003",
+      "section_name": "CS-003",
+      "chainage_m": 526.315789,
+      "active_profile_id": 3,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 4,
+      "branch_id": 1,
+      "section_code": "CS-004",
+      "section_name": "CS-004",
+      "chainage_m": 789.473684,
+      "active_profile_id": 4,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 5,
+      "branch_id": 1,
+      "section_code": "CS-005",
+      "section_name": "CS-005",
+      "chainage_m": 1052.631579,
+      "active_profile_id": 5,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 6,
+      "branch_id": 1,
+      "section_code": "CS-006",
+      "section_name": "CS-006",
+      "chainage_m": 1315.789474,
+      "active_profile_id": 6,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 7,
+      "branch_id": 1,
+      "section_code": "CS-007",
+      "section_name": "CS-007",
+      "chainage_m": 1578.947368,
+      "active_profile_id": 7,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 8,
+      "branch_id": 1,
+      "section_code": "CS-008",
+      "section_name": "CS-008",
+      "chainage_m": 1842.105263,
+      "active_profile_id": 8,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 9,
+      "branch_id": 1,
+      "section_code": "CS-009",
+      "section_name": "CS-009",
+      "chainage_m": 2105.263158,
+      "active_profile_id": 9,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 10,
+      "branch_id": 1,
+      "section_code": "CS-010",
+      "section_name": "CS-010",
+      "chainage_m": 2368.421053,
+      "active_profile_id": 10,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 11,
+      "branch_id": 1,
+      "section_code": "CS-011",
+      "section_name": "CS-011",
+      "chainage_m": 2631.578947,
+      "active_profile_id": 11,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 12,
+      "branch_id": 1,
+      "section_code": "CS-012",
+      "section_name": "CS-012",
+      "chainage_m": 2894.736842,
+      "active_profile_id": 12,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 13,
+      "branch_id": 1,
+      "section_code": "CS-013",
+      "section_name": "CS-013",
+      "chainage_m": 3157.894737,
+      "active_profile_id": 13,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 14,
+      "branch_id": 1,
+      "section_code": "CS-014",
+      "section_name": "CS-014",
+      "chainage_m": 3421.052632,
+      "active_profile_id": 14,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 15,
+      "branch_id": 1,
+      "section_code": "CS-015",
+      "section_name": "CS-015",
+      "chainage_m": 3684.210526,
+      "active_profile_id": 15,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 16,
+      "branch_id": 1,
+      "section_code": "CS-016",
+      "section_name": "CS-016",
+      "chainage_m": 3947.368421,
+      "active_profile_id": 16,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 17,
+      "branch_id": 1,
+      "section_code": "CS-017",
+      "section_name": "CS-017",
+      "chainage_m": 4210.526316,
+      "active_profile_id": 17,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 18,
+      "branch_id": 1,
+      "section_code": "CS-018",
+      "section_name": "CS-018",
+      "chainage_m": 4473.684211,
+      "active_profile_id": 18,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 19,
+      "branch_id": 1,
+      "section_code": "CS-019",
+      "section_name": "CS-019",
+      "chainage_m": 4736.842105,
+      "active_profile_id": 19,
+      "orientation_status": "confirmed"
+    },
+    {
+      "id": 20,
+      "branch_id": 1,
+      "section_code": "CS-020",
+      "section_name": "CS-020",
+      "chainage_m": 5000,
+      "active_profile_id": 20,
+      "orientation_status": "confirmed"
+    }
+  ],
+  "cross_section_profiles": [
+    {
+      "id": 1,
+      "cross_section_id": 1,
+      "branch_id": 1,
+      "section_code": "CS-001",
+      "chainage_m": 0,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-001",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "cross_section_id": 2,
+      "branch_id": 1,
+      "section_code": "CS-002",
+      "chainage_m": 263.157895,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-002",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "cross_section_id": 3,
+      "branch_id": 1,
+      "section_code": "CS-003",
+      "chainage_m": 526.315789,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-003",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "cross_section_id": 4,
+      "branch_id": 1,
+      "section_code": "CS-004",
+      "chainage_m": 789.473684,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-004",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "cross_section_id": 5,
+      "branch_id": 1,
+      "section_code": "CS-005",
+      "chainage_m": 1052.631579,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-005",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "cross_section_id": 6,
+      "branch_id": 1,
+      "section_code": "CS-006",
+      "chainage_m": 1315.789474,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-006",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "cross_section_id": 7,
+      "branch_id": 1,
+      "section_code": "CS-007",
+      "chainage_m": 1578.947368,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-007",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "cross_section_id": 8,
+      "branch_id": 1,
+      "section_code": "CS-008",
+      "chainage_m": 1842.105263,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-008",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "cross_section_id": 9,
+      "branch_id": 1,
+      "section_code": "CS-009",
+      "chainage_m": 2105.263158,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-009",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "cross_section_id": 10,
+      "branch_id": 1,
+      "section_code": "CS-010",
+      "chainage_m": 2368.421053,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-010",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "cross_section_id": 11,
+      "branch_id": 1,
+      "section_code": "CS-011",
+      "chainage_m": 2631.578947,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-011",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 12,
+      "cross_section_id": 12,
+      "branch_id": 1,
+      "section_code": "CS-012",
+      "chainage_m": 2894.736842,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-012",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "cross_section_id": 13,
+      "branch_id": 1,
+      "section_code": "CS-013",
+      "chainage_m": 3157.894737,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-013",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "cross_section_id": 14,
+      "branch_id": 1,
+      "section_code": "CS-014",
+      "chainage_m": 3421.052632,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-014",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "cross_section_id": 15,
+      "branch_id": 1,
+      "section_code": "CS-015",
+      "chainage_m": 3684.210526,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-015",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "cross_section_id": 16,
+      "branch_id": 1,
+      "section_code": "CS-016",
+      "chainage_m": 3947.368421,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-016",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "cross_section_id": 17,
+      "branch_id": 1,
+      "section_code": "CS-017",
+      "chainage_m": 4210.526316,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-017",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 18,
+      "cross_section_id": 18,
+      "branch_id": 1,
+      "section_code": "CS-018",
+      "chainage_m": 4473.684211,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-018",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "cross_section_id": 19,
+      "branch_id": 1,
+      "section_code": "CS-019",
+      "chainage_m": 4736.842105,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-019",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "cross_section_id": 20,
+      "branch_id": 1,
+      "section_code": "CS-020",
+      "chainage_m": 5000,
+      "topography_id": "SYNTHETIC-20260819",
+      "profile_hash": "HYDRO-MODEL-01-CS-020",
+      "default_manning_n": 0.03,
+      "points": [
+        {
+          "sequence": 0,
+          "offset_m": 0,
+          "elevation_m": 20
+        },
+        {
+          "sequence": 1,
+          "offset_m": 1,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 2,
+          "offset_m": 31,
+          "elevation_m": 9
+        },
+        {
+          "sequence": 3,
+          "offset_m": 32,
+          "elevation_m": 20
+        }
+      ]
+    }
+  ],
+  "roughness_zones": [],
+  "hydraulic_tables": [],
+  "gates": [
+    {
+      "id": 1,
+      "dataset_version_id": 1,
+      "gate_code": "GATE-2500",
+      "river_id": 1,
+      "branch_id": 1,
+      "reach_id": 102,
+      "river_segment_id": 1,
+      "chainage": 2500,
+      "chainage_m": 2500,
+      "station": 2500,
+      "upstream_node_id": 2,
+      "downstream_node_id": 3,
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          113.025,
+          23
+        ]
+      },
+      "gate_type": "sluice",
+      "opening_direction": "vertical",
+      "width": 8,
+      "height": 2,
+      "max_flow": 20,
+      "bottom_elevation": 9,
+      "crest_elevation": 9,
+      "discharge_coefficient": 0.62,
+      "minimum_opening": 0,
+      "maximum_opening": 2,
+      "opening_rate_limit": 0.02,
+      "minimum_hold_seconds": 0,
+      "allow_reverse_flow": false,
+      "opening_min": 0,
+      "opening_max": 2,
+      "parameters": {
+        "gate_type": "sluice",
+        "opening_direction": "vertical",
+        "width": 8,
+        "height": 2,
+        "max_flow": 20,
+        "bottom_elevation": 9,
+        "crest_elevation": 9,
+        "discharge_coefficient": 0.62,
+        "minimum_opening": 0,
+        "maximum_opening": 2,
+        "opening_rate_limit": 0.02,
+        "minimum_hold_seconds": 0,
+        "allow_reverse_flow": false,
+        "opening_min": 0,
+        "opening_max": 2
+      },
+      "control_mode": "water_level_control",
+      "control_state": {
+        "mode": "water_level_control",
+        "control_mode": "water_level_control",
+        "status": "uninitialized",
+        "availability": "online",
+        "opening": null,
+        "state_source": "frozen_dispatch_plan"
+      },
+      "status": "online",
+      "provenance": {
+        "source_table": "synthetic.gate",
+        "source_id": 1,
+        "dataset_version": {
+          "id": 1,
+          "version": "HYDRO-MODEL-01-DEMO"
+        },
+        "legacy_river_id": 1,
+        "topology_mapping": "explicit_synthetic_reach",
+        "chainage_source": "synthetic_case_definition",
+        "reach_id": 102
+      }
+    }
+  ],
+  "pumps": [
+    {
+      "id": 1,
+      "dataset_version_id": 1,
+      "pump_code": "PUMP-4000",
+      "river_id": 1,
+      "branch_id": 1,
+      "reach_id": 103,
+      "chainage": 4000,
+      "intake_node_id": 3,
+      "outlet_node_id": null,
+      "transfer_type": "external_outflow",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          113.04,
+          23
+        ]
+      },
+      "design_flow": 2,
+      "head": 4,
+      "head_curve": {
+        "points": [
+          [
+            0,
+            6
+          ],
+          [
+            2,
+            4
+          ]
+        ]
+      },
+      "efficiency_curve": {
+        "points": [
+          [
+            0,
+            0.7
+          ],
+          [
+            1,
+            0.8
+          ]
+        ]
+      },
+      "power": 100,
+      "unit_count": 1,
+      "minimum_running_units": 1,
+      "maximum_running_units": 1,
+      "minimum_run_seconds": 0,
+      "minimum_stop_seconds": 0,
+      "maximum_starts_per_run": 10,
+      "minimum_operating_head": 0,
+      "maximum_operating_head": 10,
+      "reverse_flow_protection": true,
+      "pump_count": 1,
+      "placement_node_chainage_m": 4000,
+      "position_semantics": "intake_node",
+      "parameters": {
+        "design_flow": 2,
+        "head": 4,
+        "head_curve": {
+          "points": [
+            [
+              0,
+              6
+            ],
+            [
+              2,
+              4
+            ]
+          ]
+        },
+        "efficiency_curve": {
+          "points": [
+            [
+              0,
+              0.7
+            ],
+            [
+              1,
+              0.8
+            ]
+          ]
+        },
+        "power": 100,
+        "transfer_type": "external_outflow",
+        "unit_count": 1,
+        "minimum_running_units": 1,
+        "maximum_running_units": 1,
+        "minimum_run_seconds": 0,
+        "minimum_stop_seconds": 0,
+        "maximum_starts_per_run": 10,
+        "minimum_operating_head": 0,
+        "maximum_operating_head": 10,
+        "reverse_flow_protection": true,
+        "pump_count": 1,
+        "placement_node_chainage_m": 4000,
+        "position_semantics": "intake_node"
+      },
+      "control_mode": "level_control",
+      "control_state": {
+        "mode": "level_control",
+        "control_mode": "level_control",
+        "status": "uninitialized",
+        "availability": "online",
+        "enabled": null,
+        "running_units": null,
+        "state_source": "frozen_dispatch_plan"
+      },
+      "status": "online",
+      "provenance": {
+        "source_table": "synthetic.pump",
+        "source_id": 1,
+        "dataset_version": {
+          "id": 1,
+          "version": "HYDRO-MODEL-01-DEMO"
+        },
+        "legacy_river_id": 1,
+        "topology_mapping": "explicit_synthetic_intake_node",
+        "chainage_source": "synthetic_demo_contract",
+        "reach_id": 103
+      }
+    }
+  ],
+  "structures": {
+    "gates": [
+      {
+        "id": 1,
+        "dataset_version_id": 1,
+        "gate_code": "GATE-2500",
+        "river_id": 1,
+        "branch_id": 1,
+        "reach_id": 102,
+        "river_segment_id": 1,
+        "chainage": 2500,
+        "chainage_m": 2500,
+        "station": 2500,
+        "upstream_node_id": 2,
+        "downstream_node_id": 3,
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            113.025,
+            23
+          ]
+        },
+        "gate_type": "sluice",
+        "opening_direction": "vertical",
+        "width": 8,
+        "height": 2,
+        "max_flow": 20,
+        "bottom_elevation": 9,
+        "crest_elevation": 9,
+        "discharge_coefficient": 0.62,
+        "minimum_opening": 0,
+        "maximum_opening": 2,
+        "opening_rate_limit": 0.02,
+        "minimum_hold_seconds": 0,
+        "allow_reverse_flow": false,
+        "opening_min": 0,
+        "opening_max": 2,
+        "parameters": {
+          "gate_type": "sluice",
+          "opening_direction": "vertical",
+          "width": 8,
+          "height": 2,
+          "max_flow": 20,
+          "bottom_elevation": 9,
+          "crest_elevation": 9,
+          "discharge_coefficient": 0.62,
+          "minimum_opening": 0,
+          "maximum_opening": 2,
+          "opening_rate_limit": 0.02,
+          "minimum_hold_seconds": 0,
+          "allow_reverse_flow": false,
+          "opening_min": 0,
+          "opening_max": 2
+        },
+        "control_mode": "water_level_control",
+        "control_state": {
+          "mode": "water_level_control",
+          "control_mode": "water_level_control",
+          "status": "uninitialized",
+          "availability": "online",
+          "opening": null,
+          "state_source": "frozen_dispatch_plan"
+        },
+        "status": "online",
+        "provenance": {
+          "source_table": "synthetic.gate",
+          "source_id": 1,
+          "dataset_version": {
+            "id": 1,
+            "version": "HYDRO-MODEL-01-DEMO"
+          },
+          "legacy_river_id": 1,
+          "topology_mapping": "explicit_synthetic_reach",
+          "chainage_source": "synthetic_case_definition",
+          "reach_id": 102
+        }
+      }
+    ],
+    "pumps": [
+      {
+        "id": 1,
+        "dataset_version_id": 1,
+        "pump_code": "PUMP-4000",
+        "river_id": 1,
+        "branch_id": 1,
+        "reach_id": 103,
+        "chainage": 4000,
+        "intake_node_id": 3,
+        "outlet_node_id": null,
+        "transfer_type": "external_outflow",
+        "geometry": {
+          "type": "Point",
+          "coordinates": [
+            113.04,
+            23
+          ]
+        },
+        "design_flow": 2,
+        "head": 4,
+        "head_curve": {
+          "points": [
+            [
+              0,
+              6
+            ],
+            [
+              2,
+              4
+            ]
+          ]
+        },
+        "efficiency_curve": {
+          "points": [
+            [
+              0,
+              0.7
+            ],
+            [
+              1,
+              0.8
+            ]
+          ]
+        },
+        "power": 100,
+        "unit_count": 1,
+        "minimum_running_units": 1,
+        "maximum_running_units": 1,
+        "minimum_run_seconds": 0,
+        "minimum_stop_seconds": 0,
+        "maximum_starts_per_run": 10,
+        "minimum_operating_head": 0,
+        "maximum_operating_head": 10,
+        "reverse_flow_protection": true,
+        "pump_count": 1,
+        "placement_node_chainage_m": 4000,
+        "position_semantics": "intake_node",
+        "parameters": {
+          "design_flow": 2,
+          "head": 4,
+          "head_curve": {
+            "points": [
+              [
+                0,
+                6
+              ],
+              [
+                2,
+                4
+              ]
+            ]
+          },
+          "efficiency_curve": {
+            "points": [
+              [
+                0,
+                0.7
+              ],
+              [
+                1,
+                0.8
+              ]
+            ]
+          },
+          "power": 100,
+          "transfer_type": "external_outflow",
+          "unit_count": 1,
+          "minimum_running_units": 1,
+          "maximum_running_units": 1,
+          "minimum_run_seconds": 0,
+          "minimum_stop_seconds": 0,
+          "maximum_starts_per_run": 10,
+          "minimum_operating_head": 0,
+          "maximum_operating_head": 10,
+          "reverse_flow_protection": true,
+          "pump_count": 1,
+          "placement_node_chainage_m": 4000,
+          "position_semantics": "intake_node"
+        },
+        "control_mode": "level_control",
+        "control_state": {
+          "mode": "level_control",
+          "control_mode": "level_control",
+          "status": "uninitialized",
+          "availability": "online",
+          "enabled": null,
+          "running_units": null,
+          "state_source": "frozen_dispatch_plan"
+        },
+        "status": "online",
+        "provenance": {
+          "source_table": "synthetic.pump",
+          "source_id": 1,
+          "dataset_version": {
+            "id": 1,
+            "version": "HYDRO-MODEL-01-DEMO"
+          },
+          "legacy_river_id": 1,
+          "topology_mapping": "explicit_synthetic_intake_node",
+          "chainage_source": "synthetic_demo_contract",
+          "reach_id": 103
+        }
+      }
+    ]
+  },
+  "boundary_conditions": [
+    {
+      "id": 1,
+      "boundary_type": "upstream_flow",
+      "target_node_id": 1,
+      "values": {
+        "mode": "constant",
+        "value": 20
+      }
+    },
+    {
+      "id": 2,
+      "boundary_type": "downstream_water_level",
+      "target_node_id": 4,
+      "values": {
+        "mode": "constant",
+        "value": 11
+      }
+    }
+  ],
+  "parameters": [
+    {
+      "parameter_name": "duration_seconds",
+      "value": 86400
+    },
+    {
+      "parameter_name": "time_step",
+      "value": 60
+    },
+    {
+      "parameter_name": "output_interval",
+      "value": 3600
+    },
+    {
+      "parameter_name": "cfl",
+      "value": 0.75
+    },
+    {
+      "parameter_name": "initial_water_level",
+      "value": 11
+    },
+    {
+      "parameter_name": "initial_flow",
+      "value": 20
+    },
+    {
+      "parameter_name": "minimum_depth",
+      "value": 0.05
+    }
+  ],
+  "controls": {
+    "allow_fallback_boundary": false,
+    "section_geometry": "tabulated",
+    "scientific_scope": "quasi-steady network continuity and Manning routing",
+    "rules": [
+      {
+        "id": 1,
+        "name": "high-water-open-gate",
+        "enabled": true,
+        "observation_type": "node_water_level",
+        "observation_object_id": 2,
+        "operator": ">",
+        "threshold": 10,
+        "hysteresis": 0.2,
+        "minimum_hold_seconds": 0,
+        "cooldown_seconds": 0,
+        "action_template": {
+          "structure_type": "gate",
+          "structure_id": 1,
+          "command_type": "gate_opening_m",
+          "target_value": 2
+        },
+        "priority": 20
+      },
+      {
+        "id": 2,
+        "name": "low-water-close-gate",
+        "enabled": true,
+        "observation_type": "node_water_level",
+        "observation_object_id": 2,
+        "operator": "<=",
+        "threshold": 9,
+        "hysteresis": 0,
+        "minimum_hold_seconds": 0,
+        "cooldown_seconds": 0,
+        "action_template": {
+          "structure_type": "gate",
+          "structure_id": 1,
+          "command_type": "gate_opening_m",
+          "target_value": 0
+        },
+        "priority": 20
+      },
+      {
+        "id": 3,
+        "name": "high-intake-start-pump",
+        "enabled": true,
+        "observation_type": "pump_intake_level",
+        "observation_object_id": 1,
+        "operator": ">",
+        "threshold": 10,
+        "hysteresis": 1,
+        "minimum_hold_seconds": 0,
+        "cooldown_seconds": 0,
+        "action_template": {
+          "structure_type": "pump",
+          "structure_id": 1,
+          "command_type": "pump_enabled",
+          "target_value": 1
+        },
+        "priority": 20
+      },
+      {
+        "id": 4,
+        "name": "low-intake-stop-pump",
+        "enabled": true,
+        "observation_type": "pump_intake_level",
+        "observation_object_id": 1,
+        "operator": "<=",
+        "threshold": 9,
+        "hysteresis": 0,
+        "minimum_hold_seconds": 0,
+        "cooldown_seconds": 0,
+        "action_template": {
+          "structure_type": "pump",
+          "structure_id": 1,
+          "command_type": "pump_enabled",
+          "target_value": 0
+        },
+        "priority": 20
+      }
+    ]
+  },
+  "dispatch_plan": {
+    "schema_version": "dayu.dispatch-plan.v1",
+    "plan": {
+      "name": "HYDRO-MODEL-01 automatic gate-pump rules",
+      "version": 1,
+      "evaluation_config": {
+        "warning_level": 15
+      }
+    },
+    "actions": [],
+    "rules": [
+      {
+        "id": 1,
+        "name": "high-water-open-gate",
+        "enabled": true,
+        "observation_type": "node_water_level",
+        "observation_object_id": 2,
+        "operator": ">",
+        "threshold": 10,
+        "hysteresis": 0.2,
+        "minimum_hold_seconds": 0,
+        "cooldown_seconds": 0,
+        "action_template": {
+          "structure_type": "gate",
+          "structure_id": 1,
+          "command_type": "gate_opening_m",
+          "target_value": 2
+        },
+        "priority": 20
+      },
+      {
+        "id": 2,
+        "name": "low-water-close-gate",
+        "enabled": true,
+        "observation_type": "node_water_level",
+        "observation_object_id": 2,
+        "operator": "<=",
+        "threshold": 9,
+        "hysteresis": 0,
+        "minimum_hold_seconds": 0,
+        "cooldown_seconds": 0,
+        "action_template": {
+          "structure_type": "gate",
+          "structure_id": 1,
+          "command_type": "gate_opening_m",
+          "target_value": 0
+        },
+        "priority": 20
+      },
+      {
+        "id": 3,
+        "name": "high-intake-start-pump",
+        "enabled": true,
+        "observation_type": "pump_intake_level",
+        "observation_object_id": 1,
+        "operator": ">",
+        "threshold": 10,
+        "hysteresis": 1,
+        "minimum_hold_seconds": 0,
+        "cooldown_seconds": 0,
+        "action_template": {
+          "structure_type": "pump",
+          "structure_id": 1,
+          "command_type": "pump_enabled",
+          "target_value": 1
+        },
+        "priority": 20
+      },
+      {
+        "id": 4,
+        "name": "low-intake-stop-pump",
+        "enabled": true,
+        "observation_type": "pump_intake_level",
+        "observation_object_id": 1,
+        "operator": "<=",
+        "threshold": 9,
+        "hysteresis": 0,
+        "minimum_hold_seconds": 0,
+        "cooldown_seconds": 0,
+        "action_template": {
+          "structure_type": "pump",
+          "structure_id": 1,
+          "command_type": "pump_enabled",
+          "target_value": 0
+        },
+        "priority": 20
+      }
+    ]
+  },
+  "units": {
+    "length": "m",
+    "chainage": "m",
+    "time": "s",
+    "flow": "m3/s",
+    "water_level": "m",
+    "power": "kW",
+    "energy": "kWh"
+  },
+  "provenance": {
+    "case": "HYDRO-MODEL-01 gate-pump-demo",
+    "input_schema_version": "dayu.model-input.v3",
+    "data_classification": "synthetic software acceptance data",
+    "engineering_use": "not calibrated; not for production decisions"
+  }
+}

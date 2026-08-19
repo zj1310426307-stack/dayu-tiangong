@@ -51,6 +51,7 @@ const requiredPaths = [
   '/api/v1/model-data/parameters', '/api/v1/model-data/boundary-conditions',
   '/api/v1/model-data/simulation-cases',
   '/api/v1/model-data/simulation-cases/{case_id}/input',
+  '/api/v1/model-data/simulation-cases/{case_id}/input-v3',
   '/api/v1/model/tasks', '/api/v1/model/tasks/{task_id}/run',
   '/api/v1/model/tasks/{task_id}', '/api/v1/model/results/{task_id}',
   '/api/v1/model/tasks/{task_id}/enqueue', '/api/v1/model/tasks/{task_id}/cancel',
@@ -98,6 +99,19 @@ const requiredPaths = [
   '/api/v1/gis-governance/publications',
   '/api/v1/gis-governance/versions/{version_id}/publish',
   '/api/v1/gis-governance/versions/{version_id}/retire',
+  '/api/v1/hydraulic/capabilities', '/api/v1/hydraulic/networks',
+  '/api/v1/hydraulic/cross-sections/{section_id}', '/api/v1/hydraulic/imports',
+  '/api/v1/hydraulic/imports/preview', '/api/v1/hydraulic/imports/commit',
+  '/api/v1/hydraulic/networks/{network_id}/topology',
+  '/api/v1/hydraulic/branches/{branch_id}/reverse',
+  '/api/v1/hydraulic/branches/{branch_id}/recalculate-chainage',
+  '/api/v1/hydraulic/cross-sections/{section_id}/locate',
+  '/api/v1/hydraulic/profiles/{profile_id}/process',
+  '/api/v1/hydraulic/profiles/process-batch',
+  '/api/v1/hydraulic/validation/run', '/api/v1/hydraulic/validation/{run_code}',
+  '/api/v1/hydraulic/exports/network.nwk11',
+  '/api/v1/hydraulic/exports/cross-sections.xns11',
+  '/api/v1/hydraulic/templates/{template_name}',
 ];
 for (const path of requiredPaths) {
   if (!openapi.paths?.[path]) throw new Error(`OpenAPI 缺少接口：${path}`);
@@ -125,6 +139,22 @@ export interface DGISReplayQuery { dataset_version_id: number; at: string; featu
 export interface DGISLayerQuery { dataset_version_id: number; layer_type?: string; task_id?: number; }
 export interface DatabaseListQuery { dataset_version_id?: number; river_id?: number; search?: string; limit?: number; offset?: number; }
 export interface DispatchListQuery { dataset_version_id?: number; plan_id?: number; status?: string; limit?: number; offset?: number; }
+export interface HydraulicExportQuery { dataset_version_id: number; network_id?: number; native?: boolean; }
+export interface HydraulicCoordinateOptions {
+  source_crs: string;
+  engineering_crs: string;
+  coordinate_mode: 'geographic' | 'projected';
+  axis_mapping: 'x_easting_y_northing' | 'x_northing_y_easting';
+  horizontal_unit: 'm' | 'degree';
+  vertical_datum: string;
+  x_field?: string;
+  y_field?: string;
+  z_field?: string;
+  vertical_unit?: 'm';
+  central_meridian: number;
+  zone_width: 3;
+  zone_prefix_mode?: 'none' | 'included' | 'stripped';
+}
 export interface PageResult<T> { items: T[]; total: number; limit: number; offset: number; }
 export type ImportResource = 'rivers' | 'cross_sections' | 'gates' | 'pumps';
 
@@ -168,7 +198,7 @@ function decodeApiError(payload: unknown): string | ApiErrorDetail | undefined {
 
 function toQuery<T extends object>(params: T): string {
   const query = new URLSearchParams();
-  Object.entries(params as Record<string, string | number | undefined>).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); });
+  Object.entries(params as Record<string, string | number | boolean | undefined>).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); });
   const value = query.toString();
   return value ? \`?\${value}\` : '';
 }
@@ -346,7 +376,35 @@ export const createSimulationCase = (body: SimulationCaseCreate, baseUrl = '') =
 export const updateSimulationCase = (caseId: number, body: SimulationCaseUpdate, baseUrl = '') => requestJson<SimulationCaseRecord>(\`/api/v1/model-data/simulation-cases/\${caseId}\`, jsonOptions('PUT', body), baseUrl);
 export const deleteSimulationCase = (caseId: number, baseUrl = '') => requestJson<void>(\`/api/v1/model-data/simulation-cases/\${caseId}\`, { method: 'DELETE' }, baseUrl);
 export const getModelInput = (caseId: number, baseUrl = '') => requestJson<ModelInputSnapshot>(\`/api/v1/model-data/simulation-cases/\${caseId}/input\`, {}, baseUrl);
+export const getModelInputV3 = (caseId: number, baseUrl = '') => requestJson<Record<string, unknown>>(\`/api/v1/model-data/simulation-cases/\${caseId}/input-v3\`, {}, baseUrl);
 export const runValidation = (datasetVersionId: number, baseUrl = '') => requestJson<ValidationReport>('/api/v1/validation/run', jsonOptions('POST', { dataset_version_id: datasetVersionId }), baseUrl);
+
+export const getHydraulicCapabilities = (baseUrl = '') => requestJson<HydraulicCapabilityResponse>('/api/v1/hydraulic/capabilities', {}, baseUrl);
+export const listHydraulicNetworks = (datasetVersionId: number, baseUrl = '') => requestJson<Array<HydraulicNetworkRecord>>(\`/api/v1/hydraulic/networks\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const getHydraulicSection = (sectionId: number, baseUrl = '') => requestJson<HydraulicSectionDetail>(\`/api/v1/hydraulic/cross-sections/\${sectionId}\`, {}, baseUrl);
+export const listHydraulicImportJobs = (datasetVersionId: number, baseUrl = '') => requestJson<Array<HydraulicImportJobRecord>>(\`/api/v1/hydraulic/imports\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const commitHydraulicImport = (jobCode: string, previewConfigHash: string, baseUrl = '') => requestJson<HydraulicImportJobRecord>('/api/v1/hydraulic/imports/commit', jsonOptions('POST', { job_code: jobCode, preview_config_hash: previewConfigHash }), baseUrl);
+export const buildHydraulicTopology = (networkId: number, body: HydraulicTopologyBuildRequest, baseUrl = '') => requestJson<HydraulicTopologyReport>(\`/api/v1/hydraulic/networks/\${networkId}/topology\`, jsonOptions('POST', body), baseUrl);
+export const reverseHydraulicBranch = (branchId: number, baseUrl = '') => requestJson<HydraulicBranchActionRecord>(\`/api/v1/hydraulic/branches/\${branchId}/reverse\`, { method: 'POST' }, baseUrl);
+export const recalculateHydraulicBranchChainage = (branchId: number, baseUrl = '') => requestJson<HydraulicBranchActionRecord>(\`/api/v1/hydraulic/branches/\${branchId}/recalculate-chainage\`, { method: 'POST' }, baseUrl);
+export const locateHydraulicSection = (sectionId: number, body: HydraulicLocateRequest, baseUrl = '') => requestJson<HydraulicSectionDetail>(\`/api/v1/hydraulic/cross-sections/\${sectionId}/locate\`, jsonOptions('POST', body), baseUrl);
+export const processHydraulicProfile = (profileId: number, body: HydraulicProcessRequest, baseUrl = '') => requestJson<HydraulicProcessingRecord>(\`/api/v1/hydraulic/profiles/\${profileId}/process\`, jsonOptions('POST', body), baseUrl);
+export const batchProcessHydraulicProfiles = (body: HydraulicBatchProcessRequest, baseUrl = '') => requestJson<Array<HydraulicProcessingRecord>>('/api/v1/hydraulic/profiles/process-batch', jsonOptions('POST', body), baseUrl);
+export const runHydraulicDataValidation = (datasetVersionId: number, baseUrl = '') => requestJson<HydraulicValidationRunRecord>('/api/v1/hydraulic/validation/run', jsonOptions('POST', { dataset_version_id: datasetVersionId }), baseUrl);
+export const getHydraulicDataValidation = (runCode: string, baseUrl = '') => requestJson<HydraulicValidationRunRecord>(\`/api/v1/hydraulic/validation/\${encodeURIComponent(runCode)}\`, {}, baseUrl);
+export const downloadHydraulicNetwork = (params: HydraulicExportQuery, baseUrl = '') => requestBlob(\`/api/v1/hydraulic/exports/network.nwk11\${toQuery({ dataset_version_id: params.dataset_version_id, network_id: params.network_id })}\`, {}, baseUrl);
+export const downloadHydraulicSections = (params: HydraulicExportQuery, baseUrl = '') => requestBlob(\`/api/v1/hydraulic/exports/cross-sections.xns11\${toQuery(params)}\`, {}, baseUrl);
+export const downloadHydraulicTemplate = (name: 'river-network' | 'cross-section', baseUrl = '') => requestBlob(\`/api/v1/hydraulic/templates/\${name}\`, {}, baseUrl);
+
+export async function previewHydraulicImport(datasetVersionId: number, options: HydraulicCoordinateOptions, file: File, baseUrl = ''): Promise<HydraulicImportPreview> {
+  const body = new FormData();
+  body.set('dataset_version_id', String(datasetVersionId));
+  Object.entries(options).forEach(([key, value]) => {
+    if (value !== undefined && value !== '') body.set(key, String(value));
+  });
+  body.set('file', file);
+  return requestJson<HydraulicImportPreview>('/api/v1/hydraulic/imports/preview', { method: 'POST', body }, baseUrl);
+}
 
 export const createHydraulicTask = (body: SimulationTaskCreate, baseUrl = '') => requestJson<SimulationTaskRecord>('/api/v1/model/tasks', jsonOptions('POST', body), baseUrl);
 export const listHydraulicTasks = (baseUrl = '') => requestJson<Array<SimulationTaskRecord>>('/api/v1/model/tasks', {}, baseUrl);

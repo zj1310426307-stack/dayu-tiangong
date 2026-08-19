@@ -1,4 +1,5 @@
 import {
+  ApartmentOutlined,
   AimOutlined,
   AppstoreOutlined,
   BulbOutlined,
@@ -19,7 +20,7 @@ import { MainLayout } from '../layout/MainLayout';
 import type { NavigationItem } from '../types/navigation';
 import { DatasetVersionProvider } from '../context/DatasetVersionContext';
 
-// 地图页面按路由动态加载，避免非地图功能提前下载 Cesium 运行时。
+// 地图页面按路由动态加载，避免非地图功能提前下载 OpenLayers 地图代码。
 const HomePage = lazy(() =>
   import('../pages/HomePage').then((module) => ({ default: module.HomePage })),
 );
@@ -33,6 +34,7 @@ const PumpsDatabasePage = lazy(() => import('../pages/data-center/DataCenterPage
 const DataImportPage = lazy(() => import('../pages/data-center/DataCenterPages').then((module) => ({ default: module.DataImportPage })));
 const DataValidationPage = lazy(() => import('../pages/data-center/DataCenterPages').then((module) => ({ default: module.DataValidationPage })));
 const ModelDataPage = lazy(() => import('../pages/data-center/DataCenterPages').then((module) => ({ default: module.ModelDataPage })));
+const HydraulicDataPage = lazy(() => import('../pages/hydraulic-data/HydraulicDataPage').then((module) => ({ default: module.HydraulicDataPage })));
 const HydraulicConfigPage = lazy(() => import('../pages/hydraulic/HydraulicPages').then((module) => ({ default: module.HydraulicConfigPage })));
 const HydraulicTasksPage = lazy(() => import('../pages/hydraulic/HydraulicPages').then((module) => ({ default: module.HydraulicTasksPage })));
 const HydraulicResultsPage = lazy(() => import('../pages/hydraulic/HydraulicPages').then((module) => ({ default: module.HydraulicResultsPage })));
@@ -88,7 +90,15 @@ export const navigationItems: NavigationItem[] = [
     path: '/gis',
     icon: <GlobalOutlined />,
     eyebrow: 'SPATIAL TWIN',
-    description: '承载 CesiumJS 三维河网、设施与专题图层。',
+    description: '承载 OpenLayers 河网、设施与专题图层。',
+  },
+  {
+    key: 'hydraulic-data',
+    label: '水动力数据管理',
+    path: '/data-center/hydraulic',
+    icon: <ApartmentOutlined />,
+    eyebrow: 'HYDRAULIC EXCHANGE',
+    description: '管理河网、桩号、断面剖面与 MIKE11 交换。',
   },
   {
     key: 'data-rivers',
@@ -211,6 +221,7 @@ export const appRouter = createBrowserRouter([
       { path: 'data-center/imports', element: <Suspense fallback={<RouteLoading label="正在加载数据导入中心…" />}><DataImportPage /></Suspense> },
       { path: 'data-center/validation', element: <Suspense fallback={<RouteLoading label="正在加载数据校验中心…" />}><DataValidationPage /></Suspense> },
       { path: 'data-center/model-data', element: <Suspense fallback={<RouteLoading label="正在加载模型数据…" />}><ModelDataPage /></Suspense> },
+      { path: 'data-center/hydraulic', element: <Suspense fallback={<RouteLoading label="正在加载水动力数据管理…" />}><HydraulicDataPage /></Suspense> },
       { path: 'hydraulic', element: <Navigate to="/hydraulic/config" replace /> },
       { path: 'hydraulic/config', element: <Suspense fallback={<RouteLoading label="正在加载水动力配置…" />}><HydraulicConfigPage /></Suspense> },
       { path: 'hydraulic/tasks', element: <Suspense fallback={<RouteLoading label="正在加载模拟任务…" />}><HydraulicTasksPage /></Suspense> },

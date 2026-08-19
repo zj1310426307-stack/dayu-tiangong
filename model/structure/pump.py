@@ -36,6 +36,60 @@ class PumpControlState:
     energy_kwh: float = 0.0
 
 
+@dataclass(frozen=True)
+class PumpModel:
+    """Bind immutable pump limits while delegating numerics to ``evaluate_pump``.
+
+    Mutable start/stop counters and cumulative energy stay in
+    :class:`PumpControlState`, so one frozen asset definition can be reused by
+    independent simulations without cross-run contamination.
+    """
+
+    design_flow_per_unit: float
+    minimum_running_units: int
+    maximum_running_units: int
+    minimum_run_seconds: float
+    minimum_stop_seconds: float
+    maximum_starts_per_run: int
+    minimum_operating_head: float
+    maximum_operating_head: float
+    efficiency_curve: tuple[tuple[float, float], ...]
+    availability: str = "online"
+
+    def evaluate(
+        self,
+        *,
+        requested_units: int,
+        head: float,
+        elapsed_seconds: float,
+        state: PumpControlState,
+        target_flow: float | None = None,
+        intake_depth: float | None = None,
+        minimum_intake_depth: float = 0.05,
+    ) -> PumpHydraulicResult:
+        """Evaluate one pump time slice through the shared equipment model."""
+
+        return evaluate_pump(
+            requested_units=requested_units,
+            target_flow=target_flow,
+            design_flow_per_unit=self.design_flow_per_unit,
+            head=head,
+            elapsed_seconds=elapsed_seconds,
+            state=state,
+            availability=self.availability,
+            minimum_running_units=self.minimum_running_units,
+            maximum_running_units=self.maximum_running_units,
+            minimum_run_seconds=self.minimum_run_seconds,
+            minimum_stop_seconds=self.minimum_stop_seconds,
+            maximum_starts_per_run=self.maximum_starts_per_run,
+            minimum_operating_head=self.minimum_operating_head,
+            maximum_operating_head=self.maximum_operating_head,
+            efficiency_curve=[list(point) for point in self.efficiency_curve],
+            intake_depth=intake_depth,
+            minimum_intake_depth=minimum_intake_depth,
+        )
+
+
 def interpolate_curve(
     points: list[list[float]] | tuple[tuple[float, float], ...], x: float
 ) -> float:

@@ -45,7 +45,7 @@ def create_task(
 
     try:
         return service.create_task(session, payload)
-    except service.TaskNotFoundError as exc:
+    except (service.TaskNotFoundError, service.TaskStateError) as exc:
         raise _map_error(exc) from exc
     except IntegrityError as exc:
         session.rollback()

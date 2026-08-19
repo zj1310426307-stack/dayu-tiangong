@@ -1,0 +1,7 @@
+# 原始工程资料受控外置，禁止提交。
+*
+!.gitignore
+!river/
+!cross_section/
+!structure/
+!boundary/
