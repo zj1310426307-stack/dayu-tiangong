@@ -84,6 +84,18 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 
 内置 `.nwk11`/`.xns11` 支持是 HYDRO-DATA-01 的确定性交换子集，能力状态固定标识为 `ROUNDTRIP_VALIDATED_ONLY`，不宣称已通过 DHI 商业软件原生验收。常驻后端不加载 DHI/mikeio 运行时；原生 NWK11/XNS11 读取、转换和验收属于授权外部适配环境。
 
+## 水动力求解器能力边界
+
+HYDRO-MODEL-02-A 审查确认：仓库中的 v1 单河路径包含一阶 Rusanov/Saint-Venant 有限体积原型；正式 `dayu.model-input.v2/v3` 则运行 `synchronous-network-continuity-manning-v1`，不含河网动量方程、动态蓄量、分区 `K(h)` 或逐时间 stage 的闸泵强耦合。当前能力不能作为完整 Saint-Venant 或真实工程率定结果使用。
+
+升级方案保留历史求解器和 v3 语义，在现有 `model/solver/` 内增加原生 v4 有限体积路径，并按 shadow、科学 Benchmark、结果级外部对比和真实率定逐门推进：
+
+- [当前求解器审查](docs/review/HYDRO-MODEL-02-current-solver-audit.md)
+- [目标架构](docs/model/HYDRO-MODEL-02-design.md)
+- [数学方程](docs/model/HYDRO-MODEL-02-equation.md)
+- [验证门禁](docs/model/HYDRO-MODEL-02-validation.md)
+- [迁移与回退](docs/model/HYDRO-MODEL-02-migration-report.md)
+
 ## 广东开放参考数据
 
 - 行政区：geoBoundaries 中国 ADM1/ADM2，经广东范围筛选后导入 `reference_data.administrative_area`。
