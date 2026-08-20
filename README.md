@@ -106,6 +106,13 @@ HYDRO-MODEL-02-B/B2 已在独立分支实现首个可运行的 `dayu.model-input
 
 Case 002 已通过 `v4-lite-2` 端到端门：Q 与水深误差均为 0，水量相对误差约 `2.67e-17`；该结果只属于同相对 Profile、严格线性坡、常 A/Q/depth/n、无结构且明确选择 residual-equilibrium 的亚临界参考流。非棱柱路径只证明受限 lake-at-rest 与扰动不被冻结，不代表一般移动流、湿干或结构耦合。边界空间支撑明确为 `nearest-section-cell-face-v1`，不是端节点处的连续坡床实测断面。Gate/Pump 强动量/能头、后端任务持久化、外部模型对比和真实工程率定仍未通过。
 
+HYDRO-MODEL-02-C 已完成两个独立切片：`v4-lite-3` 在受限光滑变宽、平床、无摩阻 Bernoulli 参考流上获得一阶网格收敛证据；`v4-lite-4` 以完整守恒步的保守重放将首个上升越阈值定位到有界右括端，Gate/Pump 从同一 pre-action 状态原子锁存且命令只在后续子区间生效。该事件门不插值 A/Q，不等于连续根精确求解，也不改变 Gate mass-only 与 Pump 定流量 external sink 的物理边界。
+
+- [MODEL-02-C 开发报告](docs/model/HYDRO-MODEL-02-C-development-report.md)
+- [MODEL-02-C 验证报告](docs/model/HYDRO-MODEL-02-C-validation-report.md)
+- [MODEL-02-C Benchmark 报告](docs/model/HYDRO-MODEL-02-C-benchmark-report.md)
+- [MODEL-02-C 审查结论](docs/review/HYDRO-MODEL-02-C-transient-hardening.md)
+
 ## 广东开放参考数据
 
 - 行政区：geoBoundaries 中国 ADM1/ADM2，经广东范围筛选后导入 `reference_data.administrative_area`。
