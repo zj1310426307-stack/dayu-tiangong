@@ -9,6 +9,7 @@ from typing import Literal, Mapping, Sequence
 from model.solver.finite_volume.boundary import BoundaryPair
 from model.solver.finite_volume.diagnostics import NumericalStateError, require_quality
 from model.solver.finite_volume.flux import GRAVITY
+from model.solver.finite_volume.geometry import pressure_moment
 from model.solver.finite_volume.integrator import StepResult, advance_with_retries
 from model.solver.finite_volume.mesh import FiniteVolumeMesh
 from model.solver.finite_volume.state import HydraulicState
@@ -21,6 +22,18 @@ from model.solver.finite_volume.structures import (
 _TIME_TOLERANCE = 1.0e-9
 _EQUILIBRIUM_RELATIVE_TOLERANCE = 1.0e-10
 _EQUILIBRIUM_ABSOLUTE_TOLERANCE = 1.0e-12
+_ENERGY_HEAD_ABSOLUTE_TOLERANCE_M = 1.0e-10
+_MOVING_REFERENCE_MAXIMUM_FROUDE = 0.8
+_MOVING_REFERENCE_DRY_DEPTH_FACTOR = 100.0
+_MOVING_REFERENCE_MINIMUM_TRANSIT_FRACTION = 0.02
+_MOVING_REFERENCE_MAXIMUM_DEPTH_L1_RELATIVE = 1.0e-4
+_MOVING_REFERENCE_MAXIMUM_DISCHARGE_L1_RELATIVE = 1.0e-4
+_MOVING_REFERENCE_MAXIMUM_ENERGY_LINF_M = 1.0e-4
+
+NONPRISMATIC_LAKE_SCOPE = "lake-at-rest-v1"
+NONPRISMATIC_MOVING_ENERGY_SCOPE = (
+    "fully-wet-subcritical-frictionless-energy-reference-v1"
+)
 
 
 @dataclass(frozen=True)
@@ -42,6 +55,10 @@ class SingleBranchConfig:
         "hydrostatic-reconstruction-v1",
         "hydraulic-function-linear-face-v1",
     ] = "hydrostatic-reconstruction-v1"
+    nonprismatic_scope: Literal[
+        "lake-at-rest-v1",
+        "fully-wet-subcritical-frictionless-energy-reference-v1",
+    ] = NONPRISMATIC_LAKE_SCOPE
 
     def __post_init__(self) -> None:
         """Reject unsafe controls before any boundary or state evaluation."""
@@ -64,6 +81,18 @@ class SingleBranchConfig:
             "hydraulic-function-linear-face-v1",
         ):
             raise ValueError("unsupported finite-volume geometry_source_mode")
+        if self.nonprismatic_scope not in (
+            NONPRISMATIC_LAKE_SCOPE,
+            NONPRISMATIC_MOVING_ENERGY_SCOPE,
+        ):
+            raise ValueError("unsupported finite-volume nonprismatic_scope")
+        if (
+            self.nonprismatic_scope == NONPRISMATIC_MOVING_ENERGY_SCOPE
+            and self.geometry_source_mode != "hydraulic-function-linear-face-v1"
+        ):
+            raise ValueError(
+                "moving non-prismatic scope requires the hydraulic-function face source"
+            )
 
 
 @dataclass(frozen=True)
@@ -194,6 +223,34 @@ def _absolute_stage_close(left: float, right: float) -> bool:
     )
 
 
+def _c1_reference_close(left: float, right: float) -> bool:
+    """Compare a C1 reference scalar with no magnitude-relative slack."""
+
+    tolerance = max(
+        _EQUILIBRIUM_ABSOLUTE_TOLERANCE,
+        8.0 * math.ulp(abs(left)),
+        8.0 * math.ulp(abs(right)),
+    )
+    return math.isclose(left, right, rel_tol=0.0, abs_tol=tolerance)
+
+
+def _energy_head_close(left: float, right: float) -> bool:
+    """Compare energy heads with fixed tolerance plus datum-scale ULP guard."""
+
+    tolerance = max(
+        _ENERGY_HEAD_ABSOLUTE_TOLERANCE_M,
+        8.0 * math.ulp(abs(left)),
+        8.0 * math.ulp(abs(right)),
+    )
+    return math.isclose(left, right, rel_tol=0.0, abs_tol=tolerance)
+
+
+def _cell_length_close(left: float, right: float) -> bool:
+    """Compare cell lengths without scale-dependent engineering slack."""
+
+    return _c1_reference_close(left, right)
+
+
 def _require_constant(values: Sequence[float], label: str) -> float:
     """Return the common value or fail the explicit equilibrium contract."""
 
@@ -202,6 +259,24 @@ def _require_constant(values: Sequence[float], label: str) -> float:
     reference = float(values[0])
     if any(not _equilibrium_close(float(value), reference) for value in values[1:]):
         raise ValueError(f"uniform-manning-reference requires constant {label}")
+    return reference
+
+
+def _require_scope_constant(
+    values: Sequence[float],
+    label: str,
+    scope: str,
+) -> float:
+    """Return one constant value for an explicitly named reference scope."""
+
+    if not values:
+        raise ValueError(f"{scope} requires non-empty {label}")
+    reference = float(values[0])
+    if any(
+        not _c1_reference_close(float(value), reference)
+        for value in values[1:]
+    ):
+        raise ValueError(f"{scope} requires constant {label}")
     return reference
 
 
@@ -476,6 +551,237 @@ def _validate_nonprismatic_lake_at_rest_scope(
         )
 
 
+def _core_hydraulic_signature(cell: object, stage: float) -> tuple[float, ...]:
+    """Evaluate the A/T/P/I1 identity consumed by the moving reference gate."""
+
+    geometry = getattr(cell, "geometry")
+    area = float(geometry.area(stage))
+    top_width = float(geometry.top_width(stage))
+    radius = float(geometry.hydraulic_radius(stage))
+    if area <= 0.0 or top_width <= 0.0 or radius <= 0.0:
+        raise ValueError(
+            f"{NONPRISMATIC_MOVING_ENERGY_SCOPE} requires positive hydraulic geometry"
+        )
+    perimeter = area / radius
+    moment = pressure_moment(geometry, stage)
+    return area, top_width, perimeter, moment
+
+
+def _validate_nonprismatic_moving_energy_scope(
+    *,
+    mesh: FiniteVolumeMesh,
+    initial_state: HydraulicState,
+    boundaries: BoundaryPair,
+    config: SingleBranchConfig,
+    gates: Sequence[FixedGate],
+    pumps: Sequence[OnOffPump],
+) -> None:
+    """Validate the frozen fully wet, frictionless Bernoulli reference class."""
+
+    scope = NONPRISMATIC_MOVING_ENERGY_SCOPE
+    if gates or pumps:
+        raise ValueError(f"{scope} does not support structures")
+    if boundaries.boundary_closure != "subcritical-characteristic-v1":
+        raise ValueError(f"{scope} requires characteristic boundaries")
+    if config.equilibrium_mode != "standard":
+        raise ValueError(f"{scope} uses the standard equilibrium mode")
+    if len(mesh.cells) < 3:
+        raise ValueError(f"{scope} requires at least three cells")
+
+    reference_dx = mesh.cells[0].dx
+    if any(
+        not _cell_length_close(cell.dx, reference_dx)
+        for cell in mesh.cells[1:]
+    ):
+        raise ValueError(f"{scope} requires one uniform cell-centre grid")
+    beds = tuple(cell.bed_elevation for cell in mesh.cells)
+    bed_tolerance = max(
+        _EQUILIBRIUM_ABSOLUTE_TOLERANCE,
+        8.0 * max(math.ulp(abs(bed)) for bed in beds),
+    )
+    if any(
+        not math.isclose(
+            bed,
+            beds[0],
+            rel_tol=0.0,
+            abs_tol=bed_tolerance,
+        )
+        for bed in beds[1:]
+    ):
+        raise ValueError(f"{scope} requires one flat bed elevation")
+    if any(cell.manning_n != 0.0 for cell in mesh.cells):
+        raise ValueError(f"{scope} requires Manning n=0 in every cell")
+
+    discharge = _require_scope_constant(
+        initial_state.discharge,
+        "initial discharge",
+        scope,
+    )
+    if discharge <= 0.0:
+        raise ValueError(f"{scope} requires positive downstream discharge")
+    minimum_wet_depth = max(
+        _MOVING_REFERENCE_DRY_DEPTH_FACTOR * config.dry_depth,
+        1.0e-6,
+    )
+    if any(depth <= minimum_wet_depth for depth in initial_state.water_depth):
+        raise ValueError(
+            f"{scope} requires depth greater than the frozen wet margin"
+        )
+
+    stages: list[float] = []
+    celerities: list[float] = []
+    energy_heads: list[float] = []
+    for cell, area in zip(mesh.cells, initial_state.area):
+        stage = cell.geometry.stage_from_area(area)
+        top_width = float(cell.geometry.top_width(stage))
+        if area <= 0.0 or top_width <= 0.0:
+            raise ValueError(f"{scope} requires positive hydraulic geometry")
+        celerity = math.sqrt(GRAVITY * area / top_width)
+        froude = abs(discharge / area) / celerity
+        if not math.isfinite(froude) or froude > _MOVING_REFERENCE_MAXIMUM_FROUDE:
+            raise ValueError(f"{scope} requires Froude number <= 0.8")
+        stages.append(stage)
+        celerities.append(celerity)
+        energy_heads.append(
+            stage + discharge * discharge / (2.0 * GRAVITY * area * area)
+        )
+    reference_energy = energy_heads[0]
+    if any(
+        not _energy_head_close(energy, reference_energy)
+        for energy in energy_heads[1:]
+    ):
+        raise ValueError(f"{scope} requires one constant total energy head")
+    comparison_stage = min(stages)
+    signatures = tuple(
+        _core_hydraulic_signature(cell, comparison_stage)
+        for cell in mesh.cells
+    )
+    if all(
+        all(
+            _equilibrium_close(left, right)
+            for left, right in zip(signatures[0], signature)
+        )
+        for signature in signatures[1:]
+    ):
+        raise ValueError(
+            f"{scope} requires at least two distinct hydraulic Profile signatures"
+        )
+    observation_fraction = (
+        (config.end_time - initial_state.time)
+        * max(celerities)
+        / sum(cell.dx for cell in mesh.cells)
+    )
+    if observation_fraction < _MOVING_REFERENCE_MINIMUM_TRANSIT_FRACTION:
+        raise ValueError(
+            f"{scope} requires a dimensionless observation fraction >= 0.02"
+        )
+
+    upstream_flow = _require_scope_constant(
+        boundaries.upstream.series.values,
+        "upstream Q boundary",
+        scope,
+    )
+    if not _c1_reference_close(upstream_flow, discharge):
+        raise ValueError(f"{scope} upstream Q must match initial discharge")
+    downstream_stage = _require_absolute_stage_constant(
+        boundaries.downstream.series.values,
+        "downstream H boundary",
+    )
+    if not _absolute_stage_close(downstream_stage, stages[-1]):
+        raise ValueError(f"{scope} downstream H must match the final cell")
+
+
+def _validate_moving_reference_preservation(
+    *,
+    mesh: FiniteVolumeMesh,
+    initial_state: HydraulicState,
+    steps: Sequence[StepResult],
+) -> None:
+    """Reject a reference run whose accepted states drift beyond frozen gates."""
+
+    if not steps:
+        raise NumericalStateError("moving reference quality gate requires accepted steps")
+    initial_stages = tuple(
+        cell.geometry.stage_from_area(area)
+        for cell, area in zip(mesh.cells, initial_state.area)
+    )
+    depth_scale = sum(
+        cell.dx * depth for cell, depth in zip(mesh.cells, initial_state.water_depth)
+    )
+    discharge_scale = sum(
+        cell.dx * abs(discharge)
+        for cell, discharge in zip(mesh.cells, initial_state.discharge)
+    )
+    if depth_scale <= 0.0 or discharge_scale <= 0.0:
+        raise NumericalStateError("moving reference quality scales must be positive")
+    reference_energies = tuple(
+        stage + discharge * discharge / (2.0 * GRAVITY * area * area)
+        for stage, discharge, area in zip(
+            initial_stages,
+            initial_state.discharge,
+            initial_state.area,
+        )
+    )
+    maximum_depth_l1 = 0.0
+    maximum_discharge_l1 = 0.0
+    maximum_energy_linf = 0.0
+    for step in steps:
+        state = step.state
+        stages = tuple(
+            cell.geometry.stage_from_area(area)
+            for cell, area in zip(mesh.cells, state.area)
+        )
+        maximum_depth_l1 = max(
+            maximum_depth_l1,
+            sum(
+                cell.dx * abs(stage - reference)
+                for cell, stage, reference in zip(
+                    mesh.cells,
+                    stages,
+                    initial_stages,
+                )
+            )
+            / depth_scale,
+        )
+        maximum_discharge_l1 = max(
+            maximum_discharge_l1,
+            sum(
+                cell.dx * abs(discharge - reference)
+                for cell, discharge, reference in zip(
+                    mesh.cells,
+                    state.discharge,
+                    initial_state.discharge,
+                )
+            )
+            / discharge_scale,
+        )
+        maximum_energy_linf = max(
+            maximum_energy_linf,
+            max(
+                abs(
+                    stage
+                    + discharge * discharge / (2.0 * GRAVITY * area * area)
+                    - reference
+                )
+                for stage, discharge, area, reference in zip(
+                    stages,
+                    state.discharge,
+                    state.area,
+                    reference_energies,
+                )
+            ),
+        )
+    if maximum_depth_l1 > _MOVING_REFERENCE_MAXIMUM_DEPTH_L1_RELATIVE:
+        raise NumericalStateError("moving reference depth L1 quality gate failed")
+    if (
+        maximum_discharge_l1
+        > _MOVING_REFERENCE_MAXIMUM_DISCHARGE_L1_RELATIVE
+    ):
+        raise NumericalStateError("moving reference discharge L1 quality gate failed")
+    if maximum_energy_linf > _MOVING_REFERENCE_MAXIMUM_ENERGY_LINF_M:
+        raise NumericalStateError("moving reference energy Linf quality gate failed")
+
+
 def solve_single_branch(
     *,
     mesh: FiniteVolumeMesh,
@@ -499,14 +805,24 @@ def solve_single_branch(
     boundaries.validate_coverage(initial_state.time, config.end_time)
     require_quality(initial_state, mesh)
     if config.geometry_source_mode == "hydraulic-function-linear-face-v1":
-        _validate_nonprismatic_lake_at_rest_scope(
-            mesh=mesh,
-            initial_state=initial_state,
-            boundaries=boundaries,
-            config=config,
-            gates=gates,
-            pumps=pumps,
-        )
+        if config.nonprismatic_scope == NONPRISMATIC_LAKE_SCOPE:
+            _validate_nonprismatic_lake_at_rest_scope(
+                mesh=mesh,
+                initial_state=initial_state,
+                boundaries=boundaries,
+                config=config,
+                gates=gates,
+                pumps=pumps,
+            )
+        else:
+            _validate_nonprismatic_moving_energy_scope(
+                mesh=mesh,
+                initial_state=initial_state,
+                boundaries=boundaries,
+                config=config,
+                gates=gates,
+                pumps=pumps,
+            )
     equilibrium_reference = (
         _validated_uniform_manning_reference(
             mesh=mesh,
@@ -543,6 +859,8 @@ def solve_single_branch(
         boundary_flag,
         "friction_semi_implicit_per_ssp_stage_not_full_imex",
     }
+    if config.nonprismatic_scope == NONPRISMATIC_MOVING_ENERGY_SCOPE:
+        flags.add(NONPRISMATIC_MOVING_ENERGY_SCOPE)
     if any(gate.control is not None for gate in gates) or any(
         pump.control is not None for pump in pumps
     ):
@@ -593,6 +911,13 @@ def solve_single_branch(
 
     if output_states[-1].time < config.end_time - _TIME_TOLERANCE:
         output_states.append(current)
+    if config.nonprismatic_scope == NONPRISMATIC_MOVING_ENERGY_SCOPE:
+        _validate_moving_reference_preservation(
+            mesh=mesh,
+            initial_state=initial_state,
+            steps=steps,
+        )
+        flags.add("moving_reference_preservation_quality_v1")
     final_storage = storage(mesh, current)
     storage_change = final_storage - initial_storage
     expected_change = upstream_volume - downstream_volume - pump_volume

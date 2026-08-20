@@ -35,6 +35,8 @@ from model.solver.finite_volume import (
     FiniteVolumeMesh,
     FixedGate,
     HydraulicState,
+    NONPRISMATIC_LAKE_SCOPE,
+    NONPRISMATIC_MOVING_ENERGY_SCOPE,
     OneShotStageThreshold,
     OnOffPump,
     SingleBranchConfig,
@@ -195,6 +197,17 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
             "water_balance_tolerance": solver.water_balance_tolerance,
         },
     }
+    if model_input.provenance.validation_policy_version == "v4-lite-3":
+        manifest["solver"]["execution_scope"] = (
+            NONPRISMATIC_MOVING_ENERGY_SCOPE
+        )
+        manifest["solver"]["reference_preservation_quality"] = {
+            "policy": "accepted-state-depth-flow-energy-v1",
+            "minimum_dimensionless_observation_fraction": 0.02,
+            "maximum_depth_l1_relative": 1.0e-4,
+            "maximum_discharge_l1_relative": 1.0e-4,
+            "maximum_energy_linf_m": 1.0e-4,
+        }
     return snapshot_hash(manifest)
 
 
@@ -269,6 +282,17 @@ def _runtime_equilibrium_mode(model_input: V4LiteInput) -> str:
     if policy == "uniform-manning-reference-v1":
         return "uniform-manning-reference"
     raise HydraulicInputError(f"unsupported v4-lite equilibrium_policy: {policy}")
+
+
+def _runtime_nonprismatic_scope(model_input: V4LiteInput) -> str:
+    """Map an explicit geometry policy to its independently guarded core scope."""
+
+    if (
+        model_input.solver.geometry_policy
+        == "nonprismatic-frictionless-energy-reference-v1"
+    ):
+        return NONPRISMATIC_MOVING_ENERGY_SCOPE
+    return NONPRISMATIC_LAKE_SCOPE
 
 
 def _structures(
@@ -465,7 +489,7 @@ def _result(
                         }
                     )
                 )
-                if model_input.provenance.validation_policy_version == "v4-lite-2"
+                if model_input.provenance.validation_policy_version != "v4-lite-1"
                 else evidence.diagnostic_flags
             ),
         ),
@@ -481,7 +505,7 @@ def _result(
             validation_policy_version=model_input.provenance.validation_policy_version,
             **(
                 {"solver_policy_hash": v4_lite_solver_policy_hash(model_input)}
-                if model_input.provenance.validation_policy_version == "v4-lite-2"
+                if model_input.provenance.validation_policy_version != "v4-lite-1"
                 else {}
             ),
         ),
@@ -513,6 +537,7 @@ def run_v4_lite(snapshot: Mapping[str, Any]) -> MvpHydraulicResult:
             scheme="hll",
             equilibrium_mode=_runtime_equilibrium_mode(model_input),
             geometry_source_mode=model_input.solver.geometry_source,
+            nonprismatic_scope=_runtime_nonprismatic_scope(model_input),
         ),
         gates=gates,
         pumps=pumps,

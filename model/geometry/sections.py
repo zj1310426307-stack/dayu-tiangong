@@ -280,9 +280,9 @@ def _hydraulic_properties(
             area += 0.5 * max(left_depth, right_depth) * wet_dx
             perimeter += math.hypot(wet_dx, stage - wet[1])
             intersections.append(intersection_x)
-        if math.isclose(left[1], stage, abs_tol=1.0e-12):
+        if math.isclose(left[1], stage, rel_tol=0.0, abs_tol=1.0e-12):
             intersections.append(left[0])
-        if math.isclose(right[1], stage, abs_tol=1.0e-12):
+        if math.isclose(right[1], stage, rel_tol=0.0, abs_tol=1.0e-12):
             intersections.append(right[0])
     submerged_x = [point[0] for point in points if point[1] < stage] + intersections
     width = max(submerged_x) - min(submerged_x) if len(submerged_x) >= 2 else 0.0

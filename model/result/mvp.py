@@ -243,18 +243,20 @@ class MvpResultProvenance(StrictResultModel):
     time_integrator: Literal["ssp-rk2"]
     engine_version: NonBlankText
     engine_commit: NonBlankText
-    validation_policy_version: Literal["v4-lite-1", "v4-lite-2"]
+    validation_policy_version: Literal["v4-lite-1", "v4-lite-2", "v4-lite-3"]
     solver_policy_hash: Sha256 | None = None
 
     @model_validator(mode="after")
     def validate_versioned_solver_policy(self) -> Self:
-        """Require execution-policy evidence only for the versioned v2 route."""
+        """Require execution-policy evidence for every post-v1 route."""
 
         if self.validation_policy_version == "v4-lite-1":
             if "solver_policy_hash" in self.model_fields_set:
                 raise ValueError("v4-lite-1 result must not add solver_policy_hash")
         elif self.solver_policy_hash is None:
-            raise ValueError("v4-lite-2 result requires solver_policy_hash")
+            raise ValueError(
+                f"{self.validation_policy_version} result requires solver_policy_hash"
+            )
         return self
 
     @model_serializer(mode="wrap")

@@ -81,6 +81,46 @@ def test_tabulated_pressure_moment_is_independent_of_lookup_vertical_step() -> N
     assert math.isfinite(coarse.pressure_moment(2.75))
 
 
+def test_tabulated_hydraulics_are_invariant_under_large_datum_shift() -> None:
+    """A 1e6 m datum must not absorb a real 0.0005 m Profile breakpoint."""
+
+    points = (
+        (0.0, 2.0),
+        (1.0, 0.0005),
+        (2.0, 0.0),
+        (3.0, 0.0),
+        (4.0, 2.0),
+    )
+    datum = 1_000_000.0
+    base = TabulatedSectionGeometry.from_points(points)
+    shifted = TabulatedSectionGeometry.from_points(
+        tuple((offset, elevation + datum) for offset, elevation in points)
+    )
+
+    for relative_stage in (0.0, 1.0):
+        base_stage = relative_stage
+        shifted_stage = datum + relative_stage
+        assert shifted.area(shifted_stage) == pytest.approx(
+            base.area(base_stage),
+            abs=1.0e-9,
+        )
+        assert shifted.top_width(shifted_stage) == pytest.approx(
+            base.top_width(base_stage),
+            abs=1.0e-9,
+        )
+        assert shifted.wetted_perimeter(shifted_stage) == pytest.approx(
+            base.wetted_perimeter(base_stage),
+            abs=1.0e-9,
+        )
+        assert shifted.pressure_moment(shifted_stage) == pytest.approx(
+            base.pressure_moment(base_stage),
+            abs=1.0e-8,
+        )
+
+    assert base.top_width(base.minimum_stage) == pytest.approx(1.0)
+    assert shifted.top_width(shifted.minimum_stage) == pytest.approx(1.0)
+
+
 def test_pressure_moment_stage_derivative_matches_area_at_table_stage() -> None:
     """用 dI1/dH=A 校验压力矩和面积共用同一断面定义。"""
 

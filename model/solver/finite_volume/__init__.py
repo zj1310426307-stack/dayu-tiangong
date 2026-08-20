@@ -67,6 +67,8 @@ from model.solver.finite_volume.reconstruction import (
     hydrostatic_reconstruct,
 )
 from model.solver.finite_volume.solver import (
+    NONPRISMATIC_LAKE_SCOPE,
+    NONPRISMATIC_MOVING_ENERGY_SCOPE,
     SingleBranchConfig,
     SingleBranchDiagnostics,
     SingleBranchResult,
@@ -103,6 +105,8 @@ __all__ = [
     "InterfaceFlux",
     "LinearHydraulicFaceGeometry",
     "NodeSolver",
+    "NONPRISMATIC_LAKE_SCOPE",
+    "NONPRISMATIC_MOVING_ENERGY_SCOPE",
     "NumericalFlux",
     "NumericalStateError",
     "OneShotStageThreshold",
