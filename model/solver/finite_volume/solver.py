@@ -8,13 +8,17 @@ from typing import Literal, Mapping, Sequence
 
 from model.solver.finite_volume.boundary import BoundaryPair
 from model.solver.finite_volume.diagnostics import NumericalStateError, require_quality
+from model.solver.finite_volume.event_locator import detect_bracketed_crossings
 from model.solver.finite_volume.flux import GRAVITY
 from model.solver.finite_volume.geometry import pressure_moment
 from model.solver.finite_volume.integrator import StepResult, advance_with_retries
 from model.solver.finite_volume.mesh import FiniteVolumeMesh
 from model.solver.finite_volume.state import HydraulicState
 from model.solver.finite_volume.structures import (
+    BracketedOneShotStageThreshold,
+    ControlBracketEvidence,
     FixedGate,
+    OneShotStageThreshold,
     OnOffPump,
     StructureControlEvent,
 )
@@ -59,6 +63,12 @@ class SingleBranchConfig:
         "lake-at-rest-v1",
         "fully-wet-subcritical-frictionless-energy-reference-v1",
     ] = NONPRISMATIC_LAKE_SCOPE
+    structure_event_policy: Literal[
+        "accepted-state-discrete-v1",
+        "bracketed-conservative-replay-right-end-v1",
+    ] = "accepted-state-discrete-v1"
+    event_time_tolerance: float = 1.0e-3
+    maximum_event_refinements: int = 30
 
     def __post_init__(self) -> None:
         """Reject unsafe controls before any boundary or state evaluation."""
@@ -93,6 +103,21 @@ class SingleBranchConfig:
             raise ValueError(
                 "moving non-prismatic scope requires the hydraulic-function face source"
             )
+        if self.structure_event_policy not in (
+            "accepted-state-discrete-v1",
+            "bracketed-conservative-replay-right-end-v1",
+        ):
+            raise ValueError("unsupported finite-volume structure_event_policy")
+        if (
+            not math.isfinite(self.event_time_tolerance)
+            or self.event_time_tolerance <= 0.0
+        ):
+            raise ValueError("event_time_tolerance must be finite and positive")
+        if (
+            isinstance(self.maximum_event_refinements, bool)
+            or self.maximum_event_refinements < 0
+        ):
+            raise ValueError("maximum_event_refinements must be non-negative")
 
 
 @dataclass(frozen=True)
@@ -152,6 +177,7 @@ def _synchronize_structure_controls(
     state: HydraulicState,
     gates: Sequence[FixedGate],
     pumps: Sequence[OnOffPump],
+    brackets: Mapping[tuple[str, str], ControlBracketEvidence] | None = None,
 ) -> tuple[HydraulicState, tuple[StructureControlEvent, ...]]:
     """Purely derive and atomically attach commands for one accepted state.
 
@@ -167,6 +193,7 @@ def _synchronize_structure_controls(
     if len({pump.pump_id for pump in pumps}) != len(pumps):
         raise ValueError("Pump identities must be unique")
 
+    bracket_by_key = {} if brackets is None else dict(brackets)
     gate_state = dict(state.gate_state)
     pump_state = dict(state.pump_state)
     events: list[StructureControlEvent] = []
@@ -180,6 +207,7 @@ def _synchronize_structure_controls(
             time=state.time,
             observed_water_level=observed,
             previous_state=_previous_structure_state(gate_state, gate.gate_id),
+            bracket=bracket_by_key.pop(("gate", gate.gate_id), None),
         )
         gate_state[gate.gate_id] = next_state
         if event is not None:
@@ -194,10 +222,13 @@ def _synchronize_structure_controls(
             time=state.time,
             observed_water_level=observed,
             previous_state=_previous_structure_state(pump_state, pump.pump_id),
+            bracket=bracket_by_key.pop(("pump", pump.pump_id), None),
         )
         pump_state[pump.pump_id] = next_state
         if event is not None:
             events.append(event)
+    if bracket_by_key:
+        raise ValueError("control bracket references an unknown or already-triggered device")
     return replace(state, gate_state=gate_state, pump_state=pump_state), tuple(events)
 
 
@@ -782,6 +813,59 @@ def _validate_moving_reference_preservation(
         raise NumericalStateError("moving reference energy Linf quality gate failed")
 
 
+def _validate_structure_event_scope(
+    *,
+    mesh: FiniteVolumeMesh,
+    initial_state: HydraulicState,
+    config: SingleBranchConfig,
+    gates: Sequence[FixedGate],
+    pumps: Sequence[OnOffPump],
+) -> None:
+    """Bind discrete and bracketed controls to distinct, fail-closed policies."""
+
+    controls = tuple(
+        structure.control
+        for structure in (*gates, *pumps)
+        if structure.control is not None
+    )
+    bracketed = tuple(
+        control
+        for control in controls
+        if isinstance(control, BracketedOneShotStageThreshold)
+    )
+    discrete = tuple(
+        control for control in controls if isinstance(control, OneShotStageThreshold)
+    )
+    if bracketed:
+        if config.structure_event_policy != (
+            "bracketed-conservative-replay-right-end-v1"
+        ):
+            raise ValueError("bracketed controls require the bracketed event policy")
+        if discrete:
+            raise ValueError("discrete and bracketed controls cannot be mixed")
+        if config.event_time_tolerance < config.minimum_dt:
+            raise ValueError("event_time_tolerance must not be less than minimum_dt")
+        for gate in gates:
+            if not isinstance(gate.control, BracketedOneShotStageThreshold):
+                continue
+            observed = mesh.cells[gate.face_index].geometry.stage_from_area(
+                initial_state.area[gate.face_index]
+            )
+            if observed >= gate.control.threshold_water_level:
+                raise ValueError("bracketed Gate initial stage must be below threshold")
+        for pump in pumps:
+            if not isinstance(pump.control, BracketedOneShotStageThreshold):
+                continue
+            observed = mesh.cells[pump.cell_index].geometry.stage_from_area(
+                initial_state.area[pump.cell_index]
+            )
+            if observed >= pump.control.threshold_water_level:
+                raise ValueError("bracketed Pump initial stage must be below threshold")
+        return
+    if config.structure_event_policy != "accepted-state-discrete-v1":
+        raise ValueError("bracketed event policy requires a bracketed control")
+
+
 def solve_single_branch(
     *,
     mesh: FiniteVolumeMesh,
@@ -835,6 +919,13 @@ def solve_single_branch(
         if config.equilibrium_mode == "uniform-manning-reference"
         else None
     )
+    _validate_structure_event_scope(
+        mesh=mesh,
+        initial_state=initial_state,
+        config=config,
+        gates=gates,
+        pumps=pumps,
+    )
 
     current, initial_control_events = _synchronize_structure_controls(
         mesh=mesh,
@@ -850,6 +941,7 @@ def solve_single_branch(
     upstream_volume = 0.0
     downstream_volume = 0.0
     pump_volume = 0.0
+    pending_event_refinements = 0
     boundary_flag = (
         "boundary_closure_subcritical_mvp_zero_gradient_companion"
         if boundaries.boundary_closure == "zero-gradient-companion-v1"
@@ -861,10 +953,16 @@ def solve_single_branch(
     }
     if config.nonprismatic_scope == NONPRISMATIC_MOVING_ENERGY_SCOPE:
         flags.add(NONPRISMATIC_MOVING_ENERGY_SCOPE)
-    if any(gate.control is not None for gate in gates) or any(
-        pump.control is not None for pump in pumps
+    if any(isinstance(gate.control, OneShotStageThreshold) for gate in gates) or any(
+        isinstance(pump.control, OneShotStageThreshold) for pump in pumps
     ):
         flags.add("structure_control_one_shot_accepted_state_discrete")
+    if any(
+        isinstance(gate.control, BracketedOneShotStageThreshold) for gate in gates
+    ) or any(
+        isinstance(pump.control, BracketedOneShotStageThreshold) for pump in pumps
+    ):
+        flags.add("structure_control_one_shot_bracketed_right_end_v1")
 
     while current.time < config.end_time - _TIME_TOLERANCE:
         if len(steps) >= config.maximum_steps:
@@ -877,34 +975,74 @@ def solve_single_branch(
             item for item in event_candidates if item > current.time + _TIME_TOLERANCE
         )
         requested_dt = min(config.maximum_dt, next_event - current.time)
-        step = advance_with_retries(
-            mesh=mesh,
-            state=current,
-            requested_dt=requested_dt,
-            dry_depth=config.dry_depth,
-            boundaries=boundaries,
-            cfl_limit=config.cfl_number,
-            minimum_dt=config.minimum_dt,
-            maximum_retries=config.maximum_retries,
-            gates=gates,
-            pumps=pumps,
-            scheme=config.scheme,
-            equilibrium_reference=equilibrium_reference,
-            geometry_source_mode=config.geometry_source_mode,
-        )
+        trial_dt = requested_dt
+        accepted_brackets: dict[tuple[str, str], ControlBracketEvidence] = {}
+        while True:
+            step = advance_with_retries(
+                mesh=mesh,
+                state=current,
+                requested_dt=trial_dt,
+                dry_depth=config.dry_depth,
+                boundaries=boundaries,
+                cfl_limit=config.cfl_number,
+                minimum_dt=config.minimum_dt,
+                maximum_retries=config.maximum_retries,
+                gates=gates,
+                pumps=pumps,
+                scheme=config.scheme,
+                equilibrium_reference=equilibrium_reference,
+                geometry_source_mode=config.geometry_source_mode,
+            )
+            crossing_candidates = detect_bracketed_crossings(
+                mesh=mesh,
+                previous=current,
+                candidate=step.state,
+                gates=gates,
+                pumps=pumps,
+            )
+            if (
+                crossing_candidates
+                and step.dt > config.event_time_tolerance + 1.0e-12
+            ):
+                if pending_event_refinements >= config.maximum_event_refinements:
+                    raise NumericalStateError(
+                        "bracketed control exceeded maximum_event_refinements"
+                    )
+                next_trial_dt = 0.5 * step.dt
+                if next_trial_dt < config.minimum_dt:
+                    raise NumericalStateError(
+                        "bracketed control refinement would cross minimum_dt"
+                    )
+                pending_event_refinements += 1
+                trial_dt = next_trial_dt
+                continue
+            if crossing_candidates:
+                accepted_brackets = {
+                    key: candidate.evidence(
+                        event_time_tolerance=config.event_time_tolerance,
+                        refinement_count=pending_event_refinements,
+                    )
+                    for key, candidate in crossing_candidates.items()
+                }
+            break
         current, accepted_control_events = _synchronize_structure_controls(
             mesh=mesh,
             state=step.state,
             gates=gates,
             pumps=pumps,
+            brackets=accepted_brackets,
         )
         step = replace(step, state=current)
         steps.append(step)
         control_events.extend(accepted_control_events)
+        if accepted_control_events:
+            pending_event_refinements = 0
         upstream_volume += step.budget.upstream_volume
         downstream_volume += step.budget.downstream_volume
         pump_volume += step.budget.pump_outflow_volume
         flags.update(step.diagnostic_flags)
+        if accepted_brackets:
+            flags.add("structure_event_bracketed_conservative_replay_right_end_v1")
         if current.time >= next_output - _TIME_TOLERANCE:
             output_states.append(current)
             next_output = min(next_output + config.output_interval, config.end_time)

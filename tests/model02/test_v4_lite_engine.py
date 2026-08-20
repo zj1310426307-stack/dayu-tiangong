@@ -9,12 +9,19 @@ import pytest
 import model.adapters.v4_lite as v4_adapter_module
 import model.engine as engine_module
 from model import HydraulicEngine
-from model.adapters import build_v4_lite_mesh, v4_lite_mesh_hash
+from model.adapters import (
+    build_v4_lite_mesh,
+    v4_lite_mesh_hash,
+    v4_lite_solver_policy_hash,
+)
 from model.api import parse_v4_lite_input
 from model.core.errors import HydraulicInputError
 from model.provenance import snapshot_hash
 from model.result import MvpHydraulicResult
-from tests.model02.test_v4_lite_contract import make_v4_lite_payload
+from tests.model02.test_v4_lite_contract import (
+    make_v4_lite_bracketed_payload,
+    make_v4_lite_payload,
+)
 from tests.test_hydraulic_engine import make_snapshot
 from tests.test_model_input_v3_adapter import _v3_snapshot
 from tests.test_phase4_network import make_y_network
@@ -153,6 +160,75 @@ def test_v4_lite_threshold_actions_are_typed_and_project_actual_commands() -> No
         "structure_control_one_shot_accepted_state_discrete"
         in document["diagnostics"]["diagnostic_flags"]
     )
+
+
+def test_v4_lite_4_locates_one_crossing_and_projects_bracket_evidence() -> None:
+    """The public v4 route returns bounded, atomic, next-interval actions."""
+
+    payload = make_v4_lite_bracketed_payload()
+    document = HydraulicEngine().run(payload).to_dict()
+
+    assert document["provenance"]["validation_policy_version"] == "v4-lite-4"
+    assert len(document["provenance"]["solver_policy_hash"]) == 64
+    assert [row["time"] for row in document["sections"]] == [
+        [0.0, 0.5, 1.0],
+        [0.0, 0.5, 1.0],
+        [0.0, 0.5, 1.0],
+    ]
+    assert document["gates"][0]["opening"] == [0.0, 1.0, 1.0]
+    assert document["pumps"][0]["status"] == ["off", "on", "on"]
+    assert len(document["control_events"]) == 2
+    assert len({event["time"] for event in document["control_events"]}) == 1
+    event_time = document["control_events"][0]["time"]
+    assert 0.0 < event_time < 0.5
+    for event in document["control_events"]:
+        assert event["previous_time"] < event["time"]
+        assert event["time"] - event["previous_time"] <= (
+            event["event_time_tolerance"] + 1.0e-12
+        )
+        assert event["previous_observed_water_level"] <= (
+            event["threshold_water_level"]
+        )
+        assert event["observed_water_level"] > event["threshold_water_level"]
+        assert event["bracket_end_time"] == event["time"]
+        assert event["monitored_section_id"] == 1
+        assert event["locator_policy"] == (
+            "bracketed-conservative-replay-right-end-v1"
+        )
+        assert event["spatial_support"] == "bound-section-cell-center-v1"
+    assert document["water_balance"]["status"] == "pass"
+    assert document["water_balance"]["relative_water_balance_error"] < 1.0e-12
+    assert "structure_control_one_shot_accepted_state_discrete" not in (
+        document["diagnostics"]["diagnostic_flags"]
+    )
+
+
+def test_v4_lite_4_event_policy_changes_policy_hash_not_mesh_identity() -> None:
+    """Locator tolerance belongs to solver provenance, never geometric identity."""
+
+    first_payload = make_v4_lite_bracketed_payload()
+    second_payload = copy.deepcopy(first_payload)
+    second_payload["solver"]["event_time_tolerance_seconds"] = 0.005
+    first = parse_v4_lite_input(first_payload)
+    second = parse_v4_lite_input(second_payload)
+    first_mesh = build_v4_lite_mesh(first)
+    second_mesh = build_v4_lite_mesh(second)
+
+    assert snapshot_hash(first_payload) == (
+        "d8246f6a230e7a704ed376bfa0e80ab3f64d725ac16f215cf31cee9bd979b357"
+    )
+    assert v4_lite_mesh_hash(first, first_mesh) == (
+        "8958707007115410c5b0998ceeb40d21c32f8a280ec869cf00776767cabc794b"
+    )
+    assert v4_lite_solver_policy_hash(first) == (
+        "89c97d79a184faa2bbe54d173e8503e3eaaf5cd3f17e71cb0a8dc3620d034ece"
+    )
+    assert snapshot_hash(first_payload) != snapshot_hash(second_payload)
+    assert v4_lite_mesh_hash(first, first_mesh) == v4_lite_mesh_hash(
+        second,
+        second_mesh,
+    )
+    assert v4_lite_solver_policy_hash(first) != v4_lite_solver_policy_hash(second)
 
 
 def test_v4_lite_freezes_input_before_solver_execution(monkeypatch) -> None:

@@ -126,6 +126,52 @@ def make_v4_lite_payload() -> dict:
     }
 
 
+def make_v4_lite_bracketed_payload() -> dict:
+    """Return one short v4-lite-4 case with co-located Gate/Pump monitors."""
+
+    payload = make_v4_lite_payload()
+    payload["solver"].update(
+        {
+            "duration_seconds": 1.0,
+            "maximum_time_step_seconds": 0.25,
+            "minimum_time_step_seconds": 1.0e-5,
+            "output_interval_seconds": 0.5,
+            "geometry_policy": "absolute-prismatic-v1",
+            "geometry_source": "hydrostatic-reconstruction-v1",
+            "bed_elevation_source": "profile-minimum-elevation-v1",
+            "equilibrium_policy": "standard-v1",
+            "boundary_closure": "subcritical-characteristic-v1",
+            "boundary_spatial_support": "nearest-section-cell-face-v1",
+            "structure_event_policy": (
+                "bracketed-conservative-replay-right-end-v1"
+            ),
+            "event_time_tolerance_seconds": 0.01,
+            "maximum_event_refinements": 30,
+            "control_spatial_support": "bound-section-cell-center-v1",
+        }
+    )
+    payload["boundary"]["upstream"].update(
+        {"time_seconds": [0, 1], "flow_m3_s": [5, 5]}
+    )
+    payload["boundary"]["downstream"].update(
+        {"time_seconds": [0, 1], "water_level_m": [10, 10]}
+    )
+    control = {
+        "type": "one-shot-stage-above-bracketed-v1",
+        "threshold_water_level_m": 10.00001,
+    }
+    payload["structures"]["gates"][0]["control"] = copy.deepcopy(control)
+    payload["structures"]["pumps"][0].update(
+        {
+            "section_id": 1,
+            "status": "off",
+            "control": copy.deepcopy(control),
+        }
+    )
+    payload["provenance"]["validation_policy_version"] = "v4-lite-4"
+    return payload
+
+
 def test_valid_contract_is_frozen_and_uses_the_only_solver_tuple() -> None:
     """A JSON-shaped payload validates without legacy projection or coercion surprises."""
 
@@ -286,6 +332,59 @@ def test_one_shot_structure_control_is_explicit_and_mutually_exclusive() -> None
     assert parsed.structures.pumps[0].control.type == "one-shot-stage-above"
 
     payload["structures"]["gates"][0]["control"]["type"] = "threshold"
+    with pytest.raises(HydraulicInputError):
+        parse_v4_lite_input(payload)
+
+
+def test_v4_lite_4_requires_one_complete_bracketed_event_policy() -> None:
+    """The continuous locator is explicit and cannot reinterpret an older snapshot."""
+
+    payload = make_v4_lite_bracketed_payload()
+    parsed = parse_v4_lite_input(payload)
+
+    assert parsed.provenance.validation_policy_version == "v4-lite-4"
+    assert parsed.solver.structure_event_policy == (
+        "bracketed-conservative-replay-right-end-v1"
+    )
+    assert parsed.structures.gates[0].control.type == (
+        "one-shot-stage-above-bracketed-v1"
+    )
+    assert parsed.structures.pumps[0].control.type == (
+        "one-shot-stage-above-bracketed-v1"
+    )
+
+    missing = make_v4_lite_bracketed_payload()
+    missing["solver"].pop("event_time_tolerance_seconds")
+    with pytest.raises(HydraulicInputError, match="event policy field"):
+        parse_v4_lite_input(missing)
+
+    legacy = make_v4_lite_bracketed_payload()
+    legacy["provenance"]["validation_policy_version"] = "v4-lite-1"
+    with pytest.raises(HydraulicInputError, match="explicit versioned policy"):
+        parse_v4_lite_input(legacy)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["discrete_control", "fixed_control", "initial_equality", "tolerance_below_dt"],
+)
+def test_v4_lite_4_event_semantics_fail_closed(mutation: str) -> None:
+    """Ambiguous controller, initial and locator states never reach the solver."""
+
+    payload = make_v4_lite_bracketed_payload()
+    if mutation == "discrete_control":
+        payload["structures"]["gates"][0]["control"]["type"] = (
+            "one-shot-stage-above"
+        )
+    elif mutation == "fixed_control":
+        payload["structures"]["pumps"][0]["control"] = {"type": "fixed"}
+    elif mutation == "initial_equality":
+        payload["structures"]["gates"][0]["control"][
+            "threshold_water_level_m"
+        ] = 10
+    elif mutation == "tolerance_below_dt":
+        payload["solver"]["event_time_tolerance_seconds"] = 1.0e-6
+
     with pytest.raises(HydraulicInputError):
         parse_v4_lite_input(payload)
 

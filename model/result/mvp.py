@@ -132,6 +132,16 @@ class MvpControlEvent(StrictResultModel):
     action: Literal["open", "start"]
     threshold_water_level: FiniteNumber
     observed_water_level: FiniteNumber
+    previous_time: NonNegativeFinite | None = None
+    previous_observed_water_level: FiniteNumber | None = None
+    bracket_end_time: NonNegativeFinite | None = None
+    event_time_tolerance: PositiveFinite | None = None
+    locator_policy: Literal[
+        "bracketed-conservative-replay-right-end-v1"
+    ] | None = None
+    refinement_count: NonNegativeInt | None = None
+    monitored_section_id: PositiveId | None = None
+    spatial_support: Literal["bound-section-cell-center-v1"] | None = None
 
     @model_validator(mode="after")
     def validate_causal_action(self) -> Self:
@@ -144,7 +154,58 @@ class MvpControlEvent(StrictResultModel):
             ("pump", "start"),
         }:
             raise ValueError("control event action does not match structure_type")
+        bracket_fields = (
+            self.previous_time,
+            self.previous_observed_water_level,
+            self.bracket_end_time,
+            self.event_time_tolerance,
+            self.locator_policy,
+            self.refinement_count,
+            self.monitored_section_id,
+            self.spatial_support,
+        )
+        if all(value is None for value in bracket_fields):
+            return self
+        if any(value is None for value in bracket_fields):
+            raise ValueError("bracketed control event evidence must be complete")
+        previous_time = float(self.previous_time)
+        previous_level = float(self.previous_observed_water_level)
+        bracket_end_time = float(self.bracket_end_time)
+        event_tolerance = float(self.event_time_tolerance)
+        if bracket_end_time != self.time:
+            raise ValueError("control event time must equal bracket_end_time")
+        if previous_time >= self.time:
+            raise ValueError("control event previous_time must precede event time")
+        if self.time - previous_time > event_tolerance + 1.0e-12:
+            raise ValueError("control event bracket exceeds event_time_tolerance")
+        if previous_level > self.threshold_water_level:
+            raise ValueError("control event bracket must start at or below threshold")
         return self
+
+    @property
+    def has_bracket_evidence(self) -> bool:
+        """Return whether the versioned crossing-evidence tuple is present."""
+
+        return self.locator_policy is not None
+
+    @model_serializer(mode="wrap")
+    def serialize_bracket_evidence(self, handler: Any) -> dict[str, Any]:
+        """Keep pre-v4 event bytes free of nullable bracket fields."""
+
+        payload = handler(self)
+        for key in (
+            "previous_time",
+            "previous_observed_water_level",
+            "bracket_end_time",
+            "event_time_tolerance",
+            "locator_policy",
+            "refinement_count",
+            "monitored_section_id",
+            "spatial_support",
+        ):
+            if payload.get(key) is None:
+                payload.pop(key, None)
+        return payload
 
 
 def _validate_aligned_series(
@@ -243,7 +304,12 @@ class MvpResultProvenance(StrictResultModel):
     time_integrator: Literal["ssp-rk2"]
     engine_version: NonBlankText
     engine_commit: NonBlankText
-    validation_policy_version: Literal["v4-lite-1", "v4-lite-2", "v4-lite-3"]
+    validation_policy_version: Literal[
+        "v4-lite-1",
+        "v4-lite-2",
+        "v4-lite-3",
+        "v4-lite-4",
+    ]
     solver_policy_hash: Sha256 | None = None
 
     @model_validator(mode="after")
@@ -304,6 +370,14 @@ class MvpHydraulicResult(StrictResultModel):
             for item in self.control_events
         ):
             raise ValueError("control event time lies outside the result interval")
+        expects_bracket_evidence = (
+            self.provenance.validation_policy_version == "v4-lite-4"
+        )
+        for event in self.control_events:
+            if expects_bracket_evidence and not event.has_bracket_evidence:
+                raise ValueError("v4-lite-4 control events require bracket evidence")
+            if not expects_bracket_evidence and event.has_bracket_evidence:
+                raise ValueError("pre-v4 control events must not add bracket evidence")
         event_keys = tuple(
             (item.structure_type, item.structure_id) for item in self.control_events
         )
@@ -311,10 +385,16 @@ class MvpHydraulicResult(StrictResultModel):
         event_key_set = set(event_keys)
         gate_ids = {item.gate_id for item in self.gates}
         pump_ids = {item.pump_id for item in self.pumps}
+        section_ids = {item.section_id for item in self.sections}
         for event in self.control_events:
             known_ids = gate_ids if event.structure_type == "gate" else pump_ids
             if event.structure_id not in known_ids:
                 raise ValueError("control event references an unknown result structure")
+            if (
+                event.monitored_section_id is not None
+                and event.monitored_section_id not in section_ids
+            ):
+                raise ValueError("control event references an unknown monitored section")
             if event.structure_type == "gate":
                 series = next(
                     item for item in self.gates if item.gate_id == event.structure_id

@@ -322,3 +322,86 @@ def test_one_shot_gate_target_cannot_change_after_its_event() -> None:
 
     with pytest.raises(ValidationError, match="target opening changes"):
         MvpHydraulicResult.model_validate(payload)
+
+
+def _make_v4_bracketed_result_payload() -> dict:
+    """Upgrade the compact result fixture to one valid v4-lite-4 event."""
+
+    payload = make_mvp_result_payload()
+    payload["provenance"].update(
+        {
+            "validation_policy_version": "v4-lite-4",
+            "solver_policy_hash": "c" * 64,
+        }
+    )
+    payload["gates"][0]["opening"] = [0, 1]
+    payload["gates"][0]["flow"] = [0, 2.1]
+    payload["control_events"] = [
+        {
+            "time": 30,
+            "structure_id": 51,
+            "structure_type": "gate",
+            "action": "open",
+            "threshold_water_level": 10.2,
+            "observed_water_level": 10.2001,
+            "previous_time": 29.995,
+            "previous_observed_water_level": 10.1999,
+            "bracket_end_time": 30,
+            "event_time_tolerance": 0.01,
+            "locator_policy": "bracketed-conservative-replay-right-end-v1",
+            "refinement_count": 8,
+            "monitored_section_id": 1,
+            "spatial_support": "bound-section-cell-center-v1",
+        }
+    ]
+    return payload
+
+
+def test_v4_bracketed_result_preserves_complete_crossing_evidence() -> None:
+    """The durable DTO carries one bounded bracket without requiring an output knot."""
+
+    payload = _make_v4_bracketed_result_payload()
+    result = MvpHydraulicResult.model_validate(payload)
+    event = result.to_dict()["control_events"][0]
+
+    assert event["time"] == 30.0
+    assert event["previous_time"] == 29.995
+    assert event["bracket_end_time"] == event["time"]
+    assert event["monitored_section_id"] == 1
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("missing_field", "must be complete"),
+        ("wide_bracket", "exceeds event_time_tolerance"),
+        ("wrong_end", "must equal bracket_end_time"),
+        ("pre_above", "must start at or below threshold"),
+        ("unknown_section", "unknown monitored section"),
+        ("pre_v4_evidence", "pre-v4 control events must not add bracket evidence"),
+    ],
+)
+def test_v4_bracketed_result_spoofing_fails_closed(
+    mutation: str,
+    message: str,
+) -> None:
+    """Partial, impossible, mis-versioned or unbound brackets are rejected."""
+
+    payload = _make_v4_bracketed_result_payload()
+    event = payload["control_events"][0]
+    if mutation == "missing_field":
+        event.pop("previous_time")
+    elif mutation == "wide_bracket":
+        event["previous_time"] = 29
+    elif mutation == "wrong_end":
+        event["bracket_end_time"] = 29.999
+    elif mutation == "pre_above":
+        event["previous_observed_water_level"] = 10.21
+    elif mutation == "unknown_section":
+        event["monitored_section_id"] = 999
+    elif mutation == "pre_v4_evidence":
+        payload["provenance"].pop("solver_policy_hash")
+        payload["provenance"]["validation_policy_version"] = "v4-lite-1"
+
+    with pytest.raises(ValidationError, match=message):
+        MvpHydraulicResult.model_validate(payload)

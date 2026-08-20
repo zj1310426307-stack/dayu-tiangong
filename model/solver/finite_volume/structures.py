@@ -10,6 +10,7 @@ from model.solver.finite_volume.flux import GRAVITY
 
 
 _ONE_SHOT_STAGE_ABOVE = "one-shot-stage-above"
+_ONE_SHOT_STAGE_ABOVE_BRACKETED = "one-shot-stage-above-bracketed-v1"
 
 
 def _finite_stage(value: float, label: str) -> float:
@@ -35,6 +36,12 @@ class OneShotStageThreshold:
 
     threshold_water_level: float
 
+    @property
+    def control_mode(self) -> str:
+        """Return the frozen accepted-state discrete policy identity."""
+
+        return _ONE_SHOT_STAGE_ABOVE
+
     def __post_init__(self) -> None:
         """Reject an ambiguous or non-finite absolute water-level threshold."""
 
@@ -52,6 +59,87 @@ class OneShotStageThreshold:
 
 
 @dataclass(frozen=True)
+class BracketedOneShotStageThreshold:
+    """Latch after a conservative right-end replay brackets one rising crossing."""
+
+    threshold_water_level: float
+
+    def __post_init__(self) -> None:
+        """Reject an ambiguous or non-finite absolute water-level threshold."""
+
+        object.__setattr__(
+            self,
+            "threshold_water_level",
+            _finite_stage(self.threshold_water_level, "threshold_water_level"),
+        )
+
+    @property
+    def control_mode(self) -> str:
+        """Return the versioned conservative event-location policy identity."""
+
+        return _ONE_SHOT_STAGE_ABOVE_BRACKETED
+
+    def is_exceeded(self, observed_water_level: float) -> bool:
+        """Return the same strict physical predicate as the discrete policy."""
+
+        observed = _finite_stage(observed_water_level, "observed_water_level")
+        return observed > self.threshold_water_level
+
+
+ControlPolicy = OneShotStageThreshold | BracketedOneShotStageThreshold
+
+
+@dataclass(frozen=True)
+class ControlBracketEvidence:
+    """Freeze one conservative accepted-state crossing bracket."""
+
+    previous_time: float
+    previous_observed_water_level: float
+    bracket_end_time: float
+    bracket_end_observed_water_level: float
+    event_time_tolerance: float
+    refinement_count: int
+    monitored_section_id: int
+    spatial_support: str = "bound-section-cell-center-v1"
+    locator_policy: str = "bracketed-conservative-replay-right-end-v1"
+
+    def __post_init__(self) -> None:
+        """Require finite, ordered, bounded and self-identifying evidence."""
+
+        previous_time = _finite_stage(self.previous_time, "bracket previous_time")
+        end_time = _finite_stage(self.bracket_end_time, "bracket end_time")
+        previous_level = _finite_stage(
+            self.previous_observed_water_level,
+            "bracket previous_observed_water_level",
+        )
+        end_level = _finite_stage(
+            self.bracket_end_observed_water_level,
+            "bracket end_observed_water_level",
+        )
+        tolerance = _finite_stage(
+            self.event_time_tolerance,
+            "bracket event_time_tolerance",
+        )
+        if previous_time < 0.0 or end_time <= previous_time:
+            raise ValueError("control bracket times must be strictly increasing")
+        if tolerance <= 0.0 or end_time - previous_time > tolerance + 1.0e-12:
+            raise ValueError("control bracket width exceeds event_time_tolerance")
+        if isinstance(self.refinement_count, bool) or self.refinement_count < 0:
+            raise ValueError("control bracket refinement_count must be non-negative")
+        if isinstance(self.monitored_section_id, bool) or self.monitored_section_id <= 0:
+            raise ValueError("control bracket monitored_section_id must be positive")
+        if self.spatial_support != "bound-section-cell-center-v1":
+            raise ValueError("unsupported control bracket spatial_support")
+        if self.locator_policy != "bracketed-conservative-replay-right-end-v1":
+            raise ValueError("unsupported control bracket locator_policy")
+        object.__setattr__(self, "previous_time", previous_time)
+        object.__setattr__(self, "bracket_end_time", end_time)
+        object.__setattr__(self, "previous_observed_water_level", previous_level)
+        object.__setattr__(self, "bracket_end_observed_water_level", end_level)
+        object.__setattr__(self, "event_time_tolerance", tolerance)
+
+
+@dataclass(frozen=True)
 class StructureControlEvent:
     """Record one committed one-shot action at an accepted-state time."""
 
@@ -61,6 +149,7 @@ class StructureControlEvent:
     action: Literal["open", "start"]
     threshold_water_level: float
     observed_water_level: float
+    bracket: ControlBracketEvidence | None = None
 
     def __post_init__(self) -> None:
         """Keep event evidence finite, causal, and type/action consistent."""
@@ -83,6 +172,15 @@ class StructureControlEvent:
             ("pump", "start"),
         }:
             raise ValueError("control event action does not match structure_type")
+        if self.bracket is not None:
+            if self.bracket.bracket_end_time != event_time:
+                raise ValueError("control event time must equal its bracket end time")
+            if self.bracket.bracket_end_observed_water_level != observed:
+                raise ValueError("control event level must equal its bracket end level")
+            if self.bracket.previous_observed_water_level > threshold:
+                raise ValueError("control event bracket must start at or below threshold")
+            if observed <= threshold:
+                raise ValueError("control event bracket must end above threshold")
         object.__setattr__(self, "time", event_time)
         object.__setattr__(self, "threshold_water_level", threshold)
         object.__setattr__(self, "observed_water_level", observed)
@@ -91,10 +189,11 @@ class StructureControlEvent:
 def _accepted_control_state(
     *,
     previous_state: Mapping[str, object] | None,
-    control: OneShotStageThreshold,
+    control: ControlPolicy,
     observed_water_level: float,
     actual_key: Literal["opening", "enabled"],
     active_value: float | bool,
+    trigger_allowed: bool = True,
 ) -> tuple[dict[str, object], bool]:
     """Purely derive the next one-shot latch and actual device command."""
 
@@ -110,7 +209,7 @@ def _accepted_control_state(
             raise ValueError("controlled structure state must be a mapping")
         if set(previous_state) != expected_keys:
             raise ValueError("controlled structure state has an unknown shape")
-        if previous_state["control_mode"] != _ONE_SHOT_STAGE_ABOVE:
+        if previous_state["control_mode"] != control.control_mode:
             raise ValueError("controlled structure state has an unknown control_mode")
         previous_threshold = _finite_stage(
             previous_state["threshold_water_level"],
@@ -134,13 +233,15 @@ def _accepted_control_state(
         if previous_actual != expected_actual:
             raise ValueError("controlled structure actual command contradicts its latch")
 
-    triggered = was_triggered or control.is_exceeded(observed_water_level)
+    triggered = was_triggered or (
+        trigger_allowed and control.is_exceeded(observed_water_level)
+    )
     actual = (
         active_value if triggered else (False if actual_key == "enabled" else 0.0)
     )
     return (
         {
-            "control_mode": _ONE_SHOT_STAGE_ABOVE,
+            "control_mode": control.control_mode,
             "triggered": triggered,
             "threshold_water_level": control.threshold_water_level,
             actual_key: actual,
@@ -152,7 +253,7 @@ def _accepted_control_state(
 def _stage_control_state(
     *,
     state: Mapping[str, object] | None,
-    control: OneShotStageThreshold,
+    control: ControlPolicy,
     actual_key: Literal["opening", "enabled"],
     active_value: float | bool,
 ) -> dict[str, object]:
@@ -244,7 +345,7 @@ class FixedGate:
     height: float
     discharge_coefficient: float = 0.62
     allow_reverse: bool = False
-    control: OneShotStageThreshold | None = None
+    control: ControlPolicy | None = None
 
     def __post_init__(self) -> None:
         """Validate fixed Gate geometry and its internal-face binding."""
@@ -263,9 +364,10 @@ class FixedGate:
         if not isinstance(self.allow_reverse, bool):
             raise ValueError("gate allow_reverse must be boolean")
         if self.control is not None and not isinstance(
-            self.control, OneShotStageThreshold
+            self.control,
+            (OneShotStageThreshold, BracketedOneShotStageThreshold),
         ):
-            raise ValueError("gate control must be OneShotStageThreshold or None")
+            raise ValueError("gate control has an unsupported policy")
         if self.control is not None and self.opening <= 0.0:
             raise ValueError("threshold-controlled gate target opening must be positive")
 
@@ -275,6 +377,7 @@ class FixedGate:
         time: float,
         observed_water_level: float,
         previous_state: Mapping[str, object] | None = None,
+        bracket: ControlBracketEvidence | None = None,
     ) -> tuple[Mapping[str, object], StructureControlEvent | None]:
         """Purely derive the Gate latch at one accepted absolute water level."""
 
@@ -284,12 +387,21 @@ class FixedGate:
         observed = _finite_stage(observed_water_level, "observed_water_level")
         if self.control is None:
             return {"opening": self.opening}, None
+        if bracket is not None and not isinstance(
+            self.control, BracketedOneShotStageThreshold
+        ):
+            raise ValueError("discrete Gate control cannot consume bracket evidence")
         state, newly_triggered = _accepted_control_state(
             previous_state=previous_state,
             control=self.control,
             observed_water_level=observed,
             actual_key="opening",
             active_value=self.opening,
+            trigger_allowed=(
+                bracket is not None
+                if isinstance(self.control, BracketedOneShotStageThreshold)
+                else True
+            ),
         )
         event = (
             StructureControlEvent(
@@ -299,6 +411,7 @@ class FixedGate:
                 action="open",
                 threshold_water_level=self.control.threshold_water_level,
                 observed_water_level=observed,
+                bracket=bracket,
             )
             if newly_triggered
             else None
@@ -359,7 +472,7 @@ class OnOffPump:
     cell_index: int
     design_flow: float
     enabled: bool
-    control: OneShotStageThreshold | None = None
+    control: ControlPolicy | None = None
 
     def __post_init__(self) -> None:
         """Validate the fixed pump binding without inventing a Q-H curve."""
@@ -373,9 +486,10 @@ class OnOffPump:
         if not isinstance(self.enabled, bool):
             raise ValueError("pump enabled state must be boolean")
         if self.control is not None and not isinstance(
-            self.control, OneShotStageThreshold
+            self.control,
+            (OneShotStageThreshold, BracketedOneShotStageThreshold),
         ):
-            raise ValueError("pump control must be OneShotStageThreshold or None")
+            raise ValueError("pump control has an unsupported policy")
         if self.control is not None and self.enabled:
             raise ValueError("threshold-controlled pump must start disabled")
         if self.control is not None and self.design_flow <= 0.0:
@@ -387,6 +501,7 @@ class OnOffPump:
         time: float,
         observed_water_level: float,
         previous_state: Mapping[str, object] | None = None,
+        bracket: ControlBracketEvidence | None = None,
     ) -> tuple[Mapping[str, object], StructureControlEvent | None]:
         """Purely derive the Pump latch at one accepted absolute water level."""
 
@@ -396,12 +511,21 @@ class OnOffPump:
         observed = _finite_stage(observed_water_level, "observed_water_level")
         if self.control is None:
             return {"enabled": self.enabled}, None
+        if bracket is not None and not isinstance(
+            self.control, BracketedOneShotStageThreshold
+        ):
+            raise ValueError("discrete Pump control cannot consume bracket evidence")
         state, newly_triggered = _accepted_control_state(
             previous_state=previous_state,
             control=self.control,
             observed_water_level=observed,
             actual_key="enabled",
             active_value=True,
+            trigger_allowed=(
+                bracket is not None
+                if isinstance(self.control, BracketedOneShotStageThreshold)
+                else True
+            ),
         )
         event = (
             StructureControlEvent(
@@ -411,6 +535,7 @@ class OnOffPump:
                 action="start",
                 threshold_water_level=self.control.threshold_water_level,
                 observed_water_level=observed,
+                bracket=bracket,
             )
             if newly_triggered
             else None

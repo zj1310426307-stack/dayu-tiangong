@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from model.api.v4_lite import (
+    BracketedOneShotStageAboveControlInput,
     BySectionInitialState,
     OneShotStageAboveControlInput,
     V4LiteInput,
@@ -30,6 +31,7 @@ from model.result.mvp import (
 from model.solver.finite_volume import (
     BoundaryPair,
     BoundarySeries,
+    BracketedOneShotStageThreshold,
     DownstreamStageBoundary,
     FiniteVolumeCell,
     FiniteVolumeMesh,
@@ -50,6 +52,7 @@ from model.solver.finite_volume.boundary import boundary_algorithm_id
 MESH_HASH_SCHEMA = "dayu.finite-volume-mesh.v1"
 MESH_HASH_SCHEMA_V2 = "dayu.finite-volume-mesh.v2"
 SOLVER_POLICY_HASH_SCHEMA = "dayu.solver-policy.v1"
+SOLVER_POLICY_HASH_SCHEMA_V2 = "dayu.solver-policy.v2"
 
 
 def build_v4_lite_mesh(model_input: V4LiteInput) -> FiniteVolumeMesh:
@@ -165,7 +168,11 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
 
     solver = model_input.solver
     manifest = {
-        "schema_version": SOLVER_POLICY_HASH_SCHEMA,
+        "schema_version": (
+            SOLVER_POLICY_HASH_SCHEMA_V2
+            if model_input.provenance.validation_policy_version == "v4-lite-4"
+            else SOLVER_POLICY_HASH_SCHEMA
+        ),
         "input_schema_version": model_input.schema_version,
         "validation_policy_version": model_input.provenance.validation_policy_version,
         "solver": {
@@ -207,6 +214,14 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
             "maximum_depth_l1_relative": 1.0e-4,
             "maximum_discharge_l1_relative": 1.0e-4,
             "maximum_energy_linf_m": 1.0e-4,
+        }
+    if model_input.provenance.validation_policy_version == "v4-lite-4":
+        manifest["solver"]["structure_event"] = {
+            "policy": solver.structure_event_policy,
+            "event_time_tolerance_seconds": solver.event_time_tolerance_seconds,
+            "maximum_event_refinements": solver.maximum_event_refinements,
+            "control_spatial_support": solver.control_spatial_support,
+            "command_effect": "next-accepted-subinterval-v1",
         }
     return snapshot_hash(manifest)
 
@@ -313,9 +328,18 @@ def _structures(
             discharge_coefficient=gate.discharge_coefficient,
             allow_reverse=gate.allow_reverse_flow,
             control=(
-                OneShotStageThreshold(gate.control.threshold_water_level_m)
-                if isinstance(gate.control, OneShotStageAboveControlInput)
-                else None
+                BracketedOneShotStageThreshold(
+                    gate.control.threshold_water_level_m
+                )
+                if isinstance(
+                    gate.control,
+                    BracketedOneShotStageAboveControlInput,
+                )
+                else (
+                    OneShotStageThreshold(gate.control.threshold_water_level_m)
+                    if isinstance(gate.control, OneShotStageAboveControlInput)
+                    else None
+                )
             ),
         )
         for gate in model_input.structures.gates
@@ -327,9 +351,18 @@ def _structures(
             design_flow=pump.design_flow_m3_s,
             enabled=pump.status == "on",
             control=(
-                OneShotStageThreshold(pump.control.threshold_water_level_m)
-                if isinstance(pump.control, OneShotStageAboveControlInput)
-                else None
+                BracketedOneShotStageThreshold(
+                    pump.control.threshold_water_level_m
+                )
+                if isinstance(
+                    pump.control,
+                    BracketedOneShotStageAboveControlInput,
+                )
+                else (
+                    OneShotStageThreshold(pump.control.threshold_water_level_m)
+                    if isinstance(pump.control, OneShotStageAboveControlInput)
+                    else None
+                )
             ),
         )
         for pump in model_input.structures.pumps
@@ -461,6 +494,26 @@ def _result(
                 action=event.action,
                 threshold_water_level=event.threshold_water_level,
                 observed_water_level=event.observed_water_level,
+                **(
+                    {
+                        "previous_time": event.bracket.previous_time,
+                        "previous_observed_water_level": (
+                            event.bracket.previous_observed_water_level
+                        ),
+                        "bracket_end_time": event.bracket.bracket_end_time,
+                        "event_time_tolerance": (
+                            event.bracket.event_time_tolerance
+                        ),
+                        "locator_policy": event.bracket.locator_policy,
+                        "refinement_count": event.bracket.refinement_count,
+                        "monitored_section_id": (
+                            event.bracket.monitored_section_id
+                        ),
+                        "spatial_support": event.bracket.spatial_support,
+                    }
+                    if event.bracket is not None
+                    else {}
+                ),
             )
             for event in runtime.control_events
         ),
@@ -538,6 +591,13 @@ def run_v4_lite(snapshot: Mapping[str, Any]) -> MvpHydraulicResult:
             equilibrium_mode=_runtime_equilibrium_mode(model_input),
             geometry_source_mode=model_input.solver.geometry_source,
             nonprismatic_scope=_runtime_nonprismatic_scope(model_input),
+            structure_event_policy=model_input.solver.structure_event_policy,
+            event_time_tolerance=(
+                model_input.solver.event_time_tolerance_seconds
+            ),
+            maximum_event_refinements=(
+                model_input.solver.maximum_event_refinements
+            ),
         ),
         gates=gates,
         pumps=pumps,

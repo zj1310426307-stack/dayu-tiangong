@@ -77,6 +77,8 @@ from model.solver.finite_volume.solver import (
 )
 from model.solver.finite_volume.state import HydraulicState, SolverDiagnostics
 from model.solver.finite_volume.structures import (
+    BracketedOneShotStageThreshold,
+    ControlBracketEvidence,
     FixedGate,
     OneShotStageThreshold,
     OnOffPump,
@@ -90,9 +92,11 @@ __all__ = [
     "BoundaryCoverageError",
     "BoundaryPair",
     "BoundarySeries",
+    "BracketedOneShotStageThreshold",
     "BranchNetworkSolver",
     "CflEstimate",
     "ConservedVector",
+    "ControlBracketEvidence",
     "DownstreamStageBoundary",
     "ExternalComparison",
     "FiniteVolumeCell",

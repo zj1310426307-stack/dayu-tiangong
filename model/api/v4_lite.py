@@ -75,6 +75,14 @@ C1_NONPRISMATIC_MOVING_POLICY = (
     "subcritical-characteristic-v1",
     "nearest-section-cell-face-v1",
 )
+C2_BRACKETED_EVENT_POLICY = (
+    "absolute-prismatic-v1",
+    "hydrostatic-reconstruction-v1",
+    "profile-minimum-elevation-v1",
+    "standard-v1",
+    "subcritical-characteristic-v1",
+    "nearest-section-cell-face-v1",
+)
 _VERSIONED_POLICY_FIELDS = frozenset(
     {
         "geometry_policy",
@@ -83,6 +91,14 @@ _VERSIONED_POLICY_FIELDS = frozenset(
         "equilibrium_policy",
         "boundary_closure",
         "boundary_spatial_support",
+    }
+)
+_EVENT_POLICY_FIELDS = frozenset(
+    {
+        "structure_event_policy",
+        "event_time_tolerance_seconds",
+        "maximum_event_refinements",
+        "control_spatial_support",
     }
 )
 _POLICY_RELATIVE_TOLERANCE = 1.0e-10
@@ -274,6 +290,15 @@ class V4LiteSolver(StrictContractModel):
     boundary_spatial_support: Literal[
         "nearest-section-cell-face-v1"
     ] = "nearest-section-cell-face-v1"
+    structure_event_policy: Literal[
+        "accepted-state-discrete-v1",
+        "bracketed-conservative-replay-right-end-v1",
+    ] = "accepted-state-discrete-v1"
+    event_time_tolerance_seconds: PositiveFinite = 1.0e-3
+    maximum_event_refinements: NonNegativeInt = 30
+    control_spatial_support: Literal[
+        "bound-section-cell-center-v1"
+    ] = "bound-section-cell-center-v1"
 
     @property
     def policy_tuple(self) -> tuple[str, str, str, str, str, str]:
@@ -514,8 +539,17 @@ class OneShotStageAboveControlInput(StrictContractModel):
     threshold_water_level_m: FiniteNumber
 
 
+class BracketedOneShotStageAboveControlInput(StrictContractModel):
+    """Locate one rising threshold crossing by conservative replay."""
+
+    type: Literal["one-shot-stage-above-bracketed-v1"]
+    threshold_water_level_m: FiniteNumber
+
+
 StructureControlInput = Annotated[
-    FixedStructureControlInput | OneShotStageAboveControlInput,
+    FixedStructureControlInput
+    | OneShotStageAboveControlInput
+    | BracketedOneShotStageAboveControlInput,
     Field(discriminator="type"),
 ]
 
@@ -542,7 +576,13 @@ class FixedGateInput(StrictContractModel):
         if self.opening_m > self.height_m:
             raise ValueError("gate opening_m must not exceed height_m")
         if (
-            isinstance(self.control, OneShotStageAboveControlInput)
+            isinstance(
+                self.control,
+                (
+                    OneShotStageAboveControlInput,
+                    BracketedOneShotStageAboveControlInput,
+                ),
+            )
             and self.opening_m <= 0.0
         ):
             raise ValueError("threshold-controlled Gate target opening_m must be positive")
@@ -572,7 +612,13 @@ class ExternalPumpInput(StrictContractModel):
         """Keep the threshold latch as the only authority that can start a Pump."""
 
         if (
-            isinstance(self.control, OneShotStageAboveControlInput)
+            isinstance(
+                self.control,
+                (
+                    OneShotStageAboveControlInput,
+                    BracketedOneShotStageAboveControlInput,
+                ),
+            )
             and self.status != "off"
         ):
             raise ValueError("threshold-controlled Pump must have initial status 'off'")
@@ -591,7 +637,12 @@ class V4LiteProvenance(StrictContractModel):
 
     engine_version: NonBlankText
     engine_commit: NonBlankText
-    validation_policy_version: Literal["v4-lite-1", "v4-lite-2", "v4-lite-3"]
+    validation_policy_version: Literal[
+        "v4-lite-1",
+        "v4-lite-2",
+        "v4-lite-3",
+        "v4-lite-4",
+    ]
 
 
 class V4LiteInput(StrictContractModel):
@@ -658,6 +709,7 @@ class V4LiteInput(StrictContractModel):
         self._validate_initial_state(section_by_id)
         self._validate_downstream_stage(section_by_id[section_ids[-1]])
         self._validate_structures(section_ids)
+        self._validate_structure_event_policy(section_by_id)
         self._validate_equilibrium_policy()
         self._validate_nonprismatic_lake_scope()
         self._validate_nonprismatic_moving_scope()
@@ -669,7 +721,9 @@ class V4LiteInput(StrictContractModel):
         policy = self.solver.policy_tuple
         version = self.provenance.validation_policy_version
         if version == "v4-lite-1":
-            explicit = _VERSIONED_POLICY_FIELDS & self.solver.model_fields_set
+            explicit = (
+                _VERSIONED_POLICY_FIELDS | _EVENT_POLICY_FIELDS
+            ) & self.solver.model_fields_set
             if explicit:
                 raise ValueError(
                     "v4-lite-1 does not accept explicit versioned policy fields"
@@ -683,7 +737,10 @@ class V4LiteInput(StrictContractModel):
                 f"{version} requires every versioned policy field explicitly; "
                 f"missing={sorted(missing)}"
             )
+        explicit_event_fields = _EVENT_POLICY_FIELDS & self.solver.model_fields_set
         if version == "v4-lite-2":
+            if explicit_event_fields:
+                raise ValueError("v4-lite-2 does not accept event policy fields")
             if policy not in {
                 B2_STANDARD_POLICY,
                 B2_UNIFORM_MANNING_POLICY,
@@ -691,8 +748,24 @@ class V4LiteInput(StrictContractModel):
             }:
                 raise ValueError("v4-lite-2 policy tuple is not implemented")
             return
-        if policy != C1_NONPRISMATIC_MOVING_POLICY:
-            raise ValueError("v4-lite-3 policy tuple is not implemented")
+        if version == "v4-lite-3":
+            if explicit_event_fields:
+                raise ValueError("v4-lite-3 does not accept event policy fields")
+            if policy != C1_NONPRISMATIC_MOVING_POLICY:
+                raise ValueError("v4-lite-3 policy tuple is not implemented")
+            return
+        missing_event_fields = _EVENT_POLICY_FIELDS - self.solver.model_fields_set
+        if missing_event_fields:
+            raise ValueError(
+                "v4-lite-4 requires every event policy field explicitly; "
+                f"missing={sorted(missing_event_fields)}"
+            )
+        if policy != C2_BRACKETED_EVENT_POLICY:
+            raise ValueError("v4-lite-4 policy tuple is not implemented")
+        if self.solver.structure_event_policy != (
+            "bracketed-conservative-replay-right-end-v1"
+        ):
+            raise ValueError("v4-lite-4 requires the bracketed event policy")
 
     def _validate_section_geometry_policy(self) -> None:
         """Validate exact legacy Profiles or vertically translated linear-bed Profiles."""
@@ -1199,7 +1272,13 @@ class V4LiteInput(StrictContractModel):
             adjacent_pairs = set(zip(section_ids, section_ids[1:]))
             if pair not in adjacent_pairs:
                 raise ValueError("Gate interface must use adjacent ordered section identities")
-            if isinstance(gate.control, OneShotStageAboveControlInput):
+            if isinstance(
+                gate.control,
+                (
+                    OneShotStageAboveControlInput,
+                    BracketedOneShotStageAboveControlInput,
+                ),
+            ):
                 monitored = section_by_id[gate.interface.upstream_section_id]
                 self._validate_control_threshold(
                     gate.control,
@@ -1211,16 +1290,84 @@ class V4LiteInput(StrictContractModel):
                 raise ValueError("Pump references an unknown Branch identity")
             if pump.section_id not in known_sections:
                 raise ValueError("Pump references an unknown section identity")
-            if isinstance(pump.control, OneShotStageAboveControlInput):
+            if isinstance(
+                pump.control,
+                (
+                    OneShotStageAboveControlInput,
+                    BracketedOneShotStageAboveControlInput,
+                ),
+            ):
                 self._validate_control_threshold(
                     pump.control,
                     section_by_id[pump.section_id],
                     "Pump section",
                 )
 
+    def _validate_structure_event_policy(
+        self,
+        section_by_id: dict[int, V4LiteSection],
+    ) -> None:
+        """Keep bracketed replay distinct from the frozen discrete controller."""
+
+        controls = tuple(
+            structure.control
+            for structure in (*self.structures.gates, *self.structures.pumps)
+        )
+        version = self.provenance.validation_policy_version
+        if version != "v4-lite-4":
+            if any(
+                isinstance(control, BracketedOneShotStageAboveControlInput)
+                for control in controls
+            ):
+                raise ValueError(
+                    "bracketed threshold control requires validation_policy_version "
+                    "v4-lite-4"
+                )
+            return
+        if not controls:
+            raise ValueError("v4-lite-4 requires at least one controlled structure")
+        if any(
+            not isinstance(control, BracketedOneShotStageAboveControlInput)
+            for control in controls
+        ):
+            raise ValueError("v4-lite-4 requires every structure to use bracketed control")
+        if self.solver.event_time_tolerance_seconds < (
+            self.solver.minimum_time_step_seconds
+        ):
+            raise ValueError(
+                "event_time_tolerance_seconds must not be less than "
+                "minimum_time_step_seconds"
+            )
+
+        if isinstance(self.initial_state, UniformInitialState):
+            stage_by_section = {
+                section_id: self.initial_state.water_level_m
+                for section_id in section_by_id
+            }
+        else:
+            stage_by_section = {
+                value.section_id: value.water_level_m
+                for value in self.initial_state.values
+            }
+        for gate in self.structures.gates:
+            control = gate.control
+            if not isinstance(control, BracketedOneShotStageAboveControlInput):
+                raise ValueError("v4-lite-4 Gate control must be bracketed")
+            initial_stage = stage_by_section[gate.interface.upstream_section_id]
+            if initial_stage >= control.threshold_water_level_m:
+                raise ValueError("bracketed Gate initial stage must be below threshold")
+        for pump in self.structures.pumps:
+            control = pump.control
+            if not isinstance(control, BracketedOneShotStageAboveControlInput):
+                raise ValueError("v4-lite-4 Pump control must be bracketed")
+            initial_stage = stage_by_section[pump.section_id]
+            if initial_stage >= control.threshold_water_level_m:
+                raise ValueError("bracketed Pump initial stage must be below threshold")
+
     @staticmethod
     def _validate_control_threshold(
-        control: OneShotStageAboveControlInput,
+        control: OneShotStageAboveControlInput
+        | BracketedOneShotStageAboveControlInput,
         section: V4LiteSection,
         label: str,
     ) -> None:
