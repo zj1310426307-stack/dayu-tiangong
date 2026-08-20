@@ -96,7 +96,7 @@ HYDRO-MODEL-02-A 审查确认：仓库中的 v1 单河路径包含一阶 Rusanov
 - [验证门禁](docs/model/HYDRO-MODEL-02-validation.md)
 - [迁移与回退](docs/model/HYDRO-MODEL-02-migration-report.md)
 
-HYDRO-MODEL-02-B 已在独立分支实现首个可运行的 `dayu.model-input.v4-lite` 单河有限体积 MVP：HLL、hydrostatic reconstruction、SSP-RK2、CFL、半隐式 Manning、动态 Q(t)/H(t)、固定或接受步一次性阈值 Gate/Pump，以及独立 `dayu.hydraulic-result.mvp`。当前对外只允许相同非规则 Profile 的棱柱单河，并仅提供 Python 引擎直连路由。
+HYDRO-MODEL-02-B/B2 已在独立分支实现首个可运行的 `dayu.model-input.v4-lite` 单河有限体积 MVP，并完成三项显式科学加固：严格线性坡床的 uniform-Manning 参考平衡、亚临界特征边界、以及只限全湿零流共同水位的非棱柱静水路径。旧 `v4-lite-1`、v1/v2/v3 保持原语义；新增能力只由显式 `v4-lite-2` 策略启用，并仍仅提供 Python 引擎直连路由。
 
 - [MODEL-02-B 求解器基线](docs/review/HYDRO-MODEL-02-B-solver-baseline.md)
 - [MODEL-02-B 开发报告](docs/model/HYDRO-MODEL-02-B-development-report.md)
@@ -104,7 +104,7 @@ HYDRO-MODEL-02-B 已在独立分支实现首个可运行的 `dayu.model-input.v4
 - [MODEL-02-B Benchmark 报告](docs/model/HYDRO-MODEL-02-B-benchmark-report.md)
 - [MODEL-02-B 可运行示例](examples/hydraulic/saint-venant-mvp/README.md)
 
-Case 002 已在显式 `uniform-manning-reference` 内核模式下通过 0.1% 候选线：Q 相对误差为 0，水深误差约 `8.88e-16 m`。该结论只适用于严格校验的棱柱、线性坡、常 A/Q/H/n、亚临界 Manning 平衡参考；默认 `standard` 模式仍复现约 3.71% 的离散偏差，且 v4-lite 端到端尚不能表达坡床参考。非棱柱源项、特征边界、闸泵动量/能头强耦合、后端任务持久化、外部模型对比和真实工程率定仍未通过。
+Case 002 已通过 `v4-lite-2` 端到端门：Q 与水深误差均为 0，水量相对误差约 `2.67e-17`；该结果只属于同相对 Profile、严格线性坡、常 A/Q/depth/n、无结构且明确选择 residual-equilibrium 的亚临界参考流。非棱柱路径只证明受限 lake-at-rest 与扰动不被冻结，不代表一般移动流、湿干或结构耦合。边界空间支撑明确为 `nearest-section-cell-face-v1`，不是端节点处的连续坡床实测断面。Gate/Pump 强动量/能头、后端任务持久化、外部模型对比和真实工程率定仍未通过。
 
 ## 广东开放参考数据
 

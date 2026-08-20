@@ -4,6 +4,8 @@
 - 状态：**审查完成；升级路线 GO；生产模型 NO-GO**
 - 代码行为变更：无
 
+> 本页记录 MODEL-02-A 历史审查基线。当前已进入 MODEL-02-B/B2；实现能力、测试数字和未通过边界以 B/B2 开发、验证与 Benchmark 报告为准，A 阶段的 `NOT IMPLEMENTED` 不代表后续阶段仍未实现。
+
 ## 权威文档
 
 1. 当前求解器事实与整改清单：
@@ -16,6 +18,11 @@
    [`../model/HYDRO-MODEL-02-validation.md`](../model/HYDRO-MODEL-02-validation.md)
 5. v3→v4 迁移与回退计划：
    [`../model/HYDRO-MODEL-02-migration-report.md`](../model/HYDRO-MODEL-02-migration-report.md)
+6. B/B2 当前开发与能力边界：
+   [`../model/HYDRO-MODEL-02-B-development-report.md`](../model/HYDRO-MODEL-02-B-development-report.md)
+7. B/B2 当前验证与 Benchmark：
+   [`../model/HYDRO-MODEL-02-B-validation-report.md`](../model/HYDRO-MODEL-02-B-validation-report.md)、
+   [`../model/HYDRO-MODEL-02-B-benchmark-report.md`](../model/HYDRO-MODEL-02-B-benchmark-report.md)
 
 ## 核心结论
 
@@ -26,4 +33,4 @@
 - 不删除现有求解器，不建 `model/solver2`；在现有 `model/solver/` 内建设 v4 原生有限体积路径；
 - v4 先 shadow、再 opt-in，科学 Benchmark、外部结果级对比和性能门通过后才讨论默认切换。
 
-本索引不重复维护技术事实；若有冲突，以 current-solver-audit 和对应 model 设计文档为准。
+本索引不重复维护技术事实。A 阶段设计事实冲突时以 current-solver-audit 和对应 model 设计文档为准；涉及 B/B2 已实现能力、测试结果与当前限制时，以 B/B2 三份报告为准。
