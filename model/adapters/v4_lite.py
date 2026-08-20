@@ -43,8 +43,11 @@ from model.solver.finite_volume import (
     UpstreamDischargeBoundary,
     solve_single_branch,
 )
+from model.solver.finite_volume.boundary import boundary_algorithm_id
 
 MESH_HASH_SCHEMA = "dayu.finite-volume-mesh.v1"
+MESH_HASH_SCHEMA_V2 = "dayu.finite-volume-mesh.v2"
+SOLVER_POLICY_HASH_SCHEMA = "dayu.solver-policy.v1"
 
 
 def build_v4_lite_mesh(model_input: V4LiteInput) -> FiniteVolumeMesh:
@@ -98,14 +101,35 @@ def build_v4_lite_mesh(model_input: V4LiteInput) -> FiniteVolumeMesh:
 def v4_lite_mesh_hash(model_input: V4LiteInput, mesh: FiniteVolumeMesh) -> str:
     """Hash a stable geometry/identity manifest without serialising Python objects."""
 
-    manifest = {
-        "schema_version": MESH_HASH_SCHEMA,
-        "geometry_policy": {
+    if model_input.provenance.validation_policy_version == "v4-lite-1":
+        geometry_policy = {
             "type": "tabulated-profile-points",
             "vertical_step_m": 0.05,
             "pressure_moment": "piecewise-linear-exact-v1",
             "prismatic_geometry_required": True,
-        },
+        }
+        schema_version = MESH_HASH_SCHEMA
+    else:
+        face_geometry = (
+            "hydrostatic-reconstruction-max-bed-v1"
+            if model_input.solver.geometry_source
+            == "hydrostatic-reconstruction-v1"
+            else "linear-hydraulic-functions-right-weight-left-dx-over-sum-v1"
+        )
+        geometry_policy = {
+            "geometry_policy": model_input.solver.geometry_policy,
+            "geometry_source": model_input.solver.geometry_source,
+            "bed_elevation_source": model_input.solver.bed_elevation_source,
+            "face_geometry": face_geometry,
+            "hydraulic_table": "vertical-0.05m-piecewise-linear-v1",
+            "pressure_moment": "piecewise-linear-exact-v1",
+            "stage_from_area": "tabulated-linear-inverse-v1",
+            "absolute_profile_points_hashed": True,
+        }
+        schema_version = MESH_HASH_SCHEMA_V2
+    manifest = {
+        "schema_version": schema_version,
+        "geometry_policy": geometry_policy,
         "network_id": model_input.river.network_id,
         "branch_id": model_input.river.branch_id,
         "start_chainage_m": model_input.river.start_chainage_m,
@@ -130,6 +154,46 @@ def v4_lite_mesh_hash(model_input: V4LiteInput, mesh: FiniteVolumeMesh) -> str:
             }
             for cell, section in zip(mesh.cells, model_input.sections)
         ],
+    }
+    return snapshot_hash(manifest)
+
+
+def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
+    """Hash the complete v2 execution policy independently of mesh identity."""
+
+    solver = model_input.solver
+    manifest = {
+        "schema_version": SOLVER_POLICY_HASH_SCHEMA,
+        "input_schema_version": model_input.schema_version,
+        "validation_policy_version": model_input.provenance.validation_policy_version,
+        "solver": {
+            "type": solver.type,
+            "scheme": solver.scheme,
+            "time_integrator": solver.time_integrator,
+            "geometry_policy": solver.geometry_policy,
+            "geometry_source": solver.geometry_source,
+            "bed_elevation_source": solver.bed_elevation_source,
+            "equilibrium_policy": solver.equilibrium_policy,
+            "boundary_closure": solver.boundary_closure,
+            "boundary_algorithm": boundary_algorithm_id(solver.boundary_closure),
+            "boundary_spatial_support": solver.boundary_spatial_support,
+            "friction_method": solver.friction_method,
+            "friction_algorithm": "manning-semi-implicit-per-ssp-stage-v1",
+            "hydraulic_table": "vertical-0.05m-piecewise-linear-v1",
+            "pressure_moment_quadrature": "piecewise-linear-exact-v1",
+            "stage_from_area_root": "tabulated-linear-inverse-v1",
+            "cfl_algorithm": "cell-max-abs-u-plus-sqrt-gA-over-T-v1",
+            "time_step_policy": "boundary-output-end-aligned-cfl-retry-v1",
+            "duration_seconds": solver.duration_seconds,
+            "maximum_time_step_seconds": solver.maximum_time_step_seconds,
+            "minimum_time_step_seconds": solver.minimum_time_step_seconds,
+            "output_interval_seconds": solver.output_interval_seconds,
+            "cfl_number": solver.cfl_number,
+            "dry_depth_m": solver.dry_depth_m,
+            "maximum_retries": solver.maximum_retries,
+            "maximum_steps": solver.maximum_steps,
+            "water_balance_tolerance": solver.water_balance_tolerance,
+        },
     }
     return snapshot_hash(manifest)
 
@@ -182,16 +246,29 @@ def _boundaries(model_input: V4LiteInput) -> BoundaryPair:
                 tuple(upstream.time_seconds),
                 tuple(upstream.flow_m3_s),
                 "discharge",
-            )
+            ),
+            boundary_closure=model_input.solver.boundary_closure,
         ),
         downstream=DownstreamStageBoundary(
             BoundarySeries(
                 tuple(downstream.time_seconds),
                 tuple(downstream.water_level_m),
                 "stage",
-            )
+            ),
+            boundary_closure=model_input.solver.boundary_closure,
         ),
     )
+
+
+def _runtime_equilibrium_mode(model_input: V4LiteInput) -> str:
+    """Map one validated, versioned input policy to the frozen core literal."""
+
+    policy = model_input.solver.equilibrium_policy
+    if policy == "standard-v1":
+        return "standard"
+    if policy == "uniform-manning-reference-v1":
+        return "uniform-manning-reference"
+    raise HydraulicInputError(f"unsupported v4-lite equilibrium_policy: {policy}")
 
 
 def _structures(
@@ -379,7 +456,18 @@ def _result(
             minimum_dt=evidence.minimum_dt,
             retry_count=evidence.retry_count,
             step_count=evidence.step_count,
-            diagnostic_flags=evidence.diagnostic_flags,
+            diagnostic_flags=(
+                tuple(
+                    sorted(
+                        {
+                            *evidence.diagnostic_flags,
+                            "boundary_spatial_support_nearest-section-cell-face-v1",
+                        }
+                    )
+                )
+                if model_input.provenance.validation_policy_version == "v4-lite-2"
+                else evidence.diagnostic_flags
+            ),
         ),
         provenance=MvpResultProvenance(
             input_schema_version=model_input.schema_version,
@@ -391,6 +479,11 @@ def _result(
             engine_version=model_input.provenance.engine_version,
             engine_commit=model_input.provenance.engine_commit,
             validation_policy_version=model_input.provenance.validation_policy_version,
+            **(
+                {"solver_policy_hash": v4_lite_solver_policy_hash(model_input)}
+                if model_input.provenance.validation_policy_version == "v4-lite-2"
+                else {}
+            ),
         ),
     )
 
@@ -418,6 +511,8 @@ def run_v4_lite(snapshot: Mapping[str, Any]) -> MvpHydraulicResult:
             maximum_steps=model_input.solver.maximum_steps,
             water_balance_tolerance=model_input.solver.water_balance_tolerance,
             scheme="hll",
+            equilibrium_mode=_runtime_equilibrium_mode(model_input),
+            geometry_source_mode=model_input.solver.geometry_source,
         ),
         gates=gates,
         pumps=pumps,
@@ -433,7 +528,10 @@ def run_v4_lite(snapshot: Mapping[str, Any]) -> MvpHydraulicResult:
 
 __all__ = [
     "MESH_HASH_SCHEMA",
+    "MESH_HASH_SCHEMA_V2",
+    "SOLVER_POLICY_HASH_SCHEMA",
     "build_v4_lite_mesh",
     "run_v4_lite",
     "v4_lite_mesh_hash",
+    "v4_lite_solver_policy_hash",
 ]

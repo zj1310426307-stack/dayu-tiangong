@@ -11,6 +11,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    model_serializer,
     model_validator,
 )
 
@@ -242,7 +243,28 @@ class MvpResultProvenance(StrictResultModel):
     time_integrator: Literal["ssp-rk2"]
     engine_version: NonBlankText
     engine_commit: NonBlankText
-    validation_policy_version: Literal["v4-lite-1"]
+    validation_policy_version: Literal["v4-lite-1", "v4-lite-2"]
+    solver_policy_hash: Sha256 | None = None
+
+    @model_validator(mode="after")
+    def validate_versioned_solver_policy(self) -> Self:
+        """Require execution-policy evidence only for the versioned v2 route."""
+
+        if self.validation_policy_version == "v4-lite-1":
+            if "solver_policy_hash" in self.model_fields_set:
+                raise ValueError("v4-lite-1 result must not add solver_policy_hash")
+        elif self.solver_policy_hash is None:
+            raise ValueError("v4-lite-2 result requires solver_policy_hash")
+        return self
+
+    @model_serializer(mode="wrap")
+    def serialize_versioned_policy(self, handler: Any) -> dict[str, Any]:
+        """Keep the v1 wire shape free of the v2-only policy field."""
+
+        payload = handler(self)
+        if self.validation_policy_version == "v4-lite-1":
+            payload.pop("solver_policy_hash", None)
+        return payload
 
 
 class MvpHydraulicResult(StrictResultModel):
@@ -347,6 +369,8 @@ class MvpHydraulicResult(StrictResultModel):
         payload = self.model_dump(mode="json")
         if not self.control_events:
             payload.pop("control_events")
+        if self.provenance.solver_policy_hash is None:
+            payload["provenance"].pop("solver_policy_hash", None)
         return payload
 
 

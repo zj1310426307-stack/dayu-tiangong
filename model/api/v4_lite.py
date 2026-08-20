@@ -24,6 +24,7 @@ from pydantic import (
 )
 
 from model.core.errors import HydraulicInputError
+from model.geometry.sections import TabulatedSectionGeometry
 
 
 MODEL_INPUT_V4_LITE = "dayu.model-input.v4-lite"
@@ -33,6 +34,51 @@ V4_LITE_SOLVER_TUPLE = (
     "finite-volume-hll",
     "ssp-rk2",
 )
+
+LEGACY_V4_LITE_POLICY = (
+    "absolute-prismatic-v1",
+    "hydrostatic-reconstruction-v1",
+    "profile-minimum-elevation-v1",
+    "standard-v1",
+    "zero-gradient-companion-v1",
+    "nearest-section-cell-face-v1",
+)
+B2_STANDARD_POLICY = (
+    "relative-prismatic-linear-bed-v1",
+    "hydrostatic-reconstruction-v1",
+    "profile-minimum-elevation-v1",
+    "standard-v1",
+    "subcritical-characteristic-v1",
+    "nearest-section-cell-face-v1",
+)
+B2_UNIFORM_MANNING_POLICY = (
+    "relative-prismatic-linear-bed-v1",
+    "hydrostatic-reconstruction-v1",
+    "profile-minimum-elevation-v1",
+    "uniform-manning-reference-v1",
+    "subcritical-characteristic-v1",
+    "nearest-section-cell-face-v1",
+)
+B2_NONPRISMATIC_LAKE_POLICY = (
+    "nonprismatic-section-linear-path-v1",
+    "hydraulic-function-linear-face-v1",
+    "profile-minimum-elevation-v1",
+    "standard-v1",
+    "subcritical-characteristic-v1",
+    "nearest-section-cell-face-v1",
+)
+_VERSIONED_POLICY_FIELDS = frozenset(
+    {
+        "geometry_policy",
+        "geometry_source",
+        "bed_elevation_source",
+        "equilibrium_policy",
+        "boundary_closure",
+        "boundary_spatial_support",
+    }
+)
+_POLICY_RELATIVE_TOLERANCE = 1.0e-10
+_POLICY_ABSOLUTE_TOLERANCE = 1.0e-12
 
 
 def _finite_number(value: Any) -> float:
@@ -44,6 +90,54 @@ def _finite_number(value: Any) -> float:
     if not math.isfinite(number):
         raise ValueError("value must be finite")
     return number
+
+
+def _policy_close(left: float, right: float) -> bool:
+    """Compare frozen engineering values with one strict documented tolerance."""
+
+    return math.isclose(
+        left,
+        right,
+        rel_tol=_POLICY_RELATIVE_TOLERANCE,
+        abs_tol=_POLICY_ABSOLUTE_TOLERANCE,
+    )
+
+
+def _absolute_stage_close(left: float, right: float) -> bool:
+    """Compare absolute water levels without datum-dependent relative slack."""
+
+    return math.isclose(
+        left,
+        right,
+        rel_tol=0.0,
+        abs_tol=_POLICY_ABSOLUTE_TOLERANCE,
+    )
+
+
+def _require_policy_constant(values: tuple[float, ...], label: str) -> float:
+    """Return one constant policy value or reject an inferred equilibrium."""
+
+    if not values:
+        raise ValueError(f"uniform-manning-reference-v1 requires non-empty {label}")
+    reference = values[0]
+    if any(not _policy_close(value, reference) for value in values[1:]):
+        raise ValueError(f"uniform-manning-reference-v1 requires constant {label}")
+    return reference
+
+
+def _require_absolute_stage_constant(
+    values: tuple[float, ...],
+    label: str,
+    policy: str,
+) -> float:
+    """Return one absolute stage or reject datum-scaled near-equality."""
+
+    if not values:
+        raise ValueError(f"{policy} requires non-empty {label}")
+    reference = values[0]
+    if any(not _absolute_stage_close(value, reference) for value in values[1:]):
+        raise ValueError(f"{policy} requires constant {label}")
+    return reference
 
 
 FiniteNumber = Annotated[float, BeforeValidator(_finite_number)]
@@ -106,6 +200,42 @@ class V4LiteSolver(StrictContractModel):
     maximum_retries: NonNegativeInt
     maximum_steps: PositiveInt
     water_balance_tolerance: Annotated[FiniteNumber, Field(gt=0.0, le=0.01)]
+    geometry_policy: Literal[
+        "absolute-prismatic-v1",
+        "relative-prismatic-linear-bed-v1",
+        "nonprismatic-section-linear-path-v1",
+    ] = "absolute-prismatic-v1"
+    geometry_source: Literal[
+        "hydrostatic-reconstruction-v1",
+        "hydraulic-function-linear-face-v1",
+    ] = "hydrostatic-reconstruction-v1"
+    bed_elevation_source: Literal[
+        "profile-minimum-elevation-v1"
+    ] = "profile-minimum-elevation-v1"
+    equilibrium_policy: Literal[
+        "standard-v1",
+        "uniform-manning-reference-v1",
+    ] = "standard-v1"
+    boundary_closure: Literal[
+        "zero-gradient-companion-v1",
+        "subcritical-characteristic-v1",
+    ] = "zero-gradient-companion-v1"
+    boundary_spatial_support: Literal[
+        "nearest-section-cell-face-v1"
+    ] = "nearest-section-cell-face-v1"
+
+    @property
+    def policy_tuple(self) -> tuple[str, str, str, str, str, str]:
+        """Return the single auditable geometry/source/equilibrium policy tuple."""
+
+        return (
+            self.geometry_policy,
+            self.geometry_source,
+            self.bed_elevation_source,
+            self.equilibrium_policy,
+            self.boundary_closure,
+            self.boundary_spatial_support,
+        )
 
     @model_validator(mode="after")
     def validate_time_controls(self) -> Self:
@@ -410,7 +540,7 @@ class V4LiteProvenance(StrictContractModel):
 
     engine_version: NonBlankText
     engine_commit: NonBlankText
-    validation_policy_version: Literal["v4-lite-1"]
+    validation_policy_version: Literal["v4-lite-1", "v4-lite-2"]
 
 
 class V4LiteInput(StrictContractModel):
@@ -448,9 +578,7 @@ class V4LiteInput(StrictContractModel):
 
         section_by_id = {item.section_id: item for item in self.sections}
         section_ids = tuple(section_by_id)
-        reference_geometry = tuple(
-            (point.offset_m, point.elevation_m) for point in self.sections[0].points
-        )
+        self._validate_versioned_policy()
         for section in self.sections:
             if section.branch_id != self.river.branch_id:
                 raise ValueError(
@@ -460,14 +588,7 @@ class V4LiteInput(StrictContractModel):
                 raise ValueError(
                     f"section {section.section_id} lies outside the Branch chainage range"
                 )
-            geometry = tuple(
-                (point.offset_m, point.elevation_m) for point in section.points
-            )
-            if geometry != reference_geometry:
-                raise ValueError(
-                    "v4-lite currently requires identical prismatic section geometry; "
-                    "non-prismatic geometry source terms are not implemented"
-                )
+        self._validate_section_geometry_policy()
 
         if self.boundary.upstream.target_node_id != self.river.upstream_node_id:
             raise ValueError("upstream boundary targets an unknown Branch endpoint")
@@ -479,7 +600,128 @@ class V4LiteInput(StrictContractModel):
         self._validate_initial_state(section_by_id)
         self._validate_downstream_stage(section_by_id[section_ids[-1]])
         self._validate_structures(section_ids)
+        self._validate_equilibrium_policy()
+        self._validate_nonprismatic_lake_scope()
         return self
+
+    def _validate_versioned_policy(self) -> None:
+        """Bind each supported policy tuple to one explicit validation version."""
+
+        policy = self.solver.policy_tuple
+        version = self.provenance.validation_policy_version
+        if version == "v4-lite-1":
+            explicit = _VERSIONED_POLICY_FIELDS & self.solver.model_fields_set
+            if explicit:
+                raise ValueError(
+                    "v4-lite-1 does not accept explicit versioned policy fields"
+                )
+            if policy != LEGACY_V4_LITE_POLICY:
+                raise ValueError("v4-lite-1 only supports the legacy policy tuple")
+            return
+        missing = _VERSIONED_POLICY_FIELDS - self.solver.model_fields_set
+        if missing:
+            raise ValueError(
+                "v4-lite-2 requires every versioned policy field explicitly; "
+                f"missing={sorted(missing)}"
+            )
+        if policy not in {
+            B2_STANDARD_POLICY,
+            B2_UNIFORM_MANNING_POLICY,
+            B2_NONPRISMATIC_LAKE_POLICY,
+        }:
+            raise ValueError("v4-lite-2 policy tuple is not implemented")
+
+    def _validate_section_geometry_policy(self) -> None:
+        """Validate exact legacy Profiles or vertically translated linear-bed Profiles."""
+
+        reference = self.sections[0]
+        if self.solver.geometry_policy == "absolute-prismatic-v1":
+            reference_points = tuple(
+                (point.offset_m, point.elevation_m) for point in reference.points
+            )
+            for section in self.sections[1:]:
+                points = tuple(
+                    (point.offset_m, point.elevation_m) for point in section.points
+                )
+                if points != reference_points:
+                    raise ValueError(
+                        "absolute-prismatic-v1 requires identical absolute Profile points"
+                    )
+            return
+
+        if self.solver.geometry_policy == "nonprismatic-section-linear-path-v1":
+            return
+
+        reference_shape = self._relative_profile_shape(reference)
+        for section in self.sections[1:]:
+            shape = self._relative_profile_shape(section)
+            if not self._relative_profile_shapes_match(reference_shape, shape):
+                raise ValueError(
+                    "relative-prismatic-linear-bed-v1 requires identical relative "
+                    "Profile shapes"
+                )
+
+        beds = tuple(section.minimum_stage_m for section in self.sections)
+        if any(right >= left for left, right in zip(beds, beds[1:])):
+            raise ValueError(
+                "relative-prismatic-linear-bed-v1 requires a strictly descending bed"
+            )
+        chainages = tuple(section.chainage_m for section in self.sections)
+        slopes = tuple(
+            (left_bed - right_bed) / (right_chainage - left_chainage)
+            for left_bed, right_bed, left_chainage, right_chainage in zip(
+                beds,
+                beds[1:],
+                chainages,
+                chainages[1:],
+            )
+        )
+        minimum_gap = min(
+            right - left for left, right in zip(chainages, chainages[1:])
+        )
+        slope_absolute_tolerance = max(
+            _POLICY_ABSOLUTE_TOLERANCE,
+            8.0 * max(math.ulp(abs(bed)) for bed in beds) / minimum_gap,
+        )
+        if any(
+            not math.isclose(
+                slope,
+                slopes[0],
+                rel_tol=_POLICY_RELATIVE_TOLERANCE,
+                abs_tol=slope_absolute_tolerance,
+            )
+            for slope in slopes[1:]
+        ):
+            raise ValueError(
+                "relative-prismatic-linear-bed-v1 requires one linear bed slope"
+            )
+
+    @staticmethod
+    def _relative_profile_shape(
+        section: V4LiteSection,
+    ) -> tuple[tuple[float, float], ...]:
+        """Normalize absolute Profile points against their declared minimum bed."""
+
+        bed = section.minimum_stage_m
+        return tuple(
+            (point.offset_m, point.elevation_m - bed) for point in section.points
+        )
+
+    @staticmethod
+    def _relative_profile_shapes_match(
+        left: tuple[tuple[float, float], ...],
+        right: tuple[tuple[float, float], ...],
+    ) -> bool:
+        """Compare two normalized Profiles with the versioned policy tolerance."""
+
+        return len(left) == len(right) and all(
+            _policy_close(left_offset, right_offset)
+            and _policy_close(left_height, right_height)
+            for (left_offset, left_height), (right_offset, right_height) in zip(
+                left,
+                right,
+            )
+        )
 
     def _validate_boundary_coverage(self) -> None:
         """Require both series to cover the complete simulation interval without extrapolation."""
@@ -524,6 +766,179 @@ class V4LiteInput(StrictContractModel):
                 value.water_level_m,
                 value.discharge_m3_s,
             )
+
+    def _validate_equilibrium_policy(self) -> None:
+        """Preflight the complete explicit uniform-Manning reference contract."""
+
+        if self.solver.equilibrium_policy == "standard-v1":
+            return
+        if self.structures.gates or self.structures.pumps:
+            raise ValueError(
+                "uniform-manning-reference-v1 does not support Gate or Pump structures"
+            )
+        if not isinstance(self.initial_state, BySectionInitialState):
+            raise ValueError(
+                "uniform-manning-reference-v1 requires by-section initial_state"
+            )
+
+        value_by_id = {
+            value.section_id: value for value in self.initial_state.values
+        }
+        ordered_values = tuple(
+            value_by_id[section.section_id] for section in self.sections
+        )
+        discharge = _require_policy_constant(
+            tuple(value.discharge_m3_s for value in ordered_values),
+            "initial discharge",
+        )
+        if discharge <= 0.0:
+            raise ValueError(
+                "uniform-manning-reference-v1 requires positive initial discharge"
+            )
+        depths = tuple(
+            value.water_level_m - section.minimum_stage_m
+            for value, section in zip(ordered_values, self.sections)
+        )
+        depth = _require_policy_constant(depths, "initial water depth")
+        if depth <= self.solver.dry_depth_m:
+            raise ValueError(
+                "uniform-manning-reference-v1 requires a wet initial reference"
+            )
+        _require_policy_constant(
+            tuple(section.default_manning_n for section in self.sections),
+            "Manning n",
+        )
+        upstream_flow = _require_policy_constant(
+            tuple(self.boundary.upstream.flow_m3_s),
+            "upstream discharge boundary",
+        )
+        if not _policy_close(upstream_flow, discharge):
+            raise ValueError(
+                "uniform-manning-reference-v1 upstream boundary must match initial discharge"
+            )
+        downstream_stage = _require_absolute_stage_constant(
+            tuple(self.boundary.downstream.water_level_m),
+            "downstream stage boundary",
+            "uniform-manning-reference-v1",
+        )
+        final_initial_stage = ordered_values[-1].water_level_m
+        if not _absolute_stage_close(downstream_stage, final_initial_stage):
+            raise ValueError(
+                "uniform-manning-reference-v1 downstream boundary must match the "
+                "final initial stage"
+            )
+        self._validate_equilibrium_cell_centers()
+
+    def _validate_nonprismatic_lake_scope(self) -> None:
+        """Limit the first non-prismatic public path to a verified lake at rest."""
+
+        if self.solver.geometry_policy != "nonprismatic-section-linear-path-v1":
+            return
+        if self.structures.gates or self.structures.pumps:
+            raise ValueError(
+                "nonprismatic-section-linear-path-v1 does not support structures"
+            )
+
+        if isinstance(self.initial_state, UniformInitialState):
+            stages = (self.initial_state.water_level_m,) * len(self.sections)
+            discharges = (self.initial_state.discharge_m3_s,) * len(self.sections)
+        else:
+            value_by_id = {
+                value.section_id: value for value in self.initial_state.values
+            }
+            ordered = tuple(
+                value_by_id[section.section_id] for section in self.sections
+            )
+            stages = tuple(value.water_level_m for value in ordered)
+            discharges = tuple(value.discharge_m3_s for value in ordered)
+
+        reference_stage = stages[0]
+        if any(
+            not _absolute_stage_close(stage, reference_stage)
+            for stage in stages[1:]
+        ):
+            raise ValueError(
+                "nonprismatic-section-linear-path-v1 requires one common initial stage"
+            )
+        if any(abs(discharge) > _POLICY_ABSOLUTE_TOLERANCE for discharge in discharges):
+            raise ValueError(
+                "nonprismatic-section-linear-path-v1 requires zero initial discharge"
+            )
+        if any(
+            reference_stage - section.minimum_stage_m <= self.solver.dry_depth_m
+            for section in self.sections
+        ):
+            raise ValueError(
+                "nonprismatic-section-linear-path-v1 requires every section to be wet"
+            )
+        signatures = tuple(
+            self._hydraulic_signature(section, reference_stage)
+            for section in self.sections
+        )
+        if all(
+            all(_policy_close(left, right) for left, right in zip(signatures[0], item))
+            for item in signatures[1:]
+        ):
+            raise ValueError(
+                "nonprismatic-section-linear-path-v1 requires at least two distinct "
+                "hydraulic Profile signatures at the common initial stage"
+            )
+
+        upstream = self.boundary.upstream.flow_m3_s
+        if any(abs(value) > _POLICY_ABSOLUTE_TOLERANCE for value in upstream):
+            raise ValueError(
+                "nonprismatic-section-linear-path-v1 requires zero upstream discharge"
+            )
+        downstream = self.boundary.downstream.water_level_m
+        if any(
+            not _absolute_stage_close(value, reference_stage)
+            for value in downstream
+        ):
+            raise ValueError(
+                "nonprismatic-section-linear-path-v1 downstream stage must match "
+                "the common initial stage"
+            )
+
+    @staticmethod
+    def _hydraulic_signature(
+        section: V4LiteSection,
+        stage: float,
+    ) -> tuple[float, float, float, float]:
+        """Evaluate the actual A/T/P/I1 identity used by the numerical mesh."""
+
+        geometry = TabulatedSectionGeometry.from_points(
+            tuple((point.offset_m, point.elevation_m) for point in section.points)
+        )
+        return (
+            geometry.area(stage),
+            geometry.top_width(stage),
+            geometry.wetted_perimeter(stage),
+            geometry.pressure_moment(stage),
+        )
+
+    def _validate_equilibrium_cell_centers(self) -> None:
+        """Align adopted chainages with the cell-center metric used by the kernel."""
+
+        chainages = tuple(section.chainage_m for section in self.sections)
+        internal_faces = tuple(
+            0.5 * (left + right)
+            for left, right in zip(chainages, chainages[1:])
+        )
+        faces = (
+            self.river.start_chainage_m,
+            *internal_faces,
+            self.river.end_chainage_m,
+        )
+        lengths = tuple(right - left for left, right in zip(faces, faces[1:]))
+        for index, chainage_gap in enumerate(
+            right - left for left, right in zip(chainages, chainages[1:])
+        ):
+            kernel_gap = 0.5 * (lengths[index] + lengths[index + 1])
+            if not _policy_close(kernel_gap, chainage_gap):
+                raise ValueError(
+                    "uniform-manning-reference-v1 requires section chainages to "
+                    "coincide with finite-volume cell centers"
+                )
 
     def _validate_initial_value(
         self, section: V4LiteSection, water_level: float, discharge: float

@@ -8,8 +8,17 @@ from typing import Literal, Mapping, Sequence
 
 from model.solver.finite_volume.boundary import BoundaryPair
 from model.solver.finite_volume.diagnostics import NumericalStateError, StabilityError
-from model.solver.finite_volume.flux import ConservedVector, maximum_signal_speed
+from model.solver.finite_volume.flux import (
+    ConservedVector,
+    maximum_signal_speed,
+    physical_flux,
+)
 from model.solver.finite_volume.friction import apply_manning_friction
+from model.solver.finite_volume.geometry_source import (
+    geometry_pressure_source,
+    hydraulic_path_interface_flux,
+    mesh_face_geometries,
+)
 from model.solver.finite_volume.mesh import FiniteVolumeMesh
 from model.solver.finite_volume.reconstruction import InterfaceFlux, hydrostatic_interface_flux
 from model.solver.finite_volume.state import HydraulicState
@@ -186,6 +195,10 @@ def _forward_euler_stage_raw(
     gates: Sequence[FixedGate] = (),
     pumps: Sequence[OnOffPump] = (),
     scheme: Literal["hll", "rusanov"] = "hll",
+    geometry_source_mode: Literal[
+        "hydrostatic-reconstruction-v1",
+        "hydraulic-function-linear-face-v1",
+    ] = "hydrostatic-reconstruction-v1",
 ) -> EulerStageResult:
     """Evaluate the uncorrected flux/source map for one Euler stage.
 
@@ -213,40 +226,81 @@ def _forward_euler_stage_raw(
         interior=conservative[-1],
         cell=mesh.cells[-1],
     )
-    face_fluxes: list[InterfaceFlux] = [
-        hydrostatic_interface_flux(
-            upstream_ghost,
-            conservative[0],
-            mesh.cells[0],
-            mesh.cells[0],
-            scheme=scheme,
+    if boundaries.boundary_closure == "subcritical-characteristic-v1":
+        upstream_physical = physical_flux(upstream_ghost, mesh.cells[0].geometry)
+        face_fluxes: list[InterfaceFlux] = [
+            InterfaceFlux(
+                mass=upstream_physical.mass,
+                momentum_left=upstream_physical.momentum,
+                momentum_right=upstream_physical.momentum,
+            )
+        ]
+    else:
+        face_fluxes = [
+            hydrostatic_interface_flux(
+                upstream_ghost,
+                conservative[0],
+                mesh.cells[0],
+                mesh.cells[0],
+                scheme=scheme,
+            )
+        ]
+        upstream_q = boundaries.upstream.series.value_at(state.time)
+        face_fluxes[0] = InterfaceFlux(
+            mass=upstream_q,
+            momentum_left=face_fluxes[0].momentum_left,
+            momentum_right=face_fluxes[0].momentum_right,
         )
-    ]
-    upstream_q = boundaries.upstream.series.value_at(state.time)
-    face_fluxes[0] = InterfaceFlux(
-        mass=upstream_q,
-        momentum_left=face_fluxes[0].momentum_left,
-        momentum_right=face_fluxes[0].momentum_right,
-    )
-    face_fluxes.extend(
-        hydrostatic_interface_flux(
-            conservative[index],
-            conservative[index + 1],
-            mesh.cells[index],
-            mesh.cells[index + 1],
-            scheme=scheme,
+    if geometry_source_mode == "hydrostatic-reconstruction-v1":
+        face_fluxes.extend(
+            hydrostatic_interface_flux(
+                conservative[index],
+                conservative[index + 1],
+                mesh.cells[index],
+                mesh.cells[index + 1],
+                scheme=scheme,
+            )
+            for index in range(len(mesh.cells) - 1)
         )
-        for index in range(len(mesh.cells) - 1)
-    )
-    face_fluxes.append(
-        hydrostatic_interface_flux(
-            conservative[-1],
+        face_geometries = None
+    elif geometry_source_mode == "hydraulic-function-linear-face-v1":
+        face_fluxes.extend(
+            hydraulic_path_interface_flux(
+                conservative[index],
+                conservative[index + 1],
+                mesh.cells[index],
+                mesh.cells[index + 1],
+                scheme=scheme,
+            )
+            for index in range(len(mesh.cells) - 1)
+        )
+        face_geometries = mesh_face_geometries(mesh)
+    else:
+        raise ValueError(
+            f"unsupported finite-volume geometry_source_mode: {geometry_source_mode}"
+        )
+    if boundaries.boundary_closure == "subcritical-characteristic-v1":
+        downstream_physical = physical_flux(
             downstream_ghost,
-            mesh.cells[-1],
-            mesh.cells[-1],
-            scheme=scheme,
+            mesh.cells[-1].geometry,
         )
-    )
+        face_fluxes.append(
+            InterfaceFlux(
+                mass=downstream_physical.mass,
+                momentum_left=downstream_physical.momentum,
+                momentum_right=downstream_physical.momentum,
+            )
+        )
+    else:
+        face_fluxes.append(
+            hydrostatic_interface_flux(
+                conservative[-1],
+                downstream_ghost,
+                mesh.cells[-1],
+                mesh.cells[-1],
+                scheme=scheme,
+            )
+        )
 
     gate_flows: list[StructureStageFlow] = []
     gate_state: dict[str, object] = dict(state.gate_state)
@@ -311,6 +365,13 @@ def _forward_euler_stage_raw(
             - left_flux.momentum_right
             + pump_rate * local_velocity
         )
+        if face_geometries is not None:
+            discharge += dt * geometry_pressure_source(
+                cell=cell,
+                state=conservative[index],
+                left_face_geometry=face_geometries[index],
+                right_face_geometry=face_geometries[index + 1],
+            )
         if not math.isfinite(area) or not math.isfinite(discharge):
             raise NumericalStateError(f"cell {index} produced a non-finite Euler state")
         if area < 0.0:
@@ -359,6 +420,10 @@ def forward_euler_stage(
     pumps: Sequence[OnOffPump] = (),
     scheme: Literal["hll", "rusanov"] = "hll",
     equilibrium_reference: HydraulicState | None = None,
+    geometry_source_mode: Literal[
+        "hydrostatic-reconstruction-v1",
+        "hydraulic-function-linear-face-v1",
+    ] = "hydrostatic-reconstruction-v1",
 ) -> EulerStageResult:
     """Evaluate one Euler stage, optionally in residual-equilibrium form.
 
@@ -384,6 +449,7 @@ def forward_euler_stage(
         gates=gates,
         pumps=pumps,
         scheme=scheme,
+        geometry_source_mode=geometry_source_mode,
     )
     if equilibrium_reference is None:
         return raw
@@ -410,6 +476,7 @@ def forward_euler_stage(
             dry_depth=dry_depth,
             boundaries=boundaries,
             scheme=scheme,
+            geometry_source_mode=geometry_source_mode,
         )
         corrected_area = tuple(
             current
@@ -460,6 +527,10 @@ def ssp_rk2_step(
     pumps: Sequence[OnOffPump] = (),
     scheme: Literal["hll", "rusanov"] = "hll",
     equilibrium_reference: HydraulicState | None = None,
+    geometry_source_mode: Literal[
+        "hydrostatic-reconstruction-v1",
+        "hydraulic-function-linear-face-v1",
+    ] = "hydrostatic-reconstruction-v1",
 ) -> StepResult:
     """Advance one SSP-RK2 step, recomputing all stage-dependent inputs."""
 
@@ -476,6 +547,7 @@ def ssp_rk2_step(
         pumps=pumps,
         scheme=scheme,
         equilibrium_reference=equilibrium_reference,
+        geometry_source_mode=geometry_source_mode,
     )
     stage_cfl = cfl_number_for_step(mesh=mesh, state=first.state, dt=dt)
     maximum_cfl = max(initial_cfl, stage_cfl)
@@ -491,6 +563,7 @@ def ssp_rk2_step(
         pumps=pumps,
         scheme=scheme,
         equilibrium_reference=equilibrium_reference,
+        geometry_source_mode=geometry_source_mode,
     )
     final_area = tuple(
         0.5 * (original + evolved)
@@ -538,6 +611,10 @@ def ssp_rk2_step(
                 equilibrium_reference is not None,
                 "moving_uniform_manning_residual_equilibrium_v1",
             ),
+            (
+                geometry_source_mode == "hydraulic-function-linear-face-v1",
+                "nonprismatic_hydraulic_function_linear_face_source_v1",
+            ),
         )
         if enabled
     )
@@ -579,6 +656,10 @@ def advance_with_retries(
     pumps: Sequence[OnOffPump] = (),
     scheme: Literal["hll", "rusanov"] = "hll",
     equilibrium_reference: HydraulicState | None = None,
+    geometry_source_mode: Literal[
+        "hydrostatic-reconstruction-v1",
+        "hydraulic-function-linear-face-v1",
+    ] = "hydrostatic-reconstruction-v1",
 ) -> StepResult:
     """Reduce to the CFL step and retry rejected positivity/stability attempts."""
 
@@ -608,6 +689,7 @@ def advance_with_retries(
                 pumps=pumps,
                 scheme=scheme,
                 equilibrium_reference=equilibrium_reference,
+                geometry_source_mode=geometry_source_mode,
             )
         except (NumericalStateError, StabilityError):
             if retries >= maximum_retries:

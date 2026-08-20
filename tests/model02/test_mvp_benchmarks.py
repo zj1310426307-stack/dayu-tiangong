@@ -555,6 +555,60 @@ def test_case002_uniform_manning_opt_in_rejects_dynamic_boundary(
         )
 
 
+def test_case002_core_stage_match_is_not_scaled_by_vertical_datum(
+    _case002_manning_run: tuple[
+        SingleBranchResult,
+        FiniteVolumeMesh,
+        SingleBranchConfig,
+        float,
+        float,
+    ],
+) -> None:
+    """The kernel must reject a physical H mismatch even on a large datum."""
+
+    result, mesh, config, discharge, normal_depth = _case002_manning_run
+    shift = 1_000_000.0
+    shifted_mesh = FiniteVolumeMesh(
+        tuple(
+            FiniteVolumeCell(
+                cell_id=cell.cell_id,
+                dx=cell.dx,
+                section_id=cell.section_id,
+                bed_elevation=cell.bed_elevation + shift,
+                geometry=RectangularSectionGeometry(
+                    cell.geometry.width,
+                    cell.bed_elevation + shift,
+                ),
+                manning_n=cell.manning_n,
+            )
+            for cell in mesh.cells
+        ),
+        branch_id=mesh.branch_id,
+    )
+    initial = HydraulicState.from_conserved(
+        mesh=shifted_mesh,
+        time=0.0,
+        area=result.states[0].area,
+        discharge=result.states[0].discharge,
+        dry_depth=config.dry_depth,
+    )
+    downstream_stage = (
+        shifted_mesh.cells[-1].bed_elevation + normal_depth + 4.0e-5
+    )
+
+    with pytest.raises(ValueError, match="downstream H does not match"):
+        solve_single_branch(
+            mesh=shifted_mesh,
+            initial_state=initial,
+            boundaries=_boundaries(
+                times=(0.0, config.end_time),
+                discharges=(discharge, discharge),
+                stages=(downstream_stage, downstream_stage),
+            ),
+            config=config,
+        )
+
+
 def test_case002_uniform_manning_opt_in_rejects_wrong_friction_balance(
     _case002_manning_run: tuple[
         SingleBranchResult,

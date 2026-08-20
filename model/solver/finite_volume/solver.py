@@ -38,6 +38,10 @@ class SingleBranchConfig:
     water_balance_tolerance: float = 0.01
     scheme: Literal["hll", "rusanov"] = "hll"
     equilibrium_mode: Literal["standard", "uniform-manning-reference"] = "standard"
+    geometry_source_mode: Literal[
+        "hydrostatic-reconstruction-v1",
+        "hydraulic-function-linear-face-v1",
+    ] = "hydrostatic-reconstruction-v1"
 
     def __post_init__(self) -> None:
         """Reject unsafe controls before any boundary or state evaluation."""
@@ -55,6 +59,11 @@ class SingleBranchConfig:
             raise ValueError("water_balance_tolerance must lie in (0, 1)")
         if self.equilibrium_mode not in ("standard", "uniform-manning-reference"):
             raise ValueError("unsupported finite-volume equilibrium_mode")
+        if self.geometry_source_mode not in (
+            "hydrostatic-reconstruction-v1",
+            "hydraulic-function-linear-face-v1",
+        ):
+            raise ValueError("unsupported finite-volume geometry_source_mode")
 
 
 @dataclass(frozen=True)
@@ -174,6 +183,17 @@ def _equilibrium_close(left: float, right: float) -> bool:
     )
 
 
+def _absolute_stage_close(left: float, right: float) -> bool:
+    """Compare absolute water levels without datum-scaled relative slack."""
+
+    return math.isclose(
+        left,
+        right,
+        rel_tol=0.0,
+        abs_tol=_EQUILIBRIUM_ABSOLUTE_TOLERANCE,
+    )
+
+
 def _require_constant(values: Sequence[float], label: str) -> float:
     """Return the common value or fail the explicit equilibrium contract."""
 
@@ -182,6 +202,23 @@ def _require_constant(values: Sequence[float], label: str) -> float:
     reference = float(values[0])
     if any(not _equilibrium_close(float(value), reference) for value in values[1:]):
         raise ValueError(f"uniform-manning-reference requires constant {label}")
+    return reference
+
+
+def _require_absolute_stage_constant(
+    values: Sequence[float],
+    label: str,
+) -> float:
+    """Return one absolute water level or reject datum-dependent near-equality."""
+
+    if not values:
+        raise ValueError(f"equilibrium policy requires non-empty {label}")
+    reference = float(values[0])
+    if any(
+        not _absolute_stage_close(float(value), reference)
+        for value in values[1:]
+    ):
+        raise ValueError(f"equilibrium policy requires constant {label}")
     return reference
 
 
@@ -281,7 +318,29 @@ def _validated_uniform_manning_reference(
         / (0.5 * (left.dx + right.dx))
         for left, right in zip(mesh.cells, mesh.cells[1:])
     )
-    bed_slope = _require_constant(slopes, "positive linear bed slope")
+    centre_gaps = tuple(
+        0.5 * (left.dx + right.dx)
+        for left, right in zip(mesh.cells, mesh.cells[1:])
+    )
+    slope_absolute_tolerance = max(
+        _EQUILIBRIUM_ABSOLUTE_TOLERANCE,
+        8.0
+        * max(math.ulp(abs(cell.bed_elevation)) for cell in mesh.cells)
+        / min(centre_gaps),
+    )
+    bed_slope = slopes[0]
+    if any(
+        not math.isclose(
+            slope,
+            bed_slope,
+            rel_tol=_EQUILIBRIUM_RELATIVE_TOLERANCE,
+            abs_tol=slope_absolute_tolerance,
+        )
+        for slope in slopes[1:]
+    ):
+        raise ValueError(
+            "uniform-manning-reference requires constant positive linear bed slope"
+        )
     if bed_slope <= 0.0:
         raise ValueError(
             "uniform-manning-reference requires a positive downstream bed slope"
@@ -319,7 +378,12 @@ def _validated_uniform_manning_reference(
         * abs(discharge)
         / (area * area * radius ** (4.0 / 3.0))
     )
-    if not _equilibrium_close(bed_slope, expected_slope):
+    if not math.isclose(
+        bed_slope,
+        expected_slope,
+        rel_tol=_EQUILIBRIUM_RELATIVE_TOLERANCE,
+        abs_tol=slope_absolute_tolerance,
+    ):
         raise ValueError(
             "uniform-manning-reference bed slope does not satisfy Manning equilibrium"
         )
@@ -327,7 +391,7 @@ def _validated_uniform_manning_reference(
     upstream_flow = _require_constant(
         boundaries.upstream.series.values, "upstream Q boundary"
     )
-    downstream_stage = _require_constant(
+    downstream_stage = _require_absolute_stage_constant(
         boundaries.downstream.series.values, "downstream H boundary"
     )
     if not _equilibrium_close(upstream_flow, discharge):
@@ -335,11 +399,81 @@ def _validated_uniform_manning_reference(
             "uniform-manning-reference upstream Q does not match initial discharge"
         )
     final_stage = mesh.cells[-1].geometry.stage_from_area(initial_state.area[-1])
-    if not _equilibrium_close(downstream_stage, final_stage):
+    if not _absolute_stage_close(downstream_stage, final_stage):
         raise ValueError(
             "uniform-manning-reference downstream H does not match the final cell"
         )
     return initial_state
+
+
+def _validate_nonprismatic_lake_at_rest_scope(
+    *,
+    mesh: FiniteVolumeMesh,
+    initial_state: HydraulicState,
+    boundaries: BoundaryPair,
+    config: SingleBranchConfig,
+    gates: Sequence[FixedGate],
+    pumps: Sequence[OnOffPump],
+) -> None:
+    """Limit the first non-prismatic path to its verified static-water scope.
+
+    The hydraulic-function face path is an explicit first-order geometric
+    quadrature.  B2 validates exact lake-at-rest preservation and a local
+    perturbation response, but not general moving-water, wet/dry, or structure
+    coupling.  The public branch orchestrator therefore rejects those broader
+    states until a manufactured-solution convergence gate is frozen.
+    """
+
+    if gates or pumps:
+        raise ValueError(
+            "hydraulic-function-linear-face-v1 does not support structures"
+        )
+    if boundaries.boundary_closure != "subcritical-characteristic-v1":
+        raise ValueError(
+            "hydraulic-function-linear-face-v1 requires characteristic boundaries"
+        )
+    if config.equilibrium_mode != "standard":
+        raise ValueError(
+            "hydraulic-function-linear-face-v1 uses the standard equilibrium mode"
+        )
+    if any(
+        abs(value) > _EQUILIBRIUM_ABSOLUTE_TOLERANCE
+        for value in initial_state.discharge
+    ):
+        raise ValueError(
+            "hydraulic-function-linear-face-v1 currently requires zero initial discharge"
+        )
+    stages = tuple(
+        cell.geometry.stage_from_area(area)
+        for cell, area in zip(mesh.cells, initial_state.area)
+    )
+    common_stage = _require_absolute_stage_constant(
+        stages,
+        "non-prismatic initial stage",
+    )
+    if any(
+        stage - cell.bed_elevation <= config.dry_depth
+        for cell, stage in zip(mesh.cells, stages)
+    ):
+        raise ValueError(
+            "hydraulic-function-linear-face-v1 currently requires every cell fully wet"
+        )
+    upstream_flow = _require_constant(
+        boundaries.upstream.series.values,
+        "non-prismatic upstream Q boundary",
+    )
+    if abs(upstream_flow) > _EQUILIBRIUM_ABSOLUTE_TOLERANCE:
+        raise ValueError(
+            "hydraulic-function-linear-face-v1 currently requires zero upstream Q"
+        )
+    downstream_stage = _require_absolute_stage_constant(
+        boundaries.downstream.series.values,
+        "non-prismatic downstream H boundary",
+    )
+    if not _absolute_stage_close(downstream_stage, common_stage):
+        raise ValueError(
+            "hydraulic-function-linear-face-v1 downstream H must match initial stage"
+        )
 
 
 def solve_single_branch(
@@ -364,6 +498,15 @@ def solve_single_branch(
         raise ValueError("initial_state cell count must match the mesh")
     boundaries.validate_coverage(initial_state.time, config.end_time)
     require_quality(initial_state, mesh)
+    if config.geometry_source_mode == "hydraulic-function-linear-face-v1":
+        _validate_nonprismatic_lake_at_rest_scope(
+            mesh=mesh,
+            initial_state=initial_state,
+            boundaries=boundaries,
+            config=config,
+            gates=gates,
+            pumps=pumps,
+        )
     equilibrium_reference = (
         _validated_uniform_manning_reference(
             mesh=mesh,
@@ -391,8 +534,13 @@ def solve_single_branch(
     upstream_volume = 0.0
     downstream_volume = 0.0
     pump_volume = 0.0
+    boundary_flag = (
+        "boundary_closure_subcritical_mvp_zero_gradient_companion"
+        if boundaries.boundary_closure == "zero-gradient-companion-v1"
+        else "boundary_closure_subcritical-characteristic-v1"
+    )
     flags: set[str] = {
-        "boundary_closure_subcritical_mvp_zero_gradient_companion",
+        boundary_flag,
         "friction_semi_implicit_per_ssp_stage_not_full_imex",
     }
     if any(gate.control is not None for gate in gates) or any(
@@ -424,6 +572,7 @@ def solve_single_branch(
             pumps=pumps,
             scheme=config.scheme,
             equilibrium_reference=equilibrium_reference,
+            geometry_source_mode=config.geometry_source_mode,
         )
         current, accepted_control_events = _synchronize_structure_controls(
             mesh=mesh,

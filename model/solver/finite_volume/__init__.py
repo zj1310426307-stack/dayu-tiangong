@@ -30,6 +30,13 @@ from model.solver.finite_volume.friction import (
     semi_implicit_manning,
 )
 from model.solver.finite_volume.geometry import pressure_moment, pressure_moment_from_area
+from model.solver.finite_volume.geometry_source import (
+    LinearHydraulicFaceGeometry,
+    geometry_pressure_source,
+    hydraulic_path_interface_flux,
+    internal_face_geometry,
+    mesh_face_geometries,
+)
 from model.solver.finite_volume.integrator import (
     CflEstimate,
     StepBudget,
@@ -94,6 +101,7 @@ __all__ = [
     "HydraulicState",
     "HydrostaticReconstruction",
     "InterfaceFlux",
+    "LinearHydraulicFaceGeometry",
     "NodeSolver",
     "NumericalFlux",
     "NumericalStateError",
@@ -119,11 +127,15 @@ __all__ = [
     "cfl_number_for_step",
     "estimate_cfl_time_step",
     "forward_euler_stage",
+    "geometry_pressure_source",
     "hll_flux",
     "hydrostatic_interface_flux",
     "hydrostatic_reconstruct",
+    "hydraulic_path_interface_flux",
     "inspect_state",
+    "internal_face_geometry",
     "maximum_signal_speed",
+    "mesh_face_geometries",
     "physical_flux",
     "pressure_moment",
     "pressure_moment_from_area",

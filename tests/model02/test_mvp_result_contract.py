@@ -94,7 +94,18 @@ def test_mvp_result_is_independent_and_serializes_only_its_own_contract() -> Non
         "provenance",
     }
     assert "node_series" not in payload
+    assert "solver_policy_hash" not in result.model_dump()["provenance"]
     assert payload["sections"][0]["time"] == [0.0, 60.0]
+
+
+def test_v1_result_rejects_an_explicit_null_v2_policy_hash() -> None:
+    """A v2-only field cannot enter the frozen v1 wire shape as explicit null."""
+
+    payload = make_mvp_result_payload()
+    payload["provenance"]["solver_policy_hash"] = None
+
+    with pytest.raises(ValidationError, match="must not add solver_policy_hash"):
+        MvpHydraulicResult.model_validate(payload)
 
 
 @pytest.mark.parametrize(
