@@ -4,7 +4,7 @@
 
 - C1 受限 moving non-prismatic reference：`GO`。
 - C2a 保守 bracketed crossing：`GO`。
-- C2b Gate completed-interface：`NO-GO / NOT IMPLEMENTED`。
+- C2b 固定 Gate completed-interface 限定子集：`GO`。
 - 湿干、端点 face、Branch/Junction、后端生产任务链：`NO-GO / NOT RUN`。
 
 ## 关键审查点
@@ -15,7 +15,10 @@
 4. result DTO 反向检查命令变化、事件身份、监测 Section、括区间、版本和前/后命令一致性。
 5. mesh hash 不包含事件容差；solver-policy hash 使用 v2 domain 并冻结 event policy、容差、细分上限和命令生效语义。
 6. 水量 pass 只是必要条件，未用它替代 C1 的 H/Q/能头/收敛门或 C2a 的括区间门。
+7. C2b 只由 `v4-lite-5` 显式选择；旧 Gate 仍走冻结 mass-only 路径。
+8. completed-interface 每个 RK stage 同时冻结 `Q`、孔口损失、能头残差、两侧 `A/T/I1`、左右动量和结构反力；结果 DTO 会独立复算而不是信任状态标签。
+9. C2b API 与 core 双层限制单 Gate、fixed opening、平床同断面、全湿正向亚临界、零摩阻、特征边界且无 Pump；越界不回退。
 
 ## 下一步
 
-下一个独立数值切片是 C2b：只对单 Gate、平床棱柱、全湿正向亚临界、fixed opening 实现 completed-interface 能头与左右动量闭合。不与连续事件定位或 Pump Q-H 同时修改，以便失败可归因。
+后续必须继续拆分：先评审 C2a 事件定位与 C2b Gate 物理的组合门，再单独处理湿干、显式端点断面和 Pump Q-H。v4 后端任务链与真实工程率定仍为 `NO-GO`。

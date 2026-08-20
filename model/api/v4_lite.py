@@ -83,6 +83,7 @@ C2_BRACKETED_EVENT_POLICY = (
     "subcritical-characteristic-v1",
     "nearest-section-cell-face-v1",
 )
+C2_GATE_COMPLETED_INTERFACE_POLICY = C2_BRACKETED_EVENT_POLICY
 _VERSIONED_POLICY_FIELDS = frozenset(
     {
         "geometry_policy",
@@ -99,6 +100,14 @@ _EVENT_POLICY_FIELDS = frozenset(
         "event_time_tolerance_seconds",
         "maximum_event_refinements",
         "control_spatial_support",
+    }
+)
+_GATE_COUPLING_FIELDS = frozenset(
+    {
+        "gate_coupling_policy",
+        "gate_equation_tolerance_m",
+        "gate_maximum_iterations",
+        "gate_spatial_support",
     }
 )
 _POLICY_RELATIVE_TOLERANCE = 1.0e-10
@@ -299,6 +308,15 @@ class V4LiteSolver(StrictContractModel):
     control_spatial_support: Literal[
         "bound-section-cell-center-v1"
     ] = "bound-section-cell-center-v1"
+    gate_coupling_policy: Literal[
+        "mass-only-orifice-v1",
+        "submerged-orifice-energy-momentum-v1",
+    ] = "mass-only-orifice-v1"
+    gate_equation_tolerance_m: PositiveFinite = 1.0e-10
+    gate_maximum_iterations: PositiveInt = 80
+    gate_spatial_support: Literal[
+        "bound-internal-section-face-v1"
+    ] = "bound-internal-section-face-v1"
 
     @property
     def policy_tuple(self) -> tuple[str, str, str, str, str, str]:
@@ -566,6 +584,7 @@ class FixedGateInput(StrictContractModel):
     discharge_coefficient: Annotated[FiniteNumber, Field(gt=0.0, le=1.0)]
     allow_reverse_flow: Annotated[bool, Field(strict=True)]
     control: StructureControlInput = Field(default_factory=FixedStructureControlInput)
+    sill_elevation_m: FiniteNumber | None = None
 
     @model_validator(mode="after")
     def validate_opening(self) -> Self:
@@ -642,6 +661,7 @@ class V4LiteProvenance(StrictContractModel):
         "v4-lite-2",
         "v4-lite-3",
         "v4-lite-4",
+        "v4-lite-5",
     ]
 
 
@@ -682,7 +702,7 @@ class V4LiteInput(StrictContractModel):
         section_ids = tuple(section_by_id)
         self._validate_versioned_policy()
         if (
-            self.provenance.validation_policy_version != "v4-lite-3"
+            self.provenance.validation_policy_version not in {"v4-lite-3", "v4-lite-5"}
             and any(section.default_manning_n <= 0.0 for section in self.sections)
         ):
             raise ValueError(
@@ -710,6 +730,7 @@ class V4LiteInput(StrictContractModel):
         self._validate_downstream_stage(section_by_id[section_ids[-1]])
         self._validate_structures(section_ids)
         self._validate_structure_event_policy(section_by_id)
+        self._validate_gate_coupling_policy(section_by_id)
         self._validate_equilibrium_policy()
         self._validate_nonprismatic_lake_scope()
         self._validate_nonprismatic_moving_scope()
@@ -722,7 +743,9 @@ class V4LiteInput(StrictContractModel):
         version = self.provenance.validation_policy_version
         if version == "v4-lite-1":
             explicit = (
-                _VERSIONED_POLICY_FIELDS | _EVENT_POLICY_FIELDS
+                _VERSIONED_POLICY_FIELDS
+                | _EVENT_POLICY_FIELDS
+                | _GATE_COUPLING_FIELDS
             ) & self.solver.model_fields_set
             if explicit:
                 raise ValueError(
@@ -738,9 +761,10 @@ class V4LiteInput(StrictContractModel):
                 f"missing={sorted(missing)}"
             )
         explicit_event_fields = _EVENT_POLICY_FIELDS & self.solver.model_fields_set
+        explicit_gate_fields = _GATE_COUPLING_FIELDS & self.solver.model_fields_set
         if version == "v4-lite-2":
-            if explicit_event_fields:
-                raise ValueError("v4-lite-2 does not accept event policy fields")
+            if explicit_event_fields or explicit_gate_fields:
+                raise ValueError("v4-lite-2 does not accept structure policy fields")
             if policy not in {
                 B2_STANDARD_POLICY,
                 B2_UNIFORM_MANNING_POLICY,
@@ -749,23 +773,41 @@ class V4LiteInput(StrictContractModel):
                 raise ValueError("v4-lite-2 policy tuple is not implemented")
             return
         if version == "v4-lite-3":
-            if explicit_event_fields:
-                raise ValueError("v4-lite-3 does not accept event policy fields")
+            if explicit_event_fields or explicit_gate_fields:
+                raise ValueError("v4-lite-3 does not accept structure policy fields")
             if policy != C1_NONPRISMATIC_MOVING_POLICY:
                 raise ValueError("v4-lite-3 policy tuple is not implemented")
             return
-        missing_event_fields = _EVENT_POLICY_FIELDS - self.solver.model_fields_set
-        if missing_event_fields:
+        if version == "v4-lite-4":
+            if explicit_gate_fields:
+                raise ValueError("v4-lite-4 does not accept Gate coupling fields")
+            missing_event_fields = _EVENT_POLICY_FIELDS - self.solver.model_fields_set
+            if missing_event_fields:
+                raise ValueError(
+                    "v4-lite-4 requires every event policy field explicitly; "
+                    f"missing={sorted(missing_event_fields)}"
+                )
+            if policy != C2_BRACKETED_EVENT_POLICY:
+                raise ValueError("v4-lite-4 policy tuple is not implemented")
+            if self.solver.structure_event_policy != (
+                "bracketed-conservative-replay-right-end-v1"
+            ):
+                raise ValueError("v4-lite-4 requires the bracketed event policy")
+            return
+        if explicit_event_fields:
+            raise ValueError("v4-lite-5 does not accept event policy fields")
+        missing_gate_fields = _GATE_COUPLING_FIELDS - self.solver.model_fields_set
+        if missing_gate_fields:
             raise ValueError(
-                "v4-lite-4 requires every event policy field explicitly; "
-                f"missing={sorted(missing_event_fields)}"
+                "v4-lite-5 requires every Gate coupling field explicitly; "
+                f"missing={sorted(missing_gate_fields)}"
             )
-        if policy != C2_BRACKETED_EVENT_POLICY:
-            raise ValueError("v4-lite-4 policy tuple is not implemented")
-        if self.solver.structure_event_policy != (
-            "bracketed-conservative-replay-right-end-v1"
+        if policy != C2_GATE_COMPLETED_INTERFACE_POLICY:
+            raise ValueError("v4-lite-5 policy tuple is not implemented")
+        if self.solver.gate_coupling_policy != (
+            "submerged-orifice-energy-momentum-v1"
         ):
-            raise ValueError("v4-lite-4 requires the bracketed event policy")
+            raise ValueError("v4-lite-5 requires completed-interface Gate coupling")
 
     def _validate_section_geometry_policy(self) -> None:
         """Validate exact legacy Profiles or vertically translated linear-bed Profiles."""
@@ -1363,6 +1405,71 @@ class V4LiteInput(StrictContractModel):
             initial_stage = stage_by_section[pump.section_id]
             if initial_stage >= control.threshold_water_level_m:
                 raise ValueError("bracketed Pump initial stage must be below threshold")
+
+    def _validate_gate_coupling_policy(
+        self,
+        section_by_id: dict[int, V4LiteSection],
+    ) -> None:
+        """Bind v4-lite-5 to the restricted fixed submerged Gate experiment."""
+
+        version = self.provenance.validation_policy_version
+        declared_sills = tuple(
+            "sill_elevation_m" in gate.model_fields_set
+            for gate in self.structures.gates
+        )
+        if version != "v4-lite-5":
+            if any(declared_sills):
+                raise ValueError("pre-v5 Gate must not declare sill_elevation_m")
+            return
+        if len(self.structures.gates) != 1 or self.structures.pumps:
+            raise ValueError("v4-lite-5 requires exactly one Gate and no Pump")
+        gate = self.structures.gates[0]
+        if not isinstance(gate.control, FixedStructureControlInput):
+            raise ValueError("v4-lite-5 requires fixed Gate control")
+        if not declared_sills[0] or gate.sill_elevation_m is None:
+            raise ValueError("v4-lite-5 requires explicit sill_elevation_m")
+        if self.solver.geometry_policy != "absolute-prismatic-v1":
+            raise ValueError("v4-lite-5 requires absolute-prismatic geometry")
+        if self.solver.geometry_source != "hydrostatic-reconstruction-v1":
+            raise ValueError("v4-lite-5 requires hydrostatic reconstruction")
+        if self.solver.equilibrium_policy != "standard-v1":
+            raise ValueError("v4-lite-5 requires standard equilibrium")
+        if self.solver.boundary_closure != "subcritical-characteristic-v1":
+            raise ValueError("v4-lite-5 requires characteristic boundaries")
+        if any(section.default_manning_n != 0.0 for section in self.sections):
+            raise ValueError("v4-lite-5 requires zero Manning friction")
+        if not isinstance(self.initial_state, BySectionInitialState):
+            raise ValueError("v4-lite-5 requires by-section initial_state")
+        value_by_id = {
+            value.section_id: value for value in self.initial_state.values
+        }
+        if any(value.discharge_m3_s != 0.0 for value in value_by_id.values()):
+            raise ValueError("v4-lite-5 requires zero initial discharge")
+        if any(value != 0.0 for value in self.boundary.upstream.flow_m3_s):
+            raise ValueError("v4-lite-5 requires a constant zero upstream boundary")
+        final_stage = value_by_id[self.sections[-1].section_id].water_level_m
+        if any(
+            not _absolute_stage_close(value, final_stage)
+            for value in self.boundary.downstream.water_level_m
+        ):
+            raise ValueError(
+                "v4-lite-5 downstream boundary must match the final initial stage"
+            )
+        upstream_value = value_by_id[gate.interface.upstream_section_id]
+        downstream_value = value_by_id[gate.interface.downstream_section_id]
+        if upstream_value.water_level_m <= downstream_value.water_level_m:
+            raise ValueError("v4-lite-5 Gate requires positive forward head")
+        upstream_section = section_by_id[gate.interface.upstream_section_id]
+        downstream_section = section_by_id[gate.interface.downstream_section_id]
+        sill = float(gate.sill_elevation_m)
+        if sill < upstream_section.minimum_stage_m or sill < downstream_section.minimum_stage_m:
+            raise ValueError("v4-lite-5 Gate sill lies below the Profile minimum stage")
+        gate_top = sill + gate.opening_m
+        if min(
+            upstream_value.water_level_m,
+            downstream_value.water_level_m,
+        ) <= gate_top:
+            raise ValueError("v4-lite-5 Gate opening must be submerged initially")
 
     @staticmethod
     def _validate_control_threshold(

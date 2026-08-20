@@ -21,7 +21,9 @@ from model.result.mvp import (
     HYDRAULIC_RESULT_MVP,
     MvpDiagnostics,
     MvpControlEvent,
+    MvpGateCouplingEvidence,
     MvpGateSeries,
+    MvpGateStageEvidence,
     MvpHydraulicResult,
     MvpPumpSeries,
     MvpResultProvenance,
@@ -53,6 +55,7 @@ MESH_HASH_SCHEMA = "dayu.finite-volume-mesh.v1"
 MESH_HASH_SCHEMA_V2 = "dayu.finite-volume-mesh.v2"
 SOLVER_POLICY_HASH_SCHEMA = "dayu.solver-policy.v1"
 SOLVER_POLICY_HASH_SCHEMA_V2 = "dayu.solver-policy.v2"
+SOLVER_POLICY_HASH_SCHEMA_V3 = "dayu.solver-policy.v3"
 
 
 def build_v4_lite_mesh(model_input: V4LiteInput) -> FiniteVolumeMesh:
@@ -169,9 +172,13 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
     solver = model_input.solver
     manifest = {
         "schema_version": (
-            SOLVER_POLICY_HASH_SCHEMA_V2
-            if model_input.provenance.validation_policy_version == "v4-lite-4"
-            else SOLVER_POLICY_HASH_SCHEMA
+            SOLVER_POLICY_HASH_SCHEMA_V3
+            if model_input.provenance.validation_policy_version == "v4-lite-5"
+            else (
+                SOLVER_POLICY_HASH_SCHEMA_V2
+                if model_input.provenance.validation_policy_version == "v4-lite-4"
+                else SOLVER_POLICY_HASH_SCHEMA
+            )
         ),
         "input_schema_version": model_input.schema_version,
         "validation_policy_version": model_input.provenance.validation_policy_version,
@@ -222,6 +229,16 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
             "maximum_event_refinements": solver.maximum_event_refinements,
             "control_spatial_support": solver.control_spatial_support,
             "command_effect": "next-accepted-subinterval-v1",
+        }
+    if model_input.provenance.validation_policy_version == "v4-lite-5":
+        manifest["solver"]["gate_coupling"] = {
+            "policy": solver.gate_coupling_policy,
+            "equation": "total-head-orifice-loss-positive-root-v1",
+            "equation_tolerance_m": solver.gate_equation_tolerance_m,
+            "maximum_iterations": solver.gate_maximum_iterations,
+            "spatial_support": solver.gate_spatial_support,
+            "momentum_flux": "side-specific-q2-over-a-plus-g-i1-v1",
+            "reaction_sign": "downstream-minus-upstream-v1",
         }
     return snapshot_hash(manifest)
 
@@ -327,6 +344,10 @@ def _structures(
             height=gate.height_m,
             discharge_coefficient=gate.discharge_coefficient,
             allow_reverse=gate.allow_reverse_flow,
+            coupling_policy=model_input.solver.gate_coupling_policy,
+            sill_elevation=gate.sill_elevation_m,
+            equation_tolerance=model_input.solver.gate_equation_tolerance_m,
+            maximum_iterations=model_input.solver.gate_maximum_iterations,
             control=(
                 BracketedOneShotStageThreshold(
                     gate.control.threshold_water_level_m
@@ -412,6 +433,22 @@ def _gate_series(
                     downstream_area=state.area[right],
                     upstream_discharge=state.discharge[left],
                     downstream_discharge=state.discharge[right],
+                    upstream_top_width=mesh.cells[left].geometry.top_width(
+                        mesh.cells[left].geometry.stage_from_area(state.area[left])
+                    ),
+                    downstream_top_width=mesh.cells[right].geometry.top_width(
+                        mesh.cells[right].geometry.stage_from_area(state.area[right])
+                    ),
+                    upstream_pressure_moment=(
+                        mesh.cells[left].geometry.pressure_moment(
+                            mesh.cells[left].geometry.stage_from_area(state.area[left])
+                        )
+                    ),
+                    downstream_pressure_moment=(
+                        mesh.cells[right].geometry.pressure_moment(
+                            mesh.cells[right].geometry.stage_from_area(state.area[right])
+                        )
+                    ),
                 ),
                 control_state,
             ).flow
@@ -422,6 +459,85 @@ def _gate_series(
             time=time,
             opening=tuple(opening),
             flow=tuple(flow),
+        ),
+    )
+
+
+def _gate_coupling_evidence(
+    model_input: V4LiteInput,
+    runtime: SingleBranchResult,
+    gates: tuple[FixedGate, ...],
+) -> tuple[MvpGateCouplingEvidence, ...]:
+    """Project accepted SSP-stage closure evidence for v4-lite-5 only."""
+
+    if model_input.provenance.validation_policy_version != "v4-lite-5":
+        return ()
+    if len(gates) != 1:
+        raise HydraulicInputError("v4-lite-5 result requires one runtime Gate")
+    stage_rows: list[MvpGateStageEvidence] = []
+    total_transfer = 0.0
+    for step_index, step in enumerate(runtime.steps, start=1):
+        flows = tuple(
+            flow
+            for flow in step.budget.gate_stage_flows
+            if flow.structure_id == gates[0].gate_id
+        )
+        if len(flows) != 2:
+            raise HydraulicInputError("completed Gate step must expose two RK stages")
+        for rk_stage, flow in enumerate(flows, start=1):
+            evidence = flow.completed_interface
+            if evidence is None:
+                raise HydraulicInputError("completed Gate stage evidence is missing")
+            stage_rows.append(
+                MvpGateStageEvidence(
+                    step_index=step_index,
+                    rk_stage=rk_stage,
+                    evaluation_time=evidence.evaluation_time,
+                    step_dt=step.dt,
+                    flow=flow.flow,
+                    upstream_stage=evidence.upstream_stage,
+                    downstream_stage=evidence.downstream_stage,
+                    upstream_area=evidence.upstream_area,
+                    downstream_area=evidence.downstream_area,
+                    upstream_top_width=evidence.upstream_top_width,
+                    downstream_top_width=evidence.downstream_top_width,
+                    upstream_pressure_moment=evidence.upstream_pressure_moment,
+                    downstream_pressure_moment=evidence.downstream_pressure_moment,
+                    head_loss=evidence.head_loss,
+                    energy_residual=evidence.energy_residual,
+                    iterations=evidence.iterations,
+                    momentum_flux_left=evidence.momentum_flux_left,
+                    momentum_flux_right=evidence.momentum_flux_right,
+                    reaction_force_per_density=evidence.reaction_force_per_density,
+                    regime=evidence.regime,
+                )
+            )
+        total_transfer += sum(
+            volume
+            for structure_id, volume in step.budget.gate_transfer_volume
+            if structure_id == gates[0].gate_id
+        )
+    if not stage_rows:
+        raise HydraulicInputError("completed Gate result has no accepted stage evidence")
+    source = model_input.structures.gates[0]
+    return (
+        MvpGateCouplingEvidence(
+            gate_id=source.identity.id,
+            coupling_policy="submerged-orifice-energy-momentum-v1",
+            spatial_support=model_input.solver.gate_spatial_support,
+            opening=source.opening_m,
+            width=source.width_m,
+            opening_area=source.width_m * source.opening_m,
+            discharge_coefficient=source.discharge_coefficient,
+            sill_elevation=float(source.sill_elevation_m),
+            equation_tolerance=model_input.solver.gate_equation_tolerance_m,
+            maximum_allowed_iterations=model_input.solver.gate_maximum_iterations,
+            total_transfer_volume=total_transfer,
+            maximum_absolute_energy_residual=max(
+                abs(item.energy_residual) for item in stage_rows
+            ),
+            maximum_iterations=max(item.iterations for item in stage_rows),
+            stage_evaluations=tuple(stage_rows),
         ),
     )
 
@@ -516,6 +632,11 @@ def _result(
                 ),
             )
             for event in runtime.control_events
+        ),
+        gate_coupling_evidence=_gate_coupling_evidence(
+            model_input,
+            runtime,
+            gates,
         ),
         water_balance=MvpWaterBalance(
             initial_storage=evidence.initial_storage,

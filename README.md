@@ -106,7 +106,7 @@ HYDRO-MODEL-02-B/B2 已在独立分支实现首个可运行的 `dayu.model-input
 
 Case 002 已通过 `v4-lite-2` 端到端门：Q 与水深误差均为 0，水量相对误差约 `2.67e-17`；该结果只属于同相对 Profile、严格线性坡、常 A/Q/depth/n、无结构且明确选择 residual-equilibrium 的亚临界参考流。非棱柱路径只证明受限 lake-at-rest 与扰动不被冻结，不代表一般移动流、湿干或结构耦合。边界空间支撑明确为 `nearest-section-cell-face-v1`，不是端节点处的连续坡床实测断面。Gate/Pump 强动量/能头、后端任务持久化、外部模型对比和真实工程率定仍未通过。
 
-HYDRO-MODEL-02-C 已完成两个独立切片：`v4-lite-3` 在受限光滑变宽、平床、无摩阻 Bernoulli 参考流上获得一阶网格收敛证据；`v4-lite-4` 以完整守恒步的保守重放将首个上升越阈值定位到有界右括端，Gate/Pump 从同一 pre-action 状态原子锁存且命令只在后续子区间生效。该事件门不插值 A/Q，不等于连续根精确求解，也不改变 Gate mass-only 与 Pump 定流量 external sink 的物理边界。
+HYDRO-MODEL-02-C 已完成三个独立切片：`v4-lite-3` 在受限光滑变宽、平床、无摩阻 Bernoulli 参考流上获得一阶网格收敛证据；`v4-lite-4` 以完整守恒步的保守重放将首个上升越阈值定位到有界右括端；`v4-lite-5` 只对单个固定、淹没、平床同断面 Gate 完成总能头方程和左右 `Q²/A+gI1` 动量通量，并输出结构反力与逐 RK stage 证据。C2a 与 C2b 尚未组合，历史 Gate 仍保持 mass-only，Pump 仍是定流量 external sink；完整强耦合、湿干、端点断面、v4 后端任务链和真实工程率定继续 `NO-GO`。
 
 - [MODEL-02-C 开发报告](docs/model/HYDRO-MODEL-02-C-development-report.md)
 - [MODEL-02-C 验证报告](docs/model/HYDRO-MODEL-02-C-validation-report.md)

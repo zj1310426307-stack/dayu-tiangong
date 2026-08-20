@@ -152,19 +152,31 @@ def _structure_context(
 ) -> StructureStageContext:
     """Build the current-head context required by a Gate stage evaluation."""
 
+    upstream_stage = mesh.cells[left_index].geometry.stage_from_area(
+        state.area[left_index]
+    )
+    downstream_stage = mesh.cells[right_index].geometry.stage_from_area(
+        state.area[right_index]
+    )
     return StructureStageContext(
         time=state.time,
         dt=dt,
-        upstream_stage=mesh.cells[left_index].geometry.stage_from_area(
-            state.area[left_index]
-        ),
-        downstream_stage=mesh.cells[right_index].geometry.stage_from_area(
-            state.area[right_index]
-        ),
+        upstream_stage=upstream_stage,
+        downstream_stage=downstream_stage,
         upstream_area=state.area[left_index],
         downstream_area=state.area[right_index],
         upstream_discharge=state.discharge[left_index],
         downstream_discharge=state.discharge[right_index],
+        upstream_top_width=mesh.cells[left_index].geometry.top_width(upstream_stage),
+        downstream_top_width=mesh.cells[right_index].geometry.top_width(
+            downstream_stage
+        ),
+        upstream_pressure_moment=mesh.cells[left_index].geometry.pressure_moment(
+            upstream_stage
+        ),
+        downstream_pressure_moment=mesh.cells[right_index].geometry.pressure_moment(
+            downstream_stage
+        ),
     )
 
 
@@ -202,9 +214,9 @@ def _forward_euler_stage_raw(
 ) -> EulerStageResult:
     """Evaluate the uncorrected flux/source map for one Euler stage.
 
-    Gate flow replaces only the common mass flux of its bound internal face;
-    the default hydrostatic HLL momentum terms are retained and reported by
-    the orchestrator as the explicit MVP-not-strongly-coupled limitation.
+    A legacy Gate replaces only the common mass flux of its bound internal
+    face.  A versioned completed-interface Gate also supplies the two
+    side-specific momentum fluxes and never falls back to the legacy closure.
     Pumps are external sinks and remove local advective momentum with water.
     """
 
@@ -324,11 +336,18 @@ def _forward_euler_stage_raw(
         gate_flows.append(result)
         gate_state[gate.gate_id] = result.state
         existing = face_fluxes[gate.face_index + 1]
-        face_fluxes[gate.face_index + 1] = InterfaceFlux(
-            mass=result.flow,
-            momentum_left=existing.momentum_left,
-            momentum_right=existing.momentum_right,
-        )
+        if result.completed_interface is None:
+            face_fluxes[gate.face_index + 1] = InterfaceFlux(
+                mass=result.flow,
+                momentum_left=existing.momentum_left,
+                momentum_right=existing.momentum_right,
+            )
+        else:
+            face_fluxes[gate.face_index + 1] = InterfaceFlux(
+                mass=result.flow,
+                momentum_left=result.completed_interface.momentum_flux_left,
+                momentum_right=result.completed_interface.momentum_flux_right,
+            )
 
     pump_rate_by_cell = [0.0 for _ in mesh.cells]
     pump_flows: list[StructureStageFlow] = []
@@ -606,7 +625,14 @@ def ssp_rk2_step(
     flags = tuple(
         flag
         for enabled, flag in (
-            (bool(gates), "structure_momentum_closure_mass_only_mvp"),
+            (
+                any(not gate.uses_completed_interface for gate in gates),
+                "structure_momentum_closure_mass_only_mvp",
+            ),
+            (
+                any(gate.uses_completed_interface for gate in gates),
+                "gate_completed_interface_submerged_orifice_energy_momentum_v1",
+            ),
             (
                 equilibrium_reference is not None,
                 "moving_uniform_manning_residual_equilibrium_v1",

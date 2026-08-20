@@ -285,6 +285,10 @@ class StructureStageContext:
     downstream_area: float
     upstream_discharge: float
     downstream_discharge: float
+    upstream_top_width: float | None = None
+    downstream_top_width: float | None = None
+    upstream_pressure_moment: float | None = None
+    downstream_pressure_moment: float | None = None
 
     def __post_init__(self) -> None:
         """Reject a non-finite stage context before device evaluation."""
@@ -305,17 +309,101 @@ class StructureStageContext:
             raise ValueError("structure stage time must be non-negative and dt positive")
         if self.upstream_area < 0.0 or self.downstream_area < 0.0:
             raise ValueError("structure neighbour areas must be non-negative")
+        optional = (
+            self.upstream_top_width,
+            self.downstream_top_width,
+            self.upstream_pressure_moment,
+            self.downstream_pressure_moment,
+        )
+        if any(value is not None and not math.isfinite(value) for value in optional):
+            raise ValueError("optional structure hydraulic properties must be finite")
+
+
+@dataclass(frozen=True)
+class CompletedGateInterfaceEvidence:
+    """Expose one converged submerged-orifice energy/momentum closure.
+
+    ``reaction_force_per_density`` uses the signed downstream-minus-upstream
+    momentum-flux convention.  Multiplying by fluid density gives force.
+    """
+
+    evaluation_time: float
+    upstream_stage: float
+    downstream_stage: float
+    upstream_area: float
+    downstream_area: float
+    upstream_top_width: float
+    downstream_top_width: float
+    upstream_pressure_moment: float
+    downstream_pressure_moment: float
+    head_loss: float
+    energy_residual: float
+    iterations: int
+    momentum_flux_left: float
+    momentum_flux_right: float
+    reaction_force_per_density: float
+    regime: Literal["submerged_orifice_completed_interface"] = (
+        "submerged_orifice_completed_interface"
+    )
+
+    def __post_init__(self) -> None:
+        """Keep completed-interface evidence finite and self-consistent."""
+
+        values = (
+            self.evaluation_time,
+            self.upstream_stage,
+            self.downstream_stage,
+            self.upstream_area,
+            self.downstream_area,
+            self.upstream_top_width,
+            self.downstream_top_width,
+            self.upstream_pressure_moment,
+            self.downstream_pressure_moment,
+            self.head_loss,
+            self.energy_residual,
+            self.momentum_flux_left,
+            self.momentum_flux_right,
+            self.reaction_force_per_density,
+        )
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("completed Gate evidence must contain finite values")
+        if self.evaluation_time < 0.0 or self.head_loss < 0.0:
+            raise ValueError("completed Gate time/head loss must be non-negative")
+        if min(
+            self.upstream_area,
+            self.downstream_area,
+            self.upstream_top_width,
+            self.downstream_top_width,
+        ) <= 0.0:
+            raise ValueError("completed Gate hydraulic areas/widths must be positive")
+        if min(
+            self.upstream_pressure_moment,
+            self.downstream_pressure_moment,
+        ) < 0.0:
+            raise ValueError("completed Gate pressure moments must be non-negative")
+        if isinstance(self.iterations, bool) or self.iterations <= 0:
+            raise ValueError("completed Gate iterations must be positive")
+        expected_reaction = self.momentum_flux_right - self.momentum_flux_left
+        tolerance = max(1.0e-12, 8.0 * math.ulp(abs(expected_reaction)))
+        if not math.isclose(
+            self.reaction_force_per_density,
+            expected_reaction,
+            rel_tol=0.0,
+            abs_tol=tolerance,
+        ):
+            raise ValueError("completed Gate reaction contradicts momentum fluxes")
 
 
 @dataclass(frozen=True)
 class StructureStageFlow:
-    """Return a signed volume flow and an auditable simplified closure label."""
+    """Return a signed volume flow and one explicit momentum-closure policy."""
 
     structure_id: str
     structure_type: str
     flow: float
     state: Mapping[str, object] = field(default_factory=dict)
     momentum_closure: str = "mass_only_mvp_not_strongly_coupled"
+    completed_interface: CompletedGateInterfaceEvidence | None = None
 
     def __post_init__(self) -> None:
         """Keep invalid device outputs from entering the conservative update."""
@@ -324,6 +412,11 @@ class StructureStageFlow:
             raise ValueError("structure identity and type must not be empty")
         if not math.isfinite(self.flow):
             raise ValueError("structure flow must be finite")
+        if self.completed_interface is None:
+            if self.momentum_closure != "mass_only_mvp_not_strongly_coupled":
+                raise ValueError("unknown structure momentum closure")
+        elif self.momentum_closure != "submerged_orifice_energy_momentum_v1":
+            raise ValueError("completed Gate evidence requires its versioned closure")
 
 
 @dataclass(frozen=True)
@@ -346,11 +439,24 @@ class FixedGate:
     discharge_coefficient: float = 0.62
     allow_reverse: bool = False
     control: ControlPolicy | None = None
+    coupling_policy: Literal[
+        "mass-only-orifice-v1",
+        "submerged-orifice-energy-momentum-v1",
+    ] = "mass-only-orifice-v1"
+    sill_elevation: float | None = None
+    equation_tolerance: float = 1.0e-10
+    maximum_iterations: int = 80
 
     def __post_init__(self) -> None:
         """Validate fixed Gate geometry and its internal-face binding."""
 
-        values = (self.opening, self.width, self.height, self.discharge_coefficient)
+        values = (
+            self.opening,
+            self.width,
+            self.height,
+            self.discharge_coefficient,
+            self.equation_tolerance,
+        )
         if not self.gate_id:
             raise ValueError("gate_id must not be empty")
         if self.face_index < 0:
@@ -370,6 +476,144 @@ class FixedGate:
             raise ValueError("gate control has an unsupported policy")
         if self.control is not None and self.opening <= 0.0:
             raise ValueError("threshold-controlled gate target opening must be positive")
+        if self.coupling_policy not in (
+            "mass-only-orifice-v1",
+            "submerged-orifice-energy-momentum-v1",
+        ):
+            raise ValueError("unsupported Gate coupling_policy")
+        if self.equation_tolerance <= 0.0:
+            raise ValueError("Gate equation_tolerance must be positive")
+        if isinstance(self.maximum_iterations, bool) or self.maximum_iterations <= 0:
+            raise ValueError("Gate maximum_iterations must be positive")
+        if self.coupling_policy == "submerged-orifice-energy-momentum-v1":
+            if self.control is not None:
+                raise ValueError("completed-interface Gate requires fixed control")
+            if self.allow_reverse:
+                raise ValueError("completed-interface Gate does not support reverse flow")
+            if self.opening <= 0.0:
+                raise ValueError("completed-interface Gate opening must be positive")
+            if self.sill_elevation is None or not math.isfinite(self.sill_elevation):
+                raise ValueError("completed-interface Gate requires a finite sill_elevation")
+        elif self.sill_elevation is not None:
+            raise ValueError("mass-only Gate must not declare sill_elevation")
+
+    @property
+    def uses_completed_interface(self) -> bool:
+        """Return whether this Gate replaces both side-specific momentum fluxes."""
+
+        return self.coupling_policy == "submerged-orifice-energy-momentum-v1"
+
+    def _evaluate_completed_interface(
+        self,
+        *,
+        context: StructureStageContext,
+        state: Mapping[str, object],
+        actual_opening: float,
+    ) -> StructureStageFlow:
+        """Solve the restricted submerged-orifice energy equation by bisection."""
+
+        required = (
+            context.upstream_top_width,
+            context.downstream_top_width,
+            context.upstream_pressure_moment,
+            context.downstream_pressure_moment,
+        )
+        if any(value is None for value in required):
+            raise ValueError("completed-interface Gate requires hydraulic face properties")
+        upstream_width = float(context.upstream_top_width)
+        downstream_width = float(context.downstream_top_width)
+        upstream_moment = float(context.upstream_pressure_moment)
+        downstream_moment = float(context.downstream_pressure_moment)
+        if min(
+            context.upstream_area,
+            context.downstream_area,
+            upstream_width,
+            downstream_width,
+        ) <= 0.0:
+            raise ValueError("completed-interface Gate requires fully wet neighbours")
+        head = context.upstream_stage - context.downstream_stage
+        if head <= 0.0:
+            raise ValueError("completed-interface Gate requires positive forward head")
+        gate_top = float(self.sill_elevation) + actual_opening
+        if min(context.upstream_stage, context.downstream_stage) <= gate_top:
+            raise ValueError("completed-interface Gate requires a submerged opening")
+
+        opening_area = self.width * actual_opening
+        loss_factor = (
+            1.0 / (self.discharge_coefficient * opening_area) ** 2
+            - 1.0 / context.upstream_area**2
+            + 1.0 / context.downstream_area**2
+        )
+        if not math.isfinite(loss_factor) or loss_factor <= 0.0:
+            raise ValueError("completed-interface Gate energy equation has no positive root")
+
+        def residual(flow: float) -> float:
+            return head - flow * flow * loss_factor / (2.0 * GRAVITY)
+
+        lower = 0.0
+        upper = 1.25 * math.sqrt(2.0 * GRAVITY * head / loss_factor)
+        if residual(upper) >= 0.0:
+            raise ValueError("completed-interface Gate failed to bracket its root")
+        flow = upper
+        energy_residual = residual(flow)
+        iterations = 0
+        for iterations in range(1, self.maximum_iterations + 1):
+            flow = 0.5 * (lower + upper)
+            energy_residual = residual(flow)
+            if abs(energy_residual) <= self.equation_tolerance:
+                break
+            if energy_residual > 0.0:
+                lower = flow
+            else:
+                upper = flow
+        else:
+            raise ValueError("completed-interface Gate equation did not converge")
+
+        upstream_celerity = math.sqrt(
+            GRAVITY * context.upstream_area / upstream_width
+        )
+        downstream_celerity = math.sqrt(
+            GRAVITY * context.downstream_area / downstream_width
+        )
+        upstream_froude = flow / context.upstream_area / upstream_celerity
+        downstream_froude = flow / context.downstream_area / downstream_celerity
+        if max(upstream_froude, downstream_froude) >= 1.0:
+            raise ValueError("completed-interface Gate requires subcritical traces")
+
+        head_loss = flow * flow / (
+            2.0
+            * GRAVITY
+            * (self.discharge_coefficient * opening_area) ** 2
+        )
+        momentum_left = flow * flow / context.upstream_area + GRAVITY * upstream_moment
+        momentum_right = (
+            flow * flow / context.downstream_area + GRAVITY * downstream_moment
+        )
+        evidence = CompletedGateInterfaceEvidence(
+            evaluation_time=context.time,
+            upstream_stage=context.upstream_stage,
+            downstream_stage=context.downstream_stage,
+            upstream_area=context.upstream_area,
+            downstream_area=context.downstream_area,
+            upstream_top_width=upstream_width,
+            downstream_top_width=downstream_width,
+            upstream_pressure_moment=upstream_moment,
+            downstream_pressure_moment=downstream_moment,
+            head_loss=head_loss,
+            energy_residual=energy_residual,
+            iterations=iterations,
+            momentum_flux_left=momentum_left,
+            momentum_flux_right=momentum_right,
+            reaction_force_per_density=momentum_right - momentum_left,
+        )
+        return StructureStageFlow(
+            structure_id=self.gate_id,
+            structure_type="gate",
+            flow=flow,
+            state=state,
+            momentum_closure="submerged_orifice_energy_momentum_v1",
+            completed_interface=evidence,
+        )
 
     def synchronize_accepted_state(
         self,
@@ -440,6 +684,13 @@ class FixedGate:
             actual_opening, (int, float)
         ):
             raise ValueError("gate opening state must be numeric")
+
+        if self.uses_completed_interface:
+            return self._evaluate_completed_interface(
+                context=context,
+                state=state,
+                actual_opening=float(actual_opening),
+            )
 
         head_difference = context.upstream_stage - context.downstream_stage
         direction = 1.0

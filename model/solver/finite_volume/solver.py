@@ -866,6 +866,56 @@ def _validate_structure_event_scope(
         raise ValueError("bracketed event policy requires a bracketed control")
 
 
+def _validate_completed_gate_scope(
+    *,
+    mesh: FiniteVolumeMesh,
+    initial_state: HydraulicState,
+    boundaries: BoundaryPair,
+    config: SingleBranchConfig,
+    gates: Sequence[FixedGate],
+    pumps: Sequence[OnOffPump],
+) -> None:
+    """Keep the completed-interface Gate inside its verified C2b subset."""
+
+    completed = tuple(gate for gate in gates if gate.uses_completed_interface)
+    if not completed:
+        return
+    if len(gates) != 1 or len(completed) != 1 or pumps:
+        raise ValueError("completed-interface scope requires exactly one Gate and no Pump")
+    gate = completed[0]
+    if gate.control is not None:
+        raise ValueError("completed-interface scope requires fixed Gate control")
+    if config.equilibrium_mode != "standard":
+        raise ValueError("completed-interface scope requires standard equilibrium")
+    if config.geometry_source_mode != "hydrostatic-reconstruction-v1":
+        raise ValueError("completed-interface scope requires hydrostatic reconstruction")
+    if boundaries.boundary_closure != "subcritical-characteristic-v1":
+        raise ValueError("completed-interface scope requires characteristic boundaries")
+    reference = mesh.cells[0]
+    if any(cell.geometry != reference.geometry for cell in mesh.cells[1:]):
+        raise ValueError("completed-interface scope requires one prismatic section")
+    if any(
+        not math.isclose(
+            cell.bed_elevation,
+            reference.bed_elevation,
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        )
+        for cell in mesh.cells[1:]
+    ):
+        raise ValueError("completed-interface scope requires a flat bed")
+    if any(cell.manning_n != 0.0 for cell in mesh.cells):
+        raise ValueError("completed-interface scope requires zero Manning friction")
+    if any(
+        cell.geometry.stage_from_area(area) - cell.bed_elevation
+        <= max(config.dry_depth, 1.0e-9)
+        for cell, area in zip(mesh.cells, initial_state.area)
+    ):
+        raise ValueError("completed-interface scope requires a fully wet initial state")
+    if gate.face_index >= len(mesh.cells) - 1:
+        raise ValueError("completed-interface Gate must bind an internal face")
+
+
 def solve_single_branch(
     *,
     mesh: FiniteVolumeMesh,
@@ -922,6 +972,14 @@ def solve_single_branch(
     _validate_structure_event_scope(
         mesh=mesh,
         initial_state=initial_state,
+        config=config,
+        gates=gates,
+        pumps=pumps,
+    )
+    _validate_completed_gate_scope(
+        mesh=mesh,
+        initial_state=initial_state,
+        boundaries=boundaries,
         config=config,
         gates=gates,
         pumps=pumps,

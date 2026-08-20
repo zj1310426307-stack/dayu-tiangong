@@ -1,7 +1,7 @@
 # HYDRO-MODEL-02-C 验证报告
 
 - 日期：2026-08-20
-- 范围：C1 受限 moving-energy 科学门 + C2a 保守 bracketed crossing 软件门
+- 范围：C1 moving-energy + C2a bracketed crossing + C2b 固定 Gate completed-interface
 - 结论：限定子集 `PASS`；完整科学/生产 `NO-GO`
 
 ## 1. 可复现命令
@@ -15,8 +15,8 @@ cd backend
 
 ## 2. 结果
 
-- MODEL-02 定向：`223 passed`。
-- 全仓聚合：`531 passed, 71 skipped, 0 failed`。
+- MODEL-02 定向：`244 passed`。
+- 全仓聚合：`552 passed, 71 skipped, 0 failed`。
 - 71 条 skip 均为 PostGIS/GDAL/QGIS 等显式外部环境门，未计入通过数。
 - `py_compile` 通过；`git diff --check` 无 whitespace error，仅 Windows LF/CRLF 提示。
 
@@ -52,10 +52,26 @@ v4-lite-4 冻结案例的 Gate/Pump 同时监测 Section 1：
 
 反例覆盖：初始等于/高于阈值、永不 crossing、细分次数耗尽、失败试算污染、伪造/缺字段 bracket、错误监测 Section、旧版结果混入新证据。
 
-## 5. 尚未通过
+## 5. C2b Gate completed-interface 证据
+
+冻结案例：单 Gate、`opening=0.5m`、`width=2m`、`Cd=0.62`、平床同断面、零摩阻、特征边界、初始上/下游水位 `11.0/10.5m`，模拟 `2s`、`dt<=0.1s`。
+
+- 接受步 `20`，RK stage 证据 `40` 条，数值 retry `0`。
+- Gate 流量范围：`1.9333502231–1.9373770281 m³/s`。
+- 内部转输体积：`3.8707148013 m³`，独立按 `0.5*dt*(Q1+Q2)` 复算一致。
+- 最大绝对能头残差：`5.8207549891e-11 m`，小于冻结 `1e-10m` 容差。
+- 最大根迭代次数：`32`，小于冻结上限 `80`。
+- 单位密度结构反力范围（下游减上游）：`-50.19355–-50.00813 m⁴/s²`。
+- 水量相对误差：`1.97994e-17`；最大 CFL `0.00125284`；最小接受步约 `0.1s`。
+- `gate_completed_interface_submerged_orifice_energy_momentum_v1` 存在，旧 `structure_momentum_closure_mass_only_mvp` 不存在。
+
+反例覆盖：未淹没、倒流、无正根、超临界、迭代不收敛、Pump/摩阻混入、非固定控制、缺 sill、缺策略字段、伪造反力或缺失耦合证据。旧 Gate 公式、旧诊断、v1–v4 冻结哈希与结果形状继续通过。
+
+## 6. 尚未通过
 
 - 步内未在端点形成符号变化的双 crossing检测；
-- Gate 左右动量/能头完成界面；
-- Pump Q-H/Q-η 工作点与内部转输；
+- C2a 阈值事件与 C2b Gate 物理的组合耦合；
+- Gate 自由出流、倒流、多个 Gate、非棱柱/湿干结构界面；
+- Pump Q-H/Q-η 工作点、能耗与内部转输；
 - 湿干/溃坝、端点 Profile face、河网节点；
 - v4 HTTP/Worker/持久化、外部模型对比和真实工程率定。
