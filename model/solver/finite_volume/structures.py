@@ -336,15 +336,17 @@ class CompletedGateInterfaceEvidence:
     downstream_top_width: float
     upstream_pressure_moment: float
     downstream_pressure_moment: float
+    actual_opening: float
     head_loss: float
     energy_residual: float
     iterations: int
     momentum_flux_left: float
     momentum_flux_right: float
     reaction_force_per_density: float
-    regime: Literal["submerged_orifice_completed_interface"] = (
-        "submerged_orifice_completed_interface"
-    )
+    regime: Literal[
+        "closed_barrier_completed_interface",
+        "submerged_orifice_completed_interface",
+    ] = "submerged_orifice_completed_interface"
 
     def __post_init__(self) -> None:
         """Keep completed-interface evidence finite and self-consistent."""
@@ -359,6 +361,7 @@ class CompletedGateInterfaceEvidence:
             self.downstream_top_width,
             self.upstream_pressure_moment,
             self.downstream_pressure_moment,
+            self.actual_opening,
             self.head_loss,
             self.energy_residual,
             self.momentum_flux_left,
@@ -369,6 +372,8 @@ class CompletedGateInterfaceEvidence:
             raise ValueError("completed Gate evidence must contain finite values")
         if self.evaluation_time < 0.0 or self.head_loss < 0.0:
             raise ValueError("completed Gate time/head loss must be non-negative")
+        if self.actual_opening < 0.0:
+            raise ValueError("completed Gate actual opening must be non-negative")
         if min(
             self.upstream_area,
             self.downstream_area,
@@ -381,8 +386,13 @@ class CompletedGateInterfaceEvidence:
             self.downstream_pressure_moment,
         ) < 0.0:
             raise ValueError("completed Gate pressure moments must be non-negative")
-        if isinstance(self.iterations, bool) or self.iterations <= 0:
-            raise ValueError("completed Gate iterations must be positive")
+        if isinstance(self.iterations, bool) or self.iterations < 0:
+            raise ValueError("completed Gate iterations must be non-negative")
+        if self.regime == "closed_barrier_completed_interface":
+            if self.actual_opening != 0.0 or self.iterations != 0:
+                raise ValueError("closed Gate evidence requires zero opening/iterations")
+        elif self.actual_opening <= 0.0 or self.iterations <= 0:
+            raise ValueError("open Gate evidence requires positive opening/iterations")
         expected_reaction = self.momentum_flux_right - self.momentum_flux_left
         tolerance = max(1.0e-12, 8.0 * math.ulp(abs(expected_reaction)))
         if not math.isclose(
@@ -424,11 +434,11 @@ class FixedGate:
     """Bind a fixed or accepted-state one-shot Gate to one internal face.
 
     Positive flow is from the lower face index cell to the higher one.  The
-    formula implements only the task-book ``Cd*A*sqrt(2*g*deltaH)`` mass-flow
-    relation; the orchestrator must retain an explicit diagnostic that a full
-    momentum/energy closure is not yet implemented.  ``control=None`` retains
-    the original fixed-opening behaviour.  A threshold-controlled Gate starts
-    closed and uses ``opening`` as its latched target command.
+    legacy policy implements only ``Cd*A*sqrt(2*g*deltaH)`` mass flow.  The
+    explicit completed-interface policy solves its restricted total-head
+    equation and supplies distinct left/right momentum fluxes.  A bracketed
+    completed Gate starts as an impermeable wall and uses ``opening`` only
+    after its accepted right-end event; other controls retain legacy policy.
     """
 
     gate_id: str
@@ -486,8 +496,12 @@ class FixedGate:
         if isinstance(self.maximum_iterations, bool) or self.maximum_iterations <= 0:
             raise ValueError("Gate maximum_iterations must be positive")
         if self.coupling_policy == "submerged-orifice-energy-momentum-v1":
-            if self.control is not None:
-                raise ValueError("completed-interface Gate requires fixed control")
+            if self.control is not None and not isinstance(
+                self.control, BracketedOneShotStageThreshold
+            ):
+                raise ValueError(
+                    "completed-interface Gate supports only fixed or bracketed control"
+                )
             if self.allow_reverse:
                 raise ValueError("completed-interface Gate does not support reverse flow")
             if self.opening <= 0.0:
@@ -599,6 +613,7 @@ class FixedGate:
             downstream_top_width=downstream_width,
             upstream_pressure_moment=upstream_moment,
             downstream_pressure_moment=downstream_moment,
+            actual_opening=actual_opening,
             head_loss=head_loss,
             energy_residual=energy_residual,
             iterations=iterations,
@@ -610,6 +625,73 @@ class FixedGate:
             structure_id=self.gate_id,
             structure_type="gate",
             flow=flow,
+            state=state,
+            momentum_closure="submerged_orifice_energy_momentum_v1",
+            completed_interface=evidence,
+        )
+
+    def _evaluate_closed_completed_interface(
+        self,
+        *,
+        context: StructureStageContext,
+        state: Mapping[str, object],
+    ) -> StructureStageFlow:
+        """Return an impermeable wall with distinct hydrostatic side momentum.
+
+        The closed command has no orifice equation.  Its mass flux is zero,
+        while each side receives its own ``g*I1`` momentum flux.  This keeps
+        the event-location trial conservative and prevents the future opening
+        command from being backfilled into the crossing interval.
+        """
+
+        required = (
+            context.upstream_top_width,
+            context.downstream_top_width,
+            context.upstream_pressure_moment,
+            context.downstream_pressure_moment,
+        )
+        if any(value is None for value in required):
+            raise ValueError("closed completed Gate requires hydraulic face properties")
+        upstream_width = float(context.upstream_top_width)
+        downstream_width = float(context.downstream_top_width)
+        upstream_moment = float(context.upstream_pressure_moment)
+        downstream_moment = float(context.downstream_pressure_moment)
+        if min(
+            context.upstream_area,
+            context.downstream_area,
+            upstream_width,
+            downstream_width,
+        ) <= 0.0:
+            raise ValueError("closed completed Gate requires fully wet neighbours")
+        head = context.upstream_stage - context.downstream_stage
+        if head < -1.0e-12:
+            raise ValueError("closed completed Gate does not support reverse head")
+        head_loss = max(head, 0.0)
+        momentum_left = GRAVITY * upstream_moment
+        momentum_right = GRAVITY * downstream_moment
+        evidence = CompletedGateInterfaceEvidence(
+            evaluation_time=context.time,
+            upstream_stage=context.upstream_stage,
+            downstream_stage=context.downstream_stage,
+            upstream_area=context.upstream_area,
+            downstream_area=context.downstream_area,
+            upstream_top_width=upstream_width,
+            downstream_top_width=downstream_width,
+            upstream_pressure_moment=upstream_moment,
+            downstream_pressure_moment=downstream_moment,
+            actual_opening=0.0,
+            head_loss=head_loss,
+            energy_residual=0.0,
+            iterations=0,
+            momentum_flux_left=momentum_left,
+            momentum_flux_right=momentum_right,
+            reaction_force_per_density=momentum_right - momentum_left,
+            regime="closed_barrier_completed_interface",
+        )
+        return StructureStageFlow(
+            structure_id=self.gate_id,
+            structure_type="gate",
+            flow=0.0,
             state=state,
             momentum_closure="submerged_orifice_energy_momentum_v1",
             completed_interface=evidence,
@@ -685,6 +767,11 @@ class FixedGate:
         ):
             raise ValueError("gate opening state must be numeric")
 
+        if self.uses_completed_interface and float(actual_opening) == 0.0:
+            return self._evaluate_closed_completed_interface(
+                context=context,
+                state=state,
+            )
         if self.uses_completed_interface:
             return self._evaluate_completed_interface(
                 context=context,

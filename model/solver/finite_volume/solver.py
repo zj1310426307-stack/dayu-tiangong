@@ -883,8 +883,18 @@ def _validate_completed_gate_scope(
     if len(gates) != 1 or len(completed) != 1 or pumps:
         raise ValueError("completed-interface scope requires exactly one Gate and no Pump")
     gate = completed[0]
-    if gate.control is not None:
-        raise ValueError("completed-interface scope requires fixed Gate control")
+    if gate.control is not None and not isinstance(
+        gate.control, BracketedOneShotStageThreshold
+    ):
+        raise ValueError(
+            "completed-interface scope supports only fixed or bracketed Gate control"
+        )
+    if gate.control is not None and config.structure_event_policy != (
+        "bracketed-conservative-replay-right-end-v1"
+    ):
+        raise ValueError(
+            "controlled completed-interface Gate requires bracketed replay"
+        )
     if config.equilibrium_mode != "standard":
         raise ValueError("completed-interface scope requires standard equilibrium")
     if config.geometry_source_mode != "hydrostatic-reconstruction-v1":
@@ -914,6 +924,58 @@ def _validate_completed_gate_scope(
         raise ValueError("completed-interface scope requires a fully wet initial state")
     if gate.face_index >= len(mesh.cells) - 1:
         raise ValueError("completed-interface Gate must bind an internal face")
+    if gate.control is not None:
+        left = mesh.cells[gate.face_index].geometry.stage_from_area(
+            initial_state.area[gate.face_index]
+        )
+        right = mesh.cells[gate.face_index + 1].geometry.stage_from_area(
+            initial_state.area[gate.face_index + 1]
+        )
+        if not math.isclose(left, right, rel_tol=0.0, abs_tol=1.0e-12):
+            raise ValueError(
+                "controlled completed-interface Gate requires an initially level face"
+            )
+        if any(abs(value) > 1.0e-12 for value in initial_state.discharge):
+            raise ValueError(
+                "controlled completed-interface Gate requires zero initial discharge"
+            )
+        upstream_values = boundaries.upstream.series.values
+        upstream_reference = upstream_values[0]
+        if upstream_reference <= 0.0 or any(
+            not math.isclose(
+                value,
+                upstream_reference,
+                rel_tol=0.0,
+                abs_tol=max(
+                    1.0e-12,
+                    8.0 * math.ulp(abs(value)),
+                    8.0 * math.ulp(abs(upstream_reference)),
+                ),
+            )
+            for value in upstream_values[1:]
+        ):
+            raise ValueError(
+                "controlled completed-interface Gate requires positive constant inflow"
+            )
+        final_stage = mesh.cells[-1].geometry.stage_from_area(
+            initial_state.area[-1]
+        )
+        if any(
+            not math.isclose(
+                value,
+                final_stage,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            for value in boundaries.downstream.series.values
+        ):
+            raise ValueError(
+                "controlled completed-interface Gate downstream stage must match initial"
+            )
+        if min(left, right) <= float(gate.sill_elevation) + gate.opening:
+            raise ValueError(
+                "controlled completed-interface Gate target must be initially submerged"
+            )
 
 
 def solve_single_branch(
@@ -1021,6 +1083,12 @@ def solve_single_branch(
         isinstance(pump.control, BracketedOneShotStageThreshold) for pump in pumps
     ):
         flags.add("structure_control_one_shot_bracketed_right_end_v1")
+    if any(
+        gate.uses_completed_interface
+        and isinstance(gate.control, BracketedOneShotStageThreshold)
+        for gate in gates
+    ):
+        flags.add("gate_completed_interface_bracketed_control_v1")
 
     while current.time < config.end_time - _TIME_TOLERANCE:
         if len(steps) >= config.maximum_steps:

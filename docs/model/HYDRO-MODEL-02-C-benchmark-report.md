@@ -7,6 +7,7 @@
 | C1 光滑变宽、平床、无摩阻 Bernoulli 稳态 | 科学参考门 | PASS | 一般非恒定、变床、摩阻、湿干 |
 | C2a Gate/Pump 同阈值保守括区间 | 软件/守恒事件门 | PASS | 连续根精确值、Gate 动量闭合、Pump Q-H |
 | C2b 固定 Gate completed-interface | 限定结构科学门 | PASS | 自由出流、倒流、湿干、非棱柱、多个结构、Pump |
+| C2c 单 Gate bracketed + completed-interface | 限定组合证据门 | PASS | 连续调节、多次 crossing、多个结构、Pump 强耦合 |
 | C3 湿干/溃坝/端点 face | 科学门 | NOT RUN | Ritter/Stoker、正性前沿、显式端点断面 |
 | C4 v4 后端任务链 | 系统门 | NOT RUN | HTTP/Celery/DB 生产调度 |
 
@@ -32,3 +33,12 @@
 - 关闭旧 mass-only 诊断且保留明确 completed-interface 诊断；旧 Gate 回归仍保留原数值与标志。
 - 未淹没、倒流、超临界、无根、不收敛及越出限定作用域全部 fail closed，无回退。
 - 此门只证明冻结单 Gate submerged-orifice 子集，不等于 Gate/Pump 完整强耦合或真实工程结构率定。
+
+## C2c 门禁
+
+- 触发区间始终使用关闭 Gate 的 completed-interface；事件右括端不前向回填目标开度。
+- Gate latch 只在接受态提交，下一接受子区间的两个 RK stage 才消费目标开度。
+- 关闭阶段 `Q=0` 且保留左右独立静水动量/反力；开启阶段能头残差小于 `1e-10m`。
+- 10 条 stage 证据、事件、输出命令和 `0.18963193173761772m³` 内部转输可互相独立复算。
+- API 与 core 双层拒绝初始 Gate 面不等水位、非零初始 Q、动态 Q、Pump 或任何不完整策略组合。
+- 此门只证明单 Gate 一次性上升阈值与限定 completed-interface 的组合语义，不等于 Gate/Pump 完整强耦合。

@@ -1,10 +1,10 @@
 # HYDRO-MODEL-02-C 开发报告
 
-- 日期：2026-08-20
+- 日期：2026-08-21
 - 分支：`feature/HYDRO-MODEL-02-C-transient-hardening`
 - 基线：`f5975a2`
 - C1 提交：`b7b5084`
-- 状态：C1、C2a 与 C2b 限定子门完成；完整科学与生产能力继续 `NO-GO`
+- 状态：C1、C2a、C2b 与 C2c 限定子门完成；完整科学与生产能力继续 `NO-GO`
 
 ## 1. 本阶段完成内容
 
@@ -36,6 +36,17 @@
 5. 淹没、正向、亚临界、方程残差和迭代上限任一不满足即失败，禁止回退到 mass-only；
 6. 结果保存每个接受步的两个 RK stage，DTO 独立复算孔口损失、能头残差、动量通量、反力和 Gate 内部转输体积。
 
+### C2c：bracketed control + completed-interface 组合门
+
+`v4-lite-6` 只允许一个 `one-shot-stage-above-bracketed-v1` Gate，并同时要求 C2a 的保守事件策略和 C2b 的 completed-interface 策略。组合语义为：
+
+1. 触发候选与细分重放期间 Gate 始终保持已接受的关闭命令；
+2. 被接受的事件右括端仍以关闭 Gate 完成两个 RK stage，不把目标开度回填到已走过的时间段；
+3. 事件与 Gate latch 在接受态原子提交，目标开度只从下一接受子区间开始进入 completed-interface；
+4. 关闭阶段使用 `Q=0`、左右独立 `gI1` 动量与结构反力，不伪造孔口根求解；
+5. 开启阶段逐 RK stage 求解总能头/淹没孔流，保存实际开度、残差、迭代、左右动量和反力；
+6. 结果 DTO 反向核对事件、命令生效边界、stage 对、转输体积和开/关两类物理证据，缺任一链路即拒绝。
+
 ## 2. 身份、状态与哈希
 
 - Gate/Pump 仍以显式 public asset ID 为结构身份，监测对象为绑定 hydraulic Section cell centre。
@@ -48,12 +59,16 @@
 - C2b mesh hash：`5be802aaa262a02deb2419c45b1e4b30d88ed1f9f12f7eb43ad3a8e29b9c1e33`。
 - C2b solver-policy hash：`cb36f8c8989313a69261ab139471d8f05058a88383486033e29ebf5c71c55625`。
 - Gate 耦合容差只进入 input/policy hash；断面与网格不变时 mesh hash 不变。
+- C2c 输入 hash：`b49e8b6174aa8979f04f8a0e6e0ae6350854c22487dd8374c7065346e4dabe74`。
+- C2c mesh hash：`5be802aaa262a02deb2419c45b1e4b30d88ed1f9f12f7eb43ad3a8e29b9c1e33`。
+- C2c solver-policy hash：`dd0f87e60a87826d55cc2bb02de1ad56a1bf4e8ec8a1ffe9698cdfb7738aaac4`。
+- 组合策略使用新的 policy-hash domain；事件/Gate 参数进入 input 与 policy hash，网格未变时 mesh hash 继续不变。
 
 ## 3. 实现边界
 
 - C2a 不插值 A/Q，不声称已找到连续方程的精确根；事件时刻是误差有界的右括端。
 - 仅检测步端已括住的首个上升 crossing；步内上升后下降的双 crossing 仍可能漏检。
-- 历史 Gate 和 C2a Gate 仍保持 mass-only；只有显式 `v4-lite-5` 固定 Gate 使用 completed-interface。
-- C2b 不是 Gate/Pump 完整强耦合：不含阈值事件组合、自由出流、倒流、湿干、非棱柱 Gate、多个结构、Pump Q-H/效率或内部转输。
+- 历史 Gate 和 `v4-lite-4` Gate 仍保持 mass-only；只有显式 `v4-lite-5/6` 使用 completed-interface。
+- C2c 只组合一个 Gate 的一次性上升阈值与 completed-interface，不是 Gate/Pump 完整强耦合：不含连续调节、自由出流、倒流、湿干、非棱柱 Gate、多个结构、Pump Q-H/效率或内部转输。
 - v4-lite 仍仅限 Python direct engine；HTTP/Celery/数据库持久化没有接线。
 - 湿干、溃坝、显式端点 Profile face、Branch/Junction、外部模型比较和真实率定均继续 `NO-GO/NOT RUN`。

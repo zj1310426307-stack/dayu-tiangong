@@ -295,6 +295,246 @@ class MvpGateCouplingEvidence(StrictResultModel):
         return self
 
 
+class MvpControlledGateStageEvidence(StrictResultModel):
+    """Persist one closed/open RK-stage from the bracketed strong Gate path."""
+
+    step_index: PositiveInt
+    rk_stage: Literal[1, 2]
+    evaluation_time: NonNegativeFinite
+    step_dt: PositiveFinite
+    actual_opening: NonNegativeFinite
+    flow: NonNegativeFinite
+    upstream_stage: FiniteNumber
+    downstream_stage: FiniteNumber
+    upstream_area: PositiveFinite
+    downstream_area: PositiveFinite
+    upstream_top_width: PositiveFinite
+    downstream_top_width: PositiveFinite
+    upstream_pressure_moment: NonNegativeFinite
+    downstream_pressure_moment: NonNegativeFinite
+    head_loss: NonNegativeFinite
+    energy_residual: FiniteNumber
+    iterations: NonNegativeInt
+    momentum_flux_left: FiniteNumber
+    momentum_flux_right: FiniteNumber
+    reaction_force_per_density: FiniteNumber
+    regime: Literal[
+        "closed_barrier_completed_interface",
+        "submerged_orifice_completed_interface",
+    ]
+
+    @model_validator(mode="after")
+    def validate_reaction(self) -> Self:
+        """Require each side-specific momentum pair to reproduce the reaction."""
+
+        expected = self.momentum_flux_right - self.momentum_flux_left
+        tolerance = max(1.0e-12, 8.0 * math.ulp(abs(expected)))
+        if not math.isclose(
+            self.reaction_force_per_density,
+            expected,
+            rel_tol=0.0,
+            abs_tol=tolerance,
+        ):
+            raise ValueError("controlled Gate stage reaction is inconsistent")
+        return self
+
+
+class MvpControlledGateCouplingEvidence(StrictResultModel):
+    """Prove that a located Gate command activates strong coupling afterward."""
+
+    gate_id: PositiveId
+    coupling_policy: Literal["submerged-orifice-energy-momentum-v1"]
+    event_policy: Literal["bracketed-conservative-replay-right-end-v1"]
+    command_effect: Literal["next-accepted-subinterval-v1"]
+    spatial_support: Literal["bound-internal-section-face-v1"]
+    event_time: NonNegativeFinite
+    target_opening: PositiveFinite
+    width: PositiveFinite
+    discharge_coefficient: Annotated[FiniteNumber, Field(gt=0.0, le=1.0)]
+    sill_elevation: FiniteNumber
+    equation_tolerance: PositiveFinite
+    maximum_allowed_iterations: PositiveInt
+    total_transfer_volume: NonNegativeFinite
+    maximum_absolute_energy_residual: NonNegativeFinite
+    maximum_iterations: PositiveInt
+    stage_evaluations: tuple[MvpControlledGateStageEvidence, ...] = Field(
+        min_length=4
+    )
+
+    @model_validator(mode="after")
+    def validate_combined_stage_history(self) -> Self:
+        """Recompute volume, closure and the no-forward-fill event transition."""
+
+        expected_keys = tuple(
+            (index, stage)
+            for index in range(1, len(self.stage_evaluations) // 2 + 1)
+            for stage in (1, 2)
+        )
+        actual_keys = tuple(
+            (item.step_index, item.rk_stage) for item in self.stage_evaluations
+        )
+        if len(self.stage_evaluations) % 2 or actual_keys != expected_keys:
+            raise ValueError("controlled Gate stages must be ordered RK1/RK2 pairs")
+
+        total = 0.0
+        open_rows: list[MvpControlledGateStageEvidence] = []
+        closed_rows: list[MvpControlledGateStageEvidence] = []
+        event_step_found = False
+        for first, second in zip(
+            self.stage_evaluations[::2],
+            self.stage_evaluations[1::2],
+        ):
+            if first.step_dt != second.step_dt or not math.isclose(
+                second.evaluation_time - first.evaluation_time,
+                first.step_dt,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            ):
+                raise ValueError("controlled Gate RK stage timing is inconsistent")
+            if second.evaluation_time <= self.event_time + 1.0e-12:
+                if first.actual_opening != 0.0 or second.actual_opening != 0.0:
+                    raise ValueError("Gate opening was backfilled before its event")
+                if math.isclose(
+                    second.evaluation_time,
+                    self.event_time,
+                    rel_tol=0.0,
+                    abs_tol=1.0e-12,
+                ):
+                    event_step_found = True
+            elif first.evaluation_time >= self.event_time - 1.0e-12:
+                if (
+                    first.actual_opening != self.target_opening
+                    or second.actual_opening != self.target_opening
+                ):
+                    raise ValueError("Gate target was not applied after its event")
+            else:
+                raise ValueError("controlled Gate step straddles an unaligned event")
+            total += 0.5 * first.step_dt * (first.flow + second.flow)
+
+        if not event_step_found:
+            raise ValueError("controlled Gate evidence has no accepted event step")
+        if any(
+            not math.isclose(
+                right.evaluation_time,
+                left.evaluation_time,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            for left, right in zip(
+                self.stage_evaluations[1::2],
+                self.stage_evaluations[2::2],
+            )
+        ):
+            raise ValueError("controlled Gate accepted steps must share boundary time")
+
+        for item in self.stage_evaluations:
+            expected_left = (
+                item.flow * item.flow / item.upstream_area
+                + 9.81 * item.upstream_pressure_moment
+            )
+            expected_right = (
+                item.flow * item.flow / item.downstream_area
+                + 9.81 * item.downstream_pressure_moment
+            )
+            scale = max(abs(expected_left), abs(expected_right), 1.0)
+            if not math.isclose(
+                item.momentum_flux_left,
+                expected_left,
+                rel_tol=1.0e-10,
+                abs_tol=1.0e-12 * scale,
+            ) or not math.isclose(
+                item.momentum_flux_right,
+                expected_right,
+                rel_tol=1.0e-10,
+                abs_tol=1.0e-12 * scale,
+            ):
+                raise ValueError("controlled Gate momentum flux is inconsistent")
+            if item.regime == "closed_barrier_completed_interface":
+                closed_rows.append(item)
+                expected_loss = max(item.upstream_stage - item.downstream_stage, 0.0)
+                if (
+                    item.actual_opening != 0.0
+                    or item.flow != 0.0
+                    or item.iterations != 0
+                    or item.energy_residual != 0.0
+                    or not math.isclose(
+                        item.head_loss,
+                        expected_loss,
+                        rel_tol=0.0,
+                        abs_tol=1.0e-12,
+                    )
+                ):
+                    raise ValueError("closed Gate stage evidence is inconsistent")
+                continue
+
+            open_rows.append(item)
+            if item.actual_opening != self.target_opening or item.flow <= 0.0:
+                raise ValueError("open Gate stage command/flow is inconsistent")
+            if item.iterations <= 0 or min(
+                item.upstream_stage, item.downstream_stage
+            ) <= self.sill_elevation + self.target_opening:
+                raise ValueError("open Gate stage is not submerged/converged")
+            opening_area = self.width * self.target_opening
+            expected_loss = item.flow * item.flow / (
+                2.0
+                * 9.81
+                * (self.discharge_coefficient * opening_area) ** 2
+            )
+            expected_residual = (
+                item.upstream_stage
+                + item.flow * item.flow / (2.0 * 9.81 * item.upstream_area**2)
+                - item.downstream_stage
+                - item.flow * item.flow / (2.0 * 9.81 * item.downstream_area**2)
+                - expected_loss
+            )
+            if not math.isclose(
+                item.head_loss,
+                expected_loss,
+                rel_tol=1.0e-10,
+                abs_tol=1.0e-12,
+            ) or not math.isclose(
+                item.energy_residual,
+                expected_residual,
+                rel_tol=0.0,
+                abs_tol=max(self.equation_tolerance, 1.0e-12),
+            ):
+                raise ValueError("open Gate energy closure is inconsistent")
+            upstream_froude = item.flow / item.upstream_area / math.sqrt(
+                9.81 * item.upstream_area / item.upstream_top_width
+            )
+            downstream_froude = item.flow / item.downstream_area / math.sqrt(
+                9.81 * item.downstream_area / item.downstream_top_width
+            )
+            if max(upstream_froude, downstream_froude) >= 1.0:
+                raise ValueError("open Gate stage is not subcritical")
+
+        if not closed_rows or not open_rows:
+            raise ValueError("controlled Gate evidence requires closed and open stages")
+        scale = max(abs(total), 1.0)
+        if not math.isclose(
+            self.total_transfer_volume,
+            total,
+            rel_tol=1.0e-10,
+            abs_tol=1.0e-12 * scale,
+        ):
+            raise ValueError("controlled Gate transfer volume is inconsistent")
+        maximum_residual = max(abs(item.energy_residual) for item in open_rows)
+        if not math.isclose(
+            self.maximum_absolute_energy_residual,
+            maximum_residual,
+            rel_tol=1.0e-10,
+            abs_tol=1.0e-14,
+        ) or maximum_residual > self.equation_tolerance:
+            raise ValueError("controlled Gate maximum energy residual is inconsistent")
+        maximum_iterations = max(item.iterations for item in open_rows)
+        if (
+            self.maximum_iterations != maximum_iterations
+            or maximum_iterations > self.maximum_allowed_iterations
+        ):
+            raise ValueError("controlled Gate maximum iterations is inconsistent")
+        return self
+
+
 class MvpPumpSeries(StrictResultModel):
     """Store the accepted actual Pump state and external flow at output times."""
 
@@ -508,6 +748,7 @@ class MvpResultProvenance(StrictResultModel):
         "v4-lite-3",
         "v4-lite-4",
         "v4-lite-5",
+        "v4-lite-6",
     ]
     solver_policy_hash: Sha256 | None = None
 
@@ -545,6 +786,9 @@ class MvpHydraulicResult(StrictResultModel):
     gate_coupling_evidence: tuple[MvpGateCouplingEvidence, ...] = Field(
         default=(), max_length=1
     )
+    controlled_gate_coupling_evidence: tuple[
+        MvpControlledGateCouplingEvidence, ...
+    ] = Field(default=(), max_length=1)
     water_balance: MvpWaterBalance
     diagnostics: MvpDiagnostics
     provenance: MvpResultProvenance
@@ -572,11 +816,15 @@ class MvpHydraulicResult(StrictResultModel):
             for item in self.control_events
         ):
             raise ValueError("control event time lies outside the result interval")
-        expects_bracket_evidence = (
-            self.provenance.validation_policy_version == "v4-lite-4"
-        )
+        expects_bracket_evidence = self.provenance.validation_policy_version in {
+            "v4-lite-4",
+            "v4-lite-6",
+        }
         expects_gate_coupling = (
             self.provenance.validation_policy_version == "v4-lite-5"
+        )
+        expects_controlled_gate_coupling = (
+            self.provenance.validation_policy_version == "v4-lite-6"
         )
         if expects_gate_coupling:
             if len(self.gate_coupling_evidence) != 1 or len(self.gates) != 1:
@@ -587,6 +835,32 @@ class MvpHydraulicResult(StrictResultModel):
                 raise ValueError("Gate coupling evidence references an unknown Gate")
         elif self.gate_coupling_evidence:
             raise ValueError("pre-v5 result must not add Gate coupling evidence")
+        if expects_controlled_gate_coupling:
+            if (
+                len(self.controlled_gate_coupling_evidence) != 1
+                or len(self.gates) != 1
+                or self.pumps
+            ):
+                raise ValueError(
+                    "v4-lite-6 requires one controlled Gate coupling evidence object"
+                )
+            evidence = self.controlled_gate_coupling_evidence[0]
+            if evidence.gate_id != self.gates[0].gate_id:
+                raise ValueError("controlled Gate evidence references an unknown Gate")
+            matching_events = tuple(
+                item
+                for item in self.control_events
+                if item.structure_type == "gate" and item.structure_id == evidence.gate_id
+            )
+            if len(matching_events) != 1 or not math.isclose(
+                matching_events[0].time,
+                evidence.event_time,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            ):
+                raise ValueError("controlled Gate evidence does not match its event")
+        elif self.controlled_gate_coupling_evidence:
+            raise ValueError("pre-v6 result must not add controlled Gate evidence")
         for event in self.control_events:
             if expects_bracket_evidence and not event.has_bracket_evidence:
                 raise ValueError("v4-lite-4 control events require bracket evidence")
@@ -659,6 +933,15 @@ class MvpHydraulicResult(StrictResultModel):
                 raise ValueError("Pump status changes without a control event")
         return self
 
+    @model_serializer(mode="wrap")
+    def serialize_controlled_gate_evidence(self, handler: Any) -> dict[str, Any]:
+        """Keep every pre-v6 wire shape free of the new combination field."""
+
+        payload = handler(self)
+        if not self.controlled_gate_coupling_evidence:
+            payload.pop("controlled_gate_coupling_evidence", None)
+        return payload
+
     def to_dict(self) -> dict[str, Any]:
         """Return JSON while preserving the pre-control fixed-result shape."""
 
@@ -667,6 +950,8 @@ class MvpHydraulicResult(StrictResultModel):
             payload.pop("control_events")
         if not self.gate_coupling_evidence:
             payload.pop("gate_coupling_evidence")
+        if not self.controlled_gate_coupling_evidence:
+            payload.pop("controlled_gate_coupling_evidence", None)
         if self.provenance.solver_policy_hash is None:
             payload["provenance"].pop("solver_policy_hash", None)
         return payload

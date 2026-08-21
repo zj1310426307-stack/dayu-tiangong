@@ -1,7 +1,7 @@
 # HYDRO-MODEL-02-C 验证报告
 
-- 日期：2026-08-20
-- 范围：C1 moving-energy + C2a bracketed crossing + C2b 固定 Gate completed-interface
+- 日期：2026-08-21
+- 范围：C1 moving-energy + C2a bracketed crossing + C2b 固定 Gate completed-interface + C2c 组合门
 - 结论：限定子集 `PASS`；完整科学/生产 `NO-GO`
 
 ## 1. 可复现命令
@@ -15,8 +15,8 @@ cd backend
 
 ## 2. 结果
 
-- MODEL-02 定向：`244 passed`。
-- 全仓聚合：`552 passed, 71 skipped, 0 failed`。
+- MODEL-02 定向：`266 passed`。
+- 全仓聚合：`574 passed, 71 skipped, 0 failed`。
 - 71 条 skip 均为 PostGIS/GDAL/QGIS 等显式外部环境门，未计入通过数。
 - `py_compile` 通过；`git diff --check` 无 whitespace error，仅 Windows LF/CRLF 提示。
 
@@ -67,10 +67,24 @@ v4-lite-4 冻结案例的 Gate/Pump 同时监测 Section 1：
 
 反例覆盖：未淹没、倒流、无正根、超临界、迭代不收敛、Pump/摩阻混入、非固定控制、缺 sill、缺策略字段、伪造反力或缺失耦合证据。旧 Gate 公式、旧诊断、v1–v4 冻结哈希与结果形状继续通过。
 
-## 6. 尚未通过
+## 6. C2c 组合证据
+
+冻结案例为单 Gate、关闭初态、`target_opening=0.5m`、`width=4m`、`sill=9m`、零摩阻、平床同断面、特征边界，阈值由监测 Section 水位上升跨越：
+
+- 事件右括端：`0.0078125s`；接受步 `5`，RK stage 证据 `10` 条，数值 retry `0`。
+- 事件步的两个 RK stage 均为 `actual_opening=0`、`Q_gate=0`；目标开度没有前向回填。
+- 下一接受子区间才以 `actual_opening=0.5m` 进入总能头孔流求解。
+- Gate 内部转输体积：`0.18963193173761772m³`，由实际 stage 流量独立积分复算一致。
+- 最大绝对能头残差：`8.926485462260048e-11m < 1e-10m`；最大迭代次数 `24`。
+- 水量状态 `pass`；最大 CFL `0.0022352348424436405`；最小接受步 `0.0078125s`。
+- `gate_completed_interface_bracketed_control_v1` 与强 Gate 诊断存在；旧 mass-only 诊断不存在。
+
+双层反例覆盖：API/core 作用域不一致、Gate 两侧初始水位不等、初始非零 Q、动态上游 Q、缺事件、事件步提前开 Gate、下一子区间未启用、关闭 Gate 非零流、开/关 evidence 伪造、转输体积或哈希不一致。
+
+## 7. 尚未通过
 
 - 步内未在端点形成符号变化的双 crossing检测；
-- C2a 阈值事件与 C2b Gate 物理的组合耦合；
+- 连续调节、多次 crossing、步内双 crossing 与多 Gate 同步强耦合；
 - Gate 自由出流、倒流、多个 Gate、非棱柱/湿干结构界面；
 - Pump Q-H/Q-η 工作点、能耗与内部转输；
 - 湿干/溃坝、端点 Profile face、河网节点；

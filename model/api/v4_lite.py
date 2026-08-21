@@ -84,6 +84,7 @@ C2_BRACKETED_EVENT_POLICY = (
     "nearest-section-cell-face-v1",
 )
 C2_GATE_COMPLETED_INTERFACE_POLICY = C2_BRACKETED_EVENT_POLICY
+C2_CONTROLLED_GATE_COMPLETED_INTERFACE_POLICY = C2_BRACKETED_EVENT_POLICY
 _VERSIONED_POLICY_FIELDS = frozenset(
     {
         "geometry_policy",
@@ -662,6 +663,7 @@ class V4LiteProvenance(StrictContractModel):
         "v4-lite-3",
         "v4-lite-4",
         "v4-lite-5",
+        "v4-lite-6",
     ]
 
 
@@ -702,7 +704,8 @@ class V4LiteInput(StrictContractModel):
         section_ids = tuple(section_by_id)
         self._validate_versioned_policy()
         if (
-            self.provenance.validation_policy_version not in {"v4-lite-3", "v4-lite-5"}
+            self.provenance.validation_policy_version
+            not in {"v4-lite-3", "v4-lite-5", "v4-lite-6"}
             and any(section.default_manning_n <= 0.0 for section in self.sections)
         ):
             raise ValueError(
@@ -794,20 +797,36 @@ class V4LiteInput(StrictContractModel):
             ):
                 raise ValueError("v4-lite-4 requires the bracketed event policy")
             return
-        if explicit_event_fields:
+        if version == "v4-lite-5" and explicit_event_fields:
             raise ValueError("v4-lite-5 does not accept event policy fields")
+        if version == "v4-lite-6":
+            missing_event_fields = _EVENT_POLICY_FIELDS - self.solver.model_fields_set
+            if missing_event_fields:
+                raise ValueError(
+                    "v4-lite-6 requires every event policy field explicitly; "
+                    f"missing={sorted(missing_event_fields)}"
+                )
         missing_gate_fields = _GATE_COUPLING_FIELDS - self.solver.model_fields_set
         if missing_gate_fields:
             raise ValueError(
-                "v4-lite-5 requires every Gate coupling field explicitly; "
+                f"{version} requires every Gate coupling field explicitly; "
                 f"missing={sorted(missing_gate_fields)}"
             )
-        if policy != C2_GATE_COMPLETED_INTERFACE_POLICY:
-            raise ValueError("v4-lite-5 policy tuple is not implemented")
+        expected_gate_policy = (
+            C2_CONTROLLED_GATE_COMPLETED_INTERFACE_POLICY
+            if version == "v4-lite-6"
+            else C2_GATE_COMPLETED_INTERFACE_POLICY
+        )
+        if policy != expected_gate_policy:
+            raise ValueError(f"{version} policy tuple is not implemented")
         if self.solver.gate_coupling_policy != (
             "submerged-orifice-energy-momentum-v1"
         ):
-            raise ValueError("v4-lite-5 requires completed-interface Gate coupling")
+            raise ValueError(f"{version} requires completed-interface Gate coupling")
+        if version == "v4-lite-6" and self.solver.structure_event_policy != (
+            "bracketed-conservative-replay-right-end-v1"
+        ):
+            raise ValueError("v4-lite-6 requires the bracketed event policy")
 
     def _validate_section_geometry_policy(self) -> None:
         """Validate exact legacy Profiles or vertically translated linear-bed Profiles."""
@@ -1356,23 +1375,25 @@ class V4LiteInput(StrictContractModel):
             for structure in (*self.structures.gates, *self.structures.pumps)
         )
         version = self.provenance.validation_policy_version
-        if version != "v4-lite-4":
+        if version not in {"v4-lite-4", "v4-lite-6"}:
             if any(
                 isinstance(control, BracketedOneShotStageAboveControlInput)
                 for control in controls
             ):
                 raise ValueError(
                     "bracketed threshold control requires validation_policy_version "
-                    "v4-lite-4"
+                    "v4-lite-4 or v4-lite-6"
                 )
             return
         if not controls:
-            raise ValueError("v4-lite-4 requires at least one controlled structure")
+            raise ValueError(f"{version} requires at least one controlled structure")
         if any(
             not isinstance(control, BracketedOneShotStageAboveControlInput)
             for control in controls
         ):
-            raise ValueError("v4-lite-4 requires every structure to use bracketed control")
+            raise ValueError(
+                f"{version} requires every structure to use bracketed control"
+            )
         if self.solver.event_time_tolerance_seconds < (
             self.solver.minimum_time_step_seconds
         ):
@@ -1394,14 +1415,14 @@ class V4LiteInput(StrictContractModel):
         for gate in self.structures.gates:
             control = gate.control
             if not isinstance(control, BracketedOneShotStageAboveControlInput):
-                raise ValueError("v4-lite-4 Gate control must be bracketed")
+                raise ValueError(f"{version} Gate control must be bracketed")
             initial_stage = stage_by_section[gate.interface.upstream_section_id]
             if initial_stage >= control.threshold_water_level_m:
                 raise ValueError("bracketed Gate initial stage must be below threshold")
         for pump in self.structures.pumps:
             control = pump.control
             if not isinstance(control, BracketedOneShotStageAboveControlInput):
-                raise ValueError("v4-lite-4 Pump control must be bracketed")
+                raise ValueError(f"{version} Pump control must be bracketed")
             initial_stage = stage_by_section[pump.section_id]
             if initial_stage >= control.threshold_water_level_m:
                 raise ValueError("bracketed Pump initial stage must be below threshold")
@@ -1410,66 +1431,95 @@ class V4LiteInput(StrictContractModel):
         self,
         section_by_id: dict[int, V4LiteSection],
     ) -> None:
-        """Bind v4-lite-5 to the restricted fixed submerged Gate experiment."""
+        """Bind v5/v6 to fixed or bracketed restricted submerged Gate experiments."""
 
         version = self.provenance.validation_policy_version
         declared_sills = tuple(
             "sill_elevation_m" in gate.model_fields_set
             for gate in self.structures.gates
         )
-        if version != "v4-lite-5":
+        if version not in {"v4-lite-5", "v4-lite-6"}:
             if any(declared_sills):
                 raise ValueError("pre-v5 Gate must not declare sill_elevation_m")
             return
         if len(self.structures.gates) != 1 or self.structures.pumps:
-            raise ValueError("v4-lite-5 requires exactly one Gate and no Pump")
+            raise ValueError(f"{version} requires exactly one Gate and no Pump")
         gate = self.structures.gates[0]
-        if not isinstance(gate.control, FixedStructureControlInput):
+        if version == "v4-lite-5" and not isinstance(
+            gate.control, FixedStructureControlInput
+        ):
             raise ValueError("v4-lite-5 requires fixed Gate control")
+        if version == "v4-lite-6" and not isinstance(
+            gate.control, BracketedOneShotStageAboveControlInput
+        ):
+            raise ValueError("v4-lite-6 requires bracketed Gate control")
         if not declared_sills[0] or gate.sill_elevation_m is None:
-            raise ValueError("v4-lite-5 requires explicit sill_elevation_m")
+            raise ValueError(f"{version} requires explicit sill_elevation_m")
         if self.solver.geometry_policy != "absolute-prismatic-v1":
-            raise ValueError("v4-lite-5 requires absolute-prismatic geometry")
+            raise ValueError(f"{version} requires absolute-prismatic geometry")
         if self.solver.geometry_source != "hydrostatic-reconstruction-v1":
-            raise ValueError("v4-lite-5 requires hydrostatic reconstruction")
+            raise ValueError(f"{version} requires hydrostatic reconstruction")
         if self.solver.equilibrium_policy != "standard-v1":
-            raise ValueError("v4-lite-5 requires standard equilibrium")
+            raise ValueError(f"{version} requires standard equilibrium")
         if self.solver.boundary_closure != "subcritical-characteristic-v1":
-            raise ValueError("v4-lite-5 requires characteristic boundaries")
+            raise ValueError(f"{version} requires characteristic boundaries")
         if any(section.default_manning_n != 0.0 for section in self.sections):
-            raise ValueError("v4-lite-5 requires zero Manning friction")
+            raise ValueError(f"{version} requires zero Manning friction")
         if not isinstance(self.initial_state, BySectionInitialState):
-            raise ValueError("v4-lite-5 requires by-section initial_state")
+            raise ValueError(f"{version} requires by-section initial_state")
         value_by_id = {
             value.section_id: value for value in self.initial_state.values
         }
         if any(value.discharge_m3_s != 0.0 for value in value_by_id.values()):
-            raise ValueError("v4-lite-5 requires zero initial discharge")
-        if any(value != 0.0 for value in self.boundary.upstream.flow_m3_s):
+            raise ValueError(f"{version} requires zero initial discharge")
+        upstream_flows = tuple(self.boundary.upstream.flow_m3_s)
+        if version == "v4-lite-5" and any(value != 0.0 for value in upstream_flows):
             raise ValueError("v4-lite-5 requires a constant zero upstream boundary")
+        if version == "v4-lite-6":
+            inflow = _require_scope_constant(
+                upstream_flows,
+                "upstream boundary discharge",
+                "v4-lite-6",
+            )
+            if inflow <= 0.0:
+                raise ValueError("v4-lite-6 requires positive constant upstream inflow")
         final_stage = value_by_id[self.sections[-1].section_id].water_level_m
         if any(
             not _absolute_stage_close(value, final_stage)
             for value in self.boundary.downstream.water_level_m
         ):
             raise ValueError(
-                "v4-lite-5 downstream boundary must match the final initial stage"
+                f"{version} downstream boundary must match the final initial stage"
             )
         upstream_value = value_by_id[gate.interface.upstream_section_id]
         downstream_value = value_by_id[gate.interface.downstream_section_id]
-        if upstream_value.water_level_m <= downstream_value.water_level_m:
+        if (
+            version == "v4-lite-5"
+            and upstream_value.water_level_m <= downstream_value.water_level_m
+        ):
             raise ValueError("v4-lite-5 Gate requires positive forward head")
+        if version == "v4-lite-6" and not _absolute_stage_close(
+            upstream_value.water_level_m,
+            downstream_value.water_level_m,
+        ):
+            raise ValueError("v4-lite-6 Gate requires an initially level closed interface")
         upstream_section = section_by_id[gate.interface.upstream_section_id]
         downstream_section = section_by_id[gate.interface.downstream_section_id]
         sill = float(gate.sill_elevation_m)
         if sill < upstream_section.minimum_stage_m or sill < downstream_section.minimum_stage_m:
-            raise ValueError("v4-lite-5 Gate sill lies below the Profile minimum stage")
+            raise ValueError(f"{version} Gate sill lies below the Profile minimum stage")
         gate_top = sill + gate.opening_m
-        if min(
-            upstream_value.water_level_m,
-            downstream_value.water_level_m,
-        ) <= gate_top:
-            raise ValueError("v4-lite-5 Gate opening must be submerged initially")
+        submergence_levels = [downstream_value.water_level_m]
+        if version == "v4-lite-5":
+            submergence_levels.append(upstream_value.water_level_m)
+        else:
+            control = gate.control
+            assert isinstance(control, BracketedOneShotStageAboveControlInput)
+            submergence_levels.append(control.threshold_water_level_m)
+        if min(submergence_levels) <= gate_top:
+            if version == "v4-lite-5":
+                raise ValueError("v4-lite-5 Gate opening must be submerged initially")
+            raise ValueError("v4-lite-6 Gate target opening must remain submerged")
 
     @staticmethod
     def _validate_control_threshold(

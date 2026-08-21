@@ -4,6 +4,8 @@ from model.core.types import EngineResult, SectionSeries
 from model.result.mvp import (
     HYDRAULIC_RESULT_MVP,
     MvpControlEvent,
+    MvpControlledGateCouplingEvidence,
+    MvpControlledGateStageEvidence,
     MvpDiagnostics,
     MvpGateCouplingEvidence,
     MvpGateSeries,
@@ -19,6 +21,8 @@ __all__ = [
     "EngineResult",
     "HYDRAULIC_RESULT_MVP",
     "MvpControlEvent",
+    "MvpControlledGateCouplingEvidence",
+    "MvpControlledGateStageEvidence",
     "MvpDiagnostics",
     "MvpGateCouplingEvidence",
     "MvpGateSeries",
