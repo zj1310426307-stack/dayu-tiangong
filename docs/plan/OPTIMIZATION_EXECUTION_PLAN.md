@@ -9,7 +9,7 @@
 本轮不重写业务体系，完成两个独立闭环：
 
 1. `FILE-FOUNDATION-01`：所有 HTTP 文件入口统一有界读取，落盘模块使用同一存储根与原子写入，代理限额和容器模板与应用合同一致；
-2. `TASK-VERSION-BOUNDARY-01`：水动力任务、优化任务、调度运行由后端按 Dataset Version 过滤，生成客户端与前端工作区同步。
+2. `TASK-VERSION-BOUNDARY-01`：水动力任务、优化任务、调度运行的监控列表由后端按 Dataset Version 过滤，生成客户端与前端工作区同步；该切片不构成权限隔离。
 
 ## 2. 统一架构约束
 
@@ -34,7 +34,7 @@
 - imports、conversions、ai-reports 默认根统一派生，保留原路径和测试 monkeypatch 兼容；
 - Nginx API 入口允许最大 100 MB 业务文件及 multipart 开销；
 - backend 镜像复制两个水动力模板；
-- `.env.example` 与 Compose 显式传递存储根。
+- `.env.example` 区分本地 `DAYU_STORAGE_ROOT` 和 Compose 宿主机 `DAYU_STORAGE_HOST_PATH`；容器内根固定并由 backend/worker 共用。
 
 验收：
 
@@ -60,6 +60,7 @@
 兼容策略：
 
 - 查询参数只增加不删除；旧调用不传时仍返回原全量结果；
+- 生成客户端保留旧 `list*Tasks(baseUrl)` 调用，同时支持新的查询对象；
 - 不改变任务、结果和计划的数据库字段或状态语义；
 - 不改变 v1/v2/v3/v4-lite 模型输入与结果语义；
 - 不做数据库迁移。
@@ -77,6 +78,7 @@
 - OIDC/JWT provider、登录页、RBAC scope 与 tenant/project 模型；
 - 将客户端 actor 字段改为可信 Principal；
 - 文件 metadata 表、对象存储、杀毒、配额、保留和清理 worker；
+- 任务详情、结果、取消、重试和候选等 ID 接口的版本/权限授权；
 - 统一任务 outbox/投递协调器；
 - 旧 GIS 路由退役；
 - 完整 CI、生产部署、备份恢复和高可用；
@@ -110,4 +112,3 @@
 - `DAYU_STORAGE_ROOT` 未设置时继续使用历史 `backend/storage`；
 - 删除新增查询参数或调用时，服务端旧全量 list 行为仍可工作；
 - Nginx/Docker 配置可独立回滚，不影响数据库数据。
-

@@ -1,7 +1,7 @@
 # 大禹·天工当前架构
 
-更新日期：2026-08-18
-架构基线：GIS-RESET-01
+更新日期：2026-08-24
+架构基线：GIS-RESET-01 + CONTINUOUS-OPT-01
 
 ## 1. 总体结构
 
@@ -111,14 +111,25 @@ Dataset Version 仍是 GIS、模型、调度和 AI 的共同版本身份。静�
 
 GIS 晋级只保证空间核心数据的治理与发布，不伪造模型参数、边界条件或率定状态。模型任务只能选择满足其独立完整性条件的版本。
 
-## 9. 当前限制
+水动力任务经 Simulation Case、调度运行经 Dispatch Plan、优化任务经自身字段获得 Dataset Version 身份。监控列表可在数据库查询层按版本过滤，前端必须显式传当前版本；不传参数仍保留历史全量合同。该查询边界不是授权，详情、结果和 mutation 仍需未来 Principal/RBAC 门。
+
+## 9. 文件基础边界
+
+`app.files` 是当前唯一的 HTTP 文件基础原语：四类上传执行 `limit + 1` 有界读取；imports、conversions、ai-reports 派生自同一根；受控路径拒绝逃逸；文件在同目录临时路径完成后原子替换。Compose 将 backend 和 worker 的容器根固定为 `/app/backend/storage`，宿主路径独立配置。
+
+该模块不拥有业务解析、数据库事务、文件授权或完整生命周期。文件登记、tenant/project、可信操作者、配额、保留、内容扫描、成功产物清理、对象存储、备份恢复和多节点共享仍未完成。水动力原件 BLOB 与知识原件也未被强制迁移。
+
+## 10. 当前限制
 
 - 现有 9 个活动 GeoServer 图层均来自 `publish`，WFS 为 Basic read-only；未导入真实数据的旧参考层保持 inactive。
 - 本阶段没有 Web 编辑、WFS-T、QGIS Server或三维运行时；广东高分辨率影像只通过 Esri 在线瓦片代理加载，NASA 为后备，不在本地复制或离线导出全省影像库。
 - 生产 TLS、密钥托管、统一 IAM、灾备/高可用尚未完成。
 - PLC/SCADA 未接入，仿真和调度输出不得直接下发真实设备。
+- OpenAPI 仍无统一安全 scheme；所有生产 mutation 在真实 IAM/RBAC 接入前保持 `NO-GO`。
+- 任务版本过滤只服务监控查询，不阻止调用者省略参数或按 ID 访问其他对象。
+- 本地文件根与 bind mount 不是 HA/集群文件平台；multipart 解析前的全请求体限制仍待补齐。
 
-## 10. HYDRO-DATA-01 语义层
+## 11. HYDRO-DATA-01 语义层
 
 迁移 `20260818_0019` 以加法方式建立 Network/Node/Branch/BranchVertex/Reach、CrossSection/Profile/Point/Roughness/Processing，并保留 `legacy_river_id` 和 `legacy_cross_section_id` 映射。`hydraulic.gis_river_adapter|gis_cross_section_adapter` 只提供受控读视图；正式拓扑同步投影到现有 `river_node|river_segment|river_connection`，不取代 GIS 核心表。
 

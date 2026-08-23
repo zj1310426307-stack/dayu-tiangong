@@ -17,7 +17,7 @@
 
 | ID | 问题位置与表现 | 根因与影响 | 处理方式 | 兼容/迁移 | 验收 |
 |---|---|---|---|---|---|
-| OPT-P1-001 | 水动力/优化任务与调度运行列表读取全库 | Dataset Version 只在 UI 局部过滤，状态所有权错误 | 增加可选 `dataset_version_id` 并在 SQL 查询层过滤，前端总是传当前版本 | 仅加可选查询参数，无迁移 | 不同版本任务互不可见，旧不传参数调用仍兼容 |
+| OPT-P1-001 | 水动力/优化任务与调度运行列表读取全库 | Dataset Version 只在 UI 局部过滤，状态所有权错误 | 增加可选 `dataset_version_id` 并在 SQL 查询层过滤，前端总是传当前版本 | 仅加可选查询参数，无迁移 | 携带参数的列表不混入其他版本；旧不传参数仍返回全量。该项不是权限隔离 |
 | OPT-P1-002 | imports/conversions/ai-reports 三套硬编码根目录 | 无统一文件平台所有者，部署/备份/配额漂移 | `DAYU_STORAGE_ROOT` + 命名空间 + 原子写入 + 路径边界 | 默认路径保持不变，无迁移 | env override、生存路径、路径逃逸和临时文件测试通过 |
 | OPT-P1-003 | Nginx 默认约 1 MB，而应用合同为 10/20/100 MB | 代理与应用配置未同步；经 UI 的合法大文件失败 | API location 设置略高于最大 multipart 上限；应用保留逐接口精确限额 | 配置兼容性改进 | 代理配置静态门 + 容器实测 10/20/100 MB 边界 |
 | OPT-P1-004 | backend 镜像不含水动力 Excel 模板 | Dockerfile COPY 集不完整 | 只复制受控模板目录 | 无 API/DB 变化 | 容器内两个模板下载为 200 |
@@ -27,6 +27,8 @@
 | OPT-P1-008 | 生成 client 的 operation 模板手工维护，已出现查询类型漂移 | OpenAPI 仅生成 schema，函数仍复制粘贴 | 逐步改为 operation 驱动生成，并增加 required operation/parameter 门 | 生成文件变化，不改服务端字段 | 生成后 `git diff --exit-code`、类型检查通过 |
 | OPT-P1-009 | 旧 GIS 读路由可绕过 published Catalog 状态检查 | 双读链兼容期没有统一门禁 | 旧路由复用 `_public_version` 或仅对授权内部用户开放 | 可能使 draft 读取返回 404/403 | 匿名只能读取 published，Catalog/WMS 正常 |
 | OPT-P1-010 | README 已收敛 GIS，但 DGIS 历史能力仍注册 | 兼容路由未标识生命周期 | 建立 deprecated 清单、调用统计和删除门；禁止新增第二 GIS 链 | 分阶段兼容 | 核心运行只依赖 PostGIS/GeoServer/OpenLayers |
+| OPT-P1-011 | 文件基础层缺登记、授权、配额、保留、内容扫描及成功产物清理 | 当前只完成本地文件原语，不具备完整文件治理 | 建立 Artifact 元数据、root-relative key、事务补偿/outbox、清理 worker 与访问策略 | 需迁移历史 AI 路径和现有文件 | 文件、数据库、权限和删除状态可审计且可恢复 |
+| OPT-P1-012 | multipart 在路由读取前解析；本机直连 backend 可绕过 Nginx 总门 | 缺 ASGI/入口级请求体上限 | 在统一入口增加流式 body limit，并保持逐接口精确限额 | 超限响应可能提前为统一 413 | Content-Length 与 chunked 超限均在解析前拒绝 |
 
 ## P2
 
@@ -48,9 +50,8 @@
 ## 本轮完成标识
 
 - `OPT-P0-004`：本轮实施；
-- `OPT-P1-001`：本轮实施；
-- `OPT-P1-002`：本轮实施基础层，文件登记/配额/保留仍后续；
+- `OPT-P1-001`：本轮完成监控列表查询收口；详情、结果、取消、重试等 ID 接口尚无版本授权；
+- `OPT-P1-002`：本轮完成本地文件基础原语，文件登记/授权/配额/保留仍后续；
 - `OPT-P1-003`：本轮实施配置门，真实容器边界待有 Docker 环境验证；
 - `OPT-P1-004`：本轮实施，容器下载待有 Docker 环境验证；
 - 其余条目保持 backlog，不以计划冒充完成。
-

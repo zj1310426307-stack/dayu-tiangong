@@ -44,8 +44,8 @@ GIS 权威链为 `PostGIS -> publish 只读视图 -> GeoServer -> FastAPI Gatewa
 | 数据库会话 | `backend/app/database/session.py` | 单一 SQLAlchemy Session；API/Worker 复用 |
 | 数据库权限 | `database/bootstrap_app.py`、`database/bootstrap_qgis.py` | 服务账号最小权限较完整；不是用户 RBAC |
 | GIS | `app.gis_catalog`、GeoServer、PostGIS `publish` | 主链已收敛；仍有旧读路由和历史 DGIS 语义 |
-| 文件 | import、converter、AI 各自管理目录 | 根目录、原子写入、保留与清理未统一 |
-| 水动力任务 | `app.model_engine` + `app.worker.lifecycle` | 有 claim/heartbeat/cancel/recovery；列表原为全局 |
+| 文件基础 | `app.files` | 四类 HTTP 上传统一有界读取、本地根、路径约束与原子替换；不是完整文件生命周期 |
+| 水动力任务 | `app.model_engine` + `app.worker.lifecycle` | 有 claim/heartbeat/cancel/recovery；监控列表可按 Dataset Version 过滤 |
 | 调度任务 | `app.dispatch` | 自有双任务投递和补偿语义 |
 | 优化任务 | `app.optimization` | 自有投递、取消和候选状态语义 |
 | 日志 | `app.utils.logging` | 仅 `basicConfig`，无 request/principal/task/file 关联 |
@@ -76,9 +76,9 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 
 初始化链为 database、migrate、seed、QGIS/App bootstrap、GeoServer、Catalog、backend/worker、frontend。审查发现：
 
-- Nginx 未声明上传上限，默认限制与应用的 10/20/100 MB 合同冲突；
-- backend 端口可直接从宿主访问，应用必须自身执行有界读取；
-- backend 镜像未复制 `outputs/HYDRO-DATA-01-20260818`，水动力模板在容器中可能 404；
+- Nginx 已声明 102 MiB 总门，应用仍按 10/20/100 MB 执行精确有界读取；
+- backend 宿主端口已绑定 `127.0.0.1`，本机直连仍可绕过 Nginx，总请求体解析前限额仍需后续补齐；
+- backend 镜像已复制 `outputs/HYDRO-DATA-01-20260818`，但当前环境没有 Docker CLI，容器内下载仍待验证；
 - 当前审查环境没有 Docker CLI，不能把 Compose/镜像/容器验证写成已通过。
 
 ## 7. 已实现能力
@@ -96,16 +96,16 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 - 统一 OIDC/JWT 身份验证、RBAC/scope、可信 actor 派生；
 - 登录、退出、401/403 会话处理和权限导航；
 - tenant/project/owner 数据隔离；
-- 文件元数据、操作者、配额、保留、清理和数据库补偿的完整生命周期；
+- 文件登记、可信操作者、配额、保留、成功产物清理、内容扫描和文件级授权的完整生命周期；
 - request-id、结构化业务事件和安全审计；
 - 默认 CI、前端测试/lint、依赖和镜像安全扫描；
-- Docker、新卷迁移、GeoServer、PostGIS 权限和真实浏览器的本轮运行验证；
+- Docker、新卷迁移、GeoServer 和 PostGIS 多版本真实查询验证；
 - 真实模型率定、生产 TLS/密钥托管、备份恢复和高可用。
 
 ## 9. 重复、历史与冲突模块
 
 - `model_engine`、`dispatch`、`optimization` 各有投递与失败补偿，任务所有权尚未统一。
-- 普通导入、GDAL 转换、AI 报告分别硬编码本地文件目录。
+- 普通导入、GDAL 转换、AI 报告已统一派生本地根；水动力原件 BLOB、知识原件登记和完整生命周期仍未统一。
 - README 宣告 Martin/TiTiler/GeoNode/Cesium 退出核心运行时，但历史 DGIS 路由仍暴露部分旧能力语义；必须按兼容期治理，不能再扩展第二 GIS 链。
 - API client 的 schema 生成与手写 operation 模板混合，存在后端已变更而客户端模板未更新的漂移风险。
 - 历史模型文档中的 `NO-GO` 多为显式科学边界，不是可以静默补齐的普通 TODO。
@@ -113,8 +113,8 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 ## 10. 性能现状
 
 - 前端构建转换 3927 个模块；Ant Design 和 ECharts 各自产生超过 1 MB 的压缩前 chunk，Vite 发出大块警告。
-- 三类任务页面使用不同的 3/4/5 秒轮询，实现和防旧响应策略不一致。
-- 两组上传端点先无界读取完整请求，再在内存中检查 20/100 MB，存在资源耗尽风险。
+- 三类任务页面仍使用不同的 3/4/5 秒轮询，但本轮均增加了切版迟到响应保护。
+- 四类上传路由已统一为 `limit + 1` 读取；ASGI multipart 解析前的全请求体限制仍缺失。
 - 本轮没有真实负载与数据库执行计划数据，不宣称任何性能提升比例。
 
 ## 11. 安全风险
@@ -122,7 +122,7 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 1. 所有写接口匿名可达，GIS review/promote/publish、任务执行/取消/重试和知识上传均无 RBAC。
 2. QGIS Bridge 只因本地存在任意 token 字符串就显示 IAM/OIDC 语义，而后端不验证 Bearer，属于假认证。
 3. 审计身份由客户端填写，可伪造。
-4. 普通导入与 DGIS 转换存在无界读取；backend 直连可绕开反向代理。
+4. 应用级上传读取已有上限；本机直连 backend 仍可绕过代理总门，且 multipart 解析发生在路由读取前。
 5. 旧 GIS 数据读接口未统一经过 published Catalog 门禁。
 6. CORS 和安全响应头仍为开发基线；无速率限制和统一审计日志。
 
@@ -157,4 +157,3 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 
 1. 统一四类上传的有界读取、统一本地存储根与原子写入，协调 Nginx 限额并补齐容器模板；
 2. 水动力、优化、调度任务列表按 Dataset Version 在数据库层过滤，OpenAPI 生成客户端和前端工作区同步。
-
