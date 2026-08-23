@@ -56,6 +56,16 @@ def _area_above_interface(
 
     if state.area <= _EPSILON:
         return 0.0
+    # ``interface_bed`` is selected from one of the two cell beds.  On the
+    # higher side (and on every flat-bed face) reconstruction is the identity,
+    # so avoid repeating geometry inversion and area evaluation at every RK
+    # stage.  Exact equality keeps this as a numerical no-op, not a tolerance-
+    # based change to the frozen hydrostatic reconstruction semantics.
+    if (
+        interface_bed == cell.bed_elevation
+        and cell.bed_elevation == float(cell.geometry.minimum_stage)
+    ):
+        return state.area
     stage = cell.geometry.stage_from_area(state.area)
     if stage <= interface_bed + _EPSILON:
         return 0.0
@@ -65,6 +75,23 @@ def _area_above_interface(
     if not math.isfinite(result):
         raise NumericalStateError("reconstructed area is non-finite")
     return result
+
+
+def _pressure_correction(
+    cell: FiniteVolumeCell,
+    original_area: float,
+    reconstructed_area: float,
+    *,
+    gravity: float,
+) -> float:
+    """Return the bed-step pressure source, skipping an exact identity."""
+
+    if reconstructed_area == original_area:
+        return 0.0
+    return gravity * (
+        pressure_moment_from_area(cell.geometry, original_area)
+        - pressure_moment_from_area(cell.geometry, reconstructed_area)
+    )
 
 
 def hydrostatic_reconstruct(
@@ -97,13 +124,18 @@ def hydrostatic_reconstruct(
     )
     left_star = ConservedVector(left_area, left_discharge)
     right_star = ConservedVector(right_area, right_discharge)
-    left_correction = gravity * (
-        pressure_moment_from_area(left_cell.geometry, left_state.area)
-        - pressure_moment_from_area(left_cell.geometry, left_area)
+
+    left_correction = _pressure_correction(
+        left_cell,
+        left_state.area,
+        left_area,
+        gravity=gravity,
     )
-    right_correction = gravity * (
-        pressure_moment_from_area(right_cell.geometry, right_state.area)
-        - pressure_moment_from_area(right_cell.geometry, right_area)
+    right_correction = _pressure_correction(
+        right_cell,
+        right_state.area,
+        right_area,
+        gravity=gravity,
     )
     return HydrostaticReconstruction(
         left=left_star,

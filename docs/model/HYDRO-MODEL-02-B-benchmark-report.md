@@ -54,3 +54,16 @@
 - Case 002：v4-lite-2 严格参考子集 `PASS`；默认 standard 和通用移动稳态仍 `NO-GO`。
 - 非棱柱 lake-at-rest：严格静水子集 `PASS`；一般移动非棱柱、湿干和结构耦合仍 `NO-GO`。
 - 湿干溃坝、网格收敛、闸泵强耦合、HEC-RAS/MIKE11 和真实率定：`NOT RUN / NO-GO`。
+
+## 6. 2026-08-23 性能 Benchmark
+
+新增可复跑的 `examples/hydraulic/saint-venant-mvp/benchmark_100_sections.py`，冻结以下吞吐 smoke case：
+
+- 单河、100 个表格化 V 形非规则断面；
+- 24 h、HLL、hydrostatic reconstruction、SSP-RK2；
+- 全湿 lake-at-rest，Q=0、上下游完整覆盖且禁止外推；
+- 结果保留全部 6,120 个接受步和 25 个整点输出。
+
+当前机器三个全新进程实测分别为 `41.3694 s`、`36.7450 s`、`18.5833 s`，最坏值仍低于 60 s；maximum CFL `0.7`、minimum dt `9.7288555 s`、retry `0`、归一化水量误差 `0`，任务书 `<60 s` 门在该明确子集内重复 `PASS`。
+
+作为反例，带轻微动态洪峰的 100 断面/24 h 探针仍超过 60 秒，未完成结果不记为通过。因此该性能门只证明静水吞吐下限，不证明一般非恒定流、Gate/Pump 或生产容量。

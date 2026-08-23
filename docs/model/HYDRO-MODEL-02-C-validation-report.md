@@ -1,7 +1,7 @@
 # HYDRO-MODEL-02-C 验证报告
 
-- 日期：2026-08-21
-- 范围：C1 moving-energy + C2a bracketed crossing + C2b 固定 Gate completed-interface + C2c 组合门
+- 日期：2026-08-23
+- 范围：C1 moving-energy + C2a bracketed crossing + C2b/C2c Gate + C3a 基础门 + C3b-J1 Junction
 - 结论：限定子集 `PASS`；完整科学/生产 `NO-GO`
 
 ## 1. 可复现命令
@@ -15,8 +15,10 @@ cd backend
 
 ## 2. 结果
 
-- MODEL-02 定向：`266 passed`。
-- 全仓聚合：`574 passed, 71 skipped, 0 failed`。
+- C3a 定向：`10 passed`。
+- C3b-J1 定向：`9 passed`。
+- MODEL-02 定向：`286 passed`。
+- 全仓聚合：`594 passed, 71 skipped, 0 failed`。
 - 71 条 skip 均为 PostGIS/GDAL/QGIS 等显式外部环境门，未计入通过数。
 - `py_compile` 通过；`git diff --check` 无 whitespace error，仅 Windows LF/CRLF 提示。
 
@@ -81,11 +83,39 @@ v4-lite-4 冻结案例的 Gate/Pump 同时监测 Section 1：
 
 双层反例覆盖：API/core 作用域不一致、Gate 两侧初始水位不等、初始非零 Q、动态上游 Q、缺事件、事件步提前开 Gate、下一子区间未启用、关闭 Gate 非零流、开/关 evidence 伪造、转输体积或哈希不一致。
 
-## 7. 尚未通过
+## 7. C3a 基础门证据
+
+- 1-in/2-out 的三 Branch DAG 可确定性生成 incidence 和 `B0/B1/B2` 拓扑顺序；有向环、断开分量、重复 Branch/cell 身份关闭失败。
+- 状态映射必须精确覆盖全部 Branch、cell 数量匹配且处于同一接受时刻；缺失或陈旧状态关闭失败。
+- Junction 以 `10=6+4m³/s` 和共同 `10m` 水位通过质量/水位预闭合；证据仍固定 `strong_coupling_ready=false`。流量残差、水位偏差、错误端点方向和伪造 pass 标志均被检测。
+- 两个 Manning zone 将三个 cell 解析为 `0.02/0.04/0.04`；现有半隐式摩阻对高 n cell 产生更强阻尼。分区缺口和切穿 cell 的边界关闭失败。
+- Gate 只能绑定同一 Branch 的有序相邻 cell；内部 Pump 必须同时解析 source 与 target cell，外排 Pump 禁止携带网络目标。
+- Gate/Pump 强闭合 DTO 分别通过质量、能头/扬程与损失、左右动量和反力自洽案例；任一残差或 Gate 伪造正扬程都会拒绝。
+- `git diff --check` 无 whitespace error；当前环境未安装 Ruff，未把未运行的 Ruff 写成通过。
+
+## 8. C3b-J1 特征相容证据
+
+独立矩形扰动案例：Branch 宽度 `12/8/6m`，内部水位 `2.2/1.8/1.6m`，内部 Q=`12/5/4m³/s`。
+
+- 独立解析矩形参考与生产求解共同水位均为 `1.9331359918m`；
+- 完成 trace 为 `24.0392878099 = 10.0907737832 + 13.9485140260m³/s`；
+- 归一化质量残差 `1.2348e-11`，绝对残差 `5.9368e-10m³/s`；
+- 最终水位括区间 `6.4028e-11m`，36 次二分；
+- 最大 Froude `0.27616`，三支不变量归一化残差为 0；
+- 局部质量残差导数 `dRmass/dH=-113.2241<0`，证明接受根处局部单调；
+- compatible 矩形状态精确回到 `H=2m`、`10=4+6m³/s`；三种不同表格断面精确回到共同 `H=2.2m`；
+- `1e-4/1e-6/1e-8m` 三档根容差均满足各自 bracket 与质量门。
+
+反例覆盖：错误 2-in/1-out 拓扑、反向/超临界状态、非零 endpoint Manning、无共同湿水位域、根超出 Profile 岸顶、迭代上限耗尽，以及伪造 bracket、质量、局部单调或强耦合标签。
+
+## 9. 尚未通过
 
 - 步内未在端点形成符号变化的双 crossing检测；
 - 连续调节、多次 crossing、步内双 crossing 与多 Gate 同步强耦合；
 - Gate 自由出流、倒流、多个 Gate、非棱柱/湿干结构界面；
 - Pump Q-H/Q-η 工作点、能耗与内部转输；
-- 湿干/溃坝、端点 Profile face、河网节点；
+- Junction trace 接入 Branch SSP-RK2、同步 CFL/retry、网络边界分配、水量账与河网结果；
+- Branch 夹角与节点矢量动量、2-in/1-out、一般 N-in/M-out、环网和结构节点；
+- 分区糙率公开 v4 输入、分区 conveyance、滩槽复合断面与率定；
+- 湿干/溃坝、端点 Profile face；
 - v4 HTTP/Worker/持久化、外部模型对比和真实工程率定。

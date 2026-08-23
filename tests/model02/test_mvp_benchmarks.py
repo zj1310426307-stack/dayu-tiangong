@@ -466,6 +466,7 @@ def test_case002_residual_reference_does_not_freeze_a_perturbation(
     )
     assert exact.state.area == pytest.approx(reference.area, abs=1.0e-14)
     assert exact.state.discharge == pytest.approx(reference.discharge, abs=1.0e-14)
+    assert exact.friction_evidence == ()
 
     perturbed_area = list(reference.area)
     perturbed_area[len(perturbed_area) // 2] *= 1.001
@@ -492,6 +493,7 @@ def test_case002_residual_reference_does_not_freeze_a_perturbation(
         abs(after - before)
         for after, before in zip(evolved.state.discharge, perturbation.discharge)
     ) > 1.0e-8
+    assert evolved.friction_evidence == ()
 
 
 def test_case002_uniform_manning_opt_in_rejects_non_equilibrium_initial_state(

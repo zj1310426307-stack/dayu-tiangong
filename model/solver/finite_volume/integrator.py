@@ -13,7 +13,11 @@ from model.solver.finite_volume.flux import (
     maximum_signal_speed,
     physical_flux,
 )
-from model.solver.finite_volume.friction import apply_manning_friction
+from model.solver.finite_volume.friction import (
+    ManningCellStageEvidence,
+    apply_manning_friction,
+    apply_manning_friction_with_evidence,
+)
 from model.solver.finite_volume.geometry_source import (
     geometry_pressure_source,
     hydraulic_path_interface_flux,
@@ -67,10 +71,17 @@ class StageBudget:
 
 @dataclass(frozen=True)
 class EulerStageResult:
-    """Return one positivity-checked Euler state and its stage budget."""
+    """Return one Euler state, mass budget, and directly applied source evidence.
+
+    Residual-equilibrium correction subtracts a second raw operator, so no
+    single-cell Manning tuple can truthfully describe its net corrected state.
+    That opt-in path therefore returns an empty tuple instead of relabelling
+    the uncorrected operator evidence as an accepted source update.
+    """
 
     state: HydraulicState
     budget: StageBudget
+    friction_evidence: tuple[ManningCellStageEvidence, ...]
 
 
 @dataclass(frozen=True)
@@ -211,6 +222,7 @@ def _forward_euler_stage_raw(
         "hydrostatic-reconstruction-v1",
         "hydraulic-function-linear-face-v1",
     ] = "hydrostatic-reconstruction-v1",
+    capture_friction_evidence: bool = False,
 ) -> EulerStageResult:
     """Evaluate the uncorrected flux/source map for one Euler stage.
 
@@ -222,6 +234,8 @@ def _forward_euler_stage_raw(
 
     if not math.isfinite(dt) or dt <= 0.0:
         raise ValueError("Euler stage dt must be finite and positive")
+    if not isinstance(capture_friction_evidence, bool):
+        raise TypeError("capture_friction_evidence must be boolean")
     if len(state.area) != len(mesh.cells):
         raise NumericalStateError("state and mesh cell counts differ")
     conservative = tuple(
@@ -397,12 +411,21 @@ def _forward_euler_stage_raw(
             raise NumericalStateError(f"cell {index} produced negative area")
         next_area.append(area)
         advective_discharge.append(discharge)
-    friction_discharge = apply_manning_friction(
-        mesh=mesh,
-        area=next_area,
-        discharge=advective_discharge,
-        dt=dt,
-    )
+    if capture_friction_evidence:
+        friction_discharge, friction_evidence = apply_manning_friction_with_evidence(
+            mesh=mesh,
+            area=next_area,
+            discharge=advective_discharge,
+            dt=dt,
+        )
+    else:
+        friction_discharge = apply_manning_friction(
+            mesh=mesh,
+            area=next_area,
+            discharge=advective_discharge,
+            dt=dt,
+        )
+        friction_evidence = ()
     try:
         next_state = HydraulicState.from_conserved(
             mesh=mesh,
@@ -425,6 +448,7 @@ def _forward_euler_stage_raw(
             gate_flows=tuple(gate_flows),
             pump_flows=tuple(pump_flows),
         ),
+        friction_evidence=friction_evidence,
     )
 
 
@@ -443,6 +467,7 @@ def forward_euler_stage(
         "hydrostatic-reconstruction-v1",
         "hydraulic-function-linear-face-v1",
     ] = "hydrostatic-reconstruction-v1",
+    capture_friction_evidence: bool = False,
 ) -> EulerStageResult:
     """Evaluate one Euler stage, optionally in residual-equilibrium form.
 
@@ -469,6 +494,7 @@ def forward_euler_stage(
         pumps=pumps,
         scheme=scheme,
         geometry_source_mode=geometry_source_mode,
+        capture_friction_evidence=capture_friction_evidence,
     )
     if equilibrium_reference is None:
         return raw
@@ -496,6 +522,7 @@ def forward_euler_stage(
             boundaries=boundaries,
             scheme=scheme,
             geometry_source_mode=geometry_source_mode,
+            capture_friction_evidence=False,
         )
         corrected_area = tuple(
             current
@@ -531,7 +558,11 @@ def forward_euler_stage(
         )
     except ValueError as exc:
         raise NumericalStateError(str(exc)) from exc
-    return EulerStageResult(state=corrected, budget=raw.budget)
+    return EulerStageResult(
+        state=corrected,
+        budget=raw.budget,
+        friction_evidence=(),
+    )
 
 
 def ssp_rk2_step(

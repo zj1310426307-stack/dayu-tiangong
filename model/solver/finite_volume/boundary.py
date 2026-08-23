@@ -40,6 +40,34 @@ _BOUNDARY_ALGORITHM_IDS = {
     SUBCRITICAL_CHARACTERISTIC_V1: SUBCRITICAL_CHARACTERISTIC_ALGORITHM_V1,
 }
 
+
+@dataclass(frozen=True)
+class CharacteristicProperties:
+    """Expose one verified wet, non-reverse, strictly subcritical state."""
+
+    velocity: float
+    celerity: float
+    potential: float
+    froude: float
+
+    def __post_init__(self) -> None:
+        """Keep public characteristic evidence finite and self-consistent."""
+
+        values = (self.velocity, self.celerity, self.potential, self.froude)
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("characteristic properties must be finite")
+        if self.velocity < 0.0 or self.celerity <= 0.0 or self.potential <= 0.0:
+            raise ValueError("characteristic properties require wet non-reverse flow")
+        if self.froude < 0.0 or self.froude >= 1.0:
+            raise ValueError("characteristic properties must be strictly subcritical")
+        if not math.isclose(
+            self.froude,
+            abs(self.velocity) / self.celerity,
+            rel_tol=1.0e-12,
+            abs_tol=1.0e-12,
+        ):
+            raise ValueError("characteristic Froude number is inconsistent")
+
 # Eight-point Gauss-Legendre quadrature on [-1, 1].  The characteristic
 # potential is integrated after h=s**2, so none of these nodes samples the
 # integrable dry-bed singularity directly.
@@ -192,6 +220,33 @@ def _strictly_subcritical_characteristics(
             f"{SUBCRITICAL_CHARACTERISTIC_V1} {label} state must be strictly subcritical"
         )
     return velocity, celerity, _characteristic_potential(cell, state.area)
+
+
+def characteristic_potential(*, cell: FiniteVolumeCell, area: float) -> float:
+    """Return the versioned ``Phi(A)`` used by boundaries and Junctions."""
+
+    return _characteristic_potential(cell, area)
+
+
+def subcritical_characteristic_properties(
+    *,
+    state: ConservedVector,
+    cell: FiniteVolumeCell,
+    label: str,
+) -> CharacteristicProperties:
+    """Return public characteristic properties after the existing regime gate."""
+
+    velocity, celerity, potential = _strictly_subcritical_characteristics(
+        state=state,
+        cell=cell,
+        label=label,
+    )
+    return CharacteristicProperties(
+        velocity=velocity,
+        celerity=celerity,
+        potential=potential,
+        froude=abs(velocity) / celerity,
+    )
 
 
 def _maximum_wetted_area(cell: FiniteVolumeCell) -> float | None:

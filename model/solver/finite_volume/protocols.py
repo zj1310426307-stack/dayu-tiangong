@@ -7,11 +7,16 @@ from typing import Protocol, runtime_checkable
 
 from model.solver.finite_volume.state import HydraulicState
 from model.solver.finite_volume.structures import StructureStageContext, StructureStageFlow
+from model.solver.finite_volume.coupling import InternalStructureStageEvidence
+from model.solver.finite_volume.junction import JunctionCharacteristicSolution
+from model.solver.finite_volume.mesh import FiniteVolumeMesh
+from model.solver.finite_volume.network_foundation import FiniteVolumeNetwork, NodeId
+from model.solver.finite_volume.roughness import ZonedRoughnessMesh
 
 
 @runtime_checkable
 class BranchNetworkSolver(Protocol):
-    """Future contract for advancing multiple authoritative Branch states."""
+    """Contract implemented only by the opt-in restricted C3b-J2 solver."""
 
     def advance_branches(
         self,
@@ -23,16 +28,15 @@ class BranchNetworkSolver(Protocol):
 
 @runtime_checkable
 class NodeSolver(Protocol):
-    """Future contract for a converged Junction compatibility solve."""
+    """Contract for one converged Junction characteristic stage solve."""
 
     def solve_node_stage(
         self,
         *,
-        node_id: str,
-        connected_states: Sequence[object],
-        time: float,
-        dt: float,
-    ) -> object: ...
+        network: FiniteVolumeNetwork,
+        node_id: NodeId,
+        states: Mapping[str, HydraulicState],
+    ) -> JunctionCharacteristicSolution: ...
 
 
 @runtime_checkable
@@ -48,9 +52,25 @@ class StructureSolver(Protocol):
 
 @runtime_checkable
 class RoughnessZoneSolver(Protocol):
-    """Future contract for consuming frozen zone conveyance ``K(h)``."""
+    """Contract for resolving one complete zone partition onto a Branch mesh."""
 
-    def conveyance(self, *, section_id: str | int, area: float) -> float: ...
+    def resolve_mesh(
+        self,
+        *,
+        mesh: FiniteVolumeMesh,
+        branch_start_chainage_m: float,
+    ) -> ZonedRoughnessMesh: ...
+
+
+@runtime_checkable
+class StrongStructureSolver(Protocol):
+    """Future contract that may return only fully closed internal transfers."""
+
+    def evaluate_internal_stage(
+        self,
+        *,
+        contexts: Mapping[str, StructureStageContext],
+    ) -> Sequence[InternalStructureStageEvidence]: ...
 
 
 @runtime_checkable
