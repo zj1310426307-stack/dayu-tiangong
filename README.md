@@ -84,6 +84,35 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 
 内置 `.nwk11`/`.xns11` 支持是 HYDRO-DATA-01 的确定性交换子集，能力状态固定标识为 `ROUNDTRIP_VALIDATED_ONLY`，不宣称已通过 DHI 商业软件原生验收。常驻后端不加载 DHI/mikeio 运行时；原生 NWK11/XNS11 读取、转换和验收属于授权外部适配环境。
 
+## 水动力求解器能力边界
+
+HYDRO-MODEL-02-A 审查确认：仓库中的 v1 单河路径包含一阶 Rusanov/Saint-Venant 有限体积原型；正式 `dayu.model-input.v2/v3` 则运行 `synchronous-network-continuity-manning-v1`，不含河网动量方程、动态蓄量、分区 `K(h)` 或逐时间 stage 的闸泵强耦合。当前能力不能作为完整 Saint-Venant 或真实工程率定结果使用。
+
+升级方案保留历史求解器和 v3 语义，在现有 `model/solver/` 内增加原生 v4 有限体积路径，并按 shadow、科学 Benchmark、结果级外部对比和真实率定逐门推进：
+
+- [当前求解器审查](docs/review/HYDRO-MODEL-02-current-solver-audit.md)
+- [目标架构](docs/model/HYDRO-MODEL-02-design.md)
+- [数学方程](docs/model/HYDRO-MODEL-02-equation.md)
+- [验证门禁](docs/model/HYDRO-MODEL-02-validation.md)
+- [迁移与回退](docs/model/HYDRO-MODEL-02-migration-report.md)
+
+HYDRO-MODEL-02-B/B2 已在独立分支实现首个可运行的 `dayu.model-input.v4-lite` 单河有限体积 MVP，并完成三项显式科学加固：严格线性坡床的 uniform-Manning 参考平衡、亚临界特征边界、以及只限全湿零流共同水位的非棱柱静水路径。旧 `v4-lite-1`、v1/v2/v3 保持原语义；新增能力只由显式 `v4-lite-2` 策略启用，并仍仅提供 Python 引擎直连路由。
+
+- [MODEL-02-B 求解器基线](docs/review/HYDRO-MODEL-02-B-solver-baseline.md)
+- [MODEL-02-B 开发报告](docs/model/HYDRO-MODEL-02-B-development-report.md)
+- [MODEL-02-B 验证报告](docs/model/HYDRO-MODEL-02-B-validation-report.md)
+- [MODEL-02-B Benchmark 报告](docs/model/HYDRO-MODEL-02-B-benchmark-report.md)
+- [MODEL-02-B 可运行示例](examples/hydraulic/saint-venant-mvp/README.md)
+
+Case 002 已通过 `v4-lite-2` 端到端门：Q 与水深误差均为 0，水量相对误差约 `2.67e-17`；该结果只属于同相对 Profile、严格线性坡、常 A/Q/depth/n、无结构且明确选择 residual-equilibrium 的亚临界参考流。非棱柱路径只证明受限 lake-at-rest 与扰动不被冻结，不代表一般移动流、湿干或结构耦合。边界空间支撑明确为 `nearest-section-cell-face-v1`，不是端节点处的连续坡床实测断面。Gate/Pump 强动量/能头、后端任务持久化、外部模型对比和真实工程率定仍未通过。
+
+HYDRO-MODEL-02-C 已完成四个显式切片：`v4-lite-3` 在受限光滑变宽、平床、无摩阻 Bernoulli 参考流上获得一阶网格收敛证据；`v4-lite-4` 以完整守恒步的保守重放将首个上升越阈值定位到有界右括端；`v4-lite-5` 只对单个固定、淹没、平床同断面 Gate 完成总能头方程和左右 `Q²/A+gI1` 动量通量；`v4-lite-6` 在同一限定作用域内组合 C2a 与 C2b，证明触发步仍使用关闭 Gate 的 completed-interface，目标开度只在下一接受子区间生效，随后每个 RK stage 都留下可独立复算的能头、左右动量、反力和内部转输证据。历史 Gate 仍保持 mass-only，Pump 仍是定流量 external sink；Gate/Pump 完整强耦合、湿干、端点断面、v4 后端任务链和真实工程率定继续 `NO-GO`。
+
+- [MODEL-02-C 开发报告](docs/model/HYDRO-MODEL-02-C-development-report.md)
+- [MODEL-02-C 验证报告](docs/model/HYDRO-MODEL-02-C-validation-report.md)
+- [MODEL-02-C Benchmark 报告](docs/model/HYDRO-MODEL-02-C-benchmark-report.md)
+- [MODEL-02-C 审查结论](docs/review/HYDRO-MODEL-02-C-transient-hardening.md)
+
 ## 广东开放参考数据
 
 - 行政区：geoBoundaries 中国 ADM1/ADM2，经广东范围筛选后导入 `reference_data.administrative_area`。

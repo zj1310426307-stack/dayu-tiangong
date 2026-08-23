@@ -13,7 +13,11 @@ from model.core.errors import HydraulicInputError
 
 @runtime_checkable
 class SectionGeometry(Protocol):
-    """定义求解器所需的水位—面积—湿周可逆关系，单位均为 SI。"""
+    """定义求解器所需的水位—面积—湿周可逆关系，单位均为 SI。
+
+    所有接收 ``stage`` 的方法共用同一个绝对高程基准；
+    ``pressure_moment`` 返回关于水面的静水压力矩 ``I1``（m³）。
+    """
 
     geometry_type: str
     minimum_stage: float
@@ -23,6 +27,7 @@ class SectionGeometry(Protocol):
     def top_width(self, stage: float) -> float: ...
     def wetted_perimeter(self, stage: float) -> float: ...
     def hydraulic_radius(self, stage: float) -> float: ...
+    def pressure_moment(self, stage: float) -> float: ...
     def stage_from_area(self, area: float) -> float: ...
 
 
@@ -69,6 +74,22 @@ class RectangularSectionGeometry:
         """返回水力半径（m）。"""
 
         return self.area(stage) / max(self.wetted_perimeter(stage), 1.0e-12)
+
+    def pressure_moment(self, stage: float) -> float:
+        """返回矩形断面关于水面的静水压力矩 ``I1``（m³）。
+
+        ``stage`` 是与 :meth:`area` 相同基准的绝对水位高程，
+        水深为 ``max(stage - bed_elevation, 0)``。矩形断面无
+        有限岸顶范围；床面及其以下按干断面返回零。
+        """
+
+        if not math.isfinite(stage):
+            raise HydraulicInputError("水位必须有限")
+        depth = max(stage - self.bed_elevation, 0.0)
+        moment = 0.5 * self.width * depth * depth
+        if not math.isfinite(moment):
+            raise HydraulicInputError("静水压力矩必须有限")
+        return moment
 
     def stage_from_area(self, area: float) -> float:
         """把非负过水面积反算为水位。"""
@@ -186,6 +207,24 @@ class TabulatedSectionGeometry:
 
         return self.area(stage) / max(self.wetted_perimeter(stage), 1.0e-12)
 
+    def pressure_moment(self, stage: float) -> float:
+        """返回关于水面的静水压力矩 ``I1``（m³）。
+
+        ``stage`` 是与其他查算函数相同基准的绝对水位高程，
+        而非相对水深。最低河床处的干断面返回零；不在两岸
+        限定范围内的水位与 :meth:`area` 一样被拒绝，不外推。
+
+        积分直接使用冻结的原始横距—高程折线，对每个线性
+        高程段解析积分 ``0.5 * depth**2``，因此不受查算表垂向
+        步长影响。
+        """
+
+        bounded_stage = self._bounded_stage(stage)
+        moment = _pressure_moment(self.points, bounded_stage)
+        if not math.isfinite(moment):
+            raise HydraulicInputError("静水压力矩必须有限")
+        return moment
+
     def stage_from_area(self, area: float) -> float:
         """在查算范围内把面积反算为水位，禁止无提示外推。"""
 
@@ -203,6 +242,18 @@ class TabulatedSectionGeometry:
         left = right - 1
         ratio = (area - self.areas[left]) / (self.areas[right] - self.areas[left])
         return self.stages[left] + ratio * (self.stages[right] - self.stages[left])
+
+    def _bounded_stage(self, stage: float) -> float:
+        """校验并吸附浮点容差内的边界水位。"""
+
+        if not math.isfinite(stage):
+            raise HydraulicInputError("水位必须有限")
+        if stage < self.minimum_stage - 1.0e-12 or stage > self.maximum_stage + 1.0e-12:
+            raise HydraulicInputError(
+                f"水位 {stage} 超出断面查算范围 "
+                f"[{self.minimum_stage}, {self.maximum_stage}]"
+            )
+        return min(max(stage, self.minimum_stage), self.maximum_stage)
 
 
 def _hydraulic_properties(
@@ -229,13 +280,44 @@ def _hydraulic_properties(
             area += 0.5 * max(left_depth, right_depth) * wet_dx
             perimeter += math.hypot(wet_dx, stage - wet[1])
             intersections.append(intersection_x)
-        if math.isclose(left[1], stage, abs_tol=1.0e-12):
+        if math.isclose(left[1], stage, rel_tol=0.0, abs_tol=1.0e-12):
             intersections.append(left[0])
-        if math.isclose(right[1], stage, abs_tol=1.0e-12):
+        if math.isclose(right[1], stage, rel_tol=0.0, abs_tol=1.0e-12):
             intersections.append(right[0])
     submerged_x = [point[0] for point in points if point[1] < stage] + intersections
     width = max(submerged_x) - min(submerged_x) if len(submerged_x) >= 2 else 0.0
     return max(area, 0.0), max(width, 0.0), max(perimeter, 0.0)
+
+
+def _pressure_moment(
+    points: tuple[tuple[float, float], ...], stage: float
+) -> float:
+    """对折线断面分段解析积分静水压力矩 ``I1``。
+
+    在横距 ``x`` 上，``I1 = 1/2 ∫ max(stage-z(x), 0)^2 dx``。
+    每段 ``z(x)`` 线性，因此全湿段与部分湿段均可精确积分，
+    不需要额外的数值求积网格。
+    """
+
+    moment = 0.0
+    for left, right in zip(points, points[1:]):
+        segment_length = right[0] - left[0]
+        left_depth = stage - left[1]
+        right_depth = stage - right[1]
+        if left_depth <= 0.0 and right_depth <= 0.0:
+            continue
+        if left_depth >= 0.0 and right_depth >= 0.0:
+            moment += segment_length * (
+                left_depth * left_depth
+                + left_depth * right_depth
+                + right_depth * right_depth
+            ) / 6.0
+            continue
+
+        wet_depth = max(left_depth, right_depth)
+        wet_length = segment_length * wet_depth / abs(right_depth - left_depth)
+        moment += wet_length * wet_depth * wet_depth / 6.0
+    return max(moment, 0.0)
 
 
 def build_section_geometry(points_payload: Any, *, mode: str = "tabulated") -> SectionGeometry:
