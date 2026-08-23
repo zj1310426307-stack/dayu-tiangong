@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.ai import service
+from app import files
 from app.ai.schemas import (
     AIChatRequest,
     AIChatResponse,
@@ -24,6 +25,12 @@ from app.database.session import get_database_session
 
 router = APIRouter(prefix="/api/v1/ai", tags=["ai-assistant"])
 SessionDependency = Annotated[Session, Depends(get_database_session)]
+
+
+async def _read_upload(file: UploadFile) -> bytes:
+    """通过统一文件边界读取一份有界知识文档。"""
+
+    return await files.read_limited_upload(file, service.MAX_UPLOAD_BYTES)
 
 
 def _http_error(exc: Exception) -> HTTPException:
@@ -83,7 +90,7 @@ async def upload_document(
             version=version,
             source=f"upload://{filename}",
             filename=filename,
-            content=await file.read(service.MAX_UPLOAD_BYTES + 1),
+            content=await _read_upload(file),
         )
     except service.AIServiceError as exc:
         session.rollback()

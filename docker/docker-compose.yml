@@ -45,6 +45,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dayu_dev}
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+      DAYU_STORAGE_ROOT: /app/backend/storage
       ENGINE_COMMIT: ${ENGINE_COMMIT:-local-compose}
       ENABLE_SYNC_MODEL_RUN: ${ENABLE_SYNC_MODEL_RUN:-0}
       AI_LLM_PROVIDER: ${AI_LLM_PROVIDER:-local}
@@ -168,9 +169,9 @@ services:
       GEOSERVER_PUBLIC_WFS_URL: /geoserver/dayu/ows
       GEOSERVER_WORKSPACE: dayu
     ports:
-      - "${BACKEND_PORT:-8001}:8000"
+      - "127.0.0.1:${BACKEND_PORT:-8001}:8000"
     volumes:
-      - ../backend/storage:/app/backend/storage
+      - ${DAYU_STORAGE_HOST_PATH:-../backend/storage}:/app/backend/storage
     depends_on:
       gis-catalog-seed:
         condition: service_completed_successfully
@@ -193,6 +194,8 @@ services:
       <<: *backend_environment
       POSTGRES_USER: ${BACKEND_DB_USER:-dayu_backend}
       POSTGRES_PASSWORD: ${BACKEND_DB_PASSWORD:?set BACKEND_DB_PASSWORD in an ignored .env file}
+    volumes:
+      - ${DAYU_STORAGE_HOST_PATH:-../backend/storage}:/app/backend/storage
     depends_on:
       seed:
         condition: service_completed_successfully

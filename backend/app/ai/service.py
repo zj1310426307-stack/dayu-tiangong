@@ -55,11 +55,12 @@ from app.gis.models import (
     SimulationResult,
     SimulationTask,
 )
+from app.files import atomic_output_path, atomic_write_text, storage_directory
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 KNOWLEDGE_ROOT = REPOSITORY_ROOT / "ai" / "knowledge"
-REPORT_ROOT = REPOSITORY_ROOT / "backend" / "storage" / "ai-reports"
+REPORT_ROOT = storage_directory("ai-reports")
 BUILTIN_KNOWLEDGE_VERSION = "phase6-builtin-v1"
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 MAX_EXTRACTED_BYTES = 20 * 1024 * 1024
@@ -764,33 +765,46 @@ def generate_report(
     )
     session.add(report)
     session.flush()
-    REPORT_ROOT.mkdir(parents=True, exist_ok=True)
-    markdown_path = REPORT_ROOT / f"dispatch-analysis-{report.id}.md"
-    pdf_path = REPORT_ROOT / f"dispatch-analysis-{report.id}.pdf"
-    markdown_path.write_text(markdown, encoding="utf-8")
-    markdown_to_pdf(markdown, pdf_path)
-    report.markdown_path = str(markdown_path.relative_to(REPOSITORY_ROOT)).replace("\\", "/")
-    report.pdf_path = str(pdf_path.relative_to(REPOSITORY_ROOT)).replace("\\", "/")
-    for log in logs:
+    markdown_path = atomic_write_text(
+        REPORT_ROOT, f"dispatch-analysis-{report.id}.md", markdown
+    )
+    try:
+        with atomic_output_path(
+            REPORT_ROOT, f"dispatch-analysis-{report.id}.pdf"
+        ) as (temporary_pdf, pdf_path):
+            markdown_to_pdf(markdown, temporary_pdf)
+    except Exception:
+        markdown_path.unlink(missing_ok=True)
+        raise
+
+    report.markdown_path = f"ai-reports/{markdown_path.name}"
+    report.pdf_path = f"ai-reports/{pdf_path.name}"
+    try:
+        for log in logs:
+            session.add(
+                AIToolCallLog(
+                    conversation_id=None,
+                    tool_name=log["tool_name"],
+                    input_data=log["input"],
+                    output_data=log["output"],
+                    duration_ms=log["duration_ms"],
+                )
+            )
         session.add(
             AIToolCallLog(
                 conversation_id=None,
-                tool_name=log["tool_name"],
-                input_data=log["input"],
-                output_data=log["output"],
-                duration_ms=log["duration_ms"],
+                tool_name="generate_report",
+                input_data=payload.context.model_dump(mode="json"),
+                output_data={"report_id": report.id, "formats": ["markdown", "pdf"]},
+                duration_ms=0,
             )
         )
-    session.add(
-        AIToolCallLog(
-            conversation_id=None,
-            tool_name="generate_report",
-            input_data=payload.context.model_dump(mode="json"),
-            output_data={"report_id": report.id, "formats": ["markdown", "pdf"]},
-            duration_ms=0,
-        )
-    )
-    session.commit()
+        session.commit()
+    except Exception:
+        session.rollback()
+        markdown_path.unlink(missing_ok=True)
+        pdf_path.unlink(missing_ok=True)
+        raise
     session.refresh(report)
     return ReportGenerateResponse(
         report_id=report.id,
@@ -810,10 +824,21 @@ def get_report_file(session: Session, report_id: int, format_name: str) -> tuple
     report = session.get(AIReport, report_id)
     if report is None:
         raise AINotFoundError("报告不存在")
-    relative = report.markdown_path if format_name == "markdown" else report.pdf_path
-    path = (REPOSITORY_ROOT / relative).resolve()
-    root = REPORT_ROOT.resolve()
-    if not path.is_relative_to(root) or not path.is_file():
+    registered = Path(
+        report.markdown_path if format_name == "markdown" else report.pdf_path
+    )
+    if registered.is_absolute():
+        path = registered.resolve()
+    elif registered.parts[:1] == ("ai-reports",):
+        path = (REPORT_ROOT.parent / registered).resolve()
+    else:
+        # 兼容历史版本保存的仓库相对路径。
+        path = (REPOSITORY_ROOT / registered).resolve()
+    allowed_roots = {
+        REPORT_ROOT.resolve(),
+        (REPOSITORY_ROOT / "backend" / "storage" / "ai-reports").resolve(),
+    }
+    if not any(path.is_relative_to(root) for root in allowed_roots) or not path.is_file():
         raise AINotFoundError("报告文件不存在或路径无效")
     media_type = "text/markdown; charset=utf-8" if format_name == "markdown" else "application/pdf"
     return path, media_type

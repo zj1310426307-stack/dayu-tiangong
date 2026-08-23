@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.common.http import commit_or_conflict, not_found
 from app.database.session import get_database_session
+from app import files
 from app.hydraulic import processing, service, topology
 from app.hydraulic.exporters import (
     export_native_xns11,
@@ -58,7 +59,7 @@ async def _read_upload(file: UploadFile) -> tuple[str, bytes]:
             status_code=415,
             detail="仅支持 .nwk11、.xns11、.xlsx、.csv、.geojson、.json、.zip（SHP）和 .dxf",
         )
-    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    content = await files.read_limited_upload(file, MAX_UPLOAD_BYTES)
     if not content:
         raise HTTPException(status_code=422, detail="上传文件为空")
     if len(content) > MAX_UPLOAD_BYTES:

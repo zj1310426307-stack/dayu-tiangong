@@ -338,8 +338,8 @@ def test_report_generates_downloadable_markdown_and_pdf() -> None:
     with SessionLocal() as session:
         report = session.get(AIReport, payload["report_id"])
         assert report is not None
-        markdown_path = REPOSITORY_ROOT / report.markdown_path
-        pdf_path = REPOSITORY_ROOT / report.pdf_path
+        markdown_path, _ = service.get_report_file(session, report.id, "markdown")
+        pdf_path, _ = service.get_report_file(session, report.id, "pdf")
         session.delete(report)
         session.commit()
     markdown_path.unlink(missing_ok=True)

@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.database.session import get_database_session
+from app import files
 from app.import_service import service
 from app.import_service.schemas import ImportResponse
 
@@ -20,6 +21,7 @@ ResourceForm = Annotated[Literal["rivers", "cross_sections", "gates", "pumps"], 
 VersionForm = Annotated[int, Form(gt=0)]
 FileUpload = Annotated[UploadFile, File()]
 TEMPLATE_ROOT = Path(__file__).resolve().parents[3] / "docs" / "templates"
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 
 
 async def _read_upload(file: UploadFile, expected_suffixes: set[str]) -> tuple[bytes, str]:
@@ -29,10 +31,10 @@ async def _read_upload(file: UploadFile, expected_suffixes: set[str]) -> tuple[b
     suffix = Path(filename).suffix.lower()
     if suffix not in expected_suffixes:
         raise HTTPException(status_code=415, detail=f"仅支持 {', '.join(sorted(expected_suffixes))}")
-    content = await file.read()
+    content = await files.read_limited_upload(file, MAX_UPLOAD_BYTES)
     if not content:
         raise HTTPException(status_code=422, detail="上传文件为空")
-    if len(content) > 20 * 1024 * 1024:
+    if len(content) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="上传文件不得超过 20 MB")
     return content, filename
 
