@@ -1,10 +1,11 @@
-"""Restricted synchronized Branch advance for the C3b-J2 Junction gate.
+"""Restricted synchronized Branch advance for the J2/R1 network gates.
 
 This module deliberately advances only one acyclic 1-in/2-out network.  Every
 SSP-RK2 stage solves the J1 characteristic Junction again, then applies the
 completed Branch-end traces as physical boundary fluxes.  The implementation
-does not claim vector-momentum compatibility, wet/dry support, structures,
-roughness, or a general network solver.
+does not claim vector-momentum compatibility, wet/dry support, structures, or
+a general network solver.  C3c-R1 optionally admits face-aligned Branch
+Manning zones while retaining source-free Junction-adjacent control cells.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ from model.solver.finite_volume.diagnostics import (
     require_quality,
 )
 from model.solver.finite_volume.flux import ConservedVector
+from model.solver.finite_volume.friction import ManningCellStageEvidence
 from model.solver.finite_volume.integrator import (
     StageBudget,
     cfl_number_for_step,
@@ -44,11 +46,18 @@ from model.solver.finite_volume.network_foundation import (
     FiniteVolumeNetwork,
     NodeId,
 )
+from model.solver.finite_volume.roughness import (
+    RoughnessAssignment,
+    ZonedRoughnessMesh,
+)
 from model.solver.finite_volume.solver import storage
 from model.solver.finite_volume.state import HydraulicState, SolverDiagnostics
 
 _TIME_TOLERANCE = 1.0e-9
 _FLOW_TOLERANCE = 1.0e-12
+_ROUGHNESS_POLICY = "piecewise-manning-junction-buffer-v1"
+_ROUGHNESS_STAGE_POLICY = "network-manning-stage-evidence-v1"
+_ROUGHNESS_ASSIGNMENT_POLICY = "piecewise-manning-cell-face-aligned-v1"
 
 
 def _frozen_states(
@@ -57,6 +66,29 @@ def _frozen_states(
     """Copy one Branch-state mapping into deterministic immutable storage."""
 
     return MappingProxyType(dict(sorted(states.items())))
+
+
+def _evidence_state_time(
+    states: Mapping[str, HydraulicState],
+    *,
+    label: str,
+) -> float:
+    """Return one evidence time using the network's authoritative tolerance."""
+
+    if not states:
+        raise ValueError(f"{label} requires Branch states")
+    reference = next(iter(states.values())).time
+    if any(
+        not math.isclose(
+            state.time,
+            reference,
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        )
+        for state in states.values()
+    ):
+        raise ValueError(f"{label} states must share one time")
+    return reference
 
 
 @dataclass(frozen=True)
@@ -125,6 +157,56 @@ class OneInTwoOutBoundarySet:
         )
         available = tuple(item for item in candidates if item is not None)
         return min(available) if available else None
+
+
+@dataclass(frozen=True)
+class OneInTwoOutRoughnessPlan:
+    """Freeze auditable zone provenance without becoming coefficient state.
+
+    The network Branch meshes remain the sole runtime owner of ``manning_n``.
+    Each zoned mesh here must later compare exactly with its corresponding
+    network mesh; the plan can therefore prove origin but cannot override a
+    coefficient during a stage.
+    """
+
+    zoned_meshes: tuple[ZonedRoughnessMesh, ...]
+    maximum_stage_friction_number: float = 0.1
+    policy: str = _ROUGHNESS_POLICY
+
+    def __post_init__(self) -> None:
+        """Reject ambiguous Branch provenance or a weakened R1 accuracy gate."""
+
+        object.__setattr__(self, "zoned_meshes", tuple(self.zoned_meshes))
+        if self.policy != _ROUGHNESS_POLICY:
+            raise ValueError("unsupported one-in/two-out roughness policy")
+        if len(self.zoned_meshes) != 3 or any(
+            not isinstance(item, ZonedRoughnessMesh) for item in self.zoned_meshes
+        ):
+            raise ValueError("R1 roughness plan requires three zoned Branch meshes")
+        branch_ids = tuple(item.mesh.branch_id for item in self.zoned_meshes)
+        if len(set(branch_ids)) != 3:
+            raise ValueError("R1 roughness plan Branch identities must be unique")
+        limit = self.maximum_stage_friction_number
+        if (
+            isinstance(limit, bool)
+            or not isinstance(limit, (int, float))
+            or not math.isfinite(float(limit))
+            or not 0.0 < float(limit) <= 0.1
+        ):
+            raise ValueError(
+                "R1 maximum_stage_friction_number must lie in (0, 0.1]"
+            )
+        object.__setattr__(self, "maximum_stage_friction_number", float(limit))
+
+    def zoned_mesh_for(self, branch_id: str) -> ZonedRoughnessMesh:
+        """Resolve one immutable provenance record by exact Branch identity."""
+
+        matches = tuple(
+            item for item in self.zoned_meshes if item.mesh.branch_id == branch_id
+        )
+        if len(matches) != 1:
+            raise ValueError(f"no unique roughness provenance for Branch {branch_id!r}")
+        return matches[0]
 
 
 @dataclass(frozen=True)
@@ -226,17 +308,165 @@ class NetworkStageBudget:
 
 
 @dataclass(frozen=True)
+class BranchRoughnessStageEvidence:
+    """Bind one Branch's zone assignments to its consumed Manning update."""
+
+    branch_id: str
+    stage_time: float
+    dt: float
+    junction_control_cell_id: str
+    assignments: tuple[RoughnessAssignment, ...]
+    cells: tuple[ManningCellStageEvidence, ...]
+    assignment_policy: str = _ROUGHNESS_ASSIGNMENT_POLICY
+    policy: str = _ROUGHNESS_STAGE_POLICY
+
+    def __post_init__(self) -> None:
+        """Require a reproducible one-to-one assignment/update evidence chain."""
+
+        object.__setattr__(self, "assignments", tuple(self.assignments))
+        object.__setattr__(self, "cells", tuple(self.cells))
+        if not self.branch_id or not self.junction_control_cell_id:
+            raise ValueError("roughness stage evidence identities must not be empty")
+        if self.policy != _ROUGHNESS_STAGE_POLICY:
+            raise ValueError("unsupported network Manning stage evidence policy")
+        if self.assignment_policy != _ROUGHNESS_ASSIGNMENT_POLICY:
+            raise ValueError("unsupported roughness assignment evidence policy")
+        if any(
+            not isinstance(item, RoughnessAssignment) for item in self.assignments
+        ) or any(
+            not isinstance(item, ManningCellStageEvidence) for item in self.cells
+        ):
+            raise TypeError("roughness stage evidence contains the wrong item type")
+        if (
+            not math.isfinite(self.stage_time)
+            or self.stage_time < 0.0
+            or not math.isfinite(self.dt)
+            or self.dt <= 0.0
+        ):
+            raise ValueError("roughness stage time and dt must be finite and valid")
+        if not self.cells or len(self.cells) != len(self.assignments):
+            raise ValueError("roughness stage cells must match static assignments")
+        if len({item.cell_id for item in self.cells}) != len(self.cells):
+            raise ValueError("roughness stage cell identities must be unique")
+        for assignment, cell in zip(self.assignments, self.cells):
+            if assignment.cell_id != cell.cell_id:
+                raise ValueError("roughness stage cell order contradicts assignments")
+            if assignment.manning_n != cell.manning_n:
+                raise ValueError("roughness stage coefficient contradicts assignments")
+            if not math.isclose(cell.dt, self.dt, rel_tol=0.0, abs_tol=1.0e-15):
+                raise ValueError("roughness stage cell dt is inconsistent")
+        controls = tuple(
+            item for item in self.cells if item.cell_id == self.junction_control_cell_id
+        )
+        if len(controls) != 1:
+            raise ValueError("roughness stage requires one Junction control cell")
+        control = controls[0]
+        if control.manning_n != 0.0 or control.discharge_after != control.discharge_before:
+            raise ValueError("Junction control cell must remain source-free")
+
+    @property
+    def maximum_friction_number(self) -> float:
+        """Return the strongest local split-source update in this Branch."""
+
+        return max(item.friction_number for item in self.cells)
+
+
+@dataclass(frozen=True)
+class NetworkRoughnessStageEvidence:
+    """Collect the three synchronized Branch friction records for one stage."""
+
+    stage_time: float
+    dt: float
+    branches: tuple[BranchRoughnessStageEvidence, ...]
+    maximum_allowed_friction_number: float
+    roughness_policy: str = _ROUGHNESS_POLICY
+    policy: str = _ROUGHNESS_STAGE_POLICY
+
+    def __post_init__(self) -> None:
+        """Freeze one accepted three-Branch R1 stage and its accuracy limit."""
+
+        object.__setattr__(self, "branches", tuple(self.branches))
+        if self.policy != _ROUGHNESS_STAGE_POLICY:
+            raise ValueError("unsupported network roughness stage policy")
+        if self.roughness_policy != _ROUGHNESS_POLICY:
+            raise ValueError("unsupported network roughness provenance policy")
+        if any(
+            not isinstance(item, BranchRoughnessStageEvidence)
+            for item in self.branches
+        ):
+            raise TypeError("network roughness stage contains the wrong Branch type")
+        if len(self.branches) != 3 or len(
+            {item.branch_id for item in self.branches}
+        ) != 3:
+            raise ValueError("network roughness stage requires three unique Branches")
+        if not math.isfinite(self.stage_time) or self.stage_time < 0.0:
+            raise ValueError("network roughness stage time must be finite")
+        if not math.isfinite(self.dt) or self.dt <= 0.0:
+            raise ValueError("network roughness stage dt must be finite and positive")
+        if (
+            not math.isfinite(self.maximum_allowed_friction_number)
+            or not 0.0 < self.maximum_allowed_friction_number <= 0.1
+        ):
+            raise ValueError("network roughness stage limit must lie in (0, 0.1]")
+        for branch in self.branches:
+            if not math.isclose(
+                branch.stage_time,
+                self.stage_time,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            ) or not math.isclose(branch.dt, self.dt, rel_tol=0.0, abs_tol=1.0e-15):
+                raise ValueError("Branch roughness evidence is not synchronized")
+        if self.maximum_friction_number > (
+            self.maximum_allowed_friction_number + 1.0e-12
+        ):
+            raise ValueError("network roughness stage exceeds its friction-number gate")
+
+    @property
+    def maximum_friction_number(self) -> float:
+        """Return the maximum ``mu`` across the synchronized Branch stage."""
+
+        return max(item.maximum_friction_number for item in self.branches)
+
+
+@dataclass(frozen=True)
 class NetworkEulerStageResult:
     """Return one simultaneous Euler state set and its node-stage evidence."""
 
     states: Mapping[str, HydraulicState]
     budget: NetworkStageBudget
     junction: JunctionCharacteristicSolution
+    roughness: NetworkRoughnessStageEvidence | None = None
 
     def __post_init__(self) -> None:
-        """Detach the stage state mapping from mutable caller ownership."""
+        """Detach state ownership and align optional R1 evidence to the stage."""
 
         object.__setattr__(self, "states", _frozen_states(self.states))
+        if not isinstance(self.junction, JunctionCharacteristicSolution):
+            raise TypeError("network Euler Junction evidence has the wrong type")
+        if self.roughness is None:
+            return
+        if not isinstance(self.roughness, NetworkRoughnessStageEvidence):
+            raise TypeError("network Euler roughness evidence has the wrong type")
+        advanced_time = _evidence_state_time(
+            self.states,
+            label="network Euler",
+        )
+        if not math.isclose(
+            self.roughness.stage_time + self.roughness.dt,
+            advanced_time,
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        ):
+            raise ValueError("network Euler roughness evidence time is inconsistent")
+        if not math.isclose(
+            self.junction.time,
+            self.roughness.stage_time,
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        ):
+            raise ValueError("network Euler Junction and roughness times must align")
+        if {item.branch_id for item in self.roughness.branches} != set(self.states):
+            raise ValueError("network Euler roughness Branch coverage is inconsistent")
 
 
 @dataclass(frozen=True)
@@ -298,18 +528,70 @@ class NetworkStepResult:
     maximum_cfl: float
     budget: NetworkStepBudget
     junction_stages: tuple[JunctionCharacteristicSolution, ...]
+    roughness_stages: tuple[NetworkRoughnessStageEvidence, ...] = ()
 
     def __post_init__(self) -> None:
         """Freeze the accepted Branch mapping and require both RK node solves."""
 
         object.__setattr__(self, "states", _frozen_states(self.states))
         object.__setattr__(self, "junction_stages", tuple(self.junction_stages))
+        object.__setattr__(self, "roughness_stages", tuple(self.roughness_stages))
         if not math.isfinite(self.dt) or self.dt <= 0.0:
             raise ValueError("network step dt must be finite and positive")
         if not math.isfinite(self.maximum_cfl) or self.maximum_cfl < 0.0:
             raise ValueError("network step CFL must be finite and non-negative")
         if len(self.junction_stages) != 2:
             raise ValueError("network SSP-RK2 step requires two Junction solves")
+        if any(
+            not isinstance(item, JunctionCharacteristicSolution)
+            for item in self.junction_stages
+        ):
+            raise TypeError("network step Junction evidence has the wrong type")
+        accepted_time = _evidence_state_time(
+            self.states,
+            label="network step",
+        )
+        expected_stage_times = (accepted_time - self.dt, accepted_time)
+        if any(
+            not math.isclose(
+                junction.time,
+                expected,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            for junction, expected in zip(
+                self.junction_stages,
+                expected_stage_times,
+            )
+        ):
+            raise ValueError("network step Junction stage times are inconsistent")
+        if self.roughness_stages:
+            if len(self.roughness_stages) != 2:
+                raise ValueError("R1 network step requires two roughness stages")
+            for junction, roughness in zip(
+                self.junction_stages,
+                self.roughness_stages,
+            ):
+                if not isinstance(roughness, NetworkRoughnessStageEvidence):
+                    raise TypeError("network step roughness evidence has the wrong type")
+                if not math.isclose(
+                    junction.time,
+                    roughness.stage_time,
+                    rel_tol=0.0,
+                    abs_tol=1.0e-12,
+                ):
+                    raise ValueError("Junction and roughness stage times must align")
+                if not math.isclose(
+                    roughness.dt,
+                    self.dt,
+                    rel_tol=0.0,
+                    abs_tol=1.0e-15,
+                ):
+                    raise ValueError("network step roughness dt must equal accepted dt")
+                if {item.branch_id for item in roughness.branches} != set(self.states):
+                    raise ValueError(
+                        "network step roughness Branch coverage is inconsistent"
+                    )
 
 
 @dataclass(frozen=True)
@@ -349,6 +631,9 @@ class OneInTwoOutNetworkDiagnostics:
     retry_count: int
     step_count: int
     junction_stage_count: int
+    roughness_stage_count: int
+    maximum_friction_number: float
+    roughness_policy: str
     water_balance_status: str
     diagnostic_flags: tuple[str, ...]
 
@@ -444,6 +729,71 @@ def _network_scope(network: FiniteVolumeNetwork) -> _NetworkScope:
     return _NetworkScope(incidence.node_id, incoming, (outgoing[0], outgoing[1]))
 
 
+def _junction_control_cell_index(
+    *,
+    scope: _NetworkScope,
+    branch_id: str,
+    cell_count: int,
+) -> int:
+    """Return the sole source-free cell incident on the internal Junction."""
+
+    if branch_id == scope.incoming_branch_id:
+        return cell_count - 1
+    if branch_id in scope.outgoing_branch_ids:
+        return 0
+    raise ValueError(f"Branch {branch_id!r} is not incident on the R1 Junction")
+
+
+def _validate_roughness_plan(
+    *,
+    network: FiniteVolumeNetwork,
+    scope: _NetworkScope,
+    roughness_plan: OneInTwoOutRoughnessPlan | None,
+) -> None:
+    """Fail closed on either the legacy zero-n or explicit zoned R1 contract."""
+
+    if roughness_plan is None:
+        if any(
+            cell.manning_n != 0.0
+            for branch in network.branches
+            for cell in branch.mesh.cells
+        ):
+            raise ValueError(
+                "C3b-J2 supports only zero-friction Branches unless an R1 "
+                "roughness plan is supplied"
+            )
+        return
+    if not isinstance(roughness_plan, OneInTwoOutRoughnessPlan):
+        raise TypeError("roughness_plan must be OneInTwoOutRoughnessPlan or None")
+    network_ids = {branch.branch_id for branch in network.branches}
+    plan_ids = {item.mesh.branch_id for item in roughness_plan.zoned_meshes}
+    if plan_ids != network_ids:
+        raise ValueError("R1 roughness plan must cover the exact network Branches")
+    for branch in network.branches:
+        zoned = roughness_plan.zoned_mesh_for(branch.branch_id)
+        if zoned.mesh != branch.mesh:
+            raise ValueError(
+                f"R1 roughness provenance contradicts Branch {branch.branch_id!r} mesh"
+            )
+        if len(branch.mesh.cells) < 3:
+            raise ValueError("R1 requires at least three cells per Branch")
+        control_index = _junction_control_cell_index(
+            scope=scope,
+            branch_id=branch.branch_id,
+            cell_count=len(branch.mesh.cells),
+        )
+        for index, cell in enumerate(branch.mesh.cells):
+            if index == control_index:
+                if cell.manning_n != 0.0:
+                    raise ValueError(
+                        "R1 Junction-adjacent control cells must have Manning n=0"
+                    )
+            elif cell.manning_n <= 0.0:
+                raise ValueError(
+                    "R1 non-Junction cells require explicitly positive Manning n"
+                )
+
+
 def _common_diagnostics(
     states: Mapping[str, HydraulicState],
 ) -> SolverDiagnostics:
@@ -461,17 +811,21 @@ def _validate_stage_scope(
     network: FiniteVolumeNetwork,
     states: Mapping[str, HydraulicState],
     dry_depth: float,
+    roughness_plan: OneInTwoOutRoughnessPlan | None = None,
 ) -> tuple[float, _NetworkScope]:
-    """Enforce fully wet, positive, subcritical, flat-prismatic zero-n scope."""
+    """Enforce the wet forward flat-prismatic J2/R1 numerical subset."""
 
     time = network.validate_synchronized_states(states)
     scope = _network_scope(network)
     _common_diagnostics(states)
+    _validate_roughness_plan(
+        network=network,
+        scope=scope,
+        roughness_plan=roughness_plan,
+    )
     for branch in network.branches:
         state = states[branch.branch_id]
         first_cell = branch.mesh.cells[0]
-        if any(cell.manning_n != 0.0 for cell in branch.mesh.cells):
-            raise ValueError("C3b-J2 supports only zero-friction Branches")
         if any(
             cell.bed_elevation != first_cell.bed_elevation
             or cell.geometry != first_cell.geometry
@@ -574,39 +928,54 @@ def _network_euler_stage(
     dry_depth: float,
     boundaries: OneInTwoOutBoundarySet,
     junction_solver: OneInTwoOutJunctionSolver,
+    roughness_plan: OneInTwoOutRoughnessPlan | None = None,
 ) -> NetworkEulerStageResult:
     """Advance all Branches from one shared stage-owned Junction solution."""
 
-    _, scope = _validate_stage_scope(
-        network=network,
-        states=states,
-        dry_depth=dry_depth,
-    )
-    junction = junction_solver.solve_node_stage(
-        network=network,
-        node_id=scope.junction_node_id,
-        states=states,
-    )
+    try:
+        _, scope = _validate_stage_scope(
+            network=network,
+            states=states,
+            dry_depth=dry_depth,
+            roughness_plan=roughness_plan,
+        )
+        junction = junction_solver.solve_node_stage(
+            network=network,
+            node_id=scope.junction_node_id,
+            states=states,
+        )
+    except ValueError as exc:
+        raise NumericalStateError(
+            "network Euler stage left the wet/forward/subcritical Junction scope"
+        ) from exc
     advanced: dict[str, HydraulicState] = {}
     budgets: dict[str, StageBudget] = {}
+    friction_by_branch: dict[str, tuple[ManningCellStageEvidence, ...]] = {}
     for branch_id in network.topological_branch_order:
         branch = network.branch(branch_id)
-        result = forward_euler_stage(
-            mesh=branch.mesh,
-            state=states[branch_id],
-            dt=dt,
-            dry_depth=dry_depth,
-            boundaries=_branch_boundaries(
-                scope=scope,
-                branch_id=branch_id,
-                external=boundaries,
-                junction=junction,
-            ),
-            scheme="hll",
-            geometry_source_mode="hydrostatic-reconstruction-v1",
-        )
+        try:
+            result = forward_euler_stage(
+                mesh=branch.mesh,
+                state=states[branch_id],
+                dt=dt,
+                dry_depth=dry_depth,
+                boundaries=_branch_boundaries(
+                    scope=scope,
+                    branch_id=branch_id,
+                    external=boundaries,
+                    junction=junction,
+                ),
+                scheme="hll",
+                geometry_source_mode="hydrostatic-reconstruction-v1",
+                capture_friction_evidence=roughness_plan is not None,
+            )
+        except ValueError as exc:
+            raise NumericalStateError(
+                f"Branch {branch_id!r} Euler stage left the R1 regime"
+            ) from exc
         advanced[branch_id] = result.state
         budgets[branch_id] = result.budget
+        friction_by_branch[branch_id] = result.friction_evidence
     network.validate_synchronized_states(advanced)
     traces = {state.branch_id: state for state in junction.boundary_states}
     junction_outflows = tuple(
@@ -614,6 +983,47 @@ def _network_euler_stage(
         for branch_id in scope.outgoing_branch_ids
     )
     junction_inflow = traces[scope.incoming_branch_id].discharge
+    roughness = None
+    if roughness_plan is not None:
+        branch_records = []
+        for branch_id in network.topological_branch_order:
+            branch = network.branch(branch_id)
+            zoned = roughness_plan.zoned_mesh_for(branch_id)
+            control_index = _junction_control_cell_index(
+                scope=scope,
+                branch_id=branch_id,
+                cell_count=len(branch.mesh.cells),
+            )
+            branch_records.append(
+                BranchRoughnessStageEvidence(
+                    branch_id=branch_id,
+                    stage_time=junction.time,
+                    dt=dt,
+                    junction_control_cell_id=branch.mesh.cells[control_index].cell_id,
+                    assignments=zoned.assignments,
+                    cells=friction_by_branch[branch_id],
+                    assignment_policy=zoned.policy,
+                )
+            )
+        branch_evidence = tuple(branch_records)
+        maximum_friction_number = max(
+            item.maximum_friction_number for item in branch_evidence
+        )
+        if maximum_friction_number > (
+            roughness_plan.maximum_stage_friction_number + 1.0e-12
+        ):
+            raise StabilityError(
+                "R1 Manning stage exceeds maximum_stage_friction_number"
+            )
+        roughness = NetworkRoughnessStageEvidence(
+            stage_time=junction.time,
+            dt=dt,
+            branches=branch_evidence,
+            maximum_allowed_friction_number=(
+                roughness_plan.maximum_stage_friction_number
+            ),
+            roughness_policy=roughness_plan.policy,
+        )
     return NetworkEulerStageResult(
         states=advanced,
         budget=NetworkStageBudget(
@@ -628,6 +1038,7 @@ def _network_euler_stage(
             - sum(value for _, value in junction_outflows),
         ),
         junction=junction,
+        roughness=roughness,
     )
 
 
@@ -640,6 +1051,7 @@ def one_in_two_out_network_ssp_rk2_step(
     boundaries: OneInTwoOutBoundarySet,
     cfl_limit: float,
     junction_solver: OneInTwoOutJunctionSolver | None = None,
+    roughness_plan: OneInTwoOutRoughnessPlan | None = None,
 ) -> NetworkStepResult:
     """Advance one synchronized RK2 step and recompute Junction traces twice."""
 
@@ -647,6 +1059,7 @@ def one_in_two_out_network_ssp_rk2_step(
         network=network,
         states=states,
         dry_depth=dry_depth,
+        roughness_plan=roughness_plan,
     )
     solver = junction_solver or OneInTwoOutJunctionSolver()
     initial_cfl = max(
@@ -666,6 +1079,7 @@ def one_in_two_out_network_ssp_rk2_step(
         dry_depth=dry_depth,
         boundaries=boundaries,
         junction_solver=solver,
+        roughness_plan=roughness_plan,
     )
     stage_cfl = max(
         cfl_number_for_step(
@@ -685,6 +1099,7 @@ def one_in_two_out_network_ssp_rk2_step(
         dry_depth=dry_depth,
         boundaries=boundaries,
         junction_solver=solver,
+        roughness_plan=roughness_plan,
     )
 
     accepted: dict[str, HydraulicState] = {}
@@ -713,11 +1128,17 @@ def one_in_two_out_network_ssp_rk2_step(
             )
         except ValueError as exc:
             raise NumericalStateError(str(exc)) from exc
-    _validate_stage_scope(
-        network=network,
-        states=accepted,
-        dry_depth=dry_depth,
-    )
+    try:
+        _validate_stage_scope(
+            network=network,
+            states=accepted,
+            dry_depth=dry_depth,
+            roughness_plan=roughness_plan,
+        )
+    except ValueError as exc:
+        raise NumericalStateError(
+            "accepted RK combination left the wet/forward/subcritical scope"
+        ) from exc
 
     def trapezoidal(
         left: tuple[tuple[str, float], ...],
@@ -744,6 +1165,11 @@ def one_in_two_out_network_ssp_rk2_step(
         (scope.incoming_branch_id, second.budget.junction_inflow),
         *second.budget.junction_outflows,
     )
+    if (first.roughness is None) != (second.roughness is None):
+        raise NumericalStateError("roughness evidence changed inside RK2")
+    accepted_roughness: tuple[NetworkRoughnessStageEvidence, ...] = ()
+    if first.roughness is not None and second.roughness is not None:
+        accepted_roughness = (first.roughness, second.roughness)
     return NetworkStepResult(
         states=accepted,
         dt=dt,
@@ -765,6 +1191,7 @@ def one_in_two_out_network_ssp_rk2_step(
             ),
         ),
         junction_stages=(first.junction, second.junction),
+        roughness_stages=accepted_roughness,
     )
 
 
@@ -779,10 +1206,16 @@ def advance_network_with_retries(
     minimum_dt: float,
     maximum_retries: int,
     junction_solver: OneInTwoOutJunctionSolver | None = None,
+    roughness_plan: OneInTwoOutRoughnessPlan | None = None,
 ) -> NetworkStepResult:
     """Apply one global CFL choice and discard every Branch on any rejection."""
 
-    _validate_stage_scope(network=network, states=states, dry_depth=dry_depth)
+    _validate_stage_scope(
+        network=network,
+        states=states,
+        dry_depth=dry_depth,
+        roughness_plan=roughness_plan,
+    )
     estimate = estimate_network_cfl_time_step(
         network=network,
         states=states,
@@ -813,8 +1246,9 @@ def advance_network_with_retries(
                 boundaries=boundaries,
                 cfl_limit=cfl_limit,
                 junction_solver=junction_solver,
+                roughness_plan=roughness_plan,
             )
-        except (NumericalStateError, StabilityError, ValueError) as exc:
+        except (NumericalStateError, StabilityError) as exc:
             if retries >= maximum_retries:
                 raise StabilityError(
                     "network step exhausted the unified retry budget"
@@ -837,6 +1271,7 @@ def _validate_run_scope(
     initial_states: Mapping[str, HydraulicState],
     boundaries: OneInTwoOutBoundarySet,
     config: OneInTwoOutNetworkConfig,
+    roughness_plan: OneInTwoOutRoughnessPlan | None = None,
 ) -> _NetworkScope:
     """Perform non-retryable topology, state, and boundary preflight checks."""
 
@@ -844,6 +1279,7 @@ def _validate_run_scope(
         network=network,
         states=initial_states,
         dry_depth=config.dry_depth,
+        roughness_plan=roughness_plan,
     )
     if config.end_time <= start_time + _TIME_TOLERANCE:
         raise ValueError("network end_time must be later than the initial time")
@@ -862,6 +1298,7 @@ def solve_one_in_two_out_network(
     boundaries: OneInTwoOutBoundarySet,
     config: OneInTwoOutNetworkConfig,
     junction_config: JunctionSolverConfig | None = None,
+    roughness_plan: OneInTwoOutRoughnessPlan | None = None,
 ) -> OneInTwoOutNetworkResult:
     """Run the restricted C3b-J2 network and close one external water ledger."""
 
@@ -870,6 +1307,7 @@ def solve_one_in_two_out_network(
         initial_states=initial_states,
         boundaries=boundaries,
         config=config,
+        roughness_plan=roughness_plan,
     )
     solver = OneInTwoOutJunctionSolver(junction_config or JunctionSolverConfig())
     current = _frozen_states(initial_states)
@@ -908,6 +1346,7 @@ def solve_one_in_two_out_network(
             minimum_dt=config.minimum_dt,
             maximum_retries=config.maximum_retries,
             junction_solver=solver,
+            roughness_plan=roughness_plan,
         )
         current = step.states
         steps.append(step)
@@ -953,15 +1392,36 @@ def solve_one_in_two_out_network(
             relative_water_balance_error=relative_error,
             water_balance_tolerance=config.water_balance_tolerance,
         )
+    roughness_stages = tuple(
+        stage for step in steps for stage in step.roughness_stages
+    )
+    maximum_friction_number = max(
+        (stage.maximum_friction_number for stage in roughness_stages),
+        default=0.0,
+    )
+    expected_roughness_stage_count = 0 if roughness_plan is None else 2 * len(steps)
+    if len(roughness_stages) != expected_roughness_stage_count:
+        raise NumericalStateError("network roughness stage evidence count is inconsistent")
+    roughness_flags = (
+        ("network_1in2out_fully_wet_forward_subcritical_zero_friction_v1",)
+        if roughness_plan is None
+        else (
+            "network_piecewise_manning_junction_buffer_v1",
+            "roughness_plan_face_aligned_provenance_v1",
+            "friction_semi_implicit_per_ssp_stage_not_full_imex_v1",
+            "junction_endpoint_full_cell_friction_omitted_grid_dependent_v1",
+        )
+    )
     flags = (
-        "network_1in2out_fully_wet_forward_subcritical_zero_friction_v1",
+        *roughness_flags,
         "network_flat_prismatic_branch_hll_hydrostatic_reconstruction_v1",
         "junction_characteristic_recomputed_each_ssp_rk2_stage_v1",
         "junction_physical_trace_flux_v1",
         "network_synchronized_cfl_retry_v1",
         "network_external_boundary_water_balance_v1",
         "junction_vector_momentum_not_evaluated_no_branch_angle_v1",
-        "gate_pump_wetdry_roughness_and_v4_backend_not_supported",
+        "gate_pump_wetdry_and_v4_backend_not_supported",
+        "real_engineering_calibration_not_supported",
     )
     return OneInTwoOutNetworkResult(
         snapshots=tuple(snapshots),
@@ -980,6 +1440,13 @@ def solve_one_in_two_out_network(
             retry_count=diagnostics.retry_count,
             step_count=diagnostics.step_count,
             junction_stage_count=2 * diagnostics.step_count,
+            roughness_stage_count=len(roughness_stages),
+            maximum_friction_number=maximum_friction_number,
+            roughness_policy=(
+                "zero-friction-j2-v1"
+                if roughness_plan is None
+                else roughness_plan.policy
+            ),
             water_balance_status="pass",
             diagnostic_flags=flags,
         ),
@@ -994,6 +1461,7 @@ class OneInTwoOutNetworkSolver:
     boundaries: OneInTwoOutBoundarySet
     config: OneInTwoOutNetworkConfig
     junction_config: JunctionSolverConfig = JunctionSolverConfig()
+    roughness_plan: OneInTwoOutRoughnessPlan | None = None
 
     def __post_init__(self) -> None:
         """Require authoritative typed owners before any state is advanced."""
@@ -1006,6 +1474,11 @@ class OneInTwoOutNetworkSolver:
             raise TypeError("network solver requires OneInTwoOutNetworkConfig")
         if not isinstance(self.junction_config, JunctionSolverConfig):
             raise TypeError("network solver requires JunctionSolverConfig")
+        if self.roughness_plan is not None and not isinstance(
+            self.roughness_plan,
+            OneInTwoOutRoughnessPlan,
+        ):
+            raise TypeError("network solver roughness_plan has the wrong type")
 
     def solve(
         self,
@@ -1020,6 +1493,7 @@ class OneInTwoOutNetworkSolver:
             boundaries=self.boundaries,
             config=self.config,
             junction_config=self.junction_config,
+            roughness_plan=self.roughness_plan,
         )
 
     def advance_branches(
@@ -1051,5 +1525,6 @@ class OneInTwoOutNetworkSolver:
             boundaries=self.boundaries,
             config=run_config,
             junction_config=self.junction_config,
+            roughness_plan=self.roughness_plan,
         )
         return result.snapshots[-1].states

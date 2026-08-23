@@ -107,7 +107,7 @@ HYDRO-MODEL-02-B/B2 已在独立分支实现首个可运行的 `dayu.model-input
 
 Case 002 已通过 `v4-lite-2` 端到端门：Q 与水深误差均为 0，水量相对误差约 `2.67e-17`；该结果只属于同相对 Profile、严格线性坡、常 A/Q/depth/n、无结构且明确选择 residual-equilibrium 的亚临界参考流。非棱柱路径只证明受限 lake-at-rest 与扰动不被冻结，不代表一般移动流、湿干或结构耦合。边界空间支撑明确为 `nearest-section-cell-face-v1`，不是端节点处的连续坡床实测断面。Gate/Pump 强动量/能头、后端任务持久化、外部模型对比和真实工程率定仍未通过。
 
-HYDRO-MODEL-02-C 已完成四个显式切片：`v4-lite-3` 在受限光滑变宽、平床、无摩阻 Bernoulli 参考流上获得一阶网格收敛证据；`v4-lite-4` 以完整守恒步的保守重放将首个上升越阈值定位到有界右括端；`v4-lite-5` 只对单个固定、淹没、平床同断面 Gate 完成总能头方程和左右 `Q²/A+gI1` 动量通量；`v4-lite-6` 在同一限定作用域内组合 C2a 与 C2b，证明触发步仍使用关闭 Gate 的 completed-interface，目标开度只在下一接受子区间生效，随后每个 RK stage 都留下可独立复算的能头、左右动量、反力和内部转输证据。C3a/C3b-J1/J2 又建立多 Branch DAG、1-in/2-out Junction 的共同水位/质量/特征相容 trace，并将 trace 接入三 Branch 同步 SSP-RK2、统一 CFL/retry 和外部水量账。J2 仍只支持平床棱柱、全湿正向亚临界、零摩阻和无结构物。历史 Gate 仍保持 mass-only，Pump 仍是定流量 external sink；Gate/Pump 完整强耦合、湿干、端点断面、v4 后端任务链和真实工程率定继续 `NO-GO`。
+HYDRO-MODEL-02-C 已完成四个显式切片：`v4-lite-3` 在受限光滑变宽、平床、无摩阻 Bernoulli 参考流上获得一阶网格收敛证据；`v4-lite-4` 以完整守恒步的保守重放将首个上升越阈值定位到有界右括端；`v4-lite-5` 只对单个固定、淹没、平床同断面 Gate 完成总能头方程和左右 `Q²/A+gI1` 动量通量；`v4-lite-6` 在同一限定作用域内组合 C2a 与 C2b，证明触发步仍使用关闭 Gate 的 completed-interface，目标开度只在下一接受子区间生效，随后每个 RK stage 都留下可独立复算的能头、左右动量、反力和内部转输证据。C3a/C3b-J1/J2 又建立多 Branch DAG、1-in/2-out Junction 的共同水位/质量/特征相容 trace，并将 trace 接入三 Branch 同步 SSP-RK2、统一 CFL/retry 和外部水量账。C3c-R1 在该限定网络上可选接入 face-aligned 纵向分区 Manning，每个 RK stage 独立重算半隐式摩阻并保留可复算证据；三个 Junction 相邻控制单元仍为 `n=0`，且 `mu<=0.1` 是统一缩步门。平床正摩阻案例是耗散瞬变，不是 Manning 正常水深稳态，端点完整 cell 的摩阻省略仍具网格依赖。历史 Gate 仍保持 mass-only，Pump 仍是定流量 external sink；Gate/Pump 完整强耦合、湿干、端点含源特征、节点矢量动量、一般拓扑、v4 后端任务链和真实工程率定继续 `NO-GO`。
 
 - [MODEL-02-C 开发报告](docs/model/HYDRO-MODEL-02-C-development-report.md)
 - [MODEL-02-C 验证报告](docs/model/HYDRO-MODEL-02-C-validation-report.md)
@@ -116,6 +116,7 @@ HYDRO-MODEL-02-C 已完成四个显式切片：`v4-lite-3` 在受限光滑变宽
 - [MODEL-02-C3 基础门审查](docs/review/HYDRO-MODEL-02-C3-foundation.md)
 - [MODEL-02-C3b Junction 特征相容审查](docs/review/HYDRO-MODEL-02-C3b-junction.md)
 - [MODEL-02-C3b-J2 Junction 同步阶段推进审查](docs/review/HYDRO-MODEL-02-C3b-junction-stage.md)
+- [MODEL-02-C3c-R1 分区 Manning 网络运行门审查](docs/review/HYDRO-MODEL-02-C3c-zoned-roughness.md)
 
 ## 广东开放参考数据
 

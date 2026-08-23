@@ -75,6 +75,31 @@ class RoughnessAssignment:
     end_chainage_m: float
     manning_n: float
 
+    def __post_init__(self) -> None:
+        """Reject evidence that cannot describe one physical control volume."""
+
+        if not self.cell_id or not self.zone_id:
+            raise ValueError("roughness assignment identities must not be empty")
+        start = _finite(
+            self.start_chainage_m,
+            "roughness assignment start_chainage_m",
+        )
+        end = _finite(
+            self.end_chainage_m,
+            "roughness assignment end_chainage_m",
+        )
+        coefficient = _finite(
+            self.manning_n,
+            "roughness assignment manning_n",
+        )
+        if end <= start:
+            raise ValueError("roughness assignment end chainage must exceed its start")
+        if coefficient < 0.0 or coefficient > 1.0:
+            raise ValueError("roughness assignment manning_n must be within 0..1")
+        object.__setattr__(self, "start_chainage_m", start)
+        object.__setattr__(self, "end_chainage_m", end)
+        object.__setattr__(self, "manning_n", coefficient)
+
 
 @dataclass(frozen=True)
 class ZonedRoughnessMesh:
@@ -92,13 +117,40 @@ class ZonedRoughnessMesh:
             raise ValueError("unsupported zoned roughness policy")
         if len(self.assignments) != len(self.mesh.cells):
             raise ValueError("roughness assignments must match the mesh cell count")
-        for cell, assignment in zip(self.mesh.cells, self.assignments):
+        completed_zone_ids: set[str] = set()
+        current_zone_id: str | None = None
+        coefficient_by_zone: dict[str, float] = {}
+        for index, (cell, assignment) in enumerate(
+            zip(self.mesh.cells, self.assignments)
+        ):
             if cell.cell_id != assignment.cell_id:
                 raise ValueError("roughness assignment cell order is inconsistent")
             if cell.section_id != assignment.section_id:
                 raise ValueError("roughness assignment section identity is inconsistent")
             if cell.manning_n != assignment.manning_n:
                 raise ValueError("roughness assignment contradicts the resolved cell")
+            if not _close(
+                assignment.end_chainage_m - assignment.start_chainage_m,
+                cell.dx,
+            ):
+                raise ValueError("roughness assignment span must equal the cell dx")
+            if index and not _close(
+                self.assignments[index - 1].end_chainage_m,
+                assignment.start_chainage_m,
+            ):
+                raise ValueError("roughness assignments must form a contiguous partition")
+            previous_coefficient = coefficient_by_zone.setdefault(
+                assignment.zone_id,
+                assignment.manning_n,
+            )
+            if previous_coefficient != assignment.manning_n:
+                raise ValueError("one roughness zone cannot own multiple coefficients")
+            if assignment.zone_id != current_zone_id:
+                if current_zone_id is not None:
+                    completed_zone_ids.add(current_zone_id)
+                if assignment.zone_id in completed_zone_ids:
+                    raise ValueError("roughness zone assignments must remain contiguous")
+                current_zone_id = assignment.zone_id
 
 
 @dataclass(frozen=True)

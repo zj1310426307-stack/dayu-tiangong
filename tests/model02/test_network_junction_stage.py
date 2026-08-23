@@ -17,6 +17,7 @@ from model.solver.finite_volume import (
     FiniteVolumeNetwork,
     HydraulicState,
     NetworkBranch,
+    NumericalStateError,
     OneInTwoOutBoundarySet,
     OneInTwoOutJunctionSolver,
     OneInTwoOutNetworkConfig,
@@ -432,7 +433,7 @@ def test_boundary_identity_coverage_and_retry_exhaustion_fail_closed(
 
     def always_fail(**kwargs: object):
         del kwargs
-        raise ValueError("synthetic Junction failure")
+        raise NumericalStateError("synthetic retryable Junction failure")
 
     monkeypatch.setattr(
         network_solver_module,
