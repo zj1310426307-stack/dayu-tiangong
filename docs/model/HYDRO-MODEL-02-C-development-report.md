@@ -1,10 +1,10 @@
 # HYDRO-MODEL-02-C 开发报告
 
 - 日期：2026-08-23
-- 当前分支：`feature/HYDRO-MODEL-02-C3-foundation`
+- 当前分支：`feature/HYDRO-MODEL-02-C3b-junction`
 - 基线：`f5975a2`
 - C1 提交：`b7b5084`
-- 状态：C1、C2a、C2b、C2c 与 C3a 基础门完成；完整科学与生产能力继续 `NO-GO`
+- 状态：C1、C2a、C2b、C2c、C3a 与 C3b-J1 限定门完成；完整科学与生产能力继续 `NO-GO`
 
 ## 1. 本阶段完成内容
 
@@ -58,6 +58,18 @@ C3a 不新增公开输入版本，也不启动多 Branch 时间推进。它先�
 5. `PiecewiseManningZoneSolver` 要求分区完整覆盖 Branch、无缺口/重叠且边界对齐 cell face，再复制生成每 cell `manning_n`；已有 SSP stage 摩阻会直接消费解析后的系数。
 6. `v4-lite-1` 至 `v4-lite-6` 的输入、结果和哈希均未改变；未生成 OpenAPI，也未修改 backend/Worker/数据库/前端。
 
+### C3b-J1：1-in/2-out Junction 特征相容
+
+J1 只消费 C3a 冻结的同步 Branch 状态，不推进时间。适用域为一个入流 Branch、两个出流 Branch、全湿、正向、严格亚临界、endpoint cell 零摩阻且无结构物。节点条件为：
+
+1. 入流 Branch 的下游端保留内部 `R+=u+Phi(A)`；
+2. 两条出流 Branch 的上游端各自保留内部 `R-=u-Phi(A)`；
+3. 三支使用同一绝对节点水位 `Hj`，并按各自断面计算 `A(Hj)` 与 `Phi(A)`；
+4. 以括区间二分求解 `Qin(Hj)-Qout1(Hj)-Qout2(Hj)=0`；
+5. 接受证据同时冻结最终水位括区间及两端残差、质量残差、三支不变量残差、Froude 数和局部 `dRmass/dH<0`；
+6. 每支保存 `Q²/A+gI1` 动量通量，但因尚无 Branch 夹角合同，节点证据固定为 `not-evaluated-no-branch-angle-v1`，不能声称矢量动量平衡或完整强耦合；
+7. 矩形扰动由独立解析 `Phi=2sqrt(gH)` 二分交叉校核，三种不同表格断面完成兼容态 round-trip。
+
 ## 2. 身份、状态与哈希
 
 - Gate/Pump 仍以显式 public asset ID 为结构身份，监测对象为绑定 hydraulic Section cell centre。
@@ -81,7 +93,9 @@ C3a 不新增公开输入版本，也不启动多 Branch 时间推进。它先�
 - 仅检测步端已括住的首个上升 crossing；步内上升后下降的双 crossing 仍可能漏检。
 - 历史 Gate 和 `v4-lite-4` Gate 仍保持 mass-only；只有显式 `v4-lite-5/6` 使用 completed-interface。
 - C2c 只组合一个 Gate 的一次性上升阈值与 completed-interface，不是 Gate/Pump 完整强耦合：不含连续调节、自由出流、倒流、湿干、非棱柱 Gate、多个结构、Pump Q-H/效率或内部转输。
-- C3a 是下一阶段的 fail-closed 基础合同，不是多 Branch Saint-Venant 计算结果；Junction 动量相容求解、Branch 同步 RK 推进和边界特征分配均未实现。
+- C3b-J1 已完成局部 Junction 特征相容 trace，但不是多 Branch Saint-Venant 时间推进；Branch SSP-RK2 面通量接线、同步 CFL/retry、水量账和网络结果仍未实现。
+- J1 只支持 1-in/2-out、全湿正向亚临界、零摩阻 endpoint 和无结构节点；2-in/1-out、一般 N-in/M-out、环网、超临界、倒流、湿干和结构节点均未开放。
+- J1 没有 Branch 夹角、二维速度投影或节点控制体，因此未做矢量动量平衡；per-branch 动量通量只是后续证据输入。
 - 分区 Manning 已能确定性映射并进入现有 cell-local 摩阻，但尚未接入公开 v4 输入，也没有分区 conveyance `K(h)`、滩槽分区或率定能力。
 - 内部 Pump 只完成稳定布置和强闭合证据合同；Q-H/Q-η 工作点、设备功率方程及对 source/target cell 的保守更新尚未实现。
 - v4-lite 仍仅限 Python direct engine；HTTP/Celery/数据库持久化没有接线。

@@ -28,6 +28,6 @@
 - 分区 conveyance `K(h)`、滩槽复合糙率、公开 v4 输入与工程率定；
 - 湿干、端点 Profile face、v4 后端任务链和真实工程对比。
 
-## 下一最小切片
+## 后续状态
 
-优先选择 `C3b-J1`：仅全湿、亚临界、无结构的 1-in/2-out Junction 特征相容求解，并建立质量、共同节点水位、分支端 Riemann invariant 与网格收敛证据。该门通过前，不把 `JunctionPreclosureEvidence` 升格为强耦合结果。
+`C3b-J1` 已在后续分支实现全湿、正向、亚临界、无结构的 1-in/2-out Junction 特征相容 trace；详见 `docs/review/HYDRO-MODEL-02-C3b-junction.md`。C3a 的 `JunctionPreclosureEvidence` 仍保持 preliminary 语义，没有被重解释为强耦合结果。

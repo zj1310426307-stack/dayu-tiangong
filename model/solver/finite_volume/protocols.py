@@ -8,7 +8,9 @@ from typing import Protocol, runtime_checkable
 from model.solver.finite_volume.state import HydraulicState
 from model.solver.finite_volume.structures import StructureStageContext, StructureStageFlow
 from model.solver.finite_volume.coupling import InternalStructureStageEvidence
+from model.solver.finite_volume.junction import JunctionCharacteristicSolution
 from model.solver.finite_volume.mesh import FiniteVolumeMesh
+from model.solver.finite_volume.network_foundation import FiniteVolumeNetwork, NodeId
 from model.solver.finite_volume.roughness import ZonedRoughnessMesh
 
 
@@ -26,16 +28,15 @@ class BranchNetworkSolver(Protocol):
 
 @runtime_checkable
 class NodeSolver(Protocol):
-    """Future contract for a converged Junction compatibility solve."""
+    """Contract for one converged Junction characteristic stage solve."""
 
     def solve_node_stage(
         self,
         *,
-        node_id: str,
-        connected_states: Sequence[object],
-        time: float,
-        dt: float,
-    ) -> object: ...
+        network: FiniteVolumeNetwork,
+        node_id: NodeId,
+        states: Mapping[str, HydraulicState],
+    ) -> JunctionCharacteristicSolution: ...
 
 
 @runtime_checkable

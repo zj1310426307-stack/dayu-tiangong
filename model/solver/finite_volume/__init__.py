@@ -3,8 +3,11 @@
 from model.solver.finite_volume.boundary import (
     BoundaryPair,
     BoundarySeries,
+    CharacteristicProperties,
     DownstreamStageBoundary,
     UpstreamDischargeBoundary,
+    characteristic_potential,
+    subcritical_characteristic_properties,
 )
 from model.solver.finite_volume.diagnostics import (
     BoundaryCoverageError,
@@ -46,6 +49,14 @@ from model.solver.finite_volume.integrator import (
     estimate_cfl_time_step,
     forward_euler_stage,
     ssp_rk2_step,
+)
+from model.solver.finite_volume.junction import (
+    JunctionBoundaryState,
+    JunctionCharacteristicEvidence,
+    JunctionCharacteristicSolution,
+    JunctionSolverConfig,
+    OneInTwoOutJunctionSolver,
+    solve_one_in_two_out_junction,
 )
 from model.solver.finite_volume.coupling import (
     GatePlacement,
@@ -117,6 +128,7 @@ __all__ = [
     "BracketedOneShotStageThreshold",
     "BranchNetworkSolver",
     "CflEstimate",
+    "CharacteristicProperties",
     "ConservedVector",
     "CompletedGateInterfaceEvidence",
     "ControlBracketEvidence",
@@ -135,7 +147,11 @@ __all__ = [
     "LinearHydraulicFaceGeometry",
     "InternalStructureStageEvidence",
     "JunctionIncidence",
+    "JunctionBoundaryState",
+    "JunctionCharacteristicEvidence",
+    "JunctionCharacteristicSolution",
     "JunctionPreclosureEvidence",
+    "JunctionSolverConfig",
     "JunctionTrace",
     "NetworkBranch",
     "NodeSolver",
@@ -144,6 +160,7 @@ __all__ = [
     "NumericalFlux",
     "NumericalStateError",
     "OneShotStageThreshold",
+    "OneInTwoOutJunctionSolver",
     "OnOffPump",
     "PiecewiseManningZoneSolver",
     "PumpPlacement",
@@ -169,6 +186,7 @@ __all__ = [
     "ZonedRoughnessMesh",
     "advance_with_retries",
     "apply_manning_friction",
+    "characteristic_potential",
     "cfl_number_for_step",
     "estimate_cfl_time_step",
     "forward_euler_stage",
@@ -189,7 +207,9 @@ __all__ = [
     "rusanov_flux",
     "semi_implicit_manning",
     "solve_single_branch",
+    "solve_one_in_two_out_junction",
     "ssp_rk2_step",
     "storage",
+    "subcritical_characteristic_properties",
     "wave_speed",
 ]
