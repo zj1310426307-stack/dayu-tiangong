@@ -102,6 +102,7 @@ HYDRO-MODEL-02-B/B2 已在独立分支实现首个可运行的 `dayu.model-input
 - [MODEL-02-B 开发报告](docs/model/HYDRO-MODEL-02-B-development-report.md)
 - [MODEL-02-B 验证报告](docs/model/HYDRO-MODEL-02-B-validation-report.md)
 - [MODEL-02-B Benchmark 报告](docs/model/HYDRO-MODEL-02-B-benchmark-report.md)
+- [MODEL-02-B 当前任务书复核](docs/review/HYDRO-MODEL-02-B-current-verification.md)
 - [MODEL-02-B 可运行示例](examples/hydraulic/saint-venant-mvp/README.md)
 
 Case 002 已通过 `v4-lite-2` 端到端门：Q 与水深误差均为 0，水量相对误差约 `2.67e-17`；该结果只属于同相对 Profile、严格线性坡、常 A/Q/depth/n、无结构且明确选择 residual-equilibrium 的亚临界参考流。非棱柱路径只证明受限 lake-at-rest 与扰动不被冻结，不代表一般移动流、湿干或结构耦合。边界空间支撑明确为 `nearest-section-cell-face-v1`，不是端节点处的连续坡床实测断面。Gate/Pump 强动量/能头、后端任务持久化、外部模型对比和真实工程率定仍未通过。

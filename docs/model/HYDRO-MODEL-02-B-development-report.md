@@ -122,6 +122,7 @@ mesh hash 包含实际 Profile points、dx、Manning n、几何处理策略和�
 | 结果过程线 | PASS | 独立 `hydraulic-result.mvp` |
 | Case 001–005 场景 | PASS | Case 002 仅在显式严格参考子集通过；Case 004/005 为离散一次性阈值行为 |
 | 多河网预留 | PASS | 5 个 Protocol，无伪实现 |
+| 100 断面/24 h/<60 s | PASS（冻结 smoke） | 非规则全湿静水吞吐门三个全新进程均通过；一般动态洪峰性能不外推 |
 | HTTP/Celery/DB 闭环 | NOT IN THIS STAGE | 仅 direct engine，不对外写成已通过 |
 
 ## 7. 已知限制和下一阶段
@@ -132,5 +133,20 @@ mesh hash 包含实际 Profile points、dx、Manning n、几何处理策略和�
 4. Gate 结构力/局损动量闭合、Pump Q-H/Q-η 工作点和连续阈值 crossing 定位未实现。
 5. 湿干前沿、溃坝解析解、网格收敛阶、HEC-RAS/MIKE11 结果级对比和真实率定未运行。
 6. v4-lite 仍未接入 HTTP/Celery/DB；`engine_version/engine_commit` 是调用方声明，结果 hash 也不是数字签名。
+7. 100 个表格化非规则断面的 24 h 静水吞吐门已通过，但动态洪峰案例仍可能因重试和时间步收缩超过 60 s；性能目标只在明确静水 smoke scope 内通过。
+
+## 8. 2026-08-23 当前基线性能加固
+
+在不改变 hydrostatic reconstruction 数学语义的前提下，对同床面和较高床面一侧的精确恒等重构跳过重复断面反演及零压力修正计算；HLL/Rusanov 对每侧状态只执行一次面积反演，并以线程隔离、4,096 项上限、精确状态/几何身份键复用相邻面几何评价。恒等快路径只在 `interface_bed == cell.bed_elevation` 和 `reconstructed_area == original_area` 的精确相等条件下启用，不引入容差吸附；非 frozen geometry 继续走无缓存路径。
+
+当前机器复核结果：
+
+- 100 个表格化 V 形断面、24 h、6,120 接受步：三个全新进程分别 `41.3694 s`、`36.7450 s`、`18.5833 s`，最坏值仍低于 60 s；
+- maximum CFL `0.7`，minimum dt `9.7288555 s`，retry `0`；
+- 归一化水量误差 `0`；
+- 60 秒吞吐门：三次均 `PASS`，但仅限全湿非规则 lake-at-rest smoke case；
+- 带动态洪峰的 24 h 案例超过 60 秒：继续 `NO-GO`。
+
+可复跑入口：`examples/hydraulic/saint-venant-mvp/benchmark_100_sections.py`。
 
 MODEL-02-C 应优先完成移动非棱柱 manufactured solution、湿干/溃坝和连续事件定位，再实现 Junction 特征兼容、结构物强耦合和安全后端持久化；B2 的两个 reference policy 不得被外推为上述能力已完成。

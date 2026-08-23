@@ -111,3 +111,14 @@ backend\.venv\Scripts\python.exe examples\hydraulic\saint-venant-mvp\run_demo.py
 - 代码与合成软件 MVP：`GO`。
 - MODEL-02-B/B2 冻结场景与三项科学加固：`GO`；均只在各自显式严格子集通过。
 - 实际工程/生产 Saint-Venant：`NO-GO`。
+
+## 8. 2026-08-23 当前基线复核
+
+- `tests/model02`：`267 passed`；
+- `tests + backend/tests`：`575 passed / 71 skipped / 0 failed`；
+- 71 项 skip 仍为 PostGIS、GeoServer、GDAL、QGIS 等外部环境门；
+- 精确恒等 hydrostatic reconstruction 快路径专项：`PASS`；
+- 100 个表格化 V 形断面、24 h 静水吞吐：三个全新进程分别 `41.3694 s`、`36.7450 s`、`18.5833 s`，最坏值仍 `<60 s`；6,120 steps、0 retry、balance 0；
+- 24 h 动态洪峰吞吐：`NO-GO`，本轮两种动态探针均超过 60 s 后终止，未伪造完成结果。
+
+性能结论只适用于 `benchmark_100_sections.py` 冻结的全湿非规则静水 smoke case，不能外推到一般动态边界、Manning 长时程、Gate/Pump 或生产容量。

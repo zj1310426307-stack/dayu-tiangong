@@ -4,6 +4,7 @@ import math
 
 import pytest
 
+import model.solver.finite_volume.reconstruction as reconstruction_module
 from model.geometry.sections import RectangularSectionGeometry, TabulatedSectionGeometry
 from model.solver.finite_volume import (
     BoundaryCoverageError,
@@ -21,6 +22,7 @@ from model.solver.finite_volume import (
     UpstreamDischargeBoundary,
     estimate_cfl_time_step,
     hll_flux,
+    hydrostatic_reconstruct,
     physical_flux,
     rusanov_flux,
     semi_implicit_manning,
@@ -120,6 +122,43 @@ def test_hll_and_rusanov_are_consistent_with_the_physical_flux() -> None:
     dry = ConservedVector(0.0, 0.0)
     assert hll_flux(dry, dry, geometry, geometry).mass == 0.0
     assert hll_flux(dry, dry, geometry, geometry).momentum == 0.0
+
+
+def test_flat_bed_hydrostatic_reconstruction_uses_exact_identity_fast_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flat faces must preserve states without redundant pressure integration."""
+
+    mesh = make_mesh(beds=(0.0, 0.0))
+    left = ConservedVector(area=10.0, discharge=4.0)
+    right = ConservedVector(area=8.0, discharge=2.0)
+    calls = 0
+    original = reconstruction_module.pressure_moment_from_area
+
+    def counted_pressure_moment(*args: object, **kwargs: object) -> float:
+        """Count fallback evaluations while preserving the real implementation."""
+
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        reconstruction_module,
+        "pressure_moment_from_area",
+        counted_pressure_moment,
+    )
+    reconstructed = hydrostatic_reconstruct(
+        left,
+        right,
+        mesh.cells[0],
+        mesh.cells[1],
+    )
+
+    assert reconstructed.left == left
+    assert reconstructed.right == right
+    assert reconstructed.left_pressure_correction == 0.0
+    assert reconstructed.right_pressure_correction == 0.0
+    assert calls == 0
 
 
 def test_dynamic_boundary_interpolates_but_never_extrapolates() -> None:
