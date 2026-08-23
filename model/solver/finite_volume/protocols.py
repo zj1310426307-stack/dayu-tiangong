@@ -16,7 +16,7 @@ from model.solver.finite_volume.roughness import ZonedRoughnessMesh
 
 @runtime_checkable
 class BranchNetworkSolver(Protocol):
-    """Future contract for advancing multiple authoritative Branch states."""
+    """Contract implemented only by the opt-in restricted C3b-J2 solver."""
 
     def advance_branches(
         self,
