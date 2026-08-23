@@ -113,6 +113,7 @@ HYDRO-MODEL-02-C 已完成四个显式切片：`v4-lite-3` 在受限光滑变宽
 - [MODEL-02-C 验证报告](docs/model/HYDRO-MODEL-02-C-validation-report.md)
 - [MODEL-02-C Benchmark 报告](docs/model/HYDRO-MODEL-02-C-benchmark-report.md)
 - [MODEL-02-C 审查结论](docs/review/HYDRO-MODEL-02-C-transient-hardening.md)
+- [MODEL-02-C3 基础门审查](docs/review/HYDRO-MODEL-02-C3-foundation.md)
 
 ## 广东开放参考数据
 

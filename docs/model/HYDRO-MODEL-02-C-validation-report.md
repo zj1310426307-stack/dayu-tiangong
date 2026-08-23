@@ -1,7 +1,7 @@
 # HYDRO-MODEL-02-C 验证报告
 
-- 日期：2026-08-21
-- 范围：C1 moving-energy + C2a bracketed crossing + C2b 固定 Gate completed-interface + C2c 组合门
+- 日期：2026-08-23
+- 范围：C1 moving-energy + C2a bracketed crossing + C2b 固定 Gate completed-interface + C2c 组合门 + C3a 基础门
 - 结论：限定子集 `PASS`；完整科学/生产 `NO-GO`
 
 ## 1. 可复现命令
@@ -15,8 +15,9 @@ cd backend
 
 ## 2. 结果
 
-- MODEL-02 定向：`266 passed`。
-- 全仓聚合：`574 passed, 71 skipped, 0 failed`。
+- C3a 定向：`10 passed`。
+- MODEL-02 定向：`277 passed`。
+- 全仓聚合：`585 passed, 71 skipped, 0 failed`。
 - 71 条 skip 均为 PostGIS/GDAL/QGIS 等显式外部环境门，未计入通过数。
 - `py_compile` 通过；`git diff --check` 无 whitespace error，仅 Windows LF/CRLF 提示。
 
@@ -81,11 +82,23 @@ v4-lite-4 冻结案例的 Gate/Pump 同时监测 Section 1：
 
 双层反例覆盖：API/core 作用域不一致、Gate 两侧初始水位不等、初始非零 Q、动态上游 Q、缺事件、事件步提前开 Gate、下一子区间未启用、关闭 Gate 非零流、开/关 evidence 伪造、转输体积或哈希不一致。
 
-## 7. 尚未通过
+## 7. C3a 基础门证据
+
+- 1-in/2-out 的三 Branch DAG 可确定性生成 incidence 和 `B0/B1/B2` 拓扑顺序；有向环、断开分量、重复 Branch/cell 身份关闭失败。
+- 状态映射必须精确覆盖全部 Branch、cell 数量匹配且处于同一接受时刻；缺失或陈旧状态关闭失败。
+- Junction 以 `10=6+4m³/s` 和共同 `10m` 水位通过质量/水位预闭合；证据仍固定 `strong_coupling_ready=false`。流量残差、水位偏差、错误端点方向和伪造 pass 标志均被检测。
+- 两个 Manning zone 将三个 cell 解析为 `0.02/0.04/0.04`；现有半隐式摩阻对高 n cell 产生更强阻尼。分区缺口和切穿 cell 的边界关闭失败。
+- Gate 只能绑定同一 Branch 的有序相邻 cell；内部 Pump 必须同时解析 source 与 target cell，外排 Pump 禁止携带网络目标。
+- Gate/Pump 强闭合 DTO 分别通过质量、能头/扬程与损失、左右动量和反力自洽案例；任一残差或 Gate 伪造正扬程都会拒绝。
+- `git diff --check` 无 whitespace error；当前环境未安装 Ruff，未把未运行的 Ruff 写成通过。
+
+## 8. 尚未通过
 
 - 步内未在端点形成符号变化的双 crossing检测；
 - 连续调节、多次 crossing、步内双 crossing 与多 Gate 同步强耦合；
 - Gate 自由出流、倒流、多个 Gate、非棱柱/湿干结构界面；
 - Pump Q-H/Q-η 工作点、能耗与内部转输；
-- 湿干/溃坝、端点 Profile face、河网节点；
+- Branch 同步 SSP-RK2、Junction 动量/特征相容、网络边界分配与河网结果；
+- 分区糙率公开 v4 输入、分区 conveyance、滩槽复合断面与率定；
+- 湿干/溃坝、端点 Profile face；
 - v4 HTTP/Worker/持久化、外部模型对比和真实工程率定。

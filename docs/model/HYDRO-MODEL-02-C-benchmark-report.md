@@ -8,7 +8,8 @@
 | C2a Gate/Pump 同阈值保守括区间 | 软件/守恒事件门 | PASS | 连续根精确值、Gate 动量闭合、Pump Q-H |
 | C2b 固定 Gate completed-interface | 限定结构科学门 | PASS | 自由出流、倒流、湿干、非棱柱、多个结构、Pump |
 | C2c 单 Gate bracketed + completed-interface | 限定组合证据门 | PASS | 连续调节、多次 crossing、多个结构、Pump 强耦合 |
-| C3 湿干/溃坝/端点 face | 科学门 | NOT RUN | Ritter/Stoker、正性前沿、显式端点断面 |
+| C3a 多分支/结构/分区糙率基础合同 | 软件/前置闭合门 | PASS | 多 Branch 推进、Junction 动量、Pump Q-H、公开 v4 路由 |
+| C3b 湿干/溃坝/端点 face | 科学门 | NOT RUN | Ritter/Stoker、正性前沿、显式端点断面 |
 | C4 v4 后端任务链 | 系统门 | NOT RUN | HTTP/Celery/DB 生产调度 |
 
 ## C1 门禁
@@ -42,3 +43,11 @@
 - 10 条 stage 证据、事件、输出命令和 `0.18963193173761772m³` 内部转输可互相独立复算。
 - API 与 core 双层拒绝初始 Gate 面不等水位、非零初始 Q、动态 Q、Pump 或任何不完整策略组合。
 - 此门只证明单 Gate 一次性上升阈值与限定 completed-interface 的组合语义，不等于 Gate/Pump 完整强耦合。
+
+## C3a 基础门禁
+
+- 网络基础只接受全局身份唯一、弱连通且无有向环的 Branch DAG，并要求所有 Branch 状态在一个接受时刻同步。
+- Junction preliminary gate 能核验共同水位和有符号质量残差，但强制披露动量相容未实现，因此不能作为河网 Saint-Venant benchmark。
+- 分区 Manning 必须完整覆盖且在 cell face 处分界，解析后的 per-cell n 已由现有 SSP stage 摩阻消费；缺口、重叠或切穿 cell 均拒绝。
+- Gate/Pump 稳定布置与内部 transfer evidence 已冻结；只有质量、能量/设备功、左右动量和反力全部闭合的证据才可进入未来强耦合接口。
+- 此门是软件与物理证据的前置合同，不提供网络过程线、Junction 求解收敛阶或 Pump Q-H 科学 benchmark。

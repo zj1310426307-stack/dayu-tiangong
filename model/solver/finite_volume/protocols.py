@@ -7,6 +7,9 @@ from typing import Protocol, runtime_checkable
 
 from model.solver.finite_volume.state import HydraulicState
 from model.solver.finite_volume.structures import StructureStageContext, StructureStageFlow
+from model.solver.finite_volume.coupling import InternalStructureStageEvidence
+from model.solver.finite_volume.mesh import FiniteVolumeMesh
+from model.solver.finite_volume.roughness import ZonedRoughnessMesh
 
 
 @runtime_checkable
@@ -48,9 +51,25 @@ class StructureSolver(Protocol):
 
 @runtime_checkable
 class RoughnessZoneSolver(Protocol):
-    """Future contract for consuming frozen zone conveyance ``K(h)``."""
+    """Contract for resolving one complete zone partition onto a Branch mesh."""
 
-    def conveyance(self, *, section_id: str | int, area: float) -> float: ...
+    def resolve_mesh(
+        self,
+        *,
+        mesh: FiniteVolumeMesh,
+        branch_start_chainage_m: float,
+    ) -> ZonedRoughnessMesh: ...
+
+
+@runtime_checkable
+class StrongStructureSolver(Protocol):
+    """Future contract that may return only fully closed internal transfers."""
+
+    def evaluate_internal_stage(
+        self,
+        *,
+        contexts: Mapping[str, StructureStageContext],
+    ) -> Sequence[InternalStructureStageEvidence]: ...
 
 
 @runtime_checkable

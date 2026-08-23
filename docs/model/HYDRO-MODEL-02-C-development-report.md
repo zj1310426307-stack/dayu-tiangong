@@ -1,10 +1,10 @@
 # HYDRO-MODEL-02-C 开发报告
 
-- 日期：2026-08-21
-- 分支：`feature/HYDRO-MODEL-02-C-transient-hardening`
+- 日期：2026-08-23
+- 当前分支：`feature/HYDRO-MODEL-02-C3-foundation`
 - 基线：`f5975a2`
 - C1 提交：`b7b5084`
-- 状态：C1、C2a、C2b 与 C2c 限定子门完成；完整科学与生产能力继续 `NO-GO`
+- 状态：C1、C2a、C2b、C2c 与 C3a 基础门完成；完整科学与生产能力继续 `NO-GO`
 
 ## 1. 本阶段完成内容
 
@@ -47,6 +47,17 @@
 5. 开启阶段逐 RK stage 求解总能头/淹没孔流，保存实际开度、残差、迭代、左右动量和反力；
 6. 结果 DTO 反向核对事件、命令生效边界、stage 对、转输体积和开/关两类物理证据，缺任一链路即拒绝。
 
+### C3a：多分支、结构物强闭合与分区糙率基础门
+
+C3a 不新增公开输入版本，也不启动多 Branch 时间推进。它先建立三组可执行的内部合同：
+
+1. `FiniteVolumeNetwork` 冻结 Branch 有向端点、全局 cell 身份、弱连通 DAG、确定性拓扑顺序和接受态同步；环路、断网、缺 Branch 状态或异步时刻全部拒绝。
+2. `inspect_junction_preclosure` 只核验精确 Branch incidence、共同水位和有符号质量残差；证据固定写入 `momentum_compatibility=not-implemented` 与 `strong_coupling_ready=false`，不能冒充 Junction Saint-Venant 求解。
+3. `StructurePlacementPlan` 用 Branch/cell 身份绑定 Gate 相邻界面、Pump 外排或网络目标 cell；不使用最近邻或裸索引猜测。
+4. `InternalStructureStageEvidence` 只有在 source/target 质量、总能头、设备扬程/水头损失、左右动量和结构反力同时闭合时才能构造；现有单 Branch integrator 尚未消费该对象。
+5. `PiecewiseManningZoneSolver` 要求分区完整覆盖 Branch、无缺口/重叠且边界对齐 cell face，再复制生成每 cell `manning_n`；已有 SSP stage 摩阻会直接消费解析后的系数。
+6. `v4-lite-1` 至 `v4-lite-6` 的输入、结果和哈希均未改变；未生成 OpenAPI，也未修改 backend/Worker/数据库/前端。
+
 ## 2. 身份、状态与哈希
 
 - Gate/Pump 仍以显式 public asset ID 为结构身份，监测对象为绑定 hydraulic Section cell centre。
@@ -70,5 +81,8 @@
 - 仅检测步端已括住的首个上升 crossing；步内上升后下降的双 crossing 仍可能漏检。
 - 历史 Gate 和 `v4-lite-4` Gate 仍保持 mass-only；只有显式 `v4-lite-5/6` 使用 completed-interface。
 - C2c 只组合一个 Gate 的一次性上升阈值与 completed-interface，不是 Gate/Pump 完整强耦合：不含连续调节、自由出流、倒流、湿干、非棱柱 Gate、多个结构、Pump Q-H/效率或内部转输。
+- C3a 是下一阶段的 fail-closed 基础合同，不是多 Branch Saint-Venant 计算结果；Junction 动量相容求解、Branch 同步 RK 推进和边界特征分配均未实现。
+- 分区 Manning 已能确定性映射并进入现有 cell-local 摩阻，但尚未接入公开 v4 输入，也没有分区 conveyance `K(h)`、滩槽分区或率定能力。
+- 内部 Pump 只完成稳定布置和强闭合证据合同；Q-H/Q-η 工作点、设备功率方程及对 source/target cell 的保守更新尚未实现。
 - v4-lite 仍仅限 Python direct engine；HTTP/Celery/数据库持久化没有接线。
 - 湿干、溃坝、显式端点 Profile face、Branch/Junction、外部模型比较和真实率定均继续 `NO-GO/NOT RUN`。
