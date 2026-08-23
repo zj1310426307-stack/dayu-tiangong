@@ -226,10 +226,17 @@ def create_task(session: Session, payload: SimulationTaskCreate) -> SimulationTa
     return _record(task)
 
 
-def list_tasks(session: Session) -> list[SimulationTaskRecord]:
-    """Return newest tasks first for monitoring pages."""
+def list_tasks(
+    session: Session, dataset_version_id: int | None = None
+) -> list[SimulationTaskRecord]:
+    """Return newest tasks, optionally restricted to one Dataset Version."""
 
-    tasks = session.scalars(select(SimulationTask).order_by(SimulationTask.id.desc())).all()
+    statement = select(SimulationTask)
+    if dataset_version_id is not None:
+        statement = statement.join(
+            SimulationCase, SimulationTask.case_id == SimulationCase.id
+        ).where(SimulationCase.dataset_version_id == dataset_version_id)
+    tasks = session.scalars(statement.order_by(SimulationTask.id.desc())).all()
     return [_record(task) for task in tasks]
 
 

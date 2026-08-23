@@ -214,21 +214,39 @@ export function HydraulicConfigPage() {
 
 export function HydraulicTasksPage() {
   const navigate = useNavigate();
+  const { datasetVersionId } = useDatasetVersion();
   const [tasks, setTasks] = useState<SimulationTaskRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const requestSequenceRef = useRef(0);
 
   const reload = useCallback(async () => {
+    const requestSequence = ++requestSequenceRef.current;
+    if (!datasetVersionId) {
+      setTasks([]);
+      setLoading(false);
+      setError('');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
-      setTasks(await listHydraulicTasks());
+      const nextTasks = await listHydraulicTasks({ dataset_version_id: datasetVersionId });
+      if (requestSequence === requestSequenceRef.current) setTasks(nextTasks);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '任务列表加载失败');
+      if (requestSequence === requestSequenceRef.current) {
+        setError(reason instanceof Error ? reason.message : '任务列表加载失败');
+      }
     } finally {
-      setLoading(false);
+      if (requestSequence === requestSequenceRef.current) setLoading(false);
     }
-  }, []);
+  }, [datasetVersionId]);
+
+  useEffect(() => {
+    requestSequenceRef.current += 1;
+    setTasks([]);
+    setError('');
+  }, [datasetVersionId]);
 
   useEffect(() => {
     void reload();
@@ -284,10 +302,13 @@ function HydraulicResultChart({ result }: { result?: SimulationResultResponse })
 
   useEffect(() => {
     if (!element.current || !result) return undefined;
+    let disposed = false;
     let dispose: (() => void) | undefined;
     void import('echarts').then((echarts) => {
-      if (!element.current) return;
-      const chart = echarts.init(element.current);
+      if (disposed || !element.current) return;
+      const container = element.current;
+      echarts.getInstanceByDom(container)?.dispose();
+      const chart = echarts.init(container);
       const labels = result.time.map((value) => `${Math.round(value)}s`);
       chart.setOption({
         animationDuration: 450,
@@ -326,7 +347,10 @@ function HydraulicResultChart({ result }: { result?: SimulationResultResponse })
         chart.dispose();
       };
     });
-    return () => dispose?.();
+    return () => {
+      disposed = true;
+      dispose?.();
+    };
   }, [result]);
 
   return <div ref={element} className="hydraulic-result-chart" />;
@@ -335,7 +359,9 @@ function HydraulicResultChart({ result }: { result?: SimulationResultResponse })
 export function HydraulicResultsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { datasetVersionId } = useDatasetVersion();
   const [tasks, setTasks] = useState<SimulationTaskRecord[]>([]);
+  const [tasksLoaded, setTasksLoaded] = useState(false);
   const [result, setResult] = useState<SimulationResultResponse>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -344,31 +370,65 @@ export function HydraulicResultsPage() {
   const sectionId = Number(searchParams.get('sectionId') || 0);
 
   useEffect(() => {
-    void listHydraulicTasks()
+    let cancelled = false;
+    setTasks([]);
+    setTasksLoaded(false);
+    setResult(undefined);
+    if (!datasetVersionId) {
+      setLoading(false);
+      setTasksLoaded(true);
+      return () => { cancelled = true; };
+    }
+    void listHydraulicTasks({ dataset_version_id: datasetVersionId })
       .then((items) => {
+        if (cancelled) return;
         const successful = items.filter((item) => item.status === 'success');
         setTasks(successful);
-        if (!taskId && successful[0]) {
-          const next = new URLSearchParams(searchParams);
-          next.set('taskId', String(successful[0].id));
-          setSearchParams(next, { replace: true });
+        const selectedTaskExists = successful.some((item) => item.id === taskId);
+        if (!selectedTaskExists && (successful[0] || taskId)) {
+          setSearchParams((current) => {
+            const next = new URLSearchParams(current);
+            if (successful[0]) next.set('taskId', String(successful[0].id));
+            else next.delete('taskId');
+            next.delete('sectionId');
+            return next;
+          }, { replace: true });
         }
       })
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '任务加载失败'));
-  }, [searchParams, setSearchParams, taskId]);
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : '任务加载失败');
+      })
+      .finally(() => { if (!cancelled) setTasksLoaded(true); });
+    return () => { cancelled = true; };
+  }, [datasetVersionId, setSearchParams, taskId]);
 
   useEffect(() => {
+    if (!tasksLoaded) {
+      setLoading(true);
+      return;
+    }
     if (!taskId) {
+      setResult(undefined);
       setLoading(false);
       return;
     }
+    if (!tasks.some((item) => item.id === taskId)) {
+      setResult(undefined);
+      setError('当前任务不属于所选数据版本');
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
     setLoading(true);
     setError('');
     void getHydraulicResult(taskId, sectionId || undefined)
-      .then(setResult)
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '结果加载失败'))
-      .finally(() => setLoading(false));
-  }, [sectionId, taskId]);
+      .then((value) => { if (!cancelled) setResult(value); })
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : '结果加载失败');
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [sectionId, taskId, tasks, tasksLoaded]);
 
   const selectedTask = useMemo(() => tasks.find((item) => item.id === taskId), [taskId, tasks]);
   const latestValues = result ? {
@@ -376,8 +436,9 @@ export function HydraulicResultsPage() {
   } : undefined;
 
   const changeTask = (value: number) => {
-    const next = new URLSearchParams();
+    const next = new URLSearchParams(searchParams);
     next.set('taskId', String(value));
+    next.delete('sectionId');
     setSearchParams(next);
   };
   const changeSection = (value: number) => {

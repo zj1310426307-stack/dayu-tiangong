@@ -536,13 +536,15 @@ def _refresh_run(session: Session, run: DispatchRun) -> DispatchRun:
 
 
 def list_runs(
-    session: Session, *, plan_id: int | None, status: str | None,
+    session: Session, *, dataset_version_id: int | None, plan_id: int | None,
+    status: str | None,
     limit: int, offset: int,
 ) -> tuple[list[DispatchRunRecord], int]:
-    """返回分页运行并同步派生状态。"""
+    """返回按 Dataset Version 筛选的分页运行并同步派生状态。"""
 
     items, total = repository.list_runs(
-        session, plan_id=plan_id, status=status, limit=limit, offset=offset
+        session, dataset_version_id=dataset_version_id, plan_id=plan_id,
+        status=status, limit=limit, offset=offset,
     )
     return [DispatchRunRecord.model_validate(_refresh_run(session, item)) for item in items], total
 

@@ -255,3 +255,40 @@ def test_frontend_dataset_lifecycle_is_reachable_and_fail_safe() -> None:
     for function_name in generated_functions:
         assert f"export const {function_name}" in generator
         assert f"export const {function_name}" in generated_client
+
+
+def test_async_task_monitors_use_the_generated_dataset_version_boundary() -> None:
+    """Task lists must filter in the API instead of loading every version in the browser."""
+
+    generator = (
+        REPOSITORY_ROOT / "frontend/scripts/update-openapi.mjs"
+    ).read_text(encoding="utf-8")
+    generated_client = (
+        REPOSITORY_ROOT / "frontend/src/api/generated/client.ts"
+    ).read_text(encoding="utf-8")
+    hydraulic_pages = (
+        REPOSITORY_ROOT / "frontend/src/pages/hydraulic/HydraulicPages.tsx"
+    ).read_text(encoding="utf-8")
+    optimization_pages = (
+        REPOSITORY_ROOT / "frontend/src/pages/optimization/OptimizationPages.tsx"
+    ).read_text(encoding="utf-8")
+    dispatch_pages = (
+        REPOSITORY_ROOT / "frontend/src/pages/dispatch/DispatchPages.tsx"
+    ).read_text(encoding="utf-8")
+
+    for source in (generator, generated_client):
+        normalized = source.replace(r"\${", "${").replace(r"\`", "`")
+        assert "export interface DatasetTaskListQuery" in normalized
+        assert "function datasetTaskListArgs(" in normalized
+        assert "paramsOrBaseUrl: DatasetTaskListQuery | string = {}" in normalized
+        assert "listHydraulicTasks = (paramsOrBaseUrl:" in normalized
+        assert "listOptimizationTasks = (paramsOrBaseUrl:" in normalized
+        assert "/api/v1/model/tasks${toQuery(params)}" in normalized
+        assert "/api/v1/optimization/tasks${toQuery(params)}" in normalized
+
+    assert "listHydraulicTasks({ dataset_version_id: datasetVersionId })" in hydraulic_pages
+    assert "listOptimizationTasks({ dataset_version_id: datasetVersionId })" in optimization_pages
+    assert "listDispatchRuns({ dataset_version_id: datasetVersionId" in dispatch_pages
+    assert "runPage.items.filter" not in dispatch_pages
+    for source in (hydraulic_pages, optimization_pages, dispatch_pages):
+        assert "requestSequenceRef" in source

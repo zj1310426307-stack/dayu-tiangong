@@ -138,6 +138,7 @@ export interface DGISStateQuery { dataset_version_id: number; feature_type?: str
 export interface DGISReplayQuery { dataset_version_id: number; at: string; feature_type?: string; task_id?: number; }
 export interface DGISLayerQuery { dataset_version_id: number; layer_type?: string; task_id?: number; }
 export interface DatabaseListQuery { dataset_version_id?: number; river_id?: number; search?: string; limit?: number; offset?: number; }
+export interface DatasetTaskListQuery { dataset_version_id?: number; }
 export interface DispatchListQuery { dataset_version_id?: number; plan_id?: number; status?: string; limit?: number; offset?: number; }
 export interface HydraulicExportQuery { dataset_version_id: number; network_id?: number; native?: boolean; }
 export interface HydraulicCoordinateOptions {
@@ -201,6 +202,15 @@ function toQuery<T extends object>(params: T): string {
   Object.entries(params as Record<string, string | number | boolean | undefined>).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); });
   const value = query.toString();
   return value ? \`?\${value}\` : '';
+}
+
+function datasetTaskListArgs(
+  paramsOrBaseUrl: DatasetTaskListQuery | string = {},
+  baseUrl = '',
+): [DatasetTaskListQuery, string] {
+  return typeof paramsOrBaseUrl === 'string'
+    ? [{}, paramsOrBaseUrl]
+    : [paramsOrBaseUrl, baseUrl];
 }
 
 async function requestJson<T>(path: string, options: RequestInit = {}, baseUrl = ''): Promise<T> {
@@ -407,7 +417,10 @@ export async function previewHydraulicImport(datasetVersionId: number, options: 
 }
 
 export const createHydraulicTask = (body: SimulationTaskCreate, baseUrl = '') => requestJson<SimulationTaskRecord>('/api/v1/model/tasks', jsonOptions('POST', body), baseUrl);
-export const listHydraulicTasks = (baseUrl = '') => requestJson<Array<SimulationTaskRecord>>('/api/v1/model/tasks', {}, baseUrl);
+export const listHydraulicTasks = (paramsOrBaseUrl: DatasetTaskListQuery | string = {}, baseUrl = '') => {
+  const [params, resolvedBaseUrl] = datasetTaskListArgs(paramsOrBaseUrl, baseUrl);
+  return requestJson<Array<SimulationTaskRecord>>(\`/api/v1/model/tasks\${toQuery(params)}\`, {}, resolvedBaseUrl);
+};
 export const getHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(\`/api/v1/model/tasks/\${taskId}\`, {}, baseUrl);
 export const runHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(\`/api/v1/model/tasks/\${taskId}/run\`, { method: 'POST' }, baseUrl);
 export const enqueueHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(\`/api/v1/model/tasks/\${taskId}/enqueue\`, { method: 'POST' }, baseUrl);
@@ -443,7 +456,10 @@ export const getDispatchStructures = (runId: number, baseUrl = '') => requestJso
 export const getDispatchNodes = (runId: number, baseUrl = '') => requestJson<Array<Record<string, unknown>>>(\`/api/v1/dispatch/runs/\${runId}/nodes\`, {}, baseUrl);
 
 export const createOptimizationTask = (body: OptimizationTaskCreate, baseUrl = '') => requestJson<OptimizationTaskRecord>('/api/v1/optimization/tasks', jsonOptions('POST', body), baseUrl);
-export const listOptimizationTasks = (baseUrl = '') => requestJson<Array<OptimizationTaskRecord>>('/api/v1/optimization/tasks', {}, baseUrl);
+export const listOptimizationTasks = (paramsOrBaseUrl: DatasetTaskListQuery | string = {}, baseUrl = '') => {
+  const [params, resolvedBaseUrl] = datasetTaskListArgs(paramsOrBaseUrl, baseUrl);
+  return requestJson<Array<OptimizationTaskRecord>>(\`/api/v1/optimization/tasks\${toQuery(params)}\`, {}, resolvedBaseUrl);
+};
 export const getOptimizationTask = (taskId: number, baseUrl = '') => requestJson<OptimizationTaskRecord>(\`/api/v1/optimization/tasks/\${taskId}\`, {}, baseUrl);
 export const runOptimizationTask = (taskId: number, baseUrl = '') => requestJson<OptimizationTaskRecord>(\`/api/v1/optimization/tasks/\${taskId}/run\`, { method: 'POST' }, baseUrl);
 export const cancelOptimizationTask = (taskId: number, baseUrl = '') => requestJson<OptimizationTaskRecord>(\`/api/v1/optimization/tasks/\${taskId}/cancel\`, { method: 'POST' }, baseUrl);

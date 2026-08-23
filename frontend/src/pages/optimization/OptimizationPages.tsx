@@ -173,15 +173,39 @@ export function OptimizationHomePage() {
 
 export function OptimizationTasksPage() {
   const navigate = useNavigate();
+  const { datasetVersionId } = useDatasetVersion();
   const [tasks, setTasks] = useState<OptimizationTaskRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const requestSequenceRef = useRef(0);
   const reload = useCallback(async () => {
+    const requestSequence = ++requestSequenceRef.current;
+    if (!datasetVersionId) {
+      setTasks([]);
+      setLoading(false);
+      setError('');
+      return;
+    }
     setLoading(true);
-    try { setTasks(await listOptimizationTasks()); setError(''); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : '任务列表加载失败'); }
-    finally { setLoading(false); }
-  }, []);
+    try {
+      const nextTasks = await listOptimizationTasks({ dataset_version_id: datasetVersionId });
+      if (requestSequence === requestSequenceRef.current) {
+        setTasks(nextTasks);
+        setError('');
+      }
+    } catch (reason) {
+      if (requestSequence === requestSequenceRef.current) {
+        setError(reason instanceof Error ? reason.message : '任务列表加载失败');
+      }
+    } finally {
+      if (requestSequence === requestSequenceRef.current) setLoading(false);
+    }
+  }, [datasetVersionId]);
+  useEffect(() => {
+    requestSequenceRef.current += 1;
+    setTasks([]);
+    setError('');
+  }, [datasetVersionId]);
   useEffect(() => { void reload(); const timer = window.setInterval(() => void reload(), 4000); return () => window.clearInterval(timer); }, [reload]);
   const columns: ColumnsType<OptimizationTaskRecord> = [
     { title: '任务', dataIndex: 'id', width: 80, render: (value: number) => `#${value}` },
@@ -288,23 +312,62 @@ function CandidateComparisonChart({ items }: { items: ParetoCandidateRecord[] })
 export function OptimizationTaskDetailPage() {
   const navigate = useNavigate();
   const taskId = Number(useParams().taskId);
+  const { datasetVersionId } = useDatasetVersion();
   const [task, setTask] = useState<OptimizationTaskRecord>();
   const [candidates, setCandidates] = useState<OptimizationCandidateRecord[]>([]);
   const [pareto, setPareto] = useState<ParetoCandidateRecord[]>([]);
   const [recommendation, setRecommendation] = useState<RecommendationResponse>();
   const [explanation, setExplanation] = useState<OptimizationExplanation>();
   const [error, setError] = useState('');
+  const requestSequenceRef = useRef(0);
   const reload = useCallback(async () => {
+    const requestSequence = ++requestSequenceRef.current;
+    if (!datasetVersionId) return;
     try {
-      const nextTask = await getOptimizationTask(taskId); setTask(nextTask);
-      setCandidates(await getOptimizationCandidates(taskId));
+      const nextTask = await getOptimizationTask(taskId);
+      if (nextTask.dataset_version_id !== datasetVersionId) {
+        if (requestSequence === requestSequenceRef.current) {
+          setTask(undefined);
+          setCandidates([]);
+          setPareto([]);
+          setRecommendation(undefined);
+          setExplanation(undefined);
+          setError('当前优化任务不属于所选数据版本');
+        }
+        return;
+      }
+      const nextCandidates = await getOptimizationCandidates(taskId);
+      let nextPareto: ParetoCandidateRecord[] = [];
+      let nextRecommendation: RecommendationResponse | undefined;
+      let nextExplanation: OptimizationExplanation | undefined;
       if (nextTask.status === 'success') {
         const [front, recommended, explained] = await Promise.all([getOptimizationPareto(taskId), getOptimizationRecommendation(taskId), explainOptimizationRecommendation(taskId)]);
-        setPareto(front); setRecommendation(recommended); setExplanation(explained);
+        nextPareto = front;
+        nextRecommendation = recommended;
+        nextExplanation = explained;
       }
+      if (requestSequence !== requestSequenceRef.current) return;
+      setTask(nextTask);
+      setCandidates(nextCandidates);
+      setPareto(nextPareto);
+      setRecommendation(nextRecommendation);
+      setExplanation(nextExplanation);
       setError('');
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '优化详情加载失败'); }
-  }, [taskId]);
+    } catch (reason) {
+      if (requestSequence === requestSequenceRef.current) {
+        setError(reason instanceof Error ? reason.message : '优化详情加载失败');
+      }
+    }
+  }, [datasetVersionId, taskId]);
+  useEffect(() => {
+    requestSequenceRef.current += 1;
+    setTask(undefined);
+    setCandidates([]);
+    setPareto([]);
+    setRecommendation(undefined);
+    setExplanation(undefined);
+    setError('');
+  }, [datasetVersionId, taskId]);
   useEffect(() => { void reload(); const timer = window.setInterval(() => void reload(), 4000); return () => window.clearInterval(timer); }, [reload]);
   const bestByGeneration = [...new Set(candidates.map((item) => item.generation))].map((generation) => ({ generation, score: Math.min(...candidates.filter((item) => item.generation === generation).map((item) => item.score ?? Number.POSITIVE_INFINITY)) }));
   const recommendationCandidate = recommendation?.candidate;
