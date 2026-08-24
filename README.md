@@ -8,6 +8,8 @@
 
 能力必须准确理解：文件基础层不等于完整文件生命周期，任务列表过滤不等于权限隔离。统一 OIDC/JWT、RBAC、tenant/project、可信 actor 和生产公网 mutation 仍为 `NO-GO`。
 
+发布状态：功能分支 `feature/continuous-optimization-01@608d4a6` 已上传 GitHub，并通过普通双亲合并提交 `b58207b` 合入 `main`；未强推、未删除功能分支。
+
 - [现状审查](docs/audit/CURRENT_STATE_AUDIT.md)
 - [优化 Backlog](docs/audit/OPTIMIZATION_BACKLOG.md)
 - [执行计划](docs/plan/OPTIMIZATION_EXECUTION_PLAN.md)

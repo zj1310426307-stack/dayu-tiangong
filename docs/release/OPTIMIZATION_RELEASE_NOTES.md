@@ -2,7 +2,7 @@
 
 发布日期：2026-08-24
 
-状态：本地 feature 分支已完成，尚未推送或合并 `main`
+状态：功能分支 `608d4a653990ed17eefb42ec71f5d28e1fb06e15` 已上传，并以普通双亲合并提交 `b58207ba9195e001c8e535b990dc0d2c563a12a5` 合入 `main`
 
 ## 新增
 
@@ -46,3 +46,12 @@
 6. IAM 未完成时保持公网控制面关闭。
 
 兼容、迁移和回滚详见 `docs/migration/COMPATIBILITY_AND_MIGRATION.md`；验证证据详见 `docs/verification/OPTIMIZATION_VERIFICATION_REPORT.md`。
+
+## GitHub 发布记录
+
+- 原 `main`：`07948e663fedc220d8ca6cdbdb34fd3fb4e2beee`；
+- 功能分支：`feature/continuous-optimization-01@608d4a653990ed17eefb42ec71f5d28e1fb06e15`；
+- 合并提交：`b58207ba9195e001c8e535b990dc0d2c563a12a5`；
+- 合并提交两父依次为原 `main` 与功能分支 HEAD，Tree 与功能分支完全一致；
+- 发布未使用强制更新，功能分支保留；
+- 默认 Git HTTPS 节点不可达，发布通过本机 Git Credential Manager 与 GitHub 官方 Git Data API 完成；44 个唯一 Blob、4 个功能 Tree/Commit 及合并 Commit 均与本地 SHA 精确一致。

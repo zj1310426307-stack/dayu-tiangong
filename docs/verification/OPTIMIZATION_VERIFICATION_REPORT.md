@@ -68,3 +68,16 @@
 - 未执行负载、HA、灾备、TLS、密钥托管和恶意文件测试。
 
 结论：本轮两个限定软件闭环为 `PASS`；统一 IAM、完整文件管理、权限隔离和生产部署继续 `NO-GO`。
+
+## 6. GitHub 发布与 main 合并
+
+- 发布前重跑全仓：`637 passed, 71 skipped in 136.28s`；
+- 前端 `npm run typecheck` 与 `npm run build` 通过，构建仍保留既有大 chunk 提示；
+- 高置信凭据与本机绝对路径公开发布扫描：0 命中；
+- 远端功能分支 HEAD：`608d4a653990ed17eefb42ec71f5d28e1fb06e15`；
+- 普通双亲合并提交：`b58207ba9195e001c8e535b990dc0d2c563a12a5`；
+- 合并两父：`07948e663fedc220d8ca6cdbdb34fd3fb4e2beee`、`608d4a653990ed17eefb42ec71f5d28e1fb06e15`；
+- 合并 Tree：`544d71e531a7c4f46e2734b60cff2ef7d863b993`，与功能分支一致；
+- 未强推、未删除功能分支、未把外部项目治理文档混入代码仓库。
+
+GitHub 默认 HTTPS Git 节点连续超时或重置，SSH 主机指纹虽与官方一致但本机无可用公钥。最终使用项目历史已验证的 Git Credential Manager + GitHub 官方 Git Data API 通道，令牌仅在进程内存使用；逐 Blob、Tree、Commit 交叉校验后才创建分支和非强制更新 `main`。
