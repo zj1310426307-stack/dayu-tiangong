@@ -128,6 +128,37 @@ def build_fixture_payloads() -> tuple[dict[str, Any], dict[str, Any]]:
             "end_time": generated_at,
         }
 
+    def result_payload(
+        task_id: int,
+        series: dict[str, Any],
+        all_series: list[dict[str, Any]],
+        diagnostics: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Expose the generated-client result contract for browser chart acceptance."""
+
+        return {
+            "task_id": task_id,
+            "status": "success",
+            "section_id": series["section_id"],
+            "section_code": series["section_code"],
+            "river_id": series["river_id"],
+            "station": series["station"],
+            "time": series["time"],
+            "water_level": series["water_level"],
+            "flow": series["flow"],
+            "velocity": series["velocity"],
+            "available_sections": [
+                {
+                    "section_id": row["section_id"],
+                    "section_code": row["section_code"],
+                    "river_id": row["river_id"],
+                    "station": row["station"],
+                }
+                for row in all_series
+            ],
+            "diagnostics": diagnostics,
+        }
+
     events = [
         {"id": index, **row}
         for index, row in enumerate(controlled["dispatch_events"], start=1)
@@ -166,6 +197,28 @@ def build_fixture_payloads() -> tuple[dict[str, Any], dict[str, Any]]:
         "start_time": generated_at,
         "end_time": generated_at,
     }
+    plan = {
+        "id": 1,
+        "dataset_version_id": 1,
+        "simulation_case_id": 1,
+        "name": "HYDRO-MODEL-01 闸泵调度验收方案",
+        "version": 1,
+        "status": "frozen",
+        "description": (
+            "real HydraulicEngine result-driven UI visual acceptance only; "
+            "not a real database/API closure"
+        ),
+        "duration_seconds": 86400,
+        "evaluation_config": {},
+        "storage_level": "full",
+        "created_by": "HydraulicEngine UI fixture",
+        "created_time": generated_at,
+        "updated_time": generated_at,
+        "frozen_time": generated_at,
+        "frozen_snapshot_hash": controlled_hash,
+        "action_count": 0,
+        "rule_count": len(controlled_input["dispatch_plan"].get("rules", [])),
+    }
     evidence = {
         "fixture": "HYDRO-MODEL-01 live-engine UI fixture",
         "scope": (
@@ -193,6 +246,8 @@ def build_fixture_payloads() -> tuple[dict[str, Any], dict[str, Any]]:
         ),
         "water_balance": controlled["water_balance"],
     }
+    baseline_task = task(1001, baseline_hash, "baseline")
+    controlled_task = task(1002, controlled_hash, "controlled")
     payloads = {
         "/api/v1/model-data/dataset-versions": [
             {
@@ -215,9 +270,23 @@ def build_fixture_payloads() -> tuple[dict[str, Any], dict[str, Any]]:
                 "created_time": generated_at,
             }
         ],
+        "/api/v1/dispatch/plans/1": plan,
         "/api/v1/dispatch/runs/1": run,
-        "/api/v1/model/tasks/1001": task(1001, baseline_hash, "baseline"),
-        "/api/v1/model/tasks/1002": task(1002, controlled_hash, "controlled"),
+        "/api/v1/model/tasks": [baseline_task, controlled_task],
+        "/api/v1/model/tasks/1001": baseline_task,
+        "/api/v1/model/tasks/1002": controlled_task,
+        "/api/v1/model/results/1001": result_payload(
+            1001,
+            baseline_section,
+            baseline["section_series"],
+            baseline["diagnostics"],
+        ),
+        "/api/v1/model/results/1002": result_payload(
+            1002,
+            controlled_section,
+            controlled["section_series"],
+            controlled["diagnostics"],
+        ),
         "/api/v1/dispatch/runs/1/comparison": comparison,
         "/api/v1/dispatch/runs/1/events": events,
         "/api/v1/dispatch/runs/1/structures": controlled["structure_series"],

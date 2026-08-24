@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.database.session import get_database_session
 from app.data_converter import exporter, gdal_service, importer, validator
+from app import files
 from app.dgis.schemas import ConversionCapabilityResponse, ConversionJobResponse
 from app.gis.models import DatasetVersion, GISImportBatch
 
@@ -35,7 +36,10 @@ ENTITY_TYPE_ALIASES: dict[str, GovernedEntityType] = {
 async def _read_upload(file: UploadFile) -> tuple[str, bytes]:
     """Read one upload after preserving its client filename for suffix validation."""
 
-    return file.filename or "upload", await file.read()
+    return (
+        file.filename or "upload",
+        await files.read_limited_upload(file, validator.MAX_UPLOAD_BYTES),
+    )
 
 
 def _error(exc: Exception) -> HTTPException:
@@ -66,10 +70,13 @@ async def inspect_file(file: FileUpload) -> ConversionJobResponse:
     """Stage and inspect one supported vector or raster source through GDAL."""
 
     filename, content = await _read_upload(file)
+    job_id: str | None = None
     try:
         job_id, input_format, source = importer.stage_upload(filename, content)
         details = gdal_service.inspect(source, input_format == "GeoTIFF")
     except (validator.ConversionValidationError, gdal_service.GDALServiceError) as exc:
+        if job_id is not None:
+            importer.cleanup_job(job_id)
         raise _error(exc) from exc
     return ConversionJobResponse(
         job_id=job_id, operation="inspect", status="success", input_format=input_format,
@@ -82,10 +89,13 @@ async def convert_geojson(file: FileUpload, target_srid: TargetSrid = 4490) -> C
     """Convert a supported vector source to a controlled GeoJSON artifact."""
 
     filename, content = await _read_upload(file)
+    job_id: str | None = None
     try:
         job_id, input_format, source = importer.stage_upload(filename, content, "vector")
         target = exporter.to_geojson(source, target_srid)
     except (validator.ConversionValidationError, gdal_service.GDALServiceError) as exc:
+        if job_id is not None:
+            importer.cleanup_job(job_id)
         raise _error(exc) from exc
     return ConversionJobResponse(
         job_id=job_id, operation="geojson", status="success", input_format=input_format,
@@ -98,10 +108,13 @@ async def convert_cog(file: FileUpload, target_srid: TargetSrid = 4490) -> Conve
     """Convert a GeoTIFF into a tiled, compressed Cloud Optimized GeoTIFF."""
 
     filename, content = await _read_upload(file)
+    job_id: str | None = None
     try:
         job_id, input_format, source = importer.stage_upload(filename, content, "raster")
         target = exporter.to_cog(source, target_srid)
     except (validator.ConversionValidationError, gdal_service.GDALServiceError) as exc:
+        if job_id is not None:
+            importer.cleanup_job(job_id)
         raise _error(exc) from exc
     return ConversionJobResponse(
         job_id=job_id, operation="cog", status="success", input_format=input_format,

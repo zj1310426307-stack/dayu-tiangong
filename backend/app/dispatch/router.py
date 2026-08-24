@@ -222,6 +222,7 @@ def create_run(plan_id: int, session: SessionDependency) -> DispatchRunRecord:
 @router.get("/runs", response_model=Page)
 def list_runs(
     session: SessionDependency,
+    dataset_version_id: int | None = Query(default=None, gt=0),
     plan_id: int | None = Query(default=None, gt=0),
     status_filter: str | None = Query(default=None, alias="status"),
     limit: int = Query(default=50, ge=1, le=200), offset: int = Query(default=0, ge=0),
@@ -229,7 +230,8 @@ def list_runs(
     """分页筛选调度运行。"""
 
     items, total = service.list_runs(
-        session, plan_id=plan_id, status=status_filter, limit=limit, offset=offset
+        session, dataset_version_id=dataset_version_id, plan_id=plan_id,
+        status=status_filter, limit=limit, offset=offset,
     )
     return Page(items=items, total=total, limit=limit, offset=offset)
 

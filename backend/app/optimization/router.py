@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database.session import get_database_session
@@ -51,10 +51,13 @@ def create_task(
 
 
 @router.get("/tasks", response_model=list[OptimizationTaskRecord])
-def list_tasks(session: SessionDependency) -> list[OptimizationTaskRecord]:
-    """List optimization tasks for the monitor page."""
+def list_tasks(
+    session: SessionDependency,
+    dataset_version_id: int | None = Query(default=None, gt=0),
+) -> list[OptimizationTaskRecord]:
+    """List optimization tasks for one version or the compatible all-version view."""
 
-    return service.list_tasks(session)
+    return service.list_tasks(session, dataset_version_id=dataset_version_id)
 
 
 @router.get("/tasks/{task_id}", response_model=OptimizationTaskRecord)

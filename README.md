@@ -2,6 +2,19 @@
 
 面向河网数字孪生的水利数据治理、水动力计算、闸泵调度、多目标优化与 AI 辅助平台。
 
+## 持续优化 01
+
+本轮在不增加第二技术体系的前提下完成两个限定闭环：四类上传统一接入本地文件基础层；水动力、优化和调度监控列表按当前 Dataset Version 在后端查询。前端继续使用 Ant Design、OpenLayers、DatasetVersionContext 和生成 OpenAPI client；数据库、GIS 与 Celery 主链不变。
+
+能力必须准确理解：文件基础层不等于完整文件生命周期，任务列表过滤不等于权限隔离。统一 OIDC/JWT、RBAC、tenant/project、可信 actor 和生产公网 mutation 仍为 `NO-GO`。
+
+- [现状审查](docs/audit/CURRENT_STATE_AUDIT.md)
+- [优化 Backlog](docs/audit/OPTIMIZATION_BACKLOG.md)
+- [执行计划](docs/plan/OPTIMIZATION_EXECUTION_PLAN.md)
+- [兼容与迁移](docs/migration/COMPATIBILITY_AND_MIGRATION.md)
+- [验证报告](docs/verification/OPTIMIZATION_VERIFICATION_REPORT.md)
+- [发布说明](docs/release/OPTIMIZATION_RELEASE_NOTES.md)
+
 GIS-RESET-01 已将运行架构收敛为一条链路：
 
 ```text

@@ -259,10 +259,13 @@ function SectionProfileChart({ section }: { section?: CrossSectionRecord }) {
   const element = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!element.current || !section) return undefined;
+    let disposed = false;
     let dispose: (() => void) | undefined;
     void import('echarts').then((echarts) => {
-      if (!element.current) return;
-      const chart = echarts.init(element.current);
+      if (disposed || !element.current) return;
+      const container = element.current;
+      echarts.getInstanceByDom(container)?.dispose();
+      const chart = echarts.init(container);
       const points = section.points.points ?? [];
       chart.setOption({
         grid: { left: 45, right: 20, top: 24, bottom: 38 },
@@ -273,7 +276,10 @@ function SectionProfileChart({ section }: { section?: CrossSectionRecord }) {
       });
       dispose = () => chart.dispose();
     });
-    return () => dispose?.();
+    return () => {
+      disposed = true;
+      dispose?.();
+    };
   }, [section]);
   return <div className="section-profile-chart" ref={element} />;
 }

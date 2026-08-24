@@ -131,10 +131,17 @@ def create_task(session: Session, payload: OptimizationTaskCreate) -> Optimizati
     return _task_record(session, task)
 
 
-def list_tasks(session: Session) -> list[OptimizationTaskRecord]:
-    """Return newest optimization tasks for the monitoring page."""
+def list_tasks(
+    session: Session, dataset_version_id: int | None = None
+) -> list[OptimizationTaskRecord]:
+    """Return newest optimization tasks, optionally scoped by Dataset Version."""
 
-    tasks = session.scalars(select(OptimizationTask).order_by(OptimizationTask.id.desc())).all()
+    statement = select(OptimizationTask)
+    if dataset_version_id is not None:
+        statement = statement.where(
+            OptimizationTask.dataset_version_id == dataset_version_id
+        )
+    tasks = session.scalars(statement.order_by(OptimizationTask.id.desc())).all()
     return [_task_record(session, task) for task in tasks]
 
 

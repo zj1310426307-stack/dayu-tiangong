@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.cross_section import service as cross_section_service
 from app.dataset.lifecycle import assert_dataset_version_mutable
 from app.cross_section.schemas import CrossSectionCreate
+from app.files import atomic_write_bytes, storage_directory
 from app.gis.models import River
 from app.import_service.schemas import ImportIssue, ImportResponse
 from app.river import service as river_service
@@ -25,17 +26,16 @@ from app.structure.schemas import GateCreate, PumpCreate
 
 
 ResourceName = Literal["rivers", "cross_sections", "gates", "pumps"]
-STORAGE_ROOT = Path(__file__).resolve().parents[2] / "storage" / "imports"
+STORAGE_ROOT = storage_directory("imports")
 
 
 def store_upload(filename: str, content: bytes) -> str:
     """把原始上传文件存档到项目专属目录并返回安全文件名。"""
 
-    STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
     safe_suffix = Path(filename).suffix.lower()[:10]
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     stored_name = f"{timestamp}_{uuid4().hex[:10]}{safe_suffix}"
-    (STORAGE_ROOT / stored_name).write_bytes(content)
+    atomic_write_bytes(STORAGE_ROOT, stored_name, content)
     return stored_name
 
 

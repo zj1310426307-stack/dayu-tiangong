@@ -35,12 +35,17 @@ def list_plans(
 
 
 def list_runs(
-    session: Session, *, plan_id: int | None, status: str | None,
+    session: Session, *, dataset_version_id: int | None, plan_id: int | None,
+    status: str | None,
     limit: int, offset: int,
 ) -> tuple[list[DispatchRun], int]:
-    """按计划/状态筛选调度运行并返回分页总数。"""
+    """按数据版本、计划和状态筛选调度运行并返回分页总数。"""
 
     statement = select(DispatchRun)
+    if dataset_version_id is not None:
+        statement = statement.join(
+            DispatchPlan, DispatchRun.plan_id == DispatchPlan.id
+        ).where(DispatchPlan.dataset_version_id == dataset_version_id)
     if plan_id is not None:
         statement = statement.where(DispatchRun.plan_id == plan_id)
     if status is not None:

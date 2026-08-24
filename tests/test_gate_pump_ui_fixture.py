@@ -19,6 +19,9 @@ def test_ui_fixture_exposes_unmodified_engine_structure_results() -> None:
     snapshot = json.loads((DEMO_DIRECTORY / "input.json").read_text(encoding="utf-8"))
     expected = HydraulicEngine().run(snapshot).to_dict()
 
+    assert payloads["/api/v1/dispatch/plans/1"]["dataset_version_id"] == 1
+    assert [row["id"] for row in payloads["/api/v1/model/tasks"]] == [1001, 1002]
+    assert payloads["/api/v1/model/results/1002"]["time"][-1] == 86400.0
     rows = payloads["/api/v1/dispatch/runs/1/structures"]
     assert rows == expected["structure_series"]
     assert evidence["scope"].endswith("not a real database/API closure")

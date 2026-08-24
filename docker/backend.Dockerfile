@@ -24,6 +24,7 @@ COPY ai ./ai
 COPY optimization ./optimization
 COPY geoserver ./geoserver
 COPY docs/templates ./docs/templates
+COPY outputs/HYDRO-DATA-01-20260818 ./outputs/HYDRO-DATA-01-20260818
 
 WORKDIR /app/backend
 

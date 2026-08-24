@@ -53,10 +53,13 @@ def create_task(
 
 
 @router.get("/tasks", response_model=list[SimulationTaskRecord], summary="List hydraulic tasks")
-def list_tasks(session: SessionDependency) -> list[SimulationTaskRecord]:
-    """Return newest task lifecycle records first."""
+def list_tasks(
+    session: SessionDependency,
+    dataset_version_id: int | None = Query(default=None, gt=0),
+) -> list[SimulationTaskRecord]:
+    """Return newest task lifecycle records, optionally scoped by data version."""
 
-    return service.list_tasks(session)
+    return service.list_tasks(session, dataset_version_id=dataset_version_id)
 
 
 @router.post(

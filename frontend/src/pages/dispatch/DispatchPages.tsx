@@ -435,16 +435,32 @@ export function DispatchRunListPage() {
   const [runs, setRuns] = useState<DispatchRunRecord[]>([]);
   const [plans, setPlans] = useState<DispatchPlanRecord[]>([]);
   const [loading, setLoading] = useState(false);
+  const requestSequenceRef = useRef(0);
   const reload = useCallback(async () => {
+    const requestSequence = ++requestSequenceRef.current;
+    if (!datasetVersionId) {
+      setRuns([]);
+      setPlans([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const [runPage, planPage] = await Promise.all([
-        listDispatchRuns({ limit: 200 }),
+        listDispatchRuns({ dataset_version_id: datasetVersionId, limit: 200 }),
         listDispatchPlans({ dataset_version_id: datasetVersionId, limit: 200 }),
       ]);
-      const ids = new Set(planPage.items.map((item) => item.id));
-      setPlans(planPage.items); setRuns(runPage.items.filter((item) => ids.has(item.plan_id)));
-    } finally { setLoading(false); }
+      if (requestSequence !== requestSequenceRef.current) return;
+      setPlans(planPage.items);
+      setRuns(runPage.items);
+    } finally {
+      if (requestSequence === requestSequenceRef.current) setLoading(false);
+    }
+  }, [datasetVersionId]);
+  useEffect(() => {
+    requestSequenceRef.current += 1;
+    setRuns([]);
+    setPlans([]);
   }, [datasetVersionId]);
   useEffect(() => { void reload(); const timer = window.setInterval(() => void reload(), 5000); return () => window.clearInterval(timer); }, [reload]);
   const planName = (id: number) => plans.find((item) => item.id === id)?.name ?? `#${id}`;
@@ -466,10 +482,13 @@ function ComparisonChart({ comparison }: { comparison?: DispatchComparison }) {
   const element = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!element.current || !comparison) return undefined;
+    let disposed = false;
     let dispose: (() => void) | undefined;
     void import('echarts').then((echarts) => {
-      if (!element.current) return;
-      const chart = echarts.init(element.current);
+      if (disposed || !element.current) return;
+      const container = element.current;
+      echarts.getInstanceByDom(container)?.dispose();
+      const chart = echarts.init(container);
       chart.setOption({
         tooltip: { trigger: 'axis' }, legend: { textStyle: { color: '#86a8ba' } },
         grid: { left: 60, right: 55, top: 45, bottom: 42 },
@@ -484,7 +503,10 @@ function ComparisonChart({ comparison }: { comparison?: DispatchComparison }) {
       const resize = () => chart.resize(); window.addEventListener('resize', resize);
       dispose = () => { window.removeEventListener('resize', resize); chart.dispose(); };
     });
-    return () => dispose?.();
+    return () => {
+      disposed = true;
+      dispose?.();
+    };
   }, [comparison]);
   return <div ref={element} className="dispatch-comparison-chart" />;
 }
@@ -655,7 +677,9 @@ function StructureOperationChart({
     let disposeChart: (() => void) | undefined;
     void import('echarts').then((echarts) => {
       if (disposed || !element.current) return;
-      const chart = echarts.init(element.current);
+      const container = element.current;
+      echarts.getInstanceByDom(container)?.dispose();
+      const chart = echarts.init(container);
       const gridTops = ['10%', '32%', '54%', '76%'];
       const series = panelSeries.flatMap((items, panelIndex) => items.map((item, itemIndex) => ({
         name: item.name,
@@ -735,8 +759,10 @@ export function DispatchRunDetailPage() {
   const [resultRunId, setResultRunId] = useState<number>();
   const [error, setError] = useState('');
   const activeRunIdRef = useRef(id);
+  const activeDatasetVersionIdRef = useRef(datasetVersionId);
   const requestSequenceRef = useRef(0);
   activeRunIdRef.current = id;
+  activeDatasetVersionIdRef.current = datasetVersionId;
   const clearResultData = useCallback(() => {
     setComparison(undefined);
     setEvents([]);
@@ -746,13 +772,20 @@ export function DispatchRunDetailPage() {
   }, []);
   const reload = useCallback(async () => {
     const requestedRunId = id;
+    const requestedDatasetVersionId = datasetVersionId;
     const requestSequence = ++requestSequenceRef.current;
     const isCurrent = () => (
       activeRunIdRef.current === requestedRunId
+      && activeDatasetVersionIdRef.current === requestedDatasetVersionId
       && requestSequenceRef.current === requestSequence
     );
+    if (!requestedDatasetVersionId) return;
     try {
       const value = await getDispatchRun(id);
+      const plan = await getDispatchPlan(value.plan_id);
+      if (plan.dataset_version_id !== requestedDatasetVersionId) {
+        throw new Error('当前调度运行不属于所选数据版本');
+      }
       const taskRows = await Promise.all([value.baseline_task_id, value.controlled_task_id].filter((item): item is number => item !== null).map((taskId) => getHydraulicTask(taskId)));
       if (!isCurrent()) return;
       setRun(value);
@@ -771,14 +804,14 @@ export function DispatchRunDetailPage() {
       clearResultData();
       setError(errorText(reason, '运行详情加载失败'));
     }
-  }, [clearResultData, id]);
+  }, [clearResultData, datasetVersionId, id]);
   useEffect(() => {
     requestSequenceRef.current += 1;
     setRun(undefined);
     setTasks([]);
     clearResultData();
     setError('');
-  }, [clearResultData, id]);
+  }, [clearResultData, datasetVersionId, id]);
   const currentRun = run?.id === id ? run : undefined;
   const currentComparison = resultRunId === id ? comparison : undefined;
   useEffect(() => { void reload(); if (currentRun?.status === 'success' || currentRun?.status === 'failed' || currentRun?.status === 'cancelled') return undefined; const timer = window.setInterval(() => void reload(), 3000); return () => window.clearInterval(timer); }, [currentRun?.status, reload]);
