@@ -1744,7 +1744,7 @@ class V4LiteInput(StrictContractModel):
         upstream_flows = tuple(self.boundary.upstream.flow_m3_s)
         if version == "v4-lite-5" and any(value != 0.0 for value in upstream_flows):
             raise ValueError("v4-lite-5 requires a constant zero upstream boundary")
-        if version in {"v4-lite-6", "v4-lite-7"}:
+        if version == "v4-lite-6":
             inflow = _require_scope_constant(
                 upstream_flows,
                 "upstream boundary discharge",
@@ -1752,10 +1752,24 @@ class V4LiteInput(StrictContractModel):
             )
             if inflow <= 0.0:
                 raise ValueError(f"{version} requires positive constant upstream inflow")
+        if version == "v4-lite-7" and any(value <= 0.0 for value in upstream_flows):
+            raise ValueError("v4-lite-7 requires a strictly positive upstream hydrograph")
         final_stage = value_by_id[self.sections[-1].section_id].water_level_m
-        if any(
+        downstream_stages = tuple(self.boundary.downstream.water_level_m)
+        if version == "v4-lite-7":
+            final_section = self.sections[-1]
+            if any(
+                value > final_stage
+                or value - final_section.minimum_stage_m <= self.solver.dry_depth_m
+                for value in downstream_stages
+            ):
+                raise ValueError(
+                    "v4-lite-7 downstream stage process must stay wet and no higher "
+                    "than the final initial stage"
+                )
+        elif any(
             not _absolute_stage_close(value, final_stage)
-            for value in self.boundary.downstream.water_level_m
+            for value in downstream_stages
         ):
             raise ValueError(
                 f"{version} downstream boundary must match the final initial stage"

@@ -1,0 +1,47 @@
+name: model02
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  hydraulic-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install Python dependencies
+        run: python -m pip install -r backend/requirements.txt
+      - name: Compile model and backend
+        run: python -m compileall -q model backend/app
+      - name: Run MODEL-02 tests
+        run: python -m pytest -c backend/pyproject.toml -p no:cacheprovider tests/model02 -q
+      - name: Run legacy hydraulic regressions
+        run: >-
+          python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
+          tests/test_hydraulic_engine.py
+          tests/test_pump_model.py
+          tests/test_gate_model.py
+          tests/test_phase4_hydraulic_gate.py
+          tests/test_gate_pump_simulation.py
+          tests/test_dispatch_engine.py
+
+  frontend-contract:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build

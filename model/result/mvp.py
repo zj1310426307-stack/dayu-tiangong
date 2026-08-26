@@ -54,6 +54,12 @@ class StrictResultModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+def _time_tolerance(*values: float) -> float:
+    """Return an absolute tolerance scaled to long-duration float clocks."""
+
+    return max(1.0e-12, *(8.0 * math.ulp(abs(value)) for value in values))
+
+
 class MvpSectionSeries(StrictResultModel):
     """Store aligned water-level, discharge, and velocity arrays for one section."""
 
@@ -63,17 +69,26 @@ class MvpSectionSeries(StrictResultModel):
     water_level: tuple[FiniteNumber, ...] = Field(min_length=2)
     flow: tuple[FiniteNumber, ...] = Field(min_length=2)
     velocity: tuple[FiniteNumber, ...] = Field(min_length=2)
+    volume_m3: tuple[NonNegativeFinite, ...] | None = None
 
     @model_validator(mode="after")
     def validate_alignment(self) -> Self:
         """Require one finite hydraulic sample per strictly increasing output time."""
 
-        _validate_aligned_series(
-            self.time,
-            (self.water_level, self.flow, self.velocity),
-            "section",
-        )
+        arrays = (self.water_level, self.flow, self.velocity)
+        if self.volume_m3 is not None:
+            arrays = (*arrays, self.volume_m3)
+        _validate_aligned_series(self.time, arrays, "section")
         return self
+
+    @model_serializer(mode="wrap")
+    def serialize_optional_volume(self, handler: Any) -> dict[str, Any]:
+        """Keep pre-D1 section result bytes free of the new volume field."""
+
+        payload = handler(self)
+        if self.volume_m3 is None:
+            payload.pop("volume_m3", None)
+        return payload
 
 
 class MvpGateSeries(StrictResultModel):
@@ -198,7 +213,10 @@ class MvpGateCouplingEvidence(StrictResultModel):
                 right.evaluation_time,
                 left.evaluation_time,
                 rel_tol=0.0,
-                abs_tol=1.0e-12,
+                abs_tol=_time_tolerance(
+                    right.evaluation_time,
+                    left.evaluation_time,
+                ),
             )
             for left, right in zip(
                 self.stage_evaluations[1::2],
@@ -384,11 +402,15 @@ class MvpControlledGateCouplingEvidence(StrictResultModel):
             self.stage_evaluations[::2],
             self.stage_evaluations[1::2],
         ):
+            expected_second_time = first.evaluation_time + first.step_dt
             if first.step_dt != second.step_dt or not math.isclose(
-                second.evaluation_time - first.evaluation_time,
-                first.step_dt,
+                second.evaluation_time,
+                expected_second_time,
                 rel_tol=0.0,
-                abs_tol=1.0e-12,
+                abs_tol=_time_tolerance(
+                    second.evaluation_time,
+                    expected_second_time,
+                ),
             ):
                 raise ValueError("controlled Gate RK stage timing is inconsistent")
             if second.evaluation_time <= self.event_time + 1.0e-12:
@@ -676,7 +698,7 @@ class MvpPumpStageEvidence(StrictResultModel):
             self.evaluation_time,
             expected_time,
             rel_tol=0.0,
-            abs_tol=1.0e-12,
+            abs_tol=_time_tolerance(self.evaluation_time, expected_time),
         ):
             raise ValueError("Pump RK-stage evaluation time is inconsistent")
         if self.running_units == 0:
@@ -785,7 +807,7 @@ class MvpPumpCouplingEvidence(StrictResultModel):
                 first.step_start_time,
                 previous_end,
                 rel_tol=0.0,
-                abs_tol=1.0e-12,
+                abs_tol=_time_tolerance(first.step_start_time, previous_end),
             ):
                 raise ValueError("Pump accepted stage evidence is not contiguous")
             if first.iterations > self.maximum_iterations or (
@@ -1117,6 +1139,14 @@ class MvpHydraulicResult(StrictResultModel):
             version in {"v4-lite-6", "v4-lite-7"}
         )
         expects_pump_coupling = version == "v4-lite-7"
+        if version == "v4-lite-7" and any(
+            section.volume_m3 is None for section in self.sections
+        ):
+            raise ValueError("v4-lite-7 requires section control-volume series")
+        if version != "v4-lite-7" and any(
+            section.volume_m3 is not None for section in self.sections
+        ):
+            raise ValueError("pre-v7 section results must not add volume series")
         if expects_gate_coupling:
             if len(self.gate_coupling_evidence) != 1 or len(self.gates) != 1:
                 raise ValueError("v4-lite-5 requires one Gate coupling evidence object")
@@ -1178,12 +1208,18 @@ class MvpHydraulicResult(StrictResultModel):
                 first_stage.step_start_time,
                 expected_time[0],
                 rel_tol=0.0,
-                abs_tol=1.0e-12,
+                abs_tol=_time_tolerance(
+                    first_stage.step_start_time,
+                    expected_time[0],
+                ),
             ) or not math.isclose(
                 last_stage.step_start_time + last_stage.dt,
                 expected_time[-1],
                 rel_tol=0.0,
-                abs_tol=1.0e-12,
+                abs_tol=_time_tolerance(
+                    last_stage.step_start_time + last_stage.dt,
+                    expected_time[-1],
+                ),
             ):
                 raise ValueError("Pump stage evidence does not cover the result interval")
             if not math.isclose(

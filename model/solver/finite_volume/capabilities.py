@@ -52,6 +52,8 @@ D1_PUMP_STRONG_COUPLING = SolverCapability(
             "one-completed-interface-gate",
             "one-external-sink-pump",
             "identical-parallel-pump-units",
+            "strictly-positive-upstream-hydrograph",
+            "wet-non-rising-downstream-stage-process",
         ),
     ),
 )

@@ -955,6 +955,14 @@ def _result(
             ),
             flow=tuple(state.discharge[index] for state in runtime.states),
             velocity=tuple(state.velocity[index] for state in runtime.states),
+            volume_m3=(
+                tuple(
+                    state.area[index] * mesh.cells[index].dx
+                    for state in runtime.states
+                )
+                if model_input.provenance.validation_policy_version == "v4-lite-7"
+                else None
+            ),
         )
         for index, section in enumerate(model_input.sections)
     )

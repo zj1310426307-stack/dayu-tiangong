@@ -11,7 +11,7 @@ from model import HydraulicEngine
 from model.api import parse_v4_lite_input
 from model.core.errors import HydraulicInputError
 from model.result import MvpHydraulicResult
-from model.solver.finite_volume import StabilityError
+from model.solver.finite_volume import NumericalStateError, StabilityError
 from tests.model02.test_v4_lite_controlled_gate_completed_interface import (
     make_v4_lite_controlled_completed_gate_payload,
 )
@@ -154,6 +154,9 @@ def test_gp1_v4_lite_7_gate_pump_result_is_self_auditing() -> None:
         ("efficiency", "less than or equal to 1"),
         ("hysteresis", "greater than stop_level_m"),
         ("outlet_coverage", "does not cover"),
+        ("nonpositive_inflow", "strictly positive upstream hydrograph"),
+        ("raised_tailwater", "no higher than the final initial stage"),
+        ("dry_source", "source cell must start fully wet"),
     ],
 )
 def test_d1_preflight_fails_closed(mutation: str, message: str) -> None:
@@ -185,6 +188,12 @@ def test_d1_preflight_fails_closed(mutation: str, message: str) -> None:
         pump["control"]["start_level_m"] = pump["control"]["stop_level_m"]
     elif mutation == "outlet_coverage":
         pump["outlet_stage"]["time_seconds"][-1] = 0.5
+    elif mutation == "nonpositive_inflow":
+        payload["boundary"]["upstream"]["flow_m3_s"][-1] = 0.0
+    elif mutation == "raised_tailwater":
+        payload["boundary"]["downstream"]["water_level_m"][-1] = 10.1
+    elif mutation == "dry_source":
+        payload["initial_state"]["values"][0]["water_level_m"] = 9.0005
 
     with pytest.raises(HydraulicInputError, match=message):
         parse_v4_lite_input(payload)
@@ -259,3 +268,54 @@ def test_d1_rejected_trial_does_not_pollute_energy_or_control(
         event["structure_type"] == "gate"
         for event in document["control_events"]
     ) == 1
+
+
+def test_gp2_pump_root_iteration_exhaustion_fails_closed() -> None:
+    """D1 cannot return a nearest-point result after its root budget is exhausted."""
+
+    payload = make_v4_lite_d1_payload()
+    payload["solver"]["pump_head_residual_tolerance_m"] = 1.0e-15
+    payload["solver"]["pump_maximum_iterations"] = 1
+
+    with pytest.raises(ValueError, match="did not converge"):
+        HydraulicEngine().run(payload)
+
+
+def test_gp2_gate_event_refinement_exhaustion_fails_closed() -> None:
+    """The Gate crossing cannot skip its configured conservative replay budget."""
+
+    payload = make_v4_lite_d1_payload()
+    payload["solver"]["maximum_event_refinements"] = 0
+
+    with pytest.raises(NumericalStateError, match="maximum_event_refinements"):
+        HydraulicEngine().run(payload)
+
+
+def test_gp2_pump_positivity_retry_exhaustion_fails_closed() -> None:
+    """An oversized Pump sink must not be clipped to preserve cell area."""
+
+    payload = make_v4_lite_d1_payload()
+    pump = payload["structures"]["pumps"][0]
+    pump["head_curve"]["points"] = [
+        {"flow_m3s": 1000.0, "head_m": 2.5},
+        {"flow_m3s": 10000.0, "head_m": 1.0},
+    ]
+    pump["efficiency_curve"]["points"] = [
+        {"flow_m3s": 1000.0, "efficiency": 0.7},
+        {"flow_m3s": 10000.0, "efficiency": 0.7},
+    ]
+    pump["system_loss"]["quadratic_loss_coefficient_s2_m5"] = 0.0
+    payload["solver"]["maximum_retries"] = 0
+
+    with pytest.raises(StabilityError, match="exhausted retry budget"):
+        HydraulicEngine().run(payload)
+
+
+def test_gp2_water_balance_quality_gate_fails_closed() -> None:
+    """A tolerance below floating conservation closure cannot be marked PASS."""
+
+    payload = make_v4_lite_d1_payload()
+    payload["solver"]["water_balance_tolerance"] = 1.0e-30
+
+    with pytest.raises(NumericalStateError, match="water_balance_failed"):
+        HydraulicEngine().run(payload)

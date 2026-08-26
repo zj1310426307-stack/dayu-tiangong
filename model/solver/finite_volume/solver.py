@@ -975,27 +975,42 @@ def _validate_completed_gate_scope(
                 "controlled completed-interface Gate requires zero initial discharge"
             )
         upstream_values = boundaries.upstream.series.values
-        upstream_reference = upstream_values[0]
-        if upstream_reference <= 0.0 or any(
-            not math.isclose(
-                value,
-                upstream_reference,
-                rel_tol=0.0,
-                abs_tol=max(
-                    1.0e-12,
-                    8.0 * math.ulp(abs(value)),
-                    8.0 * math.ulp(abs(upstream_reference)),
-                ),
-            )
-            for value in upstream_values[1:]
-        ):
-            raise ValueError(
-                "controlled completed-interface Gate requires positive constant inflow"
-            )
+        if d1_scope:
+            if any(value <= 0.0 for value in upstream_values):
+                raise ValueError(
+                    "D1 completed-interface Gate requires a positive inflow hydrograph"
+                )
+        else:
+            upstream_reference = upstream_values[0]
+            if upstream_reference <= 0.0 or any(
+                not math.isclose(
+                    value,
+                    upstream_reference,
+                    rel_tol=0.0,
+                    abs_tol=max(
+                        1.0e-12,
+                        8.0 * math.ulp(abs(value)),
+                        8.0 * math.ulp(abs(upstream_reference)),
+                    ),
+                )
+                for value in upstream_values[1:]
+            ):
+                raise ValueError(
+                    "controlled completed-interface Gate requires positive constant inflow"
+                )
         final_stage = mesh.cells[-1].geometry.stage_from_area(
             initial_state.area[-1]
         )
-        if any(
+        if d1_scope:
+            if any(
+                value > final_stage
+                or value - mesh.cells[-1].bed_elevation <= config.dry_depth
+                for value in boundaries.downstream.series.values
+            ):
+                raise ValueError(
+                    "D1 downstream stage process must stay wet and not exceed initial"
+                )
+        elif any(
             not math.isclose(
                 value,
                 final_stage,
@@ -1097,7 +1112,6 @@ def solve_single_branch(
     downstream_volume = 0.0
     pump_volume = 0.0
     pump_energy = 0.0
-    pending_event_refinements = 0
     boundary_flag = (
         "boundary_closure_subcritical_mvp_zero_gradient_companion"
         if boundaries.boundary_closure == "zero-gradient-companion-v1"
@@ -1143,6 +1157,7 @@ def solve_single_branch(
         )
         requested_dt = min(config.maximum_dt, next_event - current.time)
         trial_dt = requested_dt
+        event_refinement_count = 0
         accepted_brackets: dict[tuple[str, str], ControlBracketEvidence] = {}
         while True:
             step = advance_with_retries(
@@ -1171,7 +1186,7 @@ def solve_single_branch(
                 crossing_candidates
                 and step.dt > config.event_time_tolerance + 1.0e-12
             ):
-                if pending_event_refinements >= config.maximum_event_refinements:
+                if event_refinement_count >= config.maximum_event_refinements:
                     raise NumericalStateError(
                         "bracketed control exceeded maximum_event_refinements"
                     )
@@ -1180,14 +1195,14 @@ def solve_single_branch(
                     raise NumericalStateError(
                         "bracketed control refinement would cross minimum_dt"
                     )
-                pending_event_refinements += 1
+                event_refinement_count += 1
                 trial_dt = next_trial_dt
                 continue
             if crossing_candidates:
                 accepted_brackets = {
                     key: candidate.evidence(
                         event_time_tolerance=config.event_time_tolerance,
-                        refinement_count=pending_event_refinements,
+                        refinement_count=event_refinement_count,
                     )
                     for key, candidate in crossing_candidates.items()
                 }
@@ -1202,8 +1217,6 @@ def solve_single_branch(
         step = replace(step, state=current)
         steps.append(step)
         control_events.extend(accepted_control_events)
-        if accepted_control_events:
-            pending_event_refinements = 0
         upstream_volume += step.budget.upstream_volume
         downstream_volume += step.budget.downstream_volume
         pump_volume += step.budget.pump_outflow_volume
