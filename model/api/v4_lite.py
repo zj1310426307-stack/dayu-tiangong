@@ -1011,6 +1011,10 @@ class V4LiteInput(StrictContractModel):
                 "local-advective-external-sink-v1"
             ):
                 raise ValueError("v4-lite-7 requires the local Pump momentum sink")
+            if self.solver.water_balance_tolerance > 1.0e-10:
+                raise ValueError(
+                    "v4-lite-7 water_balance_tolerance must be at most 1e-10"
+                )
             if self.solver.structure_event_policy != (
                 "bracketed-conservative-replay-right-end-v1"
             ):

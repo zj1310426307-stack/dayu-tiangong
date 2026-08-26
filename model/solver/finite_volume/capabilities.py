@@ -54,6 +54,7 @@ D1_PUMP_STRONG_COUPLING = SolverCapability(
             "identical-parallel-pump-units",
             "strictly-positive-upstream-hydrograph",
             "wet-non-rising-downstream-stage-process",
+            "water-balance-tolerance-at-most-1e-10",
         ),
     ),
 )

@@ -33,6 +33,7 @@ def make_v4_lite_d1_payload() -> dict:
             "pump_head_residual_tolerance_m": 1.0e-10,
             "pump_maximum_iterations": 100,
             "pump_spatial_support": "bound-section-cell-center-v1",
+            "water_balance_tolerance": 1.0e-10,
         }
     )
     template = payload["sections"][0]
@@ -157,6 +158,7 @@ def test_gp1_v4_lite_7_gate_pump_result_is_self_auditing() -> None:
         ("nonpositive_inflow", "strictly positive upstream hydrograph"),
         ("raised_tailwater", "no higher than the final initial stage"),
         ("dry_source", "source cell must start fully wet"),
+        ("loose_balance", "at most 1e-10"),
     ],
 )
 def test_d1_preflight_fails_closed(mutation: str, message: str) -> None:
@@ -194,6 +196,8 @@ def test_d1_preflight_fails_closed(mutation: str, message: str) -> None:
         payload["boundary"]["downstream"]["water_level_m"][-1] = 10.1
     elif mutation == "dry_source":
         payload["initial_state"]["values"][0]["water_level_m"] = 9.0005
+    elif mutation == "loose_balance":
+        payload["solver"]["water_balance_tolerance"] = 0.01
 
     with pytest.raises(HydraulicInputError, match=message):
         parse_v4_lite_input(payload)

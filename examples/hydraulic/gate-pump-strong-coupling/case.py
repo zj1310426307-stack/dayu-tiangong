@@ -60,7 +60,7 @@ def build_case() -> dict:
             "dry_depth_m": 0.001,
             "maximum_retries": 8,
             "maximum_steps": 100000,
-            "water_balance_tolerance": 0.01,
+            "water_balance_tolerance": 1.0e-10,
             "geometry_policy": "absolute-prismatic-v1",
             "geometry_source": "hydrostatic-reconstruction-v1",
             "bed_elevation_source": "profile-minimum-elevation-v1",
