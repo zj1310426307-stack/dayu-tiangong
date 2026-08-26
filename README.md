@@ -173,6 +173,20 @@ npm.cmd run build
 
 涉及数据库迁移、角色轮换或 GeoServer 配置的验证，应先在独立 Compose 项目和新卷中执行。不得把隔离验证结果冒充现有持久环境部署结果。
 
+## HYDRO-MODEL-02-D1
+
+`v4-lite-7` 增加限定单 Branch 的 completed-interface Gate 与 external Q-H/Q-η Pump
+逐 SSP-RK2 stage 强耦合。冻结的 20 断面、6 小时示例位于
+`examples/hydraulic/gate-pump-strong-coupling/`。
+
+详细资料：
+
+- `docs/model/HYDRO-MODEL-02-D1-pump-equation.md`
+- `docs/model/HYDRO-MODEL-02-D1-development-report.md`
+- `docs/model/HYDRO-MODEL-02-D1-validation-report.md`
+- `docs/model/HYDRO-MODEL-02-D1-benchmark-report.md`
+- `docs/model/HYDRO-MODEL-02-D1-known-limitations.md`
+
 ## 当前边界
 
 这是工程原型和受控本地部署基线，不是生产高可用系统。统一 IAM、真实模型率定、PLC/SCADA 接入、生产 TLS/密钥托管、审计归档、备份恢复演练和集群高可用仍需后续建设。新发布 GIS 版本也不会自动成为已率定的水动力模型版本。

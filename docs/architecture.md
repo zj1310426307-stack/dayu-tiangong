@@ -136,3 +136,13 @@ GIS 晋级只保证空间核心数据的治理与发布，不伪造模型参数�
 `hydraulic.import_job` 保留文件 SHA-256、坐标/解析配置 hash、标准化 payload、变换证据、状态和错误；`validation_run|validation_result` 保留每次校核证据。预览不改变业务实体，只有针对 draft Dataset Version 且配置 hash 匹配的明确 commit 才会在单事务内落库。显示几何转换为 4490；所有吸附、距离和桩号运算必须使用明确确认的米制 4546–4549 engineering CRS。
 
 内置 NWK11/XNS11 适配器实现文档化、严格解析的 HYDRO-DATA-01 子集，只保证项目内往返一致性。常驻服务不依赖 DHI/mikeio；原生 NWK11/XNS11 读取、转换和目标版本验收均在授权外部适配环境执行。
+
+## 12. HYDRO-MODEL-02-D1 闸泵强耦合边界
+
+`v4-lite-7` 是显式选择的纯模型能力。它在一个全湿、正向、严格亚临界的单 Branch
+中组合一个已验证的 completed-interface Gate 与一个 external hydraulic Pump。每个
+SSP-RK2 stage 都重新求 Gate 闭合和 Pump Q-H/Q-η 工作点；accepted stage evidence
+独立闭合内部 Gate 转输、Pump 外排、输入能量和总水量。
+
+该能力不改变 legacy Gate/OnOffPump，也不进入现有 FastAPI/Worker 任务选择。完整限制见
+`docs/model/HYDRO-MODEL-02-D1-known-limitations.md`；v4 原生任务链属于 D2。
