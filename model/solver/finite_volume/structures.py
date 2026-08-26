@@ -173,8 +173,10 @@ class StructureControlEvent:
             ("pump", "stop"),
         }:
             raise ValueError("control event action does not match structure_type")
-        if self.action in {"open", "start"} and observed <= threshold:
-            raise ValueError("start/open event requires water level above threshold")
+        if self.action == "open" and observed <= threshold:
+            raise ValueError("Gate open event requires water level above threshold")
+        if self.action == "start" and observed < threshold:
+            raise ValueError("Pump start event requires water level at or above threshold")
         if self.action == "stop" and observed > threshold:
             raise ValueError("stop event requires water level at or below threshold")
         if self.reason is not None and not self.reason.strip():

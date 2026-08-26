@@ -73,6 +73,19 @@ from model.solver.finite_volume.mesh import (
     FiniteVolumeMesh,
     SectionGeometryLike,
 )
+from model.solver.finite_volume.pump import (
+    HydraulicExternalPump,
+    StageHysteresisMinimumRuntime,
+)
+from model.solver.finite_volume.pump_curve import (
+    PumpEfficiencyCurve,
+    PumpHeadCurve,
+    PumpOperatingEnvelope,
+    PumpOperatingPointEvidence,
+    PumpSystemLoss,
+    PumpUnitConfiguration,
+    solve_pump_operating_point,
+)
 from model.solver.finite_volume.protocols import (
     BranchNetworkSolver,
     ExternalComparison,
@@ -169,6 +182,7 @@ __all__ = [
     "FixedGate",
     "GatePlacement",
     "HydraulicState",
+    "HydraulicExternalPump",
     "HydrostaticReconstruction",
     "InterfaceFlux",
     "LinearHydraulicFaceGeometry",
@@ -206,6 +220,12 @@ __all__ = [
     "OnOffPump",
     "PiecewiseManningZoneSolver",
     "PumpPlacement",
+    "PumpEfficiencyCurve",
+    "PumpHeadCurve",
+    "PumpOperatingEnvelope",
+    "PumpOperatingPointEvidence",
+    "PumpSystemLoss",
+    "PumpUnitConfiguration",
     "QualityGateResult",
     "RoughnessZoneSolver",
     "RoughnessAssignment",
@@ -224,6 +244,7 @@ __all__ = [
     "StructureControlEvent",
     "StructureStageContext",
     "StructureStageFlow",
+    "StageHysteresisMinimumRuntime",
     "UpstreamDischargeBoundary",
     "ZonedRoughnessMesh",
     "advance_with_retries",
@@ -256,6 +277,7 @@ __all__ = [
     "solve_single_branch",
     "solve_one_in_two_out_junction",
     "solve_one_in_two_out_network",
+    "solve_pump_operating_point",
     "ssp_rk2_step",
     "storage",
     "subcritical_characteristic_properties",

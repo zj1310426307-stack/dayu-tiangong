@@ -139,6 +139,25 @@ def test_p4_maximum_starts_holds_the_station_off() -> None:
     assert repeated is None
 
 
+def test_p4_hysteresis_threshold_equality_triggers_deterministically() -> None:
+    """The frozen controller uses inclusive start/stop threshold comparisons."""
+
+    pump = _pump(minimum_run_seconds=0.0, minimum_stop_seconds=0.0)
+    started, start = pump.synchronize_accepted_state(
+        time=0.0,
+        observed_water_level=pump.control.start_level_m,
+    )
+    stopped, stop = pump.synchronize_accepted_state(
+        time=1.0,
+        observed_water_level=pump.control.stop_level_m,
+        previous_state=started,
+    )
+
+    assert start is not None and start.action == "start"
+    assert stop is not None and stop.action == "stop"
+    assert stopped["control_state"] == "off"
+
+
 def test_stage_evaluation_is_pure_and_recomputes_qh_from_stage_level() -> None:
     """RK evaluations read committed commands and change Q only through hydraulics."""
 

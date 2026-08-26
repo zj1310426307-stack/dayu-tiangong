@@ -13,6 +13,7 @@ from model.solver.finite_volume.flux import GRAVITY
 from model.solver.finite_volume.geometry import pressure_moment
 from model.solver.finite_volume.integrator import StepResult, advance_with_retries
 from model.solver.finite_volume.mesh import FiniteVolumeMesh
+from model.solver.finite_volume.pump import HydraulicExternalPump
 from model.solver.finite_volume.state import HydraulicState
 from model.solver.finite_volume.structures import (
     BracketedOneShotStageThreshold,
@@ -69,6 +70,10 @@ class SingleBranchConfig:
     ] = "accepted-state-discrete-v1"
     event_time_tolerance: float = 1.0e-3
     maximum_event_refinements: int = 30
+    structure_capability: Literal[
+        "legacy-v1",
+        "d1-single-branch-gate-pump-v1",
+    ] = "legacy-v1"
 
     def __post_init__(self) -> None:
         """Reject unsafe controls before any boundary or state evaluation."""
@@ -118,6 +123,11 @@ class SingleBranchConfig:
             or self.maximum_event_refinements < 0
         ):
             raise ValueError("maximum_event_refinements must be non-negative")
+        if self.structure_capability not in {
+            "legacy-v1",
+            "d1-single-branch-gate-pump-v1",
+        }:
+            raise ValueError("unsupported finite-volume structure_capability")
 
 
 @dataclass(frozen=True)
@@ -129,6 +139,7 @@ class SingleBranchDiagnostics:
     upstream_boundary_volume: float
     downstream_boundary_volume: float
     pump_outflow_volume: float
+    pump_input_energy_kwh: float
     water_balance_residual: float
     relative_water_balance_error: float
     water_balance_status: Literal["pass", "fail"]
@@ -176,7 +187,7 @@ def _synchronize_structure_controls(
     mesh: FiniteVolumeMesh,
     state: HydraulicState,
     gates: Sequence[FixedGate],
-    pumps: Sequence[OnOffPump],
+    pumps: Sequence[OnOffPump | HydraulicExternalPump],
     brackets: Mapping[tuple[str, str], ControlBracketEvidence] | None = None,
 ) -> tuple[HydraulicState, tuple[StructureControlEvent, ...]]:
     """Purely derive and atomically attach commands for one accepted state.
@@ -380,7 +391,7 @@ def _validated_uniform_manning_reference(
     boundaries: BoundaryPair,
     config: SingleBranchConfig,
     gates: Sequence[FixedGate],
-    pumps: Sequence[OnOffPump],
+    pumps: Sequence[OnOffPump | HydraulicExternalPump],
 ) -> HydraulicState:
     """Validate and return an analytic uniform-Manning moving equilibrium.
 
@@ -519,7 +530,7 @@ def _validate_nonprismatic_lake_at_rest_scope(
     boundaries: BoundaryPair,
     config: SingleBranchConfig,
     gates: Sequence[FixedGate],
-    pumps: Sequence[OnOffPump],
+    pumps: Sequence[OnOffPump | HydraulicExternalPump],
 ) -> None:
     """Limit the first non-prismatic path to its verified static-water scope.
 
@@ -605,7 +616,7 @@ def _validate_nonprismatic_moving_energy_scope(
     boundaries: BoundaryPair,
     config: SingleBranchConfig,
     gates: Sequence[FixedGate],
-    pumps: Sequence[OnOffPump],
+    pumps: Sequence[OnOffPump | HydraulicExternalPump],
 ) -> None:
     """Validate the frozen fully wet, frictionless Bernoulli reference class."""
 
@@ -819,7 +830,7 @@ def _validate_structure_event_scope(
     initial_state: HydraulicState,
     config: SingleBranchConfig,
     gates: Sequence[FixedGate],
-    pumps: Sequence[OnOffPump],
+    pumps: Sequence[OnOffPump | HydraulicExternalPump],
 ) -> None:
     """Bind discrete and bracketed controls to distinct, fail-closed policies."""
 
@@ -873,14 +884,22 @@ def _validate_completed_gate_scope(
     boundaries: BoundaryPair,
     config: SingleBranchConfig,
     gates: Sequence[FixedGate],
-    pumps: Sequence[OnOffPump],
+    pumps: Sequence[OnOffPump | HydraulicExternalPump],
 ) -> None:
     """Keep the completed-interface Gate inside its verified C2b subset."""
 
+    d1_scope = config.structure_capability == "d1-single-branch-gate-pump-v1"
     completed = tuple(gate for gate in gates if gate.uses_completed_interface)
     if not completed:
+        if d1_scope:
+            raise ValueError("D1 scope requires one completed-interface Gate")
         return
-    if len(gates) != 1 or len(completed) != 1 or pumps:
+    if len(gates) != 1 or len(completed) != 1:
+        raise ValueError("completed-interface scope requires exactly one Gate")
+    if d1_scope:
+        if len(pumps) != 1 or not isinstance(pumps[0], HydraulicExternalPump):
+            raise ValueError("D1 scope requires exactly one hydraulic external Pump")
+    elif pumps:
         raise ValueError("completed-interface scope requires exactly one Gate and no Pump")
     gate = completed[0]
     if gate.control is not None and not isinstance(
@@ -924,6 +943,22 @@ def _validate_completed_gate_scope(
         raise ValueError("completed-interface scope requires a fully wet initial state")
     if gate.face_index >= len(mesh.cells) - 1:
         raise ValueError("completed-interface Gate must bind an internal face")
+    if d1_scope:
+        pump = pumps[0]
+        assert isinstance(pump, HydraulicExternalPump)
+        if pump.cell_index in {gate.face_index, gate.face_index + 1}:
+            raise ValueError("D1 Gate and Pump placements must not overlap")
+        if pump.initial_status != "off":
+            raise ValueError("D1 hydraulic Pump must start OFF")
+        pump.outlet_stage.validate_coverage(initial_state.time, config.end_time)
+        source_stage = mesh.cells[pump.cell_index].geometry.stage_from_area(
+            initial_state.area[pump.cell_index]
+        )
+        if (
+            source_stage - pump.source_bed_elevation_m
+            <= pump.minimum_source_depth_m
+        ):
+            raise ValueError("D1 hydraulic Pump source cell must start fully wet")
     if gate.control is not None:
         left = mesh.cells[gate.face_index].geometry.stage_from_area(
             initial_state.area[gate.face_index]
@@ -985,7 +1020,7 @@ def solve_single_branch(
     boundaries: BoundaryPair,
     config: SingleBranchConfig,
     gates: Sequence[FixedGate] = (),
-    pumps: Sequence[OnOffPump] = (),
+    pumps: Sequence[OnOffPump | HydraulicExternalPump] = (),
 ) -> SingleBranchResult:
     """Run the composable single-river MVP and enforce its numerical gates.
 
@@ -1061,6 +1096,7 @@ def solve_single_branch(
     upstream_volume = 0.0
     downstream_volume = 0.0
     pump_volume = 0.0
+    pump_energy = 0.0
     pending_event_refinements = 0
     boundary_flag = (
         "boundary_closure_subcritical_mvp_zero_gradient_companion"
@@ -1097,6 +1133,11 @@ def solve_single_branch(
         breakpoint = boundaries.next_breakpoint_after(current.time)
         if breakpoint is not None:
             event_candidates.append(breakpoint)
+        for pump in pumps:
+            if isinstance(pump, HydraulicExternalPump):
+                pump_breakpoint = pump.outlet_stage.next_breakpoint_after(current.time)
+                if pump_breakpoint is not None:
+                    event_candidates.append(pump_breakpoint)
         next_event = min(
             item for item in event_candidates if item > current.time + _TIME_TOLERANCE
         )
@@ -1166,6 +1207,7 @@ def solve_single_branch(
         upstream_volume += step.budget.upstream_volume
         downstream_volume += step.budget.downstream_volume
         pump_volume += step.budget.pump_outflow_volume
+        pump_energy += step.budget.pump_input_energy_kwh
         flags.update(step.diagnostic_flags)
         if accepted_brackets:
             flags.add("structure_event_bracketed_conservative_replay_right_end_v1")
@@ -1214,6 +1256,7 @@ def solve_single_branch(
             upstream_boundary_volume=upstream_volume,
             downstream_boundary_volume=downstream_volume,
             pump_outflow_volume=pump_volume,
+            pump_input_energy_kwh=pump_energy,
             water_balance_residual=residual,
             relative_water_balance_error=relative_error,
             water_balance_status="pass",

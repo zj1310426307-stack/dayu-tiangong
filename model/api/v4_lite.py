@@ -25,6 +25,7 @@ from pydantic import (
 
 from model.core.errors import HydraulicInputError
 from model.geometry.sections import TabulatedSectionGeometry
+from model.solver.finite_volume.capabilities import require_solver_capability
 
 
 MODEL_INPUT_V4_LITE = "dayu.model-input.v4-lite"
@@ -109,6 +110,19 @@ _GATE_COUPLING_FIELDS = frozenset(
         "gate_equation_tolerance_m",
         "gate_maximum_iterations",
         "gate_spatial_support",
+    }
+)
+_PUMP_COUPLING_FIELDS = frozenset(
+    {
+        "pump_coupling_policy",
+        "pump_curve_policy",
+        "pump_efficiency_policy",
+        "pump_system_loss_policy",
+        "pump_control_policy",
+        "pump_momentum_policy",
+        "pump_head_residual_tolerance_m",
+        "pump_maximum_iterations",
+        "pump_spatial_support",
     }
 )
 _POLICY_RELATIVE_TOLERANCE = 1.0e-10
@@ -318,6 +332,27 @@ class V4LiteSolver(StrictContractModel):
     gate_spatial_support: Literal[
         "bound-internal-section-face-v1"
     ] = "bound-internal-section-face-v1"
+    pump_coupling_policy: Literal[
+        "design-flow-external-sink-v1",
+        "qh-operating-point-external-sink-v1",
+    ] = "design-flow-external-sink-v1"
+    pump_curve_policy: Literal["piecewise-linear-qh-v1"] = "piecewise-linear-qh-v1"
+    pump_efficiency_policy: Literal[
+        "piecewise-linear-q-efficiency-v1"
+    ] = "piecewise-linear-q-efficiency-v1"
+    pump_system_loss_policy: Literal["quadratic-q-v1"] = "quadratic-q-v1"
+    pump_control_policy: Literal[
+        "one-shot-or-fixed-v1",
+        "stage-hysteresis-min-runtime-v1",
+    ] = "one-shot-or-fixed-v1"
+    pump_momentum_policy: Literal[
+        "local-advective-external-sink-v1"
+    ] = "local-advective-external-sink-v1"
+    pump_head_residual_tolerance_m: PositiveFinite = 1.0e-10
+    pump_maximum_iterations: PositiveInt = 100
+    pump_spatial_support: Literal[
+        "bound-section-cell-center-v1"
+    ] = "bound-section-cell-center-v1"
 
     @property
     def policy_tuple(self) -> tuple[str, str, str, str, str, str]:
@@ -645,11 +680,153 @@ class ExternalPumpInput(StrictContractModel):
         return self
 
 
+class PumpHeadCurvePointInput(StrictContractModel):
+    """Store one finite per-unit Pump Q-H point in SI units."""
+
+    flow_m3s: NonNegativeFinite
+    head_m: NonNegativeFinite
+
+
+class PumpEfficiencyCurvePointInput(StrictContractModel):
+    """Store one finite per-unit Pump Q-efficiency point."""
+
+    flow_m3s: NonNegativeFinite
+    efficiency: Annotated[FiniteNumber, Field(gt=0.0, le=1.0)]
+
+
+class PumpHeadCurveInput(StrictContractModel):
+    """Require an input-order-preserving Q-H table with no extrapolation policy."""
+
+    points: tuple[PumpHeadCurvePointInput, ...] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def validate_flow_order(self) -> Self:
+        """Reject duplicate/decreasing Q instead of sorting an untrusted curve."""
+
+        flows = tuple(point.flow_m3s for point in self.points)
+        if any(right <= left for left, right in zip(flows, flows[1:])):
+            raise ValueError("Pump Q-H flow_m3s must be strictly increasing")
+        return self
+
+
+class PumpEfficiencyCurveInput(StrictContractModel):
+    """Require an ordered Q-efficiency table with physical efficiencies."""
+
+    points: tuple[PumpEfficiencyCurvePointInput, ...] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def validate_flow_order(self) -> Self:
+        """Reject duplicate/decreasing Q without inventing a station curve."""
+
+        flows = tuple(point.flow_m3s for point in self.points)
+        if any(right <= left for left, right in zip(flows, flows[1:])):
+            raise ValueError("Pump Q-efficiency flow_m3s must be strictly increasing")
+        return self
+
+
+class PumpUnitConfigurationInput(StrictContractModel):
+    """Describe identical parallel units and the commanded ON unit count."""
+
+    total_units: PositiveInt
+    running_units: PositiveInt
+    minimum_running_units: PositiveInt
+    maximum_running_units: PositiveInt
+
+    @model_validator(mode="after")
+    def validate_unit_limits(self) -> Self:
+        """Keep the commanded count inside the installed and permitted limits."""
+
+        if not (
+            self.minimum_running_units
+            <= self.running_units
+            <= self.maximum_running_units
+            <= self.total_units
+        ):
+            raise ValueError("Pump unit configuration limits are inconsistent")
+        return self
+
+
+class PumpSystemLossInput(StrictContractModel):
+    """Freeze fixed and quadratic external system-loss terms with explicit units."""
+
+    static_loss_m: NonNegativeFinite
+    quadratic_loss_coefficient_s2_m5: NonNegativeFinite
+
+
+class PumpOutletStageSeriesInput(StrictContractModel):
+    """Provide the explicit external target stage process for the Pump."""
+
+    time_seconds: tuple[NonNegativeFinite, ...] = Field(min_length=2)
+    water_level_m: tuple[FiniteNumber, ...] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def validate_series(self) -> Self:
+        """Require aligned, strictly ordered samples without extrapolation."""
+
+        _validate_time_series(
+            self.time_seconds,
+            self.water_level_m,
+            "Pump outlet stage",
+        )
+        return self
+
+
+class StageHysteresisMinimumRuntimeInput(StrictContractModel):
+    """Configure accepted-state Pump hysteresis and dwell/start limits."""
+
+    type: Literal["stage-hysteresis-min-runtime-v1"]
+    start_level_m: FiniteNumber
+    stop_level_m: FiniteNumber
+    minimum_run_seconds: NonNegativeFinite
+    minimum_stop_seconds: NonNegativeFinite
+    maximum_starts: PositiveInt
+
+    @model_validator(mode="after")
+    def validate_thresholds(self) -> Self:
+        """Reject a reversed or zero hysteresis band before runtime."""
+
+        if self.start_level_m <= self.stop_level_m:
+            raise ValueError("Pump start_level_m must be greater than stop_level_m")
+        return self
+
+
+class HydraulicExternalPumpInput(StrictContractModel):
+    """Describe one explicit Q-H/Q-efficiency external-sink Pump."""
+
+    pump_model: Literal["hydraulic-qh-external-sink-v1"]
+    identity: PumpIdentity
+    branch_id: PositiveId
+    section_id: PositiveId
+    outlet: Literal["external"]
+    status: Literal["off"]
+    head_curve: PumpHeadCurveInput
+    efficiency_curve: PumpEfficiencyCurveInput
+    unit_configuration: PumpUnitConfigurationInput
+    system_loss: PumpSystemLossInput
+    outlet_stage: PumpOutletStageSeriesInput
+    control: StageHysteresisMinimumRuntimeInput
+
+    @model_validator(mode="after")
+    def validate_curve_domain_overlap(self) -> Self:
+        """Require a non-empty per-unit Q domain shared by head and efficiency."""
+
+        head_min = self.head_curve.points[0].flow_m3s
+        head_max = self.head_curve.points[-1].flow_m3s
+        efficiency_min = self.efficiency_curve.points[0].flow_m3s
+        efficiency_max = self.efficiency_curve.points[-1].flow_m3s
+        if max(head_min, efficiency_min) >= min(head_max, efficiency_max):
+            raise ValueError("Pump Q-H and Q-efficiency domains do not overlap")
+        return self
+
+
+V4LitePumpInput = ExternalPumpInput | HydraulicExternalPumpInput
+
+
 class V4LiteStructures(StrictContractModel):
     """Limit the MVP to at most one Gate and one external Pump."""
 
     gates: tuple[FixedGateInput, ...] = Field(max_length=1)
-    pumps: tuple[ExternalPumpInput, ...] = Field(max_length=1)
+    pumps: tuple[V4LitePumpInput, ...] = Field(max_length=1)
 
 
 class V4LiteProvenance(StrictContractModel):
@@ -664,6 +841,7 @@ class V4LiteProvenance(StrictContractModel):
         "v4-lite-4",
         "v4-lite-5",
         "v4-lite-6",
+        "v4-lite-7",
     ]
 
 
@@ -705,7 +883,7 @@ class V4LiteInput(StrictContractModel):
         self._validate_versioned_policy()
         if (
             self.provenance.validation_policy_version
-            not in {"v4-lite-3", "v4-lite-5", "v4-lite-6"}
+            not in {"v4-lite-3", "v4-lite-5", "v4-lite-6", "v4-lite-7"}
             and any(section.default_manning_n <= 0.0 for section in self.sections)
         ):
             raise ValueError(
@@ -734,6 +912,7 @@ class V4LiteInput(StrictContractModel):
         self._validate_structures(section_ids)
         self._validate_structure_event_policy(section_by_id)
         self._validate_gate_coupling_policy(section_by_id)
+        self._validate_pump_coupling_policy(section_by_id)
         self._validate_equilibrium_policy()
         self._validate_nonprismatic_lake_scope()
         self._validate_nonprismatic_moving_scope()
@@ -749,6 +928,7 @@ class V4LiteInput(StrictContractModel):
                 _VERSIONED_POLICY_FIELDS
                 | _EVENT_POLICY_FIELDS
                 | _GATE_COUPLING_FIELDS
+                | _PUMP_COUPLING_FIELDS
             ) & self.solver.model_fields_set
             if explicit:
                 raise ValueError(
@@ -765,8 +945,9 @@ class V4LiteInput(StrictContractModel):
             )
         explicit_event_fields = _EVENT_POLICY_FIELDS & self.solver.model_fields_set
         explicit_gate_fields = _GATE_COUPLING_FIELDS & self.solver.model_fields_set
+        explicit_pump_fields = _PUMP_COUPLING_FIELDS & self.solver.model_fields_set
         if version == "v4-lite-2":
-            if explicit_event_fields or explicit_gate_fields:
+            if explicit_event_fields or explicit_gate_fields or explicit_pump_fields:
                 raise ValueError("v4-lite-2 does not accept structure policy fields")
             if policy not in {
                 B2_STANDARD_POLICY,
@@ -776,14 +957,14 @@ class V4LiteInput(StrictContractModel):
                 raise ValueError("v4-lite-2 policy tuple is not implemented")
             return
         if version == "v4-lite-3":
-            if explicit_event_fields or explicit_gate_fields:
+            if explicit_event_fields or explicit_gate_fields or explicit_pump_fields:
                 raise ValueError("v4-lite-3 does not accept structure policy fields")
             if policy != C1_NONPRISMATIC_MOVING_POLICY:
                 raise ValueError("v4-lite-3 policy tuple is not implemented")
             return
         if version == "v4-lite-4":
-            if explicit_gate_fields:
-                raise ValueError("v4-lite-4 does not accept Gate coupling fields")
+            if explicit_gate_fields or explicit_pump_fields:
+                raise ValueError("v4-lite-4 does not accept Gate/Pump coupling fields")
             missing_event_fields = _EVENT_POLICY_FIELDS - self.solver.model_fields_set
             if missing_event_fields:
                 raise ValueError(
@@ -797,6 +978,46 @@ class V4LiteInput(StrictContractModel):
             ):
                 raise ValueError("v4-lite-4 requires the bracketed event policy")
             return
+        if version == "v4-lite-7":
+            capability = require_solver_capability(version)
+            missing_event_fields = _EVENT_POLICY_FIELDS - self.solver.model_fields_set
+            missing_gate_fields = _GATE_COUPLING_FIELDS - self.solver.model_fields_set
+            missing_pump_fields = _PUMP_COUPLING_FIELDS - self.solver.model_fields_set
+            missing_fields = (
+                missing_event_fields | missing_gate_fields | missing_pump_fields
+            )
+            if missing_fields:
+                raise ValueError(
+                    "v4-lite-7 requires every Gate/Pump policy field explicitly; "
+                    f"missing={sorted(missing_fields)}"
+                )
+            manifest = capability.manifest
+            if policy != C2_CONTROLLED_GATE_COMPLETED_INTERFACE_POLICY:
+                raise ValueError("v4-lite-7 policy tuple is not implemented")
+            expected = {
+                "geometry_policy": manifest.geometry_policy,
+                "boundary_closure": manifest.boundary_policy,
+                "gate_coupling_policy": manifest.gate_coupling_policy,
+                "pump_coupling_policy": manifest.pump_coupling_policy,
+                "pump_curve_policy": manifest.pump_curve_policy,
+                "pump_efficiency_policy": manifest.pump_efficiency_policy,
+                "pump_control_policy": manifest.pump_control_policy,
+            }
+            if any(getattr(self.solver, key) != value for key, value in expected.items()):
+                raise ValueError("v4-lite-7 solver policies do not match its capability")
+            if self.solver.pump_system_loss_policy != "quadratic-q-v1":
+                raise ValueError("v4-lite-7 requires quadratic Pump system loss")
+            if self.solver.pump_momentum_policy != (
+                "local-advective-external-sink-v1"
+            ):
+                raise ValueError("v4-lite-7 requires the local Pump momentum sink")
+            if self.solver.structure_event_policy != (
+                "bracketed-conservative-replay-right-end-v1"
+            ):
+                raise ValueError("v4-lite-7 requires bracketed Gate replay")
+            return
+        if explicit_pump_fields:
+            raise ValueError(f"{version} does not accept hydraulic Pump policy fields")
         if version == "v4-lite-5" and explicit_event_fields:
             raise ValueError("v4-lite-5 does not accept event policy fields")
         if version == "v4-lite-6":
@@ -1375,15 +1596,56 @@ class V4LiteInput(StrictContractModel):
             for structure in (*self.structures.gates, *self.structures.pumps)
         )
         version = self.provenance.validation_policy_version
-        if version not in {"v4-lite-4", "v4-lite-6"}:
+        if version not in {"v4-lite-4", "v4-lite-6", "v4-lite-7"}:
             if any(
                 isinstance(control, BracketedOneShotStageAboveControlInput)
                 for control in controls
             ):
                 raise ValueError(
                     "bracketed threshold control requires validation_policy_version "
-                    "v4-lite-4 or v4-lite-6"
+                    "v4-lite-4, v4-lite-6, or v4-lite-7"
                 )
+            return
+        if version == "v4-lite-7":
+            if len(self.structures.gates) != 1 or len(self.structures.pumps) != 1:
+                raise ValueError("v4-lite-7 requires one Gate and one Pump")
+            gate_control = self.structures.gates[0].control
+            pump = self.structures.pumps[0]
+            if not isinstance(gate_control, BracketedOneShotStageAboveControlInput):
+                raise ValueError("v4-lite-7 Gate control must be bracketed")
+            if not isinstance(pump, HydraulicExternalPumpInput):
+                raise ValueError("v4-lite-7 requires a hydraulic Q-H Pump")
+            if self.solver.event_time_tolerance_seconds < (
+                self.solver.minimum_time_step_seconds
+            ):
+                raise ValueError(
+                    "event_time_tolerance_seconds must not be less than "
+                    "minimum_time_step_seconds"
+                )
+            if isinstance(self.initial_state, UniformInitialState):
+                stage_by_section = {
+                    section_id: self.initial_state.water_level_m
+                    for section_id in section_by_id
+                }
+            else:
+                stage_by_section = {
+                    value.section_id: value.water_level_m
+                    for value in self.initial_state.values
+                }
+            gate = self.structures.gates[0]
+            initial_gate_stage = stage_by_section[
+                gate.interface.upstream_section_id
+            ]
+            if initial_gate_stage >= gate_control.threshold_water_level_m:
+                raise ValueError("bracketed Gate initial stage must be below threshold")
+            source_section = section_by_id[pump.section_id]
+            if not (
+                source_section.minimum_stage_m
+                <= pump.control.stop_level_m
+                < pump.control.start_level_m
+                < source_section.maximum_stage_m
+            ):
+                raise ValueError("Pump hysteresis thresholds lie outside its Profile")
             return
         if not controls:
             raise ValueError(f"{version} requires at least one controlled structure")
@@ -1438,21 +1700,28 @@ class V4LiteInput(StrictContractModel):
             "sill_elevation_m" in gate.model_fields_set
             for gate in self.structures.gates
         )
-        if version not in {"v4-lite-5", "v4-lite-6"}:
+        if version not in {"v4-lite-5", "v4-lite-6", "v4-lite-7"}:
             if any(declared_sills):
                 raise ValueError("pre-v5 Gate must not declare sill_elevation_m")
             return
-        if len(self.structures.gates) != 1 or self.structures.pumps:
+        if len(self.structures.gates) != 1:
+            raise ValueError(f"{version} requires exactly one Gate")
+        if version == "v4-lite-7":
+            if len(self.structures.pumps) != 1 or not isinstance(
+                self.structures.pumps[0], HydraulicExternalPumpInput
+            ):
+                raise ValueError("v4-lite-7 requires exactly one hydraulic Pump")
+        elif self.structures.pumps:
             raise ValueError(f"{version} requires exactly one Gate and no Pump")
         gate = self.structures.gates[0]
         if version == "v4-lite-5" and not isinstance(
             gate.control, FixedStructureControlInput
         ):
             raise ValueError("v4-lite-5 requires fixed Gate control")
-        if version == "v4-lite-6" and not isinstance(
+        if version in {"v4-lite-6", "v4-lite-7"} and not isinstance(
             gate.control, BracketedOneShotStageAboveControlInput
         ):
-            raise ValueError("v4-lite-6 requires bracketed Gate control")
+            raise ValueError(f"{version} requires bracketed Gate control")
         if not declared_sills[0] or gate.sill_elevation_m is None:
             raise ValueError(f"{version} requires explicit sill_elevation_m")
         if self.solver.geometry_policy != "absolute-prismatic-v1":
@@ -1475,14 +1744,14 @@ class V4LiteInput(StrictContractModel):
         upstream_flows = tuple(self.boundary.upstream.flow_m3_s)
         if version == "v4-lite-5" and any(value != 0.0 for value in upstream_flows):
             raise ValueError("v4-lite-5 requires a constant zero upstream boundary")
-        if version == "v4-lite-6":
+        if version in {"v4-lite-6", "v4-lite-7"}:
             inflow = _require_scope_constant(
                 upstream_flows,
                 "upstream boundary discharge",
-                "v4-lite-6",
+                version,
             )
             if inflow <= 0.0:
-                raise ValueError("v4-lite-6 requires positive constant upstream inflow")
+                raise ValueError(f"{version} requires positive constant upstream inflow")
         final_stage = value_by_id[self.sections[-1].section_id].water_level_m
         if any(
             not _absolute_stage_close(value, final_stage)
@@ -1498,11 +1767,11 @@ class V4LiteInput(StrictContractModel):
             and upstream_value.water_level_m <= downstream_value.water_level_m
         ):
             raise ValueError("v4-lite-5 Gate requires positive forward head")
-        if version == "v4-lite-6" and not _absolute_stage_close(
+        if version in {"v4-lite-6", "v4-lite-7"} and not _absolute_stage_close(
             upstream_value.water_level_m,
             downstream_value.water_level_m,
         ):
-            raise ValueError("v4-lite-6 Gate requires an initially level closed interface")
+            raise ValueError(f"{version} Gate requires an initially level closed interface")
         upstream_section = section_by_id[gate.interface.upstream_section_id]
         downstream_section = section_by_id[gate.interface.downstream_section_id]
         sill = float(gate.sill_elevation_m)
@@ -1519,7 +1788,51 @@ class V4LiteInput(StrictContractModel):
         if min(submergence_levels) <= gate_top:
             if version == "v4-lite-5":
                 raise ValueError("v4-lite-5 Gate opening must be submerged initially")
-            raise ValueError("v4-lite-6 Gate target opening must remain submerged")
+            raise ValueError(f"{version} Gate target opening must remain submerged")
+
+    def _validate_pump_coupling_policy(
+        self,
+        section_by_id: dict[int, V4LiteSection],
+    ) -> None:
+        """Bind the hydraulic Q-H Pump only to the registered D1 capability."""
+
+        version = self.provenance.validation_policy_version
+        hydraulic = tuple(
+            pump
+            for pump in self.structures.pumps
+            if isinstance(pump, HydraulicExternalPumpInput)
+        )
+        if version != "v4-lite-7":
+            if hydraulic:
+                raise ValueError("hydraulic Q-H Pump requires v4-lite-7")
+            return
+        if len(hydraulic) != 1 or len(self.structures.pumps) != 1:
+            raise ValueError("v4-lite-7 requires exactly one hydraulic Pump")
+        pump = hydraulic[0]
+        gate = self.structures.gates[0]
+        section_ids = tuple(section.section_id for section in self.sections)
+        pump_index = section_ids.index(pump.section_id)
+        gate_index = section_ids.index(gate.interface.upstream_section_id)
+        if pump_index in {gate_index, gate_index + 1}:
+            raise ValueError("v4-lite-7 Gate and Pump placements must not overlap")
+        if (
+            pump.outlet_stage.time_seconds[0] > 0.0
+            or pump.outlet_stage.time_seconds[-1]
+            < self.solver.duration_seconds
+        ):
+            raise ValueError("Pump outlet stage does not cover the simulation interval")
+        if not isinstance(self.initial_state, BySectionInitialState):
+            raise ValueError("v4-lite-7 requires by-section initial_state")
+        initial_by_id = {
+            value.section_id: value for value in self.initial_state.values
+        }
+        source_section = section_by_id[pump.section_id]
+        initial_source = initial_by_id[pump.section_id]
+        if (
+            initial_source.water_level_m - source_section.minimum_stage_m
+            <= self.solver.dry_depth_m
+        ):
+            raise ValueError("v4-lite-7 Pump source cell must start fully wet")
 
     @staticmethod
     def _validate_control_threshold(
@@ -1569,10 +1882,17 @@ __all__ = [
     "ExternalPumpInput",
     "FixedGateInput",
     "FixedStructureControlInput",
+    "HydraulicExternalPumpInput",
     "OneShotStageAboveControlInput",
     "ProfilePoint",
+    "PumpEfficiencyCurveInput",
+    "PumpHeadCurveInput",
+    "PumpOutletStageSeriesInput",
+    "PumpSystemLossInput",
+    "PumpUnitConfigurationInput",
     "SectionInitialValue",
     "StructureControlInput",
+    "StageHysteresisMinimumRuntimeInput",
     "UniformInitialState",
     "UpstreamDischargeSeries",
     "V4LiteBoundary",
