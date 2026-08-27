@@ -6,6 +6,8 @@ import bisect
 import math
 from dataclasses import dataclass
 
+from model.core.callbacks import check_cancellation
+
 WATER_DENSITY_KG_M3 = 1000.0
 GRAVITY_M_S2 = 9.81
 
@@ -441,6 +443,7 @@ def solve_pump_operating_point(
     system_loss: PumpSystemLoss,
     head_residual_tolerance_m: float,
     maximum_iterations: int,
+    cancel_check: object | None = None,
 ) -> PumpOperatingPointEvidence:
     """Solve ``H_pump(Q/N) = H_system(Q)`` by deterministic bisection."""
 
@@ -487,6 +490,7 @@ def solve_pump_operating_point(
         flow = lower
         pump_head, system_head, residual = lower_values
         for iterations in range(1, maximum_iterations + 1):
+            check_cancellation(cancel_check, "pump_root_iteration")
             flow = 0.5 * (lower + upper)
             pump_head, system_head, residual = values(flow)
             if abs(residual) <= tolerance:

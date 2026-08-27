@@ -249,6 +249,8 @@ class HydraulicExternalPump:
         self,
         context: StructureStageContext,
         control_state: Mapping[str, object] | None = None,
+        *,
+        cancel_check: object | None = None,
     ) -> StructureStageFlow:
         """Solve one stage operating point from the committed Pump command."""
 
@@ -288,6 +290,7 @@ class HydraulicExternalPump:
                 system_loss=self.system_loss,
                 head_residual_tolerance_m=self.head_residual_tolerance_m,
                 maximum_iterations=self.maximum_iterations,
+                cancel_check=cancel_check,
             )
         return StructureStageFlow(
             structure_id=self.pump_id,

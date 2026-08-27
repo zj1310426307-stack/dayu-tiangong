@@ -22,4 +22,7 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_always_eager=getenv("CELERY_TASK_ALWAYS_EAGER", "0") == "1",
     task_eager_propagates=True,
+    task_routes={
+        "dayu.run_hydraulic_v4_task": {"queue": "hydraulic-v4-d1"},
+    },
 )

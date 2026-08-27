@@ -1103,7 +1103,12 @@ def _result(
     )
 
 
-def run_v4_lite(snapshot: Mapping[str, Any]) -> MvpHydraulicResult:
+def run_v4_lite(
+    snapshot: Mapping[str, Any],
+    *,
+    cancel_check: Any | None = None,
+    progress_callback: Any | None = None,
+) -> MvpHydraulicResult:
     """Validate and execute the direct v4-lite finite-volume route only."""
 
     frozen_snapshot = json.loads(canonical_json(snapshot))
@@ -1144,6 +1149,8 @@ def run_v4_lite(snapshot: Mapping[str, Any]) -> MvpHydraulicResult:
         ),
         gates=gates,
         pumps=pumps,
+        cancel_check=cancel_check,
+        progress_callback=progress_callback,
     )
     return _result(
         input_snapshot_hash=input_snapshot_hash,

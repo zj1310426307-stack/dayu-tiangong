@@ -20,7 +20,11 @@ def claim_task(session: Session, task_id: int, worker_id: str) -> SimulationTask
     now = datetime.now(UTC)
     result = session.execute(
         update(SimulationTask)
-        .where(SimulationTask.id == task_id, SimulationTask.status == "queued")
+        .where(
+            SimulationTask.id == task_id,
+            SimulationTask.status == "queued",
+            SimulationTask.input_schema_version != "dayu.model-input.v4",
+        )
         .values(
             status="running", progress=5, worker_id=worker_id,
             start_time=now, heartbeat_time=now, error_message=None,
@@ -36,22 +40,86 @@ def claim_task(session: Session, task_id: int, worker_id: str) -> SimulationTask
     return task
 
 
+def claim_v4_task(session: Session, task_id: int, worker_id: str) -> SimulationTask:
+    """Atomically claim only the exact D1 native-v4 solver capability."""
+
+    from model.solver.registry import D1_CAPABILITY_ID, D1_SOLVER_ID
+
+    now = datetime.now(UTC)
+    result = session.execute(
+        update(SimulationTask)
+        .where(
+            SimulationTask.id == task_id,
+            SimulationTask.status == "queued",
+            SimulationTask.input_schema_version == "dayu.model-input.v4",
+            SimulationTask.solver_id == D1_SOLVER_ID,
+            SimulationTask.capability_id == D1_CAPABILITY_ID,
+        )
+        .values(
+            status="running",
+            progress=5,
+            worker_id=worker_id,
+            start_time=now,
+            heartbeat_time=now,
+            execution_phase="validating_snapshot",
+            error_message=None,
+        )
+    )
+    if result.rowcount != 1:
+        session.rollback()
+        raise DuplicateClaimError("task is not a supported queued native-v4 task")
+    session.commit()
+    task = session.get(SimulationTask, task_id)
+    if task is None:
+        raise LookupError("simulation task does not exist")
+    return task
+
+
 def heartbeat(
     session: Session, task_id: int, *, progress: int,
     simulation_time: float | None = None, cfl: float | None = None,
+    execution_phase: str | None = None,
+    accepted_step_count: int | None = None,
+    retry_count: int | None = None,
+    cfl_reduction_count: int | None = None,
+    positivity_retry_count: int | None = None,
+    event_refinement_count: int | None = None,
+    gate_solver_retry_count: int | None = None,
+    pump_solver_retry_count: int | None = None,
+    minimum_dt_failure_count: int | None = None,
+    last_event: dict[str, object] | None = None,
 ) -> None:
     """更新 Worker 心跳、进度和当前数值时刻。"""
 
+    session.expire_all()
+    task = session.get(SimulationTask, task_id)
+    bounded_progress = max(0, min(progress, 99))
+    values: dict[str, object] = {
+        "heartbeat_time": datetime.now(UTC),
+        "progress": max(task.progress, bounded_progress) if task is not None else bounded_progress,
+        "current_simulation_time": simulation_time,
+        "current_cfl": cfl,
+    }
+    optional_values = {
+        "execution_phase": execution_phase,
+        "accepted_step_count": accepted_step_count,
+        "retry_count": retry_count,
+        "cfl_reduction_count": cfl_reduction_count,
+        "positivity_retry_count": positivity_retry_count,
+        "event_refinement_count": event_refinement_count,
+        "gate_solver_retry_count": gate_solver_retry_count,
+        "pump_solver_retry_count": pump_solver_retry_count,
+        "minimum_dt_failure_count": minimum_dt_failure_count,
+        "last_event": last_event,
+    }
+    values.update({key: value for key, value in optional_values.items() if value is not None})
     session.execute(
         update(SimulationTask)
         .where(
             SimulationTask.id == task_id,
             SimulationTask.status.in_(("running", "cancel_requested")),
         )
-        .values(
-            heartbeat_time=datetime.now(UTC), progress=max(0, min(progress, 99)),
-            current_simulation_time=simulation_time, current_cfl=cfl,
-        )
+        .values(**values)
     )
     session.commit()
 
@@ -97,7 +165,16 @@ def recover_stale_tasks(session: Session, stale_seconds: int = 120) -> list[int]
     for task in tasks:
         task.status = "failed"
         task.progress = 100
-        task.error_message = "worker heartbeat stale; manual retry required"
+        phase = task.execution_phase or "unknown"
+        reconciliation = phase in {"persisting", "publishing_artifact", "finalizing"}
+        task.error_message = (
+            f"worker heartbeat stale during {phase}; "
+            + (
+                "result/artifact reconciliation required before retry"
+                if reconciliation
+                else "manual retry required"
+            )
+        )
         task.end_time = datetime.now(UTC)
     session.commit()
     return [task.id for task in tasks]

@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass, replace
 from typing import Literal, Mapping, Sequence
 
+from model.core.callbacks import check_cancellation
 from model.solver.finite_volume.boundary import BoundaryPair
 from model.solver.finite_volume.diagnostics import NumericalStateError, require_quality
 from model.solver.finite_volume.event_locator import detect_bracketed_crossings
@@ -147,6 +148,12 @@ class SingleBranchDiagnostics:
     minimum_dt: float
     retry_count: int
     step_count: int
+    cfl_reduction_count: int
+    positivity_retry_count: int
+    event_refinement_count: int
+    gate_solver_retry_count: int
+    pump_solver_retry_count: int
+    minimum_dt_failure_count: int
     diagnostic_flags: tuple[str, ...]
 
 
@@ -1036,6 +1043,8 @@ def solve_single_branch(
     config: SingleBranchConfig,
     gates: Sequence[FixedGate] = (),
     pumps: Sequence[OnOffPump | HydraulicExternalPump] = (),
+    cancel_check: object | None = None,
+    progress_callback: object | None = None,
 ) -> SingleBranchResult:
     """Run the composable single-river MVP and enforce its numerical gates.
 
@@ -1112,6 +1121,10 @@ def solve_single_branch(
     downstream_volume = 0.0
     pump_volume = 0.0
     pump_energy = 0.0
+    total_event_refinements = 0
+    gate_solver_retries = 0
+    pump_solver_retries = 0
+    last_event: dict[str, object] | None = None
     boundary_flag = (
         "boundary_closure_subcritical_mvp_zero_gradient_companion"
         if boundaries.boundary_closure == "zero-gradient-companion-v1"
@@ -1141,6 +1154,7 @@ def solve_single_branch(
         flags.add("gate_completed_interface_bracketed_control_v1")
 
     while current.time < config.end_time - _TIME_TOLERANCE:
+        check_cancellation(cancel_check, "accepted_step_start")
         if len(steps) >= config.maximum_steps:
             raise NumericalStateError("single-branch run exceeded maximum_steps")
         event_candidates = [config.end_time, next_output]
@@ -1174,6 +1188,7 @@ def solve_single_branch(
                 scheme=config.scheme,
                 equilibrium_reference=equilibrium_reference,
                 geometry_source_mode=config.geometry_source_mode,
+                cancel_check=cancel_check,
             )
             crossing_candidates = detect_bracketed_crossings(
                 mesh=mesh,
@@ -1196,6 +1211,7 @@ def solve_single_branch(
                         "bracketed control refinement would cross minimum_dt"
                     )
                 event_refinement_count += 1
+                check_cancellation(cancel_check, "event_refinement")
                 trial_dt = next_trial_dt
                 continue
             if crossing_candidates:
@@ -1217,6 +1233,26 @@ def solve_single_branch(
         step = replace(step, state=current)
         steps.append(step)
         control_events.extend(accepted_control_events)
+        total_event_refinements += event_refinement_count
+        gate_solver_retries += sum(
+            max(flow.completed_interface.iterations - 1, 0)
+            for flow in step.budget.gate_stage_flows
+            if flow.completed_interface is not None
+        )
+        pump_solver_retries += sum(
+            max(flow.pump_operating_point.iterations - 1, 0)
+            for flow in step.budget.pump_stage_flows
+            if flow.pump_operating_point is not None
+        )
+        if accepted_control_events:
+            event = accepted_control_events[-1]
+            last_event = {
+                "time_seconds": event.time,
+                "structure_type": event.structure_type,
+                "structure_id": event.structure_id,
+                "action": event.action,
+                "reason": event.reason,
+            }
         upstream_volume += step.budget.upstream_volume
         downstream_volume += step.budget.downstream_volume
         pump_volume += step.budget.pump_outflow_volume
@@ -1227,6 +1263,25 @@ def solve_single_branch(
         if current.time >= next_output - _TIME_TOLERANCE:
             output_states.append(current)
             next_output = min(next_output + config.output_interval, config.end_time)
+        if callable(progress_callback):
+            progress_callback(
+                current.time,
+                step.maximum_cfl,
+                {
+                    "accepted_step_count": current.diagnostics.step_count,
+                    "retry_count": current.diagnostics.retry_count,
+                    "cfl_reduction_count": (
+                        current.diagnostics.time_step_reduction_count
+                    ),
+                    "positivity_retry_count": current.diagnostics.retry_count,
+                    "event_refinement_count": total_event_refinements,
+                    "gate_solver_retry_count": gate_solver_retries,
+                    "pump_solver_retry_count": pump_solver_retries,
+                    "minimum_dt_failure_count": 0,
+                    "last_event": last_event,
+                },
+            )
+        check_cancellation(cancel_check, "accepted_step_end")
 
     if output_states[-1].time < config.end_time - _TIME_TOLERANCE:
         output_states.append(current)
@@ -1277,6 +1332,12 @@ def solve_single_branch(
             minimum_dt=minimum_used,
             retry_count=current.diagnostics.retry_count,
             step_count=current.diagnostics.step_count,
+            cfl_reduction_count=current.diagnostics.time_step_reduction_count,
+            positivity_retry_count=current.diagnostics.retry_count,
+            event_refinement_count=total_event_refinements,
+            gate_solver_retry_count=gate_solver_retries,
+            pump_solver_retry_count=pump_solver_retries,
+            minimum_dt_failure_count=0,
             diagnostic_flags=tuple(sorted(flags)),
         ),
     )

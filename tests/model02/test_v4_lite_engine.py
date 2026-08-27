@@ -261,11 +261,11 @@ def test_unknown_schema_and_v4_legacy_overrides_fail_closed() -> None:
         HydraulicEngine().run({"schema_version": "dayu.model-input.v5"})
     with pytest.raises(HydraulicInputError, match="does not accept legacy overrides"):
         HydraulicEngine().run(make_short_v4_lite_payload(), {"time_step": 60})
-    with pytest.raises(HydraulicInputError, match="does not yet support cancellation"):
-        HydraulicEngine().run(
-            make_short_v4_lite_payload(),
-            cancel_check=lambda: False,
-        )
+    callback_result = HydraulicEngine().run(
+        make_short_v4_lite_payload(),
+        cancel_check=lambda: False,
+    )
+    assert callback_result.schema_version == "dayu.hydraulic-result.mvp"
 
 
 def test_v1_v2_v3_representative_routes_keep_their_result_semantics() -> None:

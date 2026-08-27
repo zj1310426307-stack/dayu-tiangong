@@ -39,12 +39,11 @@ class HydraulicEngine:
                 raise HydraulicInputError(
                     "v4-lite snapshot is frozen and does not accept legacy overrides"
                 )
-            if cancel_check is not None or progress_callback is not None:
-                raise HydraulicInputError(
-                    "v4-lite direct execution does not yet support cancellation "
-                    "or progress callbacks"
-                )
-            return run_v4_lite(snapshot)
+            return run_v4_lite(
+                snapshot,
+                cancel_check=cancel_check,
+                progress_callback=progress_callback,
+            )
         if snapshot.get("schema_version") == "dayu.model-input.v3":
             snapshot = adapt_v3_to_v2(snapshot)
         if snapshot.get("schema_version") == "dayu.model-input.v2":

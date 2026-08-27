@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass
 from typing import Literal, Mapping, Sequence
 
+from model.core.callbacks import check_cancellation
 from model.solver.finite_volume.boundary import BoundaryPair
 from model.solver.finite_volume.diagnostics import NumericalStateError, StabilityError
 from model.solver.finite_volume.flux import (
@@ -238,6 +239,7 @@ def _forward_euler_stage_raw(
         "hydraulic-function-linear-face-v1",
     ] = "hydrostatic-reconstruction-v1",
     capture_friction_evidence: bool = False,
+    cancel_check: object | None = None,
 ) -> EulerStageResult:
     """Evaluate the uncorrected flux/source map for one Euler stage.
 
@@ -361,6 +363,7 @@ def _forward_euler_stage_raw(
                 dt=dt,
             ),
             _committed_structure_state(state.gate_state, gate.gate_id),
+            cancel_check=cancel_check,
         )
         gate_flows.append(result)
         gate_state[gate.gate_id] = result.state
@@ -384,9 +387,16 @@ def _forward_euler_stage_raw(
     for pump in pumps:
         if pump.cell_index >= len(mesh.cells):
             raise ValueError(f"pump {pump.pump_id} cell_index is outside the mesh")
-        result = pump.evaluate_stage(
-            _pump_context(mesh=mesh, state=state, pump=pump, dt=dt),
-            _committed_structure_state(state.pump_state, pump.pump_id),
+        pump_context = _pump_context(mesh=mesh, state=state, pump=pump, dt=dt)
+        pump_command = _committed_structure_state(state.pump_state, pump.pump_id)
+        result = (
+            pump.evaluate_stage(
+                pump_context,
+                pump_command,
+                cancel_check=cancel_check,
+            )
+            if isinstance(pump, HydraulicExternalPump)
+            else pump.evaluate_stage(pump_context, pump_command)
         )
         if result.flow < 0.0:
             raise ValueError("MVP external pump sink flow must be non-negative")
@@ -483,6 +493,7 @@ def forward_euler_stage(
         "hydraulic-function-linear-face-v1",
     ] = "hydrostatic-reconstruction-v1",
     capture_friction_evidence: bool = False,
+    cancel_check: object | None = None,
 ) -> EulerStageResult:
     """Evaluate one Euler stage, optionally in residual-equilibrium form.
 
@@ -510,6 +521,7 @@ def forward_euler_stage(
         scheme=scheme,
         geometry_source_mode=geometry_source_mode,
         capture_friction_evidence=capture_friction_evidence,
+        cancel_check=cancel_check,
     )
     if equilibrium_reference is None:
         return raw
@@ -596,6 +608,7 @@ def ssp_rk2_step(
         "hydrostatic-reconstruction-v1",
         "hydraulic-function-linear-face-v1",
     ] = "hydrostatic-reconstruction-v1",
+    cancel_check: object | None = None,
 ) -> StepResult:
     """Advance one SSP-RK2 step, recomputing all stage-dependent inputs."""
 
@@ -613,6 +626,7 @@ def ssp_rk2_step(
         scheme=scheme,
         equilibrium_reference=equilibrium_reference,
         geometry_source_mode=geometry_source_mode,
+        cancel_check=cancel_check,
     )
     stage_cfl = cfl_number_for_step(mesh=mesh, state=first.state, dt=dt)
     maximum_cfl = max(initial_cfl, stage_cfl)
@@ -629,6 +643,7 @@ def ssp_rk2_step(
         scheme=scheme,
         equilibrium_reference=equilibrium_reference,
         geometry_source_mode=geometry_source_mode,
+        cancel_check=cancel_check,
     )
     final_area = tuple(
         0.5 * (original + evolved)
@@ -746,6 +761,7 @@ def advance_with_retries(
         "hydrostatic-reconstruction-v1",
         "hydraulic-function-linear-face-v1",
     ] = "hydrostatic-reconstruction-v1",
+    cancel_check: object | None = None,
 ) -> StepResult:
     """Reduce to the CFL step and retry rejected positivity/stability attempts."""
 
@@ -761,6 +777,7 @@ def advance_with_retries(
         working = working.with_diagnostics(working.diagnostics.reduced_time_step())
     retries = 0
     while True:
+        check_cancellation(cancel_check, "finite_volume_trial")
         if dt < minimum_dt - 1.0e-15:
             raise StabilityError("required retry time step is below minimum_dt")
         try:
@@ -776,6 +793,7 @@ def advance_with_retries(
                 scheme=scheme,
                 equilibrium_reference=equilibrium_reference,
                 geometry_source_mode=geometry_source_mode,
+                cancel_check=cancel_check,
             )
         except (NumericalStateError, StabilityError):
             if retries >= maximum_retries:
