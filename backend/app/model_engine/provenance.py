@@ -30,6 +30,8 @@ def freeze_task_input(
     public 标识到 hydraulic 标识的严格重写。
     """
 
+    if schema_version == "dayu.model-input.v4":
+        raise ValueError("native v4 must use freeze_v4_task_input with a frozen Dispatch Plan")
     if schema_version == "dayu.model-input.v3":
         snapshot = build_model_input_v3(
             session,
@@ -86,6 +88,16 @@ def freeze_task_input(
 def snapshot_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
     """返回可安全展示的数量和来源摘要，不把大型 JSON 塞入任务列表。"""
 
+    structures = snapshot.get("structures")
+    nested_gates = structures.get("gates", []) if isinstance(structures, dict) else []
+    nested_pumps = structures.get("pumps", []) if isinstance(structures, dict) else []
+    boundaries = snapshot.get("boundaries", snapshot.get("boundary_conditions", []))
+    boundary_count = (
+        len(boundaries)
+        if isinstance(boundaries, (list, tuple, dict))
+        else 0
+    )
+
     return {
         "schema_version": snapshot.get("schema_version"),
         "dataset_version_id": (snapshot.get("dataset_version") or {}).get("id"),
@@ -94,9 +106,9 @@ def snapshot_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         "section_count": len(snapshot.get("cross_sections", [])),
         "reach_count": len(snapshot.get("reaches", [])),
         "profile_count": len(snapshot.get("cross_section_profiles", [])),
-        "boundary_count": len(snapshot.get("boundary_conditions", [])),
-        "gate_count": len(snapshot.get("gates", [])),
-        "pump_count": len(snapshot.get("pumps", [])),
+        "boundary_count": boundary_count,
+        "gate_count": len(nested_gates or snapshot.get("gates", [])),
+        "pump_count": len(nested_pumps or snapshot.get("pumps", [])),
         "coordinate_system": snapshot.get(
             "coordinate_reference", snapshot.get("coordinate_system", "CGCS2000 (EPSG:4490)")
         ),

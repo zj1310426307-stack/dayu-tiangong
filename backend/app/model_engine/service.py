@@ -27,8 +27,10 @@ from app.model_engine.schemas import (
     SimulationTaskRecord,
 )
 from app.model_engine.provenance import ENGINE_VERSION, freeze_task_input, snapshot_summary
+from app.model_engine.v4_service import freeze_v4_task_input
 from model import HydraulicEngine
 from model.core.errors import HydraulicCancelledError
+from model.solver.registry import D1_CAPABILITY_ID, D1_RUNTIME_ADAPTER_ID, D1_SOLVER_ID
 
 
 class TaskNotFoundError(LookupError):
@@ -196,17 +198,38 @@ def create_task(session: Session, payload: SimulationTaskCreate) -> SimulationTa
     if session.get(SimulationCase, payload.case_id) is None:
         raise TaskNotFoundError("simulation case does not exist")
     config = payload.model_dump(
-        exclude={"case_id", "input_schema_version"}, exclude_none=True
+        exclude={
+            "case_id",
+            "input_schema_version",
+            "solver_id",
+            "dispatch_plan_id",
+            "execution_mode",
+        },
+        exclude_none=True,
     )
+    if payload.input_schema_version == "dayu.model-input.v4":
+        # A native-v4 task may carry execution/storage metadata only.  All physical
+        # and numerical values are frozen from authoritative platform records.
+        config = {"storage_level": payload.storage_level}
     engine_commit = getenv("ENGINE_COMMIT", "uncommitted")
     try:
-        snapshot, digest = freeze_task_input(
-            session,
-            payload.case_id,
-            config,
-            schema_version=payload.input_schema_version,
-            engine_commit=engine_commit,
-        )
+        if payload.input_schema_version == "dayu.model-input.v4":
+            assert payload.dispatch_plan_id is not None
+            snapshot, digest, projection = freeze_v4_task_input(
+                session,
+                payload.case_id,
+                payload.dispatch_plan_id,
+                engine_commit=engine_commit,
+            )
+        else:
+            snapshot, digest = freeze_task_input(
+                session,
+                payload.case_id,
+                config,
+                schema_version=payload.input_schema_version,
+                engine_commit=engine_commit,
+            )
+            projection = None
     except LookupError as exc:
         raise TaskNotFoundError(str(exc)) from exc
     except ValueError as exc:
@@ -219,6 +242,24 @@ def create_task(session: Session, payload: SimulationTaskCreate) -> SimulationTa
         input_snapshot_hash=digest,
         engine_version=ENGINE_VERSION,
         engine_commit=engine_commit,
+        solver_id=D1_SOLVER_ID if projection is not None else payload.solver_id,
+        capability_id=D1_CAPABILITY_ID if projection is not None else None,
+        runtime_adapter_id=D1_RUNTIME_ADAPTER_ID if projection is not None else None,
+        result_schema_version="dayu.hydraulic-result.v3" if projection is not None else None,
+        execution_mode=payload.execution_mode if projection is not None else None,
+        execution_phase="validating_snapshot" if projection is not None else None,
+        runtime_projection_hash=(
+            str(projection["runtime_projection_hash"]) if projection is not None else None
+        ),
+        mesh_hash=str(projection["mesh_hash"]) if projection is not None else None,
+        solver_policy_hash=(
+            str(projection["solver_policy_hash"]) if projection is not None else None
+        ),
+        validation_policy_hash=(
+            str(projection["validation_policy_hash"]) if projection is not None else None
+        ),
+        registry_hash=str(projection["registry_hash"]) if projection is not None else None,
+        artifact_status="none" if projection is not None else None,
     )
     session.add(task)
     session.commit()
