@@ -17,6 +17,7 @@ tmp/
 
 # 本地验收产物（正式审查结论保存在 docs/review）
 output/
+outputs/
 qgis/server/generated/*.secret
 qgis/server/generated/*.isolation.json
 

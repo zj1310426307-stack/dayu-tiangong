@@ -9,6 +9,8 @@ from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timezone
 from typing import Any
 
+CANONICALIZATION_ID = "dayu-canonical-json-v1"
+
 
 def _normalise(value: Any) -> Any:
     """递归规范化时间、浮点和集合，拒绝非有限数值。"""
@@ -30,7 +32,13 @@ def _normalise(value: Any) -> Any:
 
 
 def canonical_json(snapshot: Mapping[str, Any]) -> str:
-    """返回排序键、紧凑分隔符和 UTF-8 直出的规范 JSON。"""
+    """Return the v1 canonical JSON text used by authoritative identities.
+
+    V1 sorts mapping keys, uses compact separators, preserves Unicode code
+    points without normalization, rejects non-finite numbers, normalizes
+    negative zero, and appends no newline.  Authoritative numeric values must
+    originate from frozen input rather than platform-dependent runtime math.
+    """
 
     return json.dumps(
         _normalise(snapshot),
@@ -41,7 +49,19 @@ def canonical_json(snapshot: Mapping[str, Any]) -> str:
     )
 
 
-def snapshot_hash(snapshot: Mapping[str, Any]) -> str:
-    """计算规范化快照的十六进制 SHA-256。"""
+def canonical_json_bytes(snapshot: Mapping[str, Any]) -> bytes:
+    """Encode canonical JSON as UTF-8 bytes with no BOM or trailing newline."""
 
-    return hashlib.sha256(canonical_json(snapshot).encode("utf-8")).hexdigest()
+    return canonical_json(snapshot).encode("utf-8")
+
+
+def authoritative_input_hash(snapshot: Mapping[str, Any]) -> str:
+    """Hash one frozen authoritative input under ``dayu-canonical-json-v1``."""
+
+    return hashlib.sha256(canonical_json_bytes(snapshot)).hexdigest()
+
+
+def snapshot_hash(snapshot: Mapping[str, Any]) -> str:
+    """Return the legacy name for the authoritative input SHA-256."""
+
+    return authoritative_input_hash(snapshot)

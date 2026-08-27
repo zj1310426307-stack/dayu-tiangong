@@ -20,5 +20,6 @@
   "result_schema_version": "dayu.hydraulic-result.mvp",
   "retry_count": 0,
   "section_count": 3,
+  "water_balance_tolerance": 0.01,
   "water_balance_status": "pass"
 }

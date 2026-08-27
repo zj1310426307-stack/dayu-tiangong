@@ -17,7 +17,7 @@ from model.api.v4_lite import (
 )
 from model.core.errors import HydraulicInputError
 from model.geometry.sections import TabulatedSectionGeometry
-from model.provenance import canonical_json, snapshot_hash
+from model.provenance import CANONICALIZATION_ID, canonical_json, snapshot_hash
 from model.result.mvp import (
     HYDRAULIC_RESULT_MVP,
     MvpControlledGateCouplingEvidence,
@@ -70,6 +70,8 @@ SOLVER_POLICY_HASH_SCHEMA_V2 = "dayu.solver-policy.v2"
 SOLVER_POLICY_HASH_SCHEMA_V3 = "dayu.solver-policy.v3"
 SOLVER_POLICY_HASH_SCHEMA_V4 = "dayu.solver-policy.v4"
 SOLVER_POLICY_HASH_SCHEMA_V5 = "dayu.solver-policy.v5"
+RUNTIME_PROJECTION_HASH_SCHEMA = "dayu.v4-lite.runtime-projection.v1"
+VALIDATION_POLICY_HASH_SCHEMA = "dayu.v4-lite.validation-policy.v1"
 
 
 def build_v4_lite_mesh(model_input: V4LiteInput) -> FiniteVolumeMesh:
@@ -118,6 +120,40 @@ def build_v4_lite_mesh(model_input: V4LiteInput) -> FiniteVolumeMesh:
         cells=tuple(cells),
         branch_id=str(model_input.river.branch_id),
     )
+
+
+def v4_lite_runtime_projection_hash(model_input: V4LiteInput) -> str:
+    """Hash the validated numerical input projection without provenance metadata.
+
+    The authoritative input hash identifies the submitted frozen JSON.  This
+    projection instead identifies the default-expanded, validated input that
+    feeds numerical adapters.  Mesh and execution-policy identities remain in
+    their dedicated domains.
+    """
+
+    manifest = {
+        "schema_version": RUNTIME_PROJECTION_HASH_SCHEMA,
+        "canonicalization_id": CANONICALIZATION_ID,
+        "projection": model_input.model_dump(
+            mode="json",
+            exclude={"provenance"},
+        ),
+    }
+    return snapshot_hash(manifest)
+
+
+def v4_lite_validation_policy_hash(model_input: V4LiteInput) -> str:
+    """Hash the immutable public validation-policy identity independently."""
+
+    manifest = {
+        "schema_version": VALIDATION_POLICY_HASH_SCHEMA,
+        "canonicalization_id": CANONICALIZATION_ID,
+        "input_schema_version": model_input.schema_version,
+        "validation_policy_version": (
+            model_input.provenance.validation_policy_version
+        ),
+    }
+    return snapshot_hash(manifest)
 
 
 def v4_lite_mesh_hash(model_input: V4LiteInput, mesh: FiniteVolumeMesh) -> str:
@@ -1122,9 +1158,13 @@ def run_v4_lite(snapshot: Mapping[str, Any]) -> MvpHydraulicResult:
 __all__ = [
     "MESH_HASH_SCHEMA",
     "MESH_HASH_SCHEMA_V2",
+    "RUNTIME_PROJECTION_HASH_SCHEMA",
     "SOLVER_POLICY_HASH_SCHEMA",
+    "VALIDATION_POLICY_HASH_SCHEMA",
     "build_v4_lite_mesh",
     "run_v4_lite",
     "v4_lite_mesh_hash",
+    "v4_lite_runtime_projection_hash",
     "v4_lite_solver_policy_hash",
+    "v4_lite_validation_policy_hash",
 ]

@@ -4,23 +4,82 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
-  hydraulic-model:
-    runs-on: ubuntu-latest
+  model02:
+    name: MODEL02 ${{ matrix.platform }} Python ${{ matrix.python-version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: Ubuntu
+            artifact-suffix: ubuntu
+            python-version: "3.11"
+          - os: windows-latest
+            platform: Windows
+            artifact-suffix: windows
+            python-version: "3.11"
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - name: Install Python dependencies
         run: python -m pip install -r backend/requirements.txt
       - name: Compile model and backend
         run: python -m compileall -q model backend/app
+      - name: Record cross-platform diagnostic
+        run: >-
+          python tools/diagnose_model02_cross_platform.py
+          --output outputs/ci/model02/cross-platform-diagnostic.json
       - name: Run MODEL-02 tests
-        run: python -m pytest -c backend/pyproject.toml -p no:cacheprovider tests/model02 -q
+        id: model02-tests
+        continue-on-error: true
+        run: >-
+          python -m pytest -c backend/pyproject.toml -p no:cacheprovider
+          tests/model02 -q --junitxml=outputs/ci/model02/junit.xml
+      - name: Summarize MODEL-02 JUnit
+        if: always() && hashFiles('outputs/ci/model02/junit.xml') != ''
+        run: >-
+          python tools/summarize_junit.py
+          --input outputs/ci/model02/junit.xml
+          --output outputs/ci/model02/summary.json
+      - name: Upload MODEL-02 evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: model02-${{ matrix.artifact-suffix }}-py311
+          path: outputs/ci/model02/
+          if-no-files-found: error
+      - name: Enforce MODEL-02 result
+        if: always() && steps.model02-tests.outcome != 'success'
+        run: python -c "raise SystemExit('MODEL-02 tests failed')"
+
+  legacy-hydraulic:
+    name: Legacy hydraulic
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install Python dependencies
+        run: python -m pip install -r backend/requirements.txt
+      - name: Prepare evidence directory
+        run: >-
+          python -c "from pathlib import Path;
+          Path('outputs/ci/legacy').mkdir(parents=True, exist_ok=True)"
       - name: Run legacy hydraulic regressions
+        id: legacy-tests
+        continue-on-error: true
         run: >-
           python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
           tests/test_hydraulic_engine.py
@@ -29,17 +88,35 @@ jobs:
           tests/test_phase4_hydraulic_gate.py
           tests/test_gate_pump_simulation.py
           tests/test_dispatch_engine.py
+          --junitxml=outputs/ci/legacy/junit.xml
+      - name: Summarize legacy JUnit
+        if: always() && hashFiles('outputs/ci/legacy/junit.xml') != ''
+        run: >-
+          python tools/summarize_junit.py
+          --input outputs/ci/legacy/junit.xml
+          --output outputs/ci/legacy/summary.json
+      - name: Upload legacy evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: legacy-hydraulic-ubuntu-py311
+          path: outputs/ci/legacy/
+          if-no-files-found: error
+      - name: Enforce legacy result
+        if: always() && steps.legacy-tests.outcome != 'success'
+        run: python -c "raise SystemExit('legacy hydraulic tests failed')"
 
   frontend-contract:
+    name: Frontend contract
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci

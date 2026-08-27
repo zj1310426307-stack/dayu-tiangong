@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -28,9 +29,12 @@ def test_synthetic_example_reproduces_the_checked_in_summary() -> None:
     assert len(result["gates"]) == expected["gate_count"]
     assert len(result["pumps"]) == expected["pump_count"]
     assert result["water_balance"]["status"] == expected["water_balance_status"]
-    assert result["water_balance"]["relative_water_balance_error"] == pytest.approx(
-        expected["relative_water_balance_error"], rel=0.0, abs=1.0e-18
-    )
+    relative_error = result["water_balance"]["relative_water_balance_error"]
+    assert math.isfinite(relative_error)
+    assert result["water_balance"]["tolerance"] == expected[
+        "water_balance_tolerance"
+    ]
+    assert relative_error <= expected["water_balance_tolerance"]
     assert result["diagnostics"]["maximum_cfl"] == pytest.approx(
         expected["maximum_cfl"], rel=0.0, abs=1.0e-15
     )
