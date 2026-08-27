@@ -8,17 +8,18 @@
 
 ## Executive finding
 
-The repository already has durable task rows, immutable input snapshots, Redis/Celery
+The baseline repository had durable task rows, immutable input snapshots, Redis/Celery
 dispatch, atomic task claim, cooperative cancellation for legacy solvers, heartbeats,
 stale-task failure, result tables, an atomic local file service, FastAPI routes, a
-generated TypeScript client, and task/result pages. It does not yet have a platform
-solver registry, a native `dayu.model-input.v4` builder, v4 Worker capability routing,
+generated TypeScript client, and task/result pages. D2 adds the missing platform solver
+registry, native `dayu.model-input.v4` builder, v4 Worker capability routing,
 `dayu.hydraulic-result.v3`, authoritative v4 result tables, registered evidence
-artifacts, or v3/v4 shadow grouping.
+artifacts, and v3/v4 shadow grouping.
 
-The existing v4-lite-7 numerical path is suitable as the frozen D1 runtime. It is not
-a platform contract: `HydraulicEngine.run` explicitly rejects callbacks for v4-lite,
-and its direct result is `dayu.hydraulic-result.mvp`.
+The existing v4-lite-7 numerical path remains the frozen D1 runtime rather than the
+platform contract. D2 adds callbacks at accepted/safe boundaries without changing the
+callback-free result, while the runtime's `dayu.hydraulic-result.mvp` is validated and
+published by the platform as `dayu.hydraulic-result.v3`.
 
 ## Required audit answers
 
@@ -26,7 +27,8 @@ and its direct result is `dayu.hydraulic-result.mvp`.
    `dataset_version` and a primary boundary condition; `simulation_case_boundary`
    adds explicit boundary roles. Dispatch policy is a separate versioned
    `dispatch_plan` with actions/rules and an immutable frozen snapshot.
-2. **SimulationTask schemas.** `SimulationTaskCreate` accepts v1, v2, and v3.
+2. **SimulationTask schemas.** The audited baseline accepted v1, v2, and v3; D2 adds
+   native v4 with solver, capability, projection, execution, and artifact fields.
    `simulation_task` stores schema, frozen JSON, SHA-256, engine identity, lifecycle,
    progress, heartbeat, cancellation, retry, diagnostics, and result locator.
 3. **freeze_task_input.** Creation reads the case in the caller's transaction,
@@ -36,9 +38,9 @@ and its direct result is `dayu.hydraulic-result.mvp`.
    freezes a verified compatibility mapping, and `adapt_v3_to_v2` produces the legacy
    runtime projection. The v3 snapshot remains authoritative.
 5. **v4-lite direct-only boundary.** `HydraulicEngine.run` routes
-   `dayu.model-input.v4-lite` directly to `run_v4_lite`, rejects legacy overrides,
-   and rejects `cancel_check`/`progress_callback`. No database builder or task route
-   currently creates v4-lite snapshots.
+   `dayu.model-input.v4-lite` directly to `run_v4_lite` and rejects legacy overrides.
+   D2's database builder creates authoritative v4, never v4-lite; a pure adapter creates
+   the runtime projection, and callback plumbing is limited to observational/safe points.
 6. **Worker claim.** `claim_task` uses a conditional SQL `UPDATE` from `queued` to
    `running`, recording worker/start/heartbeat data. A duplicate claim rolls back.
 7. **Heartbeat/cancel/recovery.** The Worker passes database-backed cancel and progress
@@ -92,16 +94,16 @@ and its direct result is `dayu.hydraulic-result.mvp`.
 
 ## Environment finding
 
-Node.js 24 is available. The interactive shell has no `python` or `docker` command.
-Python validation can use the configured bundled workspace runtime; real PostGIS,
-Redis, Celery legacy Worker, and Celery v4 Worker integration remains `BLOCKED` until
-an approved runtime is available. Static SQL or mocks will not be reported as a real
-migration/Worker PASS.
+Node.js 24 and the project Python environment are available. The interactive shell has
+no `docker` command, so local real-service evidence is unavailable. PostGIS, Redis,
+Celery legacy Worker, Celery v4 Worker, and Backend integration is therefore executed
+by the hosted `hydraulic-platform` workflow. Static SQL or mocks are not reported as a
+real migration/Worker PASS.
 
 ## Implementation boundary
 
-D2 will add a pure-Python platform solver registry, a strongly typed v4 contract, a
-database builder/readiness service, a pure v4-to-v4-lite-7 projection, dedicated v4
+D2 implements a pure-Python platform solver registry, strongly typed v4 contract,
+database builder/readiness service, pure v4-to-v4-lite-7 projection, dedicated v4
 Worker capability, result/artifact services, additive FastAPI routes, regenerated
-OpenAPI types, and focused frontend panels. It will not change D1 expected values or
+OpenAPI types, and focused frontend panels. It does not change D1 expected values or
 expand the D1 scientific envelope.
