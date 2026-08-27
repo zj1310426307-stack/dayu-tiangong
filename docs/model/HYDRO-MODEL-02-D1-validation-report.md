@@ -15,13 +15,23 @@
 | `npm run typecheck` | PASS |
 | `npm run build` | PASS，3927 modules；仅既有大 chunk 警告 |
 | `git diff --check` | PASS（Windows LF/CRLF 提示不属于 whitespace error） |
-| GitHub hosted Actions | `NOT RUN`：分支未上传远端 |
+| 首次 GitHub hosted Actions | Run `33097599382`：FAIL，暴露 2 个跨平台测试/身份合同问题；frontend PASS |
 
 唯一根测试 skip 是本机没有 `qgis_process`。后端 71 项 skip 来自未启动的
 PostGIS/TimescaleDB、未安装 GDAL/QGIS 或显式外部服务门，未计为模型科学通过。
 
 本阶段没有修改 FastAPI/OpenAPI，因此按方案执行 typecheck/build，没有运行
 `openapi:update`。
+
+## 1.1 RC1 跨平台收口（2026-08-28）
+
+RC1 候选 `6175ab2` 本地结果：MODEL-02 `355 passed`；根目录 `521 passed,
+1 skipped`；backend 聚合 `680 passed, 71 skipped`；Node 24 typecheck/build PASS；
+D1 benchmark 未漂移。GitHub Ubuntu/Windows matrix 尚待推送复跑，未全绿前 RC1 不标记 PASS。
+
+RC1 保留首次 hosted CI 失败记录，并将动态 v4-lite-3 fixture 迁移为 checked-in JSON；
+公共 MVP 机器误差断言改为版本化科学容差，没有改变 D1 `<=1e-10` 水量门或 Pump/Gate
+残差门。详细见 `HYDRO-MODEL-02-D1-RC1-release-report.md`。
 
 ## 2. D1 专项门
 

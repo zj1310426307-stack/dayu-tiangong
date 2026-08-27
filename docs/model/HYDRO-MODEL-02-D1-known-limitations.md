@@ -26,7 +26,8 @@
 - `v4-lite-7` 是纯模型输入/结果合同，尚未接入 v4 原生 SimulationCase、Celery selector、
   进度/取消、结果持久化和 Gate/Pump UI；
 - 没有修改 FastAPI/OpenAPI；现有 Web 任务链不会自动选择 D1；
-- GitHub workflow 已创建，但本分支未上传，所以 hosted CI 为 `NOT RUN`；
+- 首次 GitHub workflow run `33097599382` 为 FAIL，RC1 已修复已知跨平台合同问题，
+  但 Ubuntu/Windows hosted matrix 未真实全绿前仍不得宣称发布完成；
 - 没有 HEC-RAS、MIKE11/DHI 等外部模型对比，也没有真实河道和泵站率定；
 - 没有 PLC/SCADA 下发，结果不得用于生产水利调度决策。
 

@@ -186,6 +186,14 @@ npm.cmd run build
 - `docs/model/HYDRO-MODEL-02-D1-validation-report.md`
 - `docs/model/HYDRO-MODEL-02-D1-benchmark-report.md`
 - `docs/model/HYDRO-MODEL-02-D1-known-limitations.md`
+- `docs/review/HYDRO-MODEL-02-D1-RC1-cross-platform-audit.md`
+- `docs/model/HYDRO-MODEL-02-D1-RC1-release-report.md`
+- `docs/verification/HYDRO-MODEL-02-D1-RC1-ci-report.md`
+
+RC1 将 v4-lite-3 动态冻结输入迁移为 checked-in canonical JSON，拆分 authoritative
+input/runtime projection/mesh/solver/validation policy 身份，并将 MODEL-02 改为
+Ubuntu/Windows Python 3.11 matrix。首次 hosted run `33097599382` 的失败历史保留；
+RC1 hosted matrix 未全绿前仍处于发布候选状态，不代表已合并 `main`。
 
 ## 当前边界
 
