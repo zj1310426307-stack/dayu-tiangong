@@ -153,3 +153,45 @@ class V4ResultSummary(BaseModel):
     pump_row_count: int
     event_count: int
     artifacts: list[V4ArtifactManifest]
+
+
+class V4ShadowCreate(BaseModel):
+    """Request two independent frozen v3/v4 diagnostic tasks."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    case_id: int = Field(gt=0)
+    dispatch_plan_id: int = Field(gt=0)
+
+
+class V4ShadowPair(BaseModel):
+    """Identify one diagnostic group and its independently frozen tasks."""
+
+    group_id: int
+    status: str
+    v3_task_id: int
+    v4_task_id: int
+    diagnostic_only: bool = True
+
+
+class V4ShadowSectionDelta(BaseModel):
+    """Compare common output coordinates without designating either solver as truth."""
+
+    section_code: str
+    time_seconds: list[float]
+    water_level_delta_m: list[float]
+    flow_delta_m3s: list[float]
+    maximum_absolute_water_level_delta_m: float
+    maximum_absolute_flow_delta_m3s: float
+    peak_flow_time_delta_seconds: float
+
+
+class V4ShadowComparison(BaseModel):
+    """Return bounded diagnostic deltas for a shadow group."""
+
+    group_id: int
+    status: Literal["pending", "ready", "failed", "not_ready"]
+    diagnostic_disclaimer: str
+    v3_task_id: int | None
+    v4_task_id: int | None
+    sections: list[V4ShadowSectionDelta]
