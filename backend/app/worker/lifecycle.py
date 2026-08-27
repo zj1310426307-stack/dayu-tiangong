@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.orm import Session
 
 from app.gis.models import SimulationTask
@@ -23,7 +23,10 @@ def claim_task(session: Session, task_id: int, worker_id: str) -> SimulationTask
         .where(
             SimulationTask.id == task_id,
             SimulationTask.status == "queued",
-            SimulationTask.input_schema_version != "dayu.model-input.v4",
+            or_(
+                SimulationTask.input_schema_version.is_(None),
+                SimulationTask.input_schema_version != "dayu.model-input.v4",
+            ),
         )
         .values(
             status="running", progress=5, worker_id=worker_id,
