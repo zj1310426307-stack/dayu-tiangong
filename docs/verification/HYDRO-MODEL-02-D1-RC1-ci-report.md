@@ -1,8 +1,8 @@
 # HYDRO-MODEL-02-D1-RC1 CI 验证报告
 
 - 日期：2026-08-28
-- 候选：`6175ab2`
-- 状态：本地 PASS；GitHub hosted matrix 待运行
+- 测试候选：`e85c95c4bad675eb404b439f696f53dccb7ac47a`
+- 状态：本地与 GitHub hosted matrix 均 PASS
 
 ## 首次 hosted 运行
 
@@ -42,4 +42,23 @@ MODEL-02 matrix 使用 `fail-fast=false`；legacy 和 frontend 不再被 MODEL-0
 
 ## Hosted RC1 结果
 
-待候选推送后补录 run id、各 job conclusion、artifact 名与 Windows/Linux hash 对比。任何 required job 未通过时，RC1 结论保持 `FAIL/BLOCKED`，D2 为 `NO-GO`。
+| 项目 | 结果 |
+|---|---|
+| Run | [`33102252587`](https://github.com/zj1310426307-stack/dayu-tiangong/actions/runs/33102252587) |
+| Head | `e85c95c4bad675eb404b439f696f53dccb7ac47a` |
+| Ubuntu MODEL-02 | 355 passed，artifact `model02-ubuntu-py311` |
+| Windows MODEL-02 | 355 passed，artifact `model02-windows-py311` |
+| Legacy hydraulic | 26 passed，artifact `legacy-hydraulic-ubuntu-py311` |
+| Frontend contract | Node 24 typecheck/build PASS |
+
+两个 MODEL-02 artifacts 的 canonical byte count 均为 13901，五类 hash 完全一致：
+
+```text
+authoritative_input_hash  96eb4e4d28bc05c865c3f5e8f24e3b0169b4d29f95bfe515e22e72237bf2bec1
+runtime_projection_hash   76123a26e539fbf5775be3ea8feb9570dc7e864a3c475036e383ae8ea8230312
+mesh_hash                 056f3bc492bf64a12ecb9c1be66d0f2935ff941214c8c0e8c318db90d433f4ea
+solver_policy_hash        c788c33c40f800fc469af1260a4a94150d16623a800c0083b56e15ad9c032618
+validation_policy_hash    bb70c5a3af5942d16c43ec8c7f490333653e7efa2051d2e734c66aa8d3f17795
+```
+
+首次失败和 RC1 通过历史均已保留。D1 RC1 判定 PASS；`main` 仍未合并。

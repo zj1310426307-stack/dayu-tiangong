@@ -2,9 +2,9 @@
 
 - 日期：2026-08-28
 - RC1 基线：`9002f10b584ac8c95439e9e161027897f7e3d803`
-- RC1 候选：`6175ab2`
+- RC1 测试候选：`e85c95c4bad675eb404b439f696f53dccb7ac47a`
 - 分支：`feature/HYDRO-MODEL-02-D1-pump-strong-coupling`
-- 状态：本地门通过；hosted CI 待复跑
+- 状态：本地门与 hosted CI 均通过
 
 ## 1. 首次 hosted CI 事实
 
@@ -80,4 +80,14 @@ validation_policy_hash    bb70c5a3af5942d16c43ec8c7f490333653e7efa2051d2e734c66a
 - 官方 action 升级为 `checkout/setup-python/setup-node/upload-artifact@v7`；
 - frontend Node 升级为 24，并已在本地 Node 24.17 验证。
 
-hosted CI 未通过前，本审计不把 RC1 标记为 PASS。
+## 6. Hosted RC1 结论
+
+GitHub Actions 运行 [`33102252587`](https://github.com/zj1310426307-stack/dayu-tiangong/actions/runs/33102252587) 在 `e85c95c` 上通过：
+
+- `MODEL02 Ubuntu Python 3.11`：355/355，PASS；
+- `MODEL02 Windows Python 3.11`：355/355，PASS；
+- `Legacy hydraulic`：26/26，PASS；
+- `Frontend contract`：Node 24 typecheck/build，PASS；
+- artifacts：`model02-ubuntu-py311`、`model02-windows-py311`、`legacy-hydraulic-ubuntu-py311` 均存在。
+
+Ubuntu glibc 2.39 与 Windows MSVC 环境的五类 hash 完全相同；水量残差也都为 `1.0231815394945443e-12 m³`。因此 RC1 跨平台门判定为 PASS。

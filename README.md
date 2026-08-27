@@ -193,7 +193,8 @@ npm.cmd run build
 RC1 将 v4-lite-3 动态冻结输入迁移为 checked-in canonical JSON，拆分 authoritative
 input/runtime projection/mesh/solver/validation policy 身份，并将 MODEL-02 改为
 Ubuntu/Windows Python 3.11 matrix。首次 hosted run `33097599382` 的失败历史保留；
-RC1 hosted matrix 未全绿前仍处于发布候选状态，不代表已合并 `main`。
+RC1 run `33102252587` 的 Ubuntu/Windows MODEL-02、legacy 与 frontend 已全绿，
+测试 artifacts 已核对；分支仍未合并 `main`。
 
 ## 当前边界
 

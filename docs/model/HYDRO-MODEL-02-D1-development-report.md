@@ -70,4 +70,5 @@ Gate 继续使用已验证的关闭/一次开启/淹没孔流子集，没有重�
 5. `0c05bf3` test(hydraulic): freeze D1 Gate Pump benchmark
 6. `dfc25e6` fix(hydraulic): enforce strict D1 balance gate
 
-本阶段没有合并 `main`，也没有上传远端。
+原 D1 阶段未合并 `main`。分支后续已上传并由 RC1 完成 Windows/Linux CI 收口；
+`main` 仍未合并，详见 `HYDRO-MODEL-02-D1-RC1-release-report.md`。

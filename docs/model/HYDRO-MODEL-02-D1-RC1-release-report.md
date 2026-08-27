@@ -3,9 +3,9 @@
 - 日期：2026-08-28
 - `main` 基线：`c00a05fa508f3f186e87f05dd26b67ea88cfc0fc`
 - D1 RC1 基线：`9002f10b584ac8c95439e9e161027897f7e3d803`
-- RC1 候选 SHA：`6175ab2`
+- RC1 测试候选 SHA：`e85c95c4bad675eb404b439f696f53dccb7ac47a`
 - 分支：`feature/HYDRO-MODEL-02-D1-pump-strong-coupling`
-- 发布状态：`PENDING HOSTED CI`
+- 发布状态：`D1 RC1 PASS`
 - 合并状态：`NOT MERGED`
 
 ## 1. 提交链
@@ -18,6 +18,7 @@
 6. `dfc25e6` fix(hydraulic): enforce strict D1 balance gate
 7. `9002f10` docs(hydraulic): publish D1 evidence and limits
 8. `6175ab2` fix(hydraulic): stabilize D1 cross-platform RC1
+9. `e85c95c` docs(hydraulic): prepare D1 RC1 release evidence
 
 ## 2. GitHub Actions 历史
 
@@ -28,7 +29,15 @@
 - legacy：前序失败后被跳过；
 - frontend：PASS。
 
-RC1 hosted CI run id、Ubuntu、Windows、legacy 和 frontend 结果将在候选推送并真实运行后补录。未全绿前不创建 PR。
+RC1 运行：[`33102252587`](https://github.com/zj1310426307-stack/dayu-tiangong/actions/runs/33102252587)，结论 `success`。
+
+- Ubuntu MODEL-02：355 passed；
+- Windows MODEL-02：355 passed；
+- legacy hydraulic：26 passed；
+- frontend：Node 24 typecheck/build PASS；
+- 三个测试 artifacts 均已上传并下载复核。
+
+Ubuntu/Windows diagnostic 中 authoritative、runtime projection、mesh、solver policy 和 validation policy hash 完全相同。PR 在发布证据提交再次通过 CI 后创建，不自动合并。
 
 ## 3. 身份迁移
 
