@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Literal, Mapping
 
 from model.solver.finite_volume.flux import GRAVITY
+from model.solver.finite_volume.pump_curve import PumpOperatingPointEvidence
 
 
 _ONE_SHOT_STAGE_ABOVE = "one-shot-stage-above"
@@ -141,15 +142,16 @@ class ControlBracketEvidence:
 
 @dataclass(frozen=True)
 class StructureControlEvent:
-    """Record one committed one-shot action at an accepted-state time."""
+    """Record one committed structure action at an accepted-state time."""
 
     time: float
     structure_id: str
     structure_type: Literal["gate", "pump"]
-    action: Literal["open", "start"]
+    action: Literal["open", "start", "stop"]
     threshold_water_level: float
     observed_water_level: float
     bracket: ControlBracketEvidence | None = None
+    reason: str | None = None
 
     def __post_init__(self) -> None:
         """Keep event evidence finite, causal, and type/action consistent."""
@@ -165,14 +167,23 @@ class StructureControlEvent:
         )
         if event_time < 0.0:
             raise ValueError("control event time must be non-negative")
-        if observed <= threshold:
-            raise ValueError("control event requires observed water level above threshold")
         if (self.structure_type, self.action) not in {
             ("gate", "open"),
             ("pump", "start"),
+            ("pump", "stop"),
         }:
             raise ValueError("control event action does not match structure_type")
+        if self.action == "open" and observed <= threshold:
+            raise ValueError("Gate open event requires water level above threshold")
+        if self.action == "start" and observed < threshold:
+            raise ValueError("Pump start event requires water level at or above threshold")
+        if self.action == "stop" and observed > threshold:
+            raise ValueError("stop event requires water level at or below threshold")
+        if self.reason is not None and not self.reason.strip():
+            raise ValueError("control event reason must not be blank")
         if self.bracket is not None:
+            if self.action == "stop":
+                raise ValueError("stop event cannot use rising one-shot bracket evidence")
             if self.bracket.bracket_end_time != event_time:
                 raise ValueError("control event time must equal its bracket end time")
             if self.bracket.bracket_end_observed_water_level != observed:
@@ -414,6 +425,7 @@ class StructureStageFlow:
     state: Mapping[str, object] = field(default_factory=dict)
     momentum_closure: str = "mass_only_mvp_not_strongly_coupled"
     completed_interface: CompletedGateInterfaceEvidence | None = None
+    pump_operating_point: PumpOperatingPointEvidence | None = None
 
     def __post_init__(self) -> None:
         """Keep invalid device outputs from entering the conservative update."""
@@ -422,11 +434,27 @@ class StructureStageFlow:
             raise ValueError("structure identity and type must not be empty")
         if not math.isfinite(self.flow):
             raise ValueError("structure flow must be finite")
-        if self.completed_interface is None:
-            if self.momentum_closure != "mass_only_mvp_not_strongly_coupled":
-                raise ValueError("unknown structure momentum closure")
-        elif self.momentum_closure != "submerged_orifice_energy_momentum_v1":
-            raise ValueError("completed Gate evidence requires its versioned closure")
+        if self.completed_interface is not None and self.pump_operating_point is not None:
+            raise ValueError("one structure flow cannot contain Gate and Pump evidence")
+        if self.completed_interface is not None:
+            if self.momentum_closure != "submerged_orifice_energy_momentum_v1":
+                raise ValueError("completed Gate evidence requires its versioned closure")
+            return
+        if self.pump_operating_point is not None:
+            if self.structure_type != "pump":
+                raise ValueError("Pump operating-point evidence requires structure_type pump")
+            if self.momentum_closure != "local-advective-external-sink-v1":
+                raise ValueError("hydraulic Pump requires its local momentum sink policy")
+            if not math.isclose(
+                self.flow,
+                self.pump_operating_point.total_flow_m3s,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            ):
+                raise ValueError("Pump stage flow contradicts its operating-point evidence")
+            return
+        if self.momentum_closure != "mass_only_mvp_not_strongly_coupled":
+            raise ValueError("unknown structure momentum closure")
 
 
 @dataclass(frozen=True)

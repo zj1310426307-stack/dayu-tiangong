@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 from model.solver.finite_volume.mesh import FiniteVolumeMesh
+from model.solver.finite_volume.pump import HydraulicExternalPump
 from model.solver.finite_volume.state import HydraulicState
 from model.solver.finite_volume.structures import (
     BracketedOneShotStageThreshold,
@@ -69,7 +70,7 @@ def detect_bracketed_crossings(
     previous: HydraulicState,
     candidate: HydraulicState,
     gates: Sequence[FixedGate],
-    pumps: Sequence[OnOffPump],
+    pumps: Sequence[OnOffPump | HydraulicExternalPump],
 ) -> dict[StructureEventKey, BracketedCrossingCandidate]:
     """Return every strict rising crossing bracketed by two conservative states."""
 

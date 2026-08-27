@@ -173,6 +173,30 @@ npm.cmd run build
 
 涉及数据库迁移、角色轮换或 GeoServer 配置的验证，应先在独立 Compose 项目和新卷中执行。不得把隔离验证结果冒充现有持久环境部署结果。
 
+## HYDRO-MODEL-02-D1
+
+`v4-lite-7` 增加限定单 Branch 的 completed-interface Gate 与 external Q-H/Q-η Pump
+逐 SSP-RK2 stage 强耦合。冻结的 20 断面、6 小时示例位于
+`examples/hydraulic/gate-pump-strong-coupling/`。
+
+详细资料：
+
+- `docs/model/HYDRO-MODEL-02-D1-pump-equation.md`
+- `docs/model/HYDRO-MODEL-02-D1-development-report.md`
+- `docs/model/HYDRO-MODEL-02-D1-validation-report.md`
+- `docs/model/HYDRO-MODEL-02-D1-benchmark-report.md`
+- `docs/model/HYDRO-MODEL-02-D1-known-limitations.md`
+- `docs/review/HYDRO-MODEL-02-D1-RC1-cross-platform-audit.md`
+- `docs/model/HYDRO-MODEL-02-D1-RC1-release-report.md`
+- `docs/verification/HYDRO-MODEL-02-D1-RC1-ci-report.md`
+
+RC1 将 v4-lite-3 动态冻结输入迁移为 checked-in canonical JSON，拆分 authoritative
+input/runtime projection/mesh/solver/validation policy 身份，并将 MODEL-02 改为
+Ubuntu/Windows Python 3.11 matrix。首次 hosted run `33097599382` 的失败历史保留；
+RC1 run `33102252587`、最终 HEAD run `33102637908` 与 PR #10 run `33102843115`
+均全绿，测试 artifacts 已核对；PR [#10](https://github.com/zj1310426307-stack/dayu-tiangong/pull/10)
+保持 OPEN，未合并 `main`。
+
 ## 当前边界
 
 这是工程原型和受控本地部署基线，不是生产高可用系统。统一 IAM、真实模型率定、PLC/SCADA 接入、生产 TLS/密钥托管、审计归档、备份恢复演练和集群高可用仍需后续建设。新发布 GIS 版本也不会自动成为已率定的水动力模型版本。

@@ -54,6 +54,12 @@ class StrictResultModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+def _time_tolerance(*values: float) -> float:
+    """Return an absolute tolerance scaled to long-duration float clocks."""
+
+    return max(1.0e-12, *(8.0 * math.ulp(abs(value)) for value in values))
+
+
 class MvpSectionSeries(StrictResultModel):
     """Store aligned water-level, discharge, and velocity arrays for one section."""
 
@@ -63,17 +69,26 @@ class MvpSectionSeries(StrictResultModel):
     water_level: tuple[FiniteNumber, ...] = Field(min_length=2)
     flow: tuple[FiniteNumber, ...] = Field(min_length=2)
     velocity: tuple[FiniteNumber, ...] = Field(min_length=2)
+    volume_m3: tuple[NonNegativeFinite, ...] | None = None
 
     @model_validator(mode="after")
     def validate_alignment(self) -> Self:
         """Require one finite hydraulic sample per strictly increasing output time."""
 
-        _validate_aligned_series(
-            self.time,
-            (self.water_level, self.flow, self.velocity),
-            "section",
-        )
+        arrays = (self.water_level, self.flow, self.velocity)
+        if self.volume_m3 is not None:
+            arrays = (*arrays, self.volume_m3)
+        _validate_aligned_series(self.time, arrays, "section")
         return self
+
+    @model_serializer(mode="wrap")
+    def serialize_optional_volume(self, handler: Any) -> dict[str, Any]:
+        """Keep pre-D1 section result bytes free of the new volume field."""
+
+        payload = handler(self)
+        if self.volume_m3 is None:
+            payload.pop("volume_m3", None)
+        return payload
 
 
 class MvpGateSeries(StrictResultModel):
@@ -198,7 +213,10 @@ class MvpGateCouplingEvidence(StrictResultModel):
                 right.evaluation_time,
                 left.evaluation_time,
                 rel_tol=0.0,
-                abs_tol=1.0e-12,
+                abs_tol=_time_tolerance(
+                    right.evaluation_time,
+                    left.evaluation_time,
+                ),
             )
             for left, right in zip(
                 self.stage_evaluations[1::2],
@@ -384,11 +402,15 @@ class MvpControlledGateCouplingEvidence(StrictResultModel):
             self.stage_evaluations[::2],
             self.stage_evaluations[1::2],
         ):
+            expected_second_time = first.evaluation_time + first.step_dt
             if first.step_dt != second.step_dt or not math.isclose(
-                second.evaluation_time - first.evaluation_time,
-                first.step_dt,
+                second.evaluation_time,
+                expected_second_time,
                 rel_tol=0.0,
-                abs_tol=1.0e-12,
+                abs_tol=_time_tolerance(
+                    second.evaluation_time,
+                    expected_second_time,
+                ),
             ):
                 raise ValueError("controlled Gate RK stage timing is inconsistent")
             if second.evaluation_time <= self.event_time + 1.0e-12:
@@ -561,13 +583,282 @@ class MvpPumpSeries(StrictResultModel):
         return self
 
 
+class MvpHydraulicPumpSeries(StrictResultModel):
+    """Store output-aligned D1 Pump hydraulics, power, energy, and control state."""
+
+    pump_id: PositiveId
+    coupling_policy: Literal["qh-operating-point-external-sink-v1"]
+    time: tuple[NonNegativeFinite, ...] = Field(min_length=2)
+    running_units: tuple[NonNegativeInt, ...] = Field(min_length=2)
+    flow_m3s: tuple[NonNegativeFinite, ...] = Field(min_length=2)
+    source_stage_m: tuple[FiniteNumber, ...] = Field(min_length=2)
+    outlet_or_target_stage_m: tuple[FiniteNumber, ...] = Field(min_length=2)
+    pump_head_m: tuple[NonNegativeFinite, ...] = Field(min_length=2)
+    system_head_m: tuple[NonNegativeFinite, ...] = Field(min_length=2)
+    efficiency: tuple[NonNegativeFinite, ...] = Field(min_length=2)
+    hydraulic_power_kw: tuple[NonNegativeFinite, ...] = Field(min_length=2)
+    input_power_kw: tuple[NonNegativeFinite, ...] = Field(min_length=2)
+    cumulative_energy_kwh: tuple[NonNegativeFinite, ...] = Field(min_length=2)
+    control_state: tuple[Literal["on", "off"], ...] = Field(min_length=2)
+    regime: tuple[Literal["off", "running_qh_operating_point"], ...] = Field(
+        min_length=2
+    )
+    iterations: tuple[NonNegativeInt, ...] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def validate_hydraulic_series(self) -> Self:
+        """Require aligned ON/OFF semantics and monotone accepted energy."""
+
+        arrays = (
+            self.running_units,
+            self.flow_m3s,
+            self.source_stage_m,
+            self.outlet_or_target_stage_m,
+            self.pump_head_m,
+            self.system_head_m,
+            self.efficiency,
+            self.hydraulic_power_kw,
+            self.input_power_kw,
+            self.cumulative_energy_kwh,
+            self.control_state,
+            self.regime,
+            self.iterations,
+        )
+        _validate_aligned_series(self.time, arrays, "hydraulic Pump")
+        for index, status in enumerate(self.control_state):
+            if status == "off":
+                if any(
+                    values[index] != 0
+                    for values in (
+                        self.running_units,
+                        self.flow_m3s,
+                        self.pump_head_m,
+                        self.system_head_m,
+                        self.efficiency,
+                        self.hydraulic_power_kw,
+                        self.input_power_kw,
+                        self.iterations,
+                    )
+                ) or self.regime[index] != "off":
+                    raise ValueError("OFF hydraulic Pump result must have zero outputs")
+            elif (
+                self.running_units[index] <= 0
+                or self.flow_m3s[index] <= 0.0
+                or not 0.0 < self.efficiency[index] <= 1.0
+                or self.regime[index] != "running_qh_operating_point"
+            ):
+                raise ValueError("ON hydraulic Pump result is incomplete")
+        if any(
+            right < left
+            for left, right in zip(
+                self.cumulative_energy_kwh,
+                self.cumulative_energy_kwh[1:],
+            )
+        ):
+            raise ValueError("Pump cumulative energy must be non-decreasing")
+        return self
+
+
+class MvpPumpStageEvidence(StrictResultModel):
+    """Persist one actual D1 Pump operating point used by an SSP-RK2 stage."""
+
+    step_start_time: NonNegativeFinite
+    rk_stage: Literal[1, 2]
+    evaluation_time: NonNegativeFinite
+    dt: PositiveFinite
+    pump_id: PositiveId
+    source_stage_m: FiniteNumber
+    outlet_or_target_stage_m: FiniteNumber
+    running_units: NonNegativeInt
+    total_flow_m3s: NonNegativeFinite
+    per_unit_flow_m3s: NonNegativeFinite
+    pump_head_m: NonNegativeFinite
+    system_head_m: FiniteNumber
+    head_residual_m: FiniteNumber
+    efficiency: NonNegativeFinite
+    hydraulic_power_kw: NonNegativeFinite
+    input_power_kw: NonNegativeFinite
+    iterations: NonNegativeInt
+    curve_segment: NonNegativeInt | None
+    efficiency_segment: NonNegativeInt | None
+    static_loss_m: NonNegativeFinite
+    quadratic_loss_coefficient_s2_m5: NonNegativeFinite
+    pump_coupling_policy: Literal["qh-operating-point-external-sink-v1"]
+    pump_curve_policy: Literal["piecewise-linear-qh-v1"]
+    pump_efficiency_policy: Literal["piecewise-linear-q-efficiency-v1"]
+    system_loss_policy: Literal["quadratic-q-v1"]
+    regime: Literal["off", "running_qh_operating_point"]
+
+    @model_validator(mode="after")
+    def validate_stage_closure(self) -> Self:
+        """Recompute timing, system head, residual, and input power."""
+
+        expected_time = self.step_start_time + (self.dt if self.rk_stage == 2 else 0.0)
+        if not math.isclose(
+            self.evaluation_time,
+            expected_time,
+            rel_tol=0.0,
+            abs_tol=_time_tolerance(self.evaluation_time, expected_time),
+        ):
+            raise ValueError("Pump RK-stage evaluation time is inconsistent")
+        if self.running_units == 0:
+            if any(
+                value != 0
+                for value in (
+                    self.total_flow_m3s,
+                    self.per_unit_flow_m3s,
+                    self.pump_head_m,
+                    self.system_head_m,
+                    self.head_residual_m,
+                    self.efficiency,
+                    self.hydraulic_power_kw,
+                    self.input_power_kw,
+                    self.iterations,
+                )
+            ) or self.regime != "off":
+                raise ValueError("OFF Pump stage evidence must have zero outputs")
+            return self
+        if self.regime != "running_qh_operating_point":
+            raise ValueError("running Pump stage has an unknown regime")
+        if self.total_flow_m3s <= 0.0 or self.per_unit_flow_m3s <= 0.0:
+            raise ValueError("running Pump stage requires positive flow")
+        if not 0.0 < self.efficiency <= 1.0:
+            raise ValueError("running Pump stage has invalid efficiency")
+        expected_system = (
+            self.outlet_or_target_stage_m
+            - self.source_stage_m
+            + self.static_loss_m
+            + self.quadratic_loss_coefficient_s2_m5
+            * self.total_flow_m3s
+            * abs(self.total_flow_m3s)
+        )
+        tolerance = max(1.0e-10, 8.0 * math.ulp(abs(expected_system)))
+        if not math.isclose(
+            self.system_head_m,
+            expected_system,
+            rel_tol=0.0,
+            abs_tol=tolerance,
+        ) or not math.isclose(
+            self.head_residual_m,
+            self.pump_head_m - self.system_head_m,
+            rel_tol=0.0,
+            abs_tol=tolerance,
+        ):
+            raise ValueError("Pump stage head closure is inconsistent")
+        hydraulic_power = (
+            1000.0
+            * 9.81
+            * self.total_flow_m3s
+            * self.pump_head_m
+            / 1000.0
+        )
+        input_power = hydraulic_power / self.efficiency
+        if not math.isclose(
+            self.hydraulic_power_kw,
+            hydraulic_power,
+            rel_tol=0.0,
+            abs_tol=1.0e-9,
+        ) or not math.isclose(
+            self.input_power_kw,
+            input_power,
+            rel_tol=0.0,
+            abs_tol=1.0e-9,
+        ):
+            raise ValueError("Pump stage power is inconsistent")
+        return self
+
+
+class MvpPumpCouplingEvidence(StrictResultModel):
+    """Aggregate accepted D1 Pump stages into exact volume and energy budgets."""
+
+    pump_id: PositiveId
+    pump_coupling_policy: Literal["qh-operating-point-external-sink-v1"]
+    pump_curve_policy: Literal["piecewise-linear-qh-v1"]
+    pump_efficiency_policy: Literal["piecewise-linear-q-efficiency-v1"]
+    pump_control_policy: Literal["stage-hysteresis-min-runtime-v1"]
+    system_loss_policy: Literal["quadratic-q-v1"]
+    momentum_policy: Literal["local-advective-external-sink-v1"]
+    head_residual_tolerance_m: PositiveFinite
+    maximum_iterations: PositiveInt
+    total_external_volume_m3: NonNegativeFinite
+    total_input_energy_kwh: NonNegativeFinite
+    maximum_absolute_head_residual_m: NonNegativeFinite
+    stage_evaluations: tuple[MvpPumpStageEvidence, ...] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def validate_accepted_stage_budget(self) -> Self:
+        """Reintegrate paired RK stages and reject probe/retry contamination."""
+
+        if len(self.stage_evaluations) % 2:
+            raise ValueError("Pump evidence must contain complete RK1/RK2 pairs")
+        volume = 0.0
+        energy = 0.0
+        maximum_residual = 0.0
+        previous_end = -1.0
+        for index in range(0, len(self.stage_evaluations), 2):
+            first, second = self.stage_evaluations[index : index + 2]
+            if (first.rk_stage, second.rk_stage) != (1, 2):
+                raise ValueError("Pump stages must be ordered RK1/RK2 pairs")
+            if first.pump_id != self.pump_id or second.pump_id != self.pump_id:
+                raise ValueError("Pump stage evidence references another Pump")
+            if first.step_start_time != second.step_start_time or first.dt != second.dt:
+                raise ValueError("Pump RK stages must share one accepted step")
+            if previous_end >= 0.0 and not math.isclose(
+                first.step_start_time,
+                previous_end,
+                rel_tol=0.0,
+                abs_tol=_time_tolerance(first.step_start_time, previous_end),
+            ):
+                raise ValueError("Pump accepted stage evidence is not contiguous")
+            if first.iterations > self.maximum_iterations or (
+                second.iterations > self.maximum_iterations
+            ):
+                raise ValueError("Pump stage evidence exceeds maximum_iterations")
+            previous_end = first.step_start_time + first.dt
+            volume += 0.5 * first.dt * (
+                first.total_flow_m3s + second.total_flow_m3s
+            )
+            energy += 0.5 * first.dt * (
+                first.input_power_kw + second.input_power_kw
+            ) / 3600.0
+            maximum_residual = max(
+                maximum_residual,
+                abs(first.head_residual_m),
+                abs(second.head_residual_m),
+            )
+        if not math.isclose(
+            self.total_external_volume_m3,
+            volume,
+            rel_tol=0.0,
+            abs_tol=1.0e-9,
+        ):
+            raise ValueError("Pump external volume is inconsistent with accepted stages")
+        if not math.isclose(
+            self.total_input_energy_kwh,
+            energy,
+            rel_tol=0.0,
+            abs_tol=1.0e-9,
+        ):
+            raise ValueError("Pump energy is inconsistent with accepted stages")
+        if not math.isclose(
+            self.maximum_absolute_head_residual_m,
+            maximum_residual,
+            rel_tol=0.0,
+            abs_tol=1.0e-12,
+        ):
+            raise ValueError("Pump maximum head residual is inconsistent")
+        if maximum_residual > self.head_residual_tolerance_m:
+            raise ValueError("Pump stage head residual exceeds the configured tolerance")
+        return self
+
+
 class MvpControlEvent(StrictResultModel):
     """Expose one accepted-state threshold action independently of device state."""
 
     time: NonNegativeFinite
     structure_id: PositiveId
     structure_type: Literal["gate", "pump"]
-    action: Literal["open", "start"]
+    action: Literal["open", "start", "stop"]
     threshold_water_level: FiniteNumber
     observed_water_level: FiniteNumber
     previous_time: NonNegativeFinite | None = None
@@ -580,18 +871,30 @@ class MvpControlEvent(StrictResultModel):
     refinement_count: NonNegativeInt | None = None
     monitored_section_id: PositiveId | None = None
     spatial_support: Literal["bound-section-cell-center-v1"] | None = None
+    reason: NonBlankText | None = None
 
     @model_validator(mode="after")
     def validate_causal_action(self) -> Self:
         """Require a strict crossing and the action defined for that device type."""
 
-        if self.observed_water_level <= self.threshold_water_level:
-            raise ValueError("control event observed level must exceed its threshold")
         if (self.structure_type, self.action) not in {
             ("gate", "open"),
             ("pump", "start"),
+            ("pump", "stop"),
         }:
             raise ValueError("control event action does not match structure_type")
+        if self.action == "open" and (
+            self.observed_water_level <= self.threshold_water_level
+        ):
+            raise ValueError("Gate open event level must exceed its threshold")
+        if self.action == "start" and (
+            self.observed_water_level < self.threshold_water_level
+        ):
+            raise ValueError("Pump start event level must be at or above its threshold")
+        if self.action == "stop" and (
+            self.observed_water_level > self.threshold_water_level
+        ):
+            raise ValueError("stop event level must be at or below its threshold")
         bracket_fields = (
             self.previous_time,
             self.previous_observed_water_level,
@@ -604,6 +907,8 @@ class MvpControlEvent(StrictResultModel):
         )
         if all(value is None for value in bracket_fields):
             return self
+        if self.action == "stop":
+            raise ValueError("stop event cannot contain rising bracket evidence")
         if any(value is None for value in bracket_fields):
             raise ValueError("bracketed control event evidence must be complete")
         previous_time = float(self.previous_time)
@@ -643,6 +948,8 @@ class MvpControlEvent(StrictResultModel):
         ):
             if payload.get(key) is None:
                 payload.pop(key, None)
+        if payload.get("reason") is None:
+            payload.pop("reason", None)
         return payload
 
 
@@ -749,6 +1056,7 @@ class MvpResultProvenance(StrictResultModel):
         "v4-lite-4",
         "v4-lite-5",
         "v4-lite-6",
+        "v4-lite-7",
     ]
     solver_policy_hash: Sha256 | None = None
 
@@ -781,7 +1089,7 @@ class MvpHydraulicResult(StrictResultModel):
     schema_version: Literal["dayu.hydraulic-result.mvp"]
     sections: tuple[MvpSectionSeries, ...] = Field(min_length=3)
     gates: tuple[MvpGateSeries, ...] = Field(max_length=1)
-    pumps: tuple[MvpPumpSeries, ...] = Field(max_length=1)
+    pumps: tuple[MvpPumpSeries | MvpHydraulicPumpSeries, ...] = Field(max_length=1)
     control_events: tuple[MvpControlEvent, ...] = ()
     gate_coupling_evidence: tuple[MvpGateCouplingEvidence, ...] = Field(
         default=(), max_length=1
@@ -789,6 +1097,9 @@ class MvpHydraulicResult(StrictResultModel):
     controlled_gate_coupling_evidence: tuple[
         MvpControlledGateCouplingEvidence, ...
     ] = Field(default=(), max_length=1)
+    pump_coupling_evidence: tuple[MvpPumpCouplingEvidence, ...] = Field(
+        default=(), max_length=1
+    )
     water_balance: MvpWaterBalance
     diagnostics: MvpDiagnostics
     provenance: MvpResultProvenance
@@ -816,16 +1127,26 @@ class MvpHydraulicResult(StrictResultModel):
             for item in self.control_events
         ):
             raise ValueError("control event time lies outside the result interval")
-        expects_bracket_evidence = self.provenance.validation_policy_version in {
+        version = self.provenance.validation_policy_version
+        expects_bracket_evidence = version in {
             "v4-lite-4",
             "v4-lite-6",
         }
         expects_gate_coupling = (
-            self.provenance.validation_policy_version == "v4-lite-5"
+            version == "v4-lite-5"
         )
         expects_controlled_gate_coupling = (
-            self.provenance.validation_policy_version == "v4-lite-6"
+            version in {"v4-lite-6", "v4-lite-7"}
         )
+        expects_pump_coupling = version == "v4-lite-7"
+        if version == "v4-lite-7" and any(
+            section.volume_m3 is None for section in self.sections
+        ):
+            raise ValueError("v4-lite-7 requires section control-volume series")
+        if version != "v4-lite-7" and any(
+            section.volume_m3 is not None for section in self.sections
+        ):
+            raise ValueError("pre-v7 section results must not add volume series")
         if expects_gate_coupling:
             if len(self.gate_coupling_evidence) != 1 or len(self.gates) != 1:
                 raise ValueError("v4-lite-5 requires one Gate coupling evidence object")
@@ -839,7 +1160,7 @@ class MvpHydraulicResult(StrictResultModel):
             if (
                 len(self.controlled_gate_coupling_evidence) != 1
                 or len(self.gates) != 1
-                or self.pumps
+                or (version == "v4-lite-6" and self.pumps)
             ):
                 raise ValueError(
                     "v4-lite-6 requires one controlled Gate coupling evidence object"
@@ -861,15 +1182,96 @@ class MvpHydraulicResult(StrictResultModel):
                 raise ValueError("controlled Gate evidence does not match its event")
         elif self.controlled_gate_coupling_evidence:
             raise ValueError("pre-v6 result must not add controlled Gate evidence")
+        if expects_pump_coupling:
+            if len(self.pumps) != 1 or not isinstance(
+                self.pumps[0], MvpHydraulicPumpSeries
+            ):
+                raise ValueError("v4-lite-7 requires one hydraulic Pump result")
+            if len(self.pump_coupling_evidence) != 1:
+                raise ValueError("v4-lite-7 requires one Pump coupling evidence object")
+            pump_evidence = self.pump_coupling_evidence[0]
+            pump_series = self.pumps[0]
+            if pump_evidence.pump_id != pump_series.pump_id:
+                raise ValueError("Pump coupling evidence references an unknown Pump")
+            if not math.isclose(
+                pump_evidence.total_external_volume_m3,
+                self.water_balance.pump_outflow_volume,
+                rel_tol=0.0,
+                abs_tol=1.0e-9,
+            ):
+                raise ValueError("Pump coupling evidence contradicts water balance")
+            if len(pump_evidence.stage_evaluations) != 2 * self.diagnostics.step_count:
+                raise ValueError("Pump stage evidence count contradicts diagnostics")
+            first_stage = pump_evidence.stage_evaluations[0]
+            last_stage = pump_evidence.stage_evaluations[-1]
+            if not math.isclose(
+                first_stage.step_start_time,
+                expected_time[0],
+                rel_tol=0.0,
+                abs_tol=_time_tolerance(
+                    first_stage.step_start_time,
+                    expected_time[0],
+                ),
+            ) or not math.isclose(
+                last_stage.step_start_time + last_stage.dt,
+                expected_time[-1],
+                rel_tol=0.0,
+                abs_tol=_time_tolerance(
+                    last_stage.step_start_time + last_stage.dt,
+                    expected_time[-1],
+                ),
+            ):
+                raise ValueError("Pump stage evidence does not cover the result interval")
+            if not math.isclose(
+                pump_series.cumulative_energy_kwh[-1],
+                pump_evidence.total_input_energy_kwh,
+                rel_tol=0.0,
+                abs_tol=1.0e-9,
+            ):
+                raise ValueError("Pump output energy contradicts coupling evidence")
+        elif self.pump_coupling_evidence:
+            raise ValueError("pre-v7 result must not add Pump coupling evidence")
         for event in self.control_events:
             if expects_bracket_evidence and not event.has_bracket_evidence:
                 raise ValueError("v4-lite-4 control events require bracket evidence")
             if not expects_bracket_evidence and event.has_bracket_evidence:
-                raise ValueError("pre-v4 control events must not add bracket evidence")
+                if not (
+                    version == "v4-lite-7"
+                    and event.structure_type == "gate"
+                    and event.action == "open"
+                ):
+                    raise ValueError(
+                        "pre-v4 control events must not add bracket evidence"
+                    )
+            if (
+                version == "v4-lite-7"
+                and event.structure_type == "gate"
+                and not event.has_bracket_evidence
+            ):
+                raise ValueError("v4-lite-7 Gate event requires bracket evidence")
+            if (
+                version == "v4-lite-7"
+                and event.structure_type == "pump"
+                and event.has_bracket_evidence
+            ):
+                raise ValueError("v4-lite-7 Pump hysteresis event cannot use a bracket")
         event_keys = tuple(
             (item.structure_type, item.structure_id) for item in self.control_events
         )
-        _require_unique(event_keys, "one-shot control event structure identity")
+        if version == "v4-lite-7":
+            _require_unique(
+                (
+                    (item.time, item.structure_type, item.structure_id, item.action)
+                    for item in self.control_events
+                ),
+                "D1 control event identity",
+            )
+            gate_event_keys = tuple(
+                key for key in event_keys if key[0] == "gate"
+            )
+            _require_unique(gate_event_keys, "D1 one-shot Gate event identity")
+        else:
+            _require_unique(event_keys, "one-shot control event structure identity")
         event_key_set = set(event_keys)
         gate_ids = {item.gate_id for item in self.gates}
         pump_ids = {item.pump_id for item in self.pumps}
@@ -903,10 +1305,14 @@ class MvpHydraulicResult(StrictResultModel):
                     raise ValueError("Gate event contradicts its accepted opening series")
                 if len(set(after)) != 1:
                     raise ValueError("Gate target opening changes after its one-shot event")
-            else:
+            elif isinstance(
+                next(item for item in self.pumps if item.pump_id == event.structure_id),
+                MvpPumpSeries,
+            ):
                 series = next(
                     item for item in self.pumps if item.pump_id == event.structure_id
                 )
+                assert isinstance(series, MvpPumpSeries)
                 before = tuple(
                     status
                     for time, status in zip(series.time, series.status)
@@ -927,10 +1333,41 @@ class MvpHydraulicResult(StrictResultModel):
             ) != 1:
                 raise ValueError("Gate opening changes without a control event")
         for pump in self.pumps:
-            if ("pump", pump.pump_id) not in event_key_set and len(
-                set(pump.status)
-            ) != 1:
-                raise ValueError("Pump status changes without a control event")
+            if isinstance(pump, MvpPumpSeries):
+                if ("pump", pump.pump_id) not in event_key_set and len(
+                    set(pump.status)
+                ) != 1:
+                    raise ValueError("Pump status changes without a control event")
+            else:
+                pump_events = tuple(
+                    event
+                    for event in self.control_events
+                    if event.structure_type == "pump"
+                    and event.structure_id == pump.pump_id
+                )
+                if len(set(pump.control_state)) > 1 and not pump_events:
+                    raise ValueError("hydraulic Pump state changes without an event")
+                expected_status = "off"
+                event_index = 0
+                for time, actual_status in zip(pump.time, pump.control_state):
+                    while (
+                        event_index < len(pump_events)
+                        and pump_events[event_index].time <= time
+                    ):
+                        action = pump_events[event_index].action
+                        if (expected_status, action) == ("off", "start"):
+                            expected_status = "on"
+                        elif (expected_status, action) == ("on", "stop"):
+                            expected_status = "off"
+                        else:
+                            raise ValueError(
+                                "hydraulic Pump event sequence contradicts hysteresis"
+                            )
+                        event_index += 1
+                    if actual_status != expected_status:
+                        raise ValueError(
+                            "hydraulic Pump event contradicts its control-state series"
+                        )
         return self
 
     @model_serializer(mode="wrap")
@@ -940,6 +1377,8 @@ class MvpHydraulicResult(StrictResultModel):
         payload = handler(self)
         if not self.controlled_gate_coupling_evidence:
             payload.pop("controlled_gate_coupling_evidence", None)
+        if not self.pump_coupling_evidence:
+            payload.pop("pump_coupling_evidence", None)
         return payload
 
     def to_dict(self) -> dict[str, Any]:
@@ -952,6 +1391,8 @@ class MvpHydraulicResult(StrictResultModel):
             payload.pop("gate_coupling_evidence")
         if not self.controlled_gate_coupling_evidence:
             payload.pop("controlled_gate_coupling_evidence", None)
+        if not self.pump_coupling_evidence:
+            payload.pop("pump_coupling_evidence", None)
         if self.provenance.solver_policy_hash is None:
             payload["provenance"].pop("solver_policy_hash", None)
         return payload
@@ -972,8 +1413,11 @@ __all__ = [
     "MvpGateSeries",
     "MvpGateCouplingEvidence",
     "MvpGateStageEvidence",
+    "MvpHydraulicPumpSeries",
     "MvpHydraulicResult",
+    "MvpPumpCouplingEvidence",
     "MvpPumpSeries",
+    "MvpPumpStageEvidence",
     "MvpResultProvenance",
     "MvpSectionSeries",
     "MvpWaterBalance",

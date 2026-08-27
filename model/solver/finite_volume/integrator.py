@@ -24,6 +24,7 @@ from model.solver.finite_volume.geometry_source import (
     mesh_face_geometries,
 )
 from model.solver.finite_volume.mesh import FiniteVolumeMesh
+from model.solver.finite_volume.pump import HydraulicExternalPump
 from model.solver.finite_volume.reconstruction import InterfaceFlux, hydrostatic_interface_flux
 from model.solver.finite_volume.state import HydraulicState
 from model.solver.finite_volume.structures import (
@@ -91,6 +92,7 @@ class StepBudget:
     upstream_volume: float
     downstream_volume: float
     pump_outflow_volume: float
+    pump_input_energy_kwh: float
     gate_transfer_volume: tuple[tuple[str, float], ...]
     gate_stage_flows: tuple[StructureStageFlow, ...]
     pump_stage_flows: tuple[StructureStageFlow, ...]
@@ -192,19 +194,32 @@ def _structure_context(
 
 
 def _pump_context(
-    *, state: HydraulicState, cell_index: int, dt: float
+    *,
+    mesh: FiniteVolumeMesh,
+    state: HydraulicState,
+    pump: OnOffPump | HydraulicExternalPump,
+    dt: float,
 ) -> StructureStageContext:
-    """Build a same-cell context for the fixed external pump sink."""
+    """Build current absolute source/target stages for one Pump evaluation."""
+
+    source_stage = mesh.cells[pump.cell_index].geometry.stage_from_area(
+        state.area[pump.cell_index]
+    )
+    target_stage = (
+        pump.outlet_stage_at(state.time)
+        if isinstance(pump, HydraulicExternalPump)
+        else source_stage
+    )
 
     return StructureStageContext(
         time=state.time,
         dt=dt,
-        upstream_stage=state.water_depth[cell_index],
-        downstream_stage=state.water_depth[cell_index],
-        upstream_area=state.area[cell_index],
-        downstream_area=state.area[cell_index],
-        upstream_discharge=state.discharge[cell_index],
-        downstream_discharge=state.discharge[cell_index],
+        upstream_stage=source_stage,
+        downstream_stage=target_stage,
+        upstream_area=state.area[pump.cell_index],
+        downstream_area=state.area[pump.cell_index],
+        upstream_discharge=state.discharge[pump.cell_index],
+        downstream_discharge=state.discharge[pump.cell_index],
     )
 
 
@@ -216,7 +231,7 @@ def _forward_euler_stage_raw(
     dry_depth: float,
     boundaries: BoundaryPair,
     gates: Sequence[FixedGate] = (),
-    pumps: Sequence[OnOffPump] = (),
+    pumps: Sequence[OnOffPump | HydraulicExternalPump] = (),
     scheme: Literal["hll", "rusanov"] = "hll",
     geometry_source_mode: Literal[
         "hydrostatic-reconstruction-v1",
@@ -370,7 +385,7 @@ def _forward_euler_stage_raw(
         if pump.cell_index >= len(mesh.cells):
             raise ValueError(f"pump {pump.pump_id} cell_index is outside the mesh")
         result = pump.evaluate_stage(
-            _pump_context(state=state, cell_index=pump.cell_index, dt=dt),
+            _pump_context(mesh=mesh, state=state, pump=pump, dt=dt),
             _committed_structure_state(state.pump_state, pump.pump_id),
         )
         if result.flow < 0.0:
@@ -460,7 +475,7 @@ def forward_euler_stage(
     dry_depth: float,
     boundaries: BoundaryPair,
     gates: Sequence[FixedGate] = (),
-    pumps: Sequence[OnOffPump] = (),
+    pumps: Sequence[OnOffPump | HydraulicExternalPump] = (),
     scheme: Literal["hll", "rusanov"] = "hll",
     equilibrium_reference: HydraulicState | None = None,
     geometry_source_mode: Literal[
@@ -574,7 +589,7 @@ def ssp_rk2_step(
     boundaries: BoundaryPair,
     cfl_limit: float,
     gates: Sequence[FixedGate] = (),
-    pumps: Sequence[OnOffPump] = (),
+    pumps: Sequence[OnOffPump | HydraulicExternalPump] = (),
     scheme: Literal["hll", "rusanov"] = "hll",
     equilibrium_reference: HydraulicState | None = None,
     geometry_source_mode: Literal[
@@ -653,6 +668,19 @@ def ssp_rk2_step(
         )
 
     average_gate = average_flows(first.budget.gate_flows, second.budget.gate_flows)
+    pump_input_energy_kwh = (
+        0.5
+        * dt
+        * sum(
+            evidence.input_power_kw
+            for stage in (
+                *first.budget.pump_flows,
+                *second.budget.pump_flows,
+            )
+            if (evidence := stage.pump_operating_point) is not None
+        )
+        / 3600.0
+    )
     flags = tuple(
         flag
         for enabled, flag in (
@@ -689,6 +717,7 @@ def ssp_rk2_step(
             pump_outflow_volume=0.5
             * dt
             * (first.budget.pump_outflow + second.budget.pump_outflow),
+            pump_input_energy_kwh=pump_input_energy_kwh,
             gate_transfer_volume=tuple(
                 (structure_id, flow * dt) for structure_id, flow in average_gate
             ),
@@ -710,7 +739,7 @@ def advance_with_retries(
     minimum_dt: float,
     maximum_retries: int,
     gates: Sequence[FixedGate] = (),
-    pumps: Sequence[OnOffPump] = (),
+    pumps: Sequence[OnOffPump | HydraulicExternalPump] = (),
     scheme: Literal["hll", "rusanov"] = "hll",
     equilibrium_reference: HydraulicState | None = None,
     geometry_source_mode: Literal[

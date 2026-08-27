@@ -10,13 +10,14 @@ from typing import Any
 from model.api.v4_lite import (
     BracketedOneShotStageAboveControlInput,
     BySectionInitialState,
+    HydraulicExternalPumpInput,
     OneShotStageAboveControlInput,
     V4LiteInput,
     parse_v4_lite_input,
 )
 from model.core.errors import HydraulicInputError
 from model.geometry.sections import TabulatedSectionGeometry
-from model.provenance import canonical_json, snapshot_hash
+from model.provenance import CANONICALIZATION_ID, canonical_json, snapshot_hash
 from model.result.mvp import (
     HYDRAULIC_RESULT_MVP,
     MvpControlledGateCouplingEvidence,
@@ -27,6 +28,9 @@ from model.result.mvp import (
     MvpGateSeries,
     MvpGateStageEvidence,
     MvpHydraulicResult,
+    MvpHydraulicPumpSeries,
+    MvpPumpCouplingEvidence,
+    MvpPumpStageEvidence,
     MvpPumpSeries,
     MvpResultProvenance,
     MvpSectionSeries,
@@ -41,13 +45,19 @@ from model.solver.finite_volume import (
     FiniteVolumeMesh,
     FixedGate,
     HydraulicState,
+    HydraulicExternalPump,
     NONPRISMATIC_LAKE_SCOPE,
     NONPRISMATIC_MOVING_ENERGY_SCOPE,
     OneShotStageThreshold,
     OnOffPump,
+    PumpEfficiencyCurve,
+    PumpHeadCurve,
+    PumpSystemLoss,
+    PumpUnitConfiguration,
     SingleBranchConfig,
     SingleBranchResult,
     StructureStageContext,
+    StageHysteresisMinimumRuntime,
     UpstreamDischargeBoundary,
     solve_single_branch,
 )
@@ -59,6 +69,9 @@ SOLVER_POLICY_HASH_SCHEMA = "dayu.solver-policy.v1"
 SOLVER_POLICY_HASH_SCHEMA_V2 = "dayu.solver-policy.v2"
 SOLVER_POLICY_HASH_SCHEMA_V3 = "dayu.solver-policy.v3"
 SOLVER_POLICY_HASH_SCHEMA_V4 = "dayu.solver-policy.v4"
+SOLVER_POLICY_HASH_SCHEMA_V5 = "dayu.solver-policy.v5"
+RUNTIME_PROJECTION_HASH_SCHEMA = "dayu.v4-lite.runtime-projection.v1"
+VALIDATION_POLICY_HASH_SCHEMA = "dayu.v4-lite.validation-policy.v1"
 
 
 def build_v4_lite_mesh(model_input: V4LiteInput) -> FiniteVolumeMesh:
@@ -107,6 +120,40 @@ def build_v4_lite_mesh(model_input: V4LiteInput) -> FiniteVolumeMesh:
         cells=tuple(cells),
         branch_id=str(model_input.river.branch_id),
     )
+
+
+def v4_lite_runtime_projection_hash(model_input: V4LiteInput) -> str:
+    """Hash the validated numerical input projection without provenance metadata.
+
+    The authoritative input hash identifies the submitted frozen JSON.  This
+    projection instead identifies the default-expanded, validated input that
+    feeds numerical adapters.  Mesh and execution-policy identities remain in
+    their dedicated domains.
+    """
+
+    manifest = {
+        "schema_version": RUNTIME_PROJECTION_HASH_SCHEMA,
+        "canonicalization_id": CANONICALIZATION_ID,
+        "projection": model_input.model_dump(
+            mode="json",
+            exclude={"provenance"},
+        ),
+    }
+    return snapshot_hash(manifest)
+
+
+def v4_lite_validation_policy_hash(model_input: V4LiteInput) -> str:
+    """Hash the immutable public validation-policy identity independently."""
+
+    manifest = {
+        "schema_version": VALIDATION_POLICY_HASH_SCHEMA,
+        "canonicalization_id": CANONICALIZATION_ID,
+        "input_schema_version": model_input.schema_version,
+        "validation_policy_version": (
+            model_input.provenance.validation_policy_version
+        ),
+    }
+    return snapshot_hash(manifest)
 
 
 def v4_lite_mesh_hash(model_input: V4LiteInput, mesh: FiniteVolumeMesh) -> str:
@@ -175,15 +222,19 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
     solver = model_input.solver
     manifest = {
         "schema_version": (
-            SOLVER_POLICY_HASH_SCHEMA_V4
-            if model_input.provenance.validation_policy_version == "v4-lite-6"
+            SOLVER_POLICY_HASH_SCHEMA_V5
+            if model_input.provenance.validation_policy_version == "v4-lite-7"
             else (
-                SOLVER_POLICY_HASH_SCHEMA_V3
-                if model_input.provenance.validation_policy_version == "v4-lite-5"
+                SOLVER_POLICY_HASH_SCHEMA_V4
+                if model_input.provenance.validation_policy_version == "v4-lite-6"
                 else (
-                    SOLVER_POLICY_HASH_SCHEMA_V2
-                    if model_input.provenance.validation_policy_version == "v4-lite-4"
-                    else SOLVER_POLICY_HASH_SCHEMA
+                    SOLVER_POLICY_HASH_SCHEMA_V3
+                    if model_input.provenance.validation_policy_version == "v4-lite-5"
+                    else (
+                        SOLVER_POLICY_HASH_SCHEMA_V2
+                        if model_input.provenance.validation_policy_version == "v4-lite-4"
+                        else SOLVER_POLICY_HASH_SCHEMA
+                    )
                 )
             )
         ),
@@ -229,7 +280,11 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
             "maximum_discharge_l1_relative": 1.0e-4,
             "maximum_energy_linf_m": 1.0e-4,
         }
-    if model_input.provenance.validation_policy_version in {"v4-lite-4", "v4-lite-6"}:
+    if model_input.provenance.validation_policy_version in {
+        "v4-lite-4",
+        "v4-lite-6",
+        "v4-lite-7",
+    }:
         manifest["solver"]["structure_event"] = {
             "policy": solver.structure_event_policy,
             "event_time_tolerance_seconds": solver.event_time_tolerance_seconds,
@@ -237,7 +292,11 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
             "control_spatial_support": solver.control_spatial_support,
             "command_effect": "next-accepted-subinterval-v1",
         }
-    if model_input.provenance.validation_policy_version in {"v4-lite-5", "v4-lite-6"}:
+    if model_input.provenance.validation_policy_version in {
+        "v4-lite-5",
+        "v4-lite-6",
+        "v4-lite-7",
+    }:
         manifest["solver"]["gate_coupling"] = {
             "policy": solver.gate_coupling_policy,
             "equation": "total-head-orifice-loss-positive-root-v1",
@@ -247,12 +306,27 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
             "momentum_flux": "side-specific-q2-over-a-plus-g-i1-v1",
             "reaction_sign": "downstream-minus-upstream-v1",
         }
-    if model_input.provenance.validation_policy_version == "v4-lite-6":
+    if model_input.provenance.validation_policy_version in {"v4-lite-6", "v4-lite-7"}:
         manifest["solver"]["combined_gate_control"] = {
             "policy": "bracketed-event-then-completed-interface-v1",
             "closed_interface": "impermeable-side-specific-g-i1-v1",
             "event_step_command": "closed",
             "open_command_effect": "next-accepted-subinterval-v1",
+        }
+    if model_input.provenance.validation_policy_version == "v4-lite-7":
+        manifest["solver"]["pump_coupling"] = {
+            "policy": solver.pump_coupling_policy,
+            "curve_policy": solver.pump_curve_policy,
+            "efficiency_policy": solver.pump_efficiency_policy,
+            "system_loss_policy": solver.pump_system_loss_policy,
+            "control_policy": solver.pump_control_policy,
+            "momentum_policy": solver.pump_momentum_policy,
+            "head_residual_tolerance_m": solver.pump_head_residual_tolerance_m,
+            "maximum_iterations": solver.pump_maximum_iterations,
+            "spatial_support": solver.pump_spatial_support,
+            "parallel_units": "identical-q-total-over-n-v1",
+            "root_solver": "curve-domain-bracket-bisection-v1",
+            "energy_integration": "accepted-ssp-stage-trapezoid-v1",
         }
     return snapshot_hash(manifest)
 
@@ -343,7 +417,10 @@ def _runtime_nonprismatic_scope(model_input: V4LiteInput) -> str:
 
 def _structures(
     model_input: V4LiteInput,
-) -> tuple[tuple[FixedGate, ...], tuple[OnOffPump, ...]]:
+) -> tuple[
+    tuple[FixedGate, ...],
+    tuple[OnOffPump | HydraulicExternalPump, ...],
+]:
     """Resolve the single optional Gate face and external Pump cell by identity."""
 
     index_by_section = {
@@ -379,30 +456,88 @@ def _structures(
         )
         for gate in model_input.structures.gates
     )
-    pumps = tuple(
-        OnOffPump(
-            pump_id=str(pump.identity.id),
-            cell_index=index_by_section[pump.section_id],
-            design_flow=pump.design_flow_m3_s,
-            enabled=pump.status == "on",
-            control=(
-                BracketedOneShotStageThreshold(
-                    pump.control.threshold_water_level_m
+    pumps: list[OnOffPump | HydraulicExternalPump] = []
+    for pump in model_input.structures.pumps:
+        if isinstance(pump, HydraulicExternalPumpInput):
+            section_index = index_by_section[pump.section_id]
+            section = model_input.sections[section_index]
+            pumps.append(
+                HydraulicExternalPump(
+                    pump_id=str(pump.identity.id),
+                    cell_index=section_index,
+                    source_bed_elevation_m=section.minimum_stage_m,
+                    minimum_source_depth_m=model_input.solver.dry_depth_m,
+                    head_curve=PumpHeadCurve(
+                        tuple(
+                            (point.flow_m3s, point.head_m)
+                            for point in pump.head_curve.points
+                        )
+                    ),
+                    efficiency_curve=PumpEfficiencyCurve(
+                        tuple(
+                            (point.flow_m3s, point.efficiency)
+                            for point in pump.efficiency_curve.points
+                        )
+                    ),
+                    unit_configuration=PumpUnitConfiguration(
+                        total_units=pump.unit_configuration.total_units,
+                        running_units=pump.unit_configuration.running_units,
+                        minimum_running_units=(
+                            pump.unit_configuration.minimum_running_units
+                        ),
+                        maximum_running_units=(
+                            pump.unit_configuration.maximum_running_units
+                        ),
+                    ),
+                    system_loss=PumpSystemLoss(
+                        static_loss_m=pump.system_loss.static_loss_m,
+                        quadratic_loss_coefficient_s2_m5=(
+                            pump.system_loss.quadratic_loss_coefficient_s2_m5
+                        ),
+                    ),
+                    outlet_stage=BoundarySeries(
+                        pump.outlet_stage.time_seconds,
+                        pump.outlet_stage.water_level_m,
+                        "stage",
+                    ),
+                    control=StageHysteresisMinimumRuntime(
+                        start_level_m=pump.control.start_level_m,
+                        stop_level_m=pump.control.stop_level_m,
+                        minimum_run_seconds=pump.control.minimum_run_seconds,
+                        minimum_stop_seconds=pump.control.minimum_stop_seconds,
+                        maximum_starts=pump.control.maximum_starts,
+                    ),
+                    initial_status=pump.status,
+                    head_residual_tolerance_m=(
+                        model_input.solver.pump_head_residual_tolerance_m
+                    ),
+                    maximum_iterations=model_input.solver.pump_maximum_iterations,
                 )
-                if isinstance(
-                    pump.control,
-                    BracketedOneShotStageAboveControlInput,
-                )
-                else (
-                    OneShotStageThreshold(pump.control.threshold_water_level_m)
-                    if isinstance(pump.control, OneShotStageAboveControlInput)
-                    else None
-                )
-            ),
+            )
+            continue
+        pumps.append(
+            OnOffPump(
+                pump_id=str(pump.identity.id),
+                cell_index=index_by_section[pump.section_id],
+                design_flow=pump.design_flow_m3_s,
+                enabled=pump.status == "on",
+                control=(
+                    BracketedOneShotStageThreshold(
+                        pump.control.threshold_water_level_m
+                    )
+                    if isinstance(
+                        pump.control,
+                        BracketedOneShotStageAboveControlInput,
+                    )
+                    else (
+                        OneShotStageThreshold(pump.control.threshold_water_level_m)
+                        if isinstance(pump.control, OneShotStageAboveControlInput)
+                        else None
+                    )
+                ),
+            )
         )
-        for pump in model_input.structures.pumps
-    )
-    return gates, pumps
+    return gates, tuple(pumps)
 
 
 def _gate_series(
@@ -561,9 +696,12 @@ def _controlled_gate_coupling_evidence(
     runtime: SingleBranchResult,
     gates: tuple[FixedGate, ...],
 ) -> tuple[MvpControlledGateCouplingEvidence, ...]:
-    """Project the v6 closed/event/open strong-interface stage history."""
+    """Project the v6/v7 closed/event/open strong-interface stage history."""
 
-    if model_input.provenance.validation_policy_version != "v4-lite-6":
+    if model_input.provenance.validation_policy_version not in {
+        "v4-lite-6",
+        "v4-lite-7",
+    }:
         return ()
     if len(gates) != 1:
         raise HydraulicInputError("v4-lite-6 result requires one runtime Gate")
@@ -650,16 +788,85 @@ def _controlled_gate_coupling_evidence(
 def _pump_series(
     model_input: V4LiteInput,
     runtime: SingleBranchResult,
-) -> tuple[MvpPumpSeries, ...]:
+    mesh: FiniteVolumeMesh,
+    pumps: tuple[OnOffPump | HydraulicExternalPump, ...],
+) -> tuple[MvpPumpSeries | MvpHydraulicPumpSeries, ...]:
     """Project each accepted actual Pump command onto the output time axis."""
 
     if not model_input.structures.pumps:
         return ()
-    pump = model_input.structures.pumps[0]
+    pump_input = model_input.structures.pumps[0]
     time = tuple(state.time for state in runtime.states)
+    if isinstance(pump_input, HydraulicExternalPumpInput):
+        if len(pumps) != 1 or not isinstance(pumps[0], HydraulicExternalPump):
+            raise HydraulicInputError("v4-lite-7 runtime hydraulic Pump is missing")
+        pump = pumps[0]
+        rows = []
+        cumulative_energy = []
+        for state in runtime.states:
+            control_state = state.pump_state.get(pump.pump_id)
+            if not isinstance(control_state, Mapping):
+                raise HydraulicInputError("runtime hydraulic Pump state is malformed")
+            source_stage = mesh.cells[pump.cell_index].geometry.stage_from_area(
+                state.area[pump.cell_index]
+            )
+            row = pump.evaluate_stage(
+                StructureStageContext(
+                    time=state.time,
+                    dt=1.0,
+                    upstream_stage=source_stage,
+                    downstream_stage=pump.outlet_stage_at(state.time),
+                    upstream_area=state.area[pump.cell_index],
+                    downstream_area=state.area[pump.cell_index],
+                    upstream_discharge=state.discharge[pump.cell_index],
+                    downstream_discharge=state.discharge[pump.cell_index],
+                ),
+                control_state,
+            )
+            if row.pump_operating_point is None:
+                raise HydraulicInputError("hydraulic Pump output evidence is missing")
+            rows.append((control_state, row.pump_operating_point))
+            cumulative_energy.append(
+                sum(
+                    step.budget.pump_input_energy_kwh
+                    for step in runtime.steps
+                    if step.state.time <= state.time + 1.0e-12
+                )
+            )
+        return (
+            MvpHydraulicPumpSeries(
+                pump_id=pump_input.identity.id,
+                coupling_policy="qh-operating-point-external-sink-v1",
+                time=time,
+                running_units=tuple(
+                    int(control_state["running_units"])
+                    for control_state, _ in rows
+                ),
+                flow_m3s=tuple(item.total_flow_m3s for _, item in rows),
+                source_stage_m=tuple(item.source_stage_m for _, item in rows),
+                outlet_or_target_stage_m=tuple(
+                    item.outlet_or_target_stage_m for _, item in rows
+                ),
+                pump_head_m=tuple(item.pump_head_m for _, item in rows),
+                system_head_m=tuple(item.system_head_m for _, item in rows),
+                efficiency=tuple(item.efficiency for _, item in rows),
+                hydraulic_power_kw=tuple(
+                    item.hydraulic_power_kw for _, item in rows
+                ),
+                input_power_kw=tuple(item.input_power_kw for _, item in rows),
+                cumulative_energy_kwh=tuple(cumulative_energy),
+                control_state=tuple(
+                    str(control_state["control_state"])
+                    for control_state, _ in rows
+                ),
+                regime=tuple(item.regime for _, item in rows),
+                iterations=tuple(item.iterations for _, item in rows),
+            ),
+        )
+
     enabled: list[bool] = []
     for state in runtime.states:
-        control_state = state.pump_state.get(str(pump.identity.id))
+        control_state = state.pump_state.get(str(pump_input.identity.id))
         if not isinstance(control_state, Mapping):
             raise HydraulicInputError("runtime Pump state is missing or malformed")
         actual_enabled = control_state.get("enabled")
@@ -668,10 +875,95 @@ def _pump_series(
         enabled.append(actual_enabled)
     return (
         MvpPumpSeries(
-            pump_id=pump.identity.id,
+            pump_id=pump_input.identity.id,
             time=time,
             status=tuple("on" if item else "off" for item in enabled),
-            flow=tuple(pump.design_flow_m3_s if item else 0.0 for item in enabled),
+            flow=tuple(
+                pump_input.design_flow_m3_s if item else 0.0 for item in enabled
+            ),
+        ),
+    )
+
+
+def _pump_coupling_evidence(
+    model_input: V4LiteInput,
+    runtime: SingleBranchResult,
+    pumps: tuple[OnOffPump | HydraulicExternalPump, ...],
+) -> tuple[MvpPumpCouplingEvidence, ...]:
+    """Project only accepted D1 RK-stage Pump points into a self-checking budget."""
+
+    if model_input.provenance.validation_policy_version != "v4-lite-7":
+        return ()
+    if len(pumps) != 1 or not isinstance(pumps[0], HydraulicExternalPump):
+        raise HydraulicInputError("v4-lite-7 requires one runtime hydraulic Pump")
+    pump = pumps[0]
+    stage_rows: list[MvpPumpStageEvidence] = []
+    for step in runtime.steps:
+        flows = tuple(
+            flow
+            for flow in step.budget.pump_stage_flows
+            if flow.structure_id == pump.pump_id
+        )
+        if len(flows) != 2:
+            raise HydraulicInputError("hydraulic Pump step must expose two RK stages")
+        step_start = step.state.time - step.dt
+        for rk_stage, flow in enumerate(flows, start=1):
+            evidence = flow.pump_operating_point
+            if evidence is None:
+                raise HydraulicInputError("hydraulic Pump stage evidence is missing")
+            stage_rows.append(
+                MvpPumpStageEvidence(
+                    step_start_time=step_start,
+                    rk_stage=rk_stage,
+                    evaluation_time=evidence.evaluation_time,
+                    dt=evidence.dt,
+                    pump_id=int(evidence.pump_id),
+                    source_stage_m=evidence.source_stage_m,
+                    outlet_or_target_stage_m=evidence.outlet_or_target_stage_m,
+                    running_units=evidence.running_units,
+                    total_flow_m3s=evidence.total_flow_m3s,
+                    per_unit_flow_m3s=evidence.per_unit_flow_m3s,
+                    pump_head_m=evidence.pump_head_m,
+                    system_head_m=evidence.system_head_m,
+                    head_residual_m=evidence.head_residual_m,
+                    efficiency=evidence.efficiency,
+                    hydraulic_power_kw=evidence.hydraulic_power_kw,
+                    input_power_kw=evidence.input_power_kw,
+                    iterations=evidence.iterations,
+                    curve_segment=evidence.curve_segment,
+                    efficiency_segment=evidence.efficiency_segment,
+                    static_loss_m=evidence.static_loss_m,
+                    quadratic_loss_coefficient_s2_m5=(
+                        evidence.quadratic_loss_coefficient_s2_m5
+                    ),
+                    pump_coupling_policy=evidence.pump_coupling_policy,
+                    pump_curve_policy=evidence.pump_curve_policy,
+                    pump_efficiency_policy=evidence.pump_efficiency_policy,
+                    system_loss_policy=evidence.system_loss_policy,
+                    regime=evidence.regime,
+                )
+            )
+    if not stage_rows:
+        raise HydraulicInputError("v4-lite-7 has no accepted Pump stage evidence")
+    return (
+        MvpPumpCouplingEvidence(
+            pump_id=int(pump.pump_id),
+            pump_coupling_policy=model_input.solver.pump_coupling_policy,
+            pump_curve_policy=model_input.solver.pump_curve_policy,
+            pump_efficiency_policy=model_input.solver.pump_efficiency_policy,
+            pump_control_policy=model_input.solver.pump_control_policy,
+            system_loss_policy=model_input.solver.pump_system_loss_policy,
+            momentum_policy=model_input.solver.pump_momentum_policy,
+            head_residual_tolerance_m=(
+                model_input.solver.pump_head_residual_tolerance_m
+            ),
+            maximum_iterations=model_input.solver.pump_maximum_iterations,
+            total_external_volume_m3=runtime.diagnostics.pump_outflow_volume,
+            total_input_energy_kwh=runtime.diagnostics.pump_input_energy_kwh,
+            maximum_absolute_head_residual_m=max(
+                abs(row.head_residual_m) for row in stage_rows
+            ),
+            stage_evaluations=tuple(stage_rows),
         ),
     )
 
@@ -683,6 +975,7 @@ def _result(
     mesh: FiniteVolumeMesh,
     runtime: SingleBranchResult,
     gates: tuple[FixedGate, ...],
+    pumps: tuple[OnOffPump | HydraulicExternalPump, ...],
 ) -> MvpHydraulicResult:
     """Build the independent result DTO without legacy EngineResult projection."""
 
@@ -698,6 +991,14 @@ def _result(
             ),
             flow=tuple(state.discharge[index] for state in runtime.states),
             velocity=tuple(state.velocity[index] for state in runtime.states),
+            volume_m3=(
+                tuple(
+                    state.area[index] * mesh.cells[index].dx
+                    for state in runtime.states
+                )
+                if model_input.provenance.validation_policy_version == "v4-lite-7"
+                else None
+            ),
         )
         for index, section in enumerate(model_input.sections)
     )
@@ -706,7 +1007,7 @@ def _result(
         schema_version=HYDRAULIC_RESULT_MVP,
         sections=sections,
         gates=_gate_series(model_input, runtime, mesh, gates),
-        pumps=_pump_series(model_input, runtime),
+        pumps=_pump_series(model_input, runtime, mesh, pumps),
         control_events=tuple(
             MvpControlEvent(
                 time=event.time,
@@ -715,6 +1016,7 @@ def _result(
                 action=event.action,
                 threshold_water_level=event.threshold_water_level,
                 observed_water_level=event.observed_water_level,
+                reason=event.reason,
                 **(
                     {
                         "previous_time": event.bracket.previous_time,
@@ -747,6 +1049,11 @@ def _result(
             model_input,
             runtime,
             gates,
+        ),
+        pump_coupling_evidence=_pump_coupling_evidence(
+            model_input,
+            runtime,
+            pumps,
         ),
         water_balance=MvpWaterBalance(
             initial_storage=evidence.initial_storage,
@@ -829,6 +1136,11 @@ def run_v4_lite(snapshot: Mapping[str, Any]) -> MvpHydraulicResult:
             maximum_event_refinements=(
                 model_input.solver.maximum_event_refinements
             ),
+            structure_capability=(
+                "d1-single-branch-gate-pump-v1"
+                if model_input.provenance.validation_policy_version == "v4-lite-7"
+                else "legacy-v1"
+            ),
         ),
         gates=gates,
         pumps=pumps,
@@ -839,15 +1151,20 @@ def run_v4_lite(snapshot: Mapping[str, Any]) -> MvpHydraulicResult:
         mesh=mesh,
         runtime=runtime,
         gates=gates,
+        pumps=pumps,
     )
 
 
 __all__ = [
     "MESH_HASH_SCHEMA",
     "MESH_HASH_SCHEMA_V2",
+    "RUNTIME_PROJECTION_HASH_SCHEMA",
     "SOLVER_POLICY_HASH_SCHEMA",
+    "VALIDATION_POLICY_HASH_SCHEMA",
     "build_v4_lite_mesh",
     "run_v4_lite",
     "v4_lite_mesh_hash",
+    "v4_lite_runtime_projection_hash",
     "v4_lite_solver_policy_hash",
+    "v4_lite_validation_policy_hash",
 ]

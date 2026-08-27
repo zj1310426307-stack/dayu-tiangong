@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import copy
+import json
 import math
+from pathlib import Path
 
 import pytest
 
@@ -24,6 +26,18 @@ _DOMAIN_LENGTH_M = 1_000.0
 _FLOW_M3_S = 5.0
 _REFERENCE_DEPTH_M = 2.0
 _CELL_COUNT = 25
+_FROZEN_FIXTURE = (
+    Path(__file__).parents[1]
+    / "fixtures"
+    / "model02"
+    / "v4-lite-3-moving-nonprismatic.json"
+)
+
+
+def load_frozen_moving_nonprismatic_payload() -> dict:
+    """Load authoritative fixture numbers without executing platform libm."""
+
+    return json.loads(_FROZEN_FIXTURE.read_text(encoding="utf-8"))
 
 
 def _width_at(chainage_m: float) -> float:
@@ -159,7 +173,7 @@ def make_moving_nonprismatic_payload(*, datum: float = 0.0) -> dict:
 def test_v4_lite_3_moving_reference_runs_with_frozen_quality_evidence() -> None:
     """The public route must retain the exact restricted moving reference."""
 
-    payload = make_moving_nonprismatic_payload()
+    payload = load_frozen_moving_nonprismatic_payload()
     parsed = parse_v4_lite_input(payload)
     mesh = build_v4_lite_mesh(parsed)
     result = HydraulicEngine().run(payload)
