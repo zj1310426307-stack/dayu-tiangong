@@ -1,0 +1,93 @@
+"""Shared builders for native-v4 platform contract tests."""
+
+from __future__ import annotations
+
+import runpy
+from pathlib import Path
+
+from model.provenance import CANONICALIZATION_ID, snapshot_hash
+from model.solver.registry import (
+    D1_CAPABILITY_ID,
+    D1_RUNTIME_ADAPTER_ID,
+    D1_SOLVER_ID,
+    registry_hash,
+)
+
+
+def d1_runtime_payload() -> dict:
+    """Load the checked-in six-hour D1 example without importing a hyphenated package."""
+
+    path = (
+        Path(__file__).parents[2]
+        / "examples"
+        / "hydraulic"
+        / "gate-pump-strong-coupling"
+        / "case.py"
+    )
+    build_case = runpy.run_path(str(path))["build_case"]
+    return build_case()
+
+
+def native_v4_payload() -> dict:
+    """Wrap the D1 runtime fixture in the authoritative platform-v4 contract."""
+
+    runtime = d1_runtime_payload()
+    sections = runtime["sections"]
+    return {
+        "schema_version": "dayu.model-input.v4",
+        "solver_selection": {
+            "solver_id": D1_SOLVER_ID,
+            "capability_id": D1_CAPABILITY_ID,
+            "runtime_adapter_id": D1_RUNTIME_ADAPTER_ID,
+        },
+        "dataset_version": runtime["dataset_version"],
+        "simulation_case": {"id": 71, "name": "D1 platform integration"},
+        "coordinate_reference": runtime["coordinate_reference"],
+        "network": {"id": runtime["river"]["network_id"], "code": "NW-D1"},
+        "branches": [runtime["river"]],
+        "reaches": [
+            {
+                "id": 81,
+                "branch_id": runtime["river"]["branch_id"],
+                "reach_code": "R-D1",
+                "start_chainage_m": runtime["river"]["start_chainage_m"],
+                "end_chainage_m": runtime["river"]["end_chainage_m"],
+            }
+        ],
+        "cross_sections": sections,
+        "cross_section_profiles": [
+            {
+                "id": item["profile_id"],
+                "cross_section_id": item["section_id"],
+                "profile_hash": item["profile_hash"],
+            }
+            for item in sections
+        ],
+        "initial_state": runtime["initial_state"],
+        "boundaries": runtime["boundary"],
+        "structures": runtime["structures"],
+        "control_plan": {
+            "id": 91,
+            "frozen_snapshot_hash": snapshot_hash(
+                {"schema_version": "dayu.dispatch-plan.v1", "id": 91}
+            ),
+            "policy_id": "d1-gate-pump-control-v1",
+        },
+        "numerical_policy": runtime["solver"],
+        "validation": {
+            "validation_policy_version": "v4-lite-7",
+            "capability_id": D1_CAPABILITY_ID,
+            "water_balance_tolerance": runtime["solver"]["water_balance_tolerance"],
+        },
+        "provenance": {
+            "engine_version": runtime["provenance"]["engine_version"],
+            "engine_commit": "cc6936d9d48d64c46a78ba85bed77c473e20cff3",
+            "canonicalization_id": CANONICALIZATION_ID,
+            "registry_hash": registry_hash(),
+        },
+        "known_limitations": [
+            "single Branch, fully wet, forward strictly subcritical validation only",
+            "not calibrated and not approved for production water decisions",
+        ],
+    }
+
