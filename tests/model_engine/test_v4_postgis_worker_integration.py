@@ -51,6 +51,22 @@ pytestmark = pytest.mark.skipif(
     reason="requires migrated PostGIS, Redis, and both Celery workers",
 )
 
+DATASET_ID = 9001
+RIVER_ID = 9002
+NETWORK_ID = 9011
+BRANCH_ID = 9021
+UPSTREAM_NODE_ID = 9031
+DOWNSTREAM_NODE_ID = 9032
+UPSTREAM_BOUNDARY_ID = 9041
+DOWNSTREAM_BOUNDARY_ID = 9042
+GATE_ID = 9051
+PUMP_ID = 9061
+CASE_ID = 9071
+REACH_ID = 9081
+PLAN_ID = 9091
+SECTION_IDS = tuple(range(9101, 9121))
+PROFILE_IDS = tuple(range(9201, 9221))
+
 
 def _point(longitude: float, latitude: float):
     return func.ST_SetSRID(func.ST_MakePoint(longitude, latitude), 4490)
@@ -61,13 +77,52 @@ def _seed_authoritative_case() -> int:
 
     with SessionLocal() as session:
         source = native_v4_payload()
+        source["dataset_version"]["id"] = DATASET_ID
+        source["simulation_case"]["id"] = CASE_ID
+        source["network"]["id"] = NETWORK_ID
+        source["branches"][0].update(
+            network_id=NETWORK_ID,
+            branch_id=BRANCH_ID,
+            upstream_node_id=UPSTREAM_NODE_ID,
+            downstream_node_id=DOWNSTREAM_NODE_ID,
+        )
+        source["reaches"][0].update(id=REACH_ID, branch_id=BRANCH_ID)
+        for ordinal, section in enumerate(source["cross_sections"]):
+            section.update(
+                section_id=SECTION_IDS[ordinal],
+                branch_id=BRANCH_ID,
+                profile_id=PROFILE_IDS[ordinal],
+            )
+        source["cross_section_profiles"] = [
+            {
+                "id": section["profile_id"],
+                "cross_section_id": section["section_id"],
+                "profile_hash": section["profile_hash"],
+            }
+            for section in source["cross_sections"]
+        ]
+        for ordinal, state in enumerate(source["initial_state"]["values"]):
+            state["section_id"] = SECTION_IDS[ordinal]
+        source["boundaries"]["upstream"]["identity"]["id"] = UPSTREAM_BOUNDARY_ID
+        source["boundaries"]["upstream"]["target_node_id"] = UPSTREAM_NODE_ID
+        source["boundaries"]["downstream"]["identity"]["id"] = DOWNSTREAM_BOUNDARY_ID
+        source["boundaries"]["downstream"]["target_node_id"] = DOWNSTREAM_NODE_ID
+        source["structures"]["gates"][0]["identity"]["id"] = GATE_ID
+        source["structures"]["gates"][0]["branch_id"] = BRANCH_ID
+        source["structures"]["gates"][0]["interface"] = {
+            "upstream_section_id": SECTION_IDS[7],
+            "downstream_section_id": SECTION_IDS[8],
+        }
+        source["structures"]["pumps"][0]["identity"]["id"] = PUMP_ID
+        source["structures"]["pumps"][0]["branch_id"] = BRANCH_ID
+        source["structures"]["pumps"][0]["section_id"] = SECTION_IDS[15]
         runtime = source["numerical_policy"]
         upstream_source = source["boundaries"]["upstream"]
         downstream_source = source["boundaries"]["downstream"]
         pump_source = source["structures"]["pumps"][0]
         gate_source = source["structures"]["gates"][0]
         version = DatasetVersion(
-            id=1,
+            id=DATASET_ID,
             version="D2-CI-1",
             name="D2 hosted integration",
             creator="github-actions",
@@ -78,7 +133,7 @@ def _seed_authoritative_case() -> int:
         session.flush()
 
         upstream_boundary = BoundaryCondition(
-            id=41,
+            id=UPSTREAM_BOUNDARY_ID,
             dataset_version_id=version.id,
             name="D2 CI upstream",
             boundary_type="upstream_flow",
@@ -89,7 +144,7 @@ def _seed_authoritative_case() -> int:
             unit="m3/s",
         )
         downstream_boundary = BoundaryCondition(
-            id=42,
+            id=DOWNSTREAM_BOUNDARY_ID,
             dataset_version_id=version.id,
             name="D2 CI downstream",
             boundary_type="downstream_water_level",
@@ -102,7 +157,7 @@ def _seed_authoritative_case() -> int:
         session.add_all([upstream_boundary, downstream_boundary])
         session.flush()
         simulation_case = SimulationCase(
-            id=71,
+            id=CASE_ID,
             name="D1 platform integration",
             dataset_version_id=version.id,
             boundary_condition_id=upstream_boundary.id,
@@ -114,7 +169,7 @@ def _seed_authoritative_case() -> int:
             },
         )
         river = River(
-            id=1,
+            id=RIVER_ID,
             dataset_version_id=version.id,
             name="D2 CI river",
             code="D2-CI-RIVER",
@@ -126,7 +181,7 @@ def _seed_authoritative_case() -> int:
             ),
         )
         network = HydraulicNetwork(
-            id=11,
+            id=NETWORK_ID,
             dataset_version_id=version.id,
             code="NW-D1",
             name="D2 CI network",
@@ -151,7 +206,7 @@ def _seed_authoritative_case() -> int:
         )
 
         upstream = HydraulicNode(
-            id=31,
+            id=UPSTREAM_NODE_ID,
             dataset_version_id=version.id,
             network_id=network.id,
             node_code="D2-UP",
@@ -159,7 +214,7 @@ def _seed_authoritative_case() -> int:
             geometry=_point(113.10, 23.10),
         )
         downstream = HydraulicNode(
-            id=32,
+            id=DOWNSTREAM_NODE_ID,
             dataset_version_id=version.id,
             network_id=network.id,
             node_code="D2-DOWN",
@@ -172,7 +227,7 @@ def _seed_authoritative_case() -> int:
         downstream_boundary.hydraulic_node_id = downstream.id
         session.flush()
         branch = HydraulicBranch(
-            id=21,
+            id=BRANCH_ID,
             dataset_version_id=version.id,
             network_id=network.id,
             branch_code="B-001",
@@ -193,7 +248,7 @@ def _seed_authoritative_case() -> int:
 
         session.add(
             HydraulicReach(
-                id=81,
+                id=REACH_ID,
                 dataset_version_id=version.id,
                 branch_id=branch.id,
                 reach_code="R-D1",
@@ -209,15 +264,15 @@ def _seed_authoritative_case() -> int:
             )
         )
 
-        for section_id in range(1, 21):
+        for ordinal, section_id in enumerate(SECTION_IDS, start=1):
             session.add(
                 HydraulicCrossSection(
                     id=section_id,
                     dataset_version_id=version.id,
                     branch_id=branch.id,
-                    section_code=f"CS{section_id:02d}",
-                    section_name=f"D2 CI section {section_id}",
-                    chainage=400.0 * (section_id - 1),
+                    section_code=f"CS{ordinal:02d}",
+                    section_name=f"D2 CI section {ordinal}",
+                    chainage=400.0 * (ordinal - 1),
                     chainage_source="imported",
                     location_geometry=_point(
                         113.10 + section_id / 1000.0,
@@ -227,15 +282,15 @@ def _seed_authoritative_case() -> int:
                 )
             )
         session.flush()
-        for section_id in range(1, 21):
+        for ordinal, section_id in enumerate(SECTION_IDS):
             profile = HydraulicCrossSectionProfile(
-                id=100 + section_id,
+                id=PROFILE_IDS[ordinal],
                 dataset_version_id=version.id,
                 cross_section_id=section_id,
                 topography_id="D1-IDENTICAL",
                 vertical_datum="1985 National Height Datum",
                 default_manning_n=0.03,
-                profile_hash=f"{section_id:064x}",
+                profile_hash=f"{ordinal + 1:064x}",
                 is_active=True,
             )
             session.add(profile)
@@ -255,7 +310,7 @@ def _seed_authoritative_case() -> int:
         session.flush()
 
         gate = Gate(
-            id=51,
+            id=GATE_ID,
             dataset_version_id=version.id,
             name="D2 CI gate",
             gate_code="D2-CI-GATE",
@@ -278,7 +333,7 @@ def _seed_authoritative_case() -> int:
             geometry=_point(113.14, 23.14),
         )
         pump = Pump(
-            id=61,
+            id=PUMP_ID,
             dataset_version_id=version.id,
             name="D2 CI pump",
             pump_code="D2-CI-PUMP",
@@ -332,7 +387,7 @@ def _seed_authoritative_case() -> int:
             "rules": [],
         }
         plan = DispatchPlan(
-            id=91,
+            id=PLAN_ID,
             dataset_version_id=version.id,
             simulation_case_id=simulation_case.id,
             name="D2 hosted D1 controls",
@@ -351,7 +406,14 @@ def _seed_authoritative_case() -> int:
         return plan.id
 
 
-def test_v4_task_runs_through_api_broker_worker_postgis_and_artifact() -> None:
+@pytest.fixture(scope="module")
+def authoritative_plan_id() -> int:
+    return _seed_authoritative_case()
+
+
+def test_v4_task_runs_through_api_broker_worker_postgis_and_artifact(
+    authoritative_plan_id: int,
+) -> None:
     """Run readiness, API create/queue, Worker, PostGIS, and API reads end to end."""
 
     broker = getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
@@ -370,11 +432,11 @@ def test_v4_task_runs_through_api_broker_worker_postgis_and_artifact() -> None:
     assert any(V4_QUEUE in queues for queues in queue_sets.values()), queue_sets
     assert any("celery" in queues and V4_QUEUE not in queues for queues in queue_sets.values()), queue_sets
 
-    plan_id = _seed_authoritative_case()
+    plan_id = authoritative_plan_id
     base_url = getenv("D2_BACKEND_URL", "http://127.0.0.1:8001")
     with httpx.Client(base_url=base_url, timeout=30.0) as client:
         readiness_response = client.get(
-            "/api/v1/model-data/simulation-cases/71/input-v4/readiness",
+            f"/api/v1/model-data/simulation-cases/{CASE_ID}/input-v4/readiness",
             params={"dispatch_plan_id": plan_id},
         )
         assert readiness_response.status_code == 200, readiness_response.text
@@ -384,7 +446,7 @@ def test_v4_task_runs_through_api_broker_worker_postgis_and_artifact() -> None:
         assert readiness["snapshot_summary"]["section_count"] == 20
 
         preview_response = client.get(
-            "/api/v1/model-data/simulation-cases/71/input-v4/preview",
+            f"/api/v1/model-data/simulation-cases/{CASE_ID}/input-v4/preview",
             params={"dispatch_plan_id": plan_id},
         )
         assert preview_response.status_code == 200, preview_response.text
@@ -395,7 +457,7 @@ def test_v4_task_runs_through_api_broker_worker_postgis_and_artifact() -> None:
         create_response = client.post(
             "/api/v1/model/tasks",
             json={
-                "case_id": 71,
+                "case_id": CASE_ID,
                 "input_schema_version": "dayu.model-input.v4",
                 "solver_id": D1_SOLVER_ID,
                 "dispatch_plan_id": plan_id,
@@ -441,7 +503,7 @@ def test_v4_task_runs_through_api_broker_worker_postgis_and_artifact() -> None:
         ).json()
         assert len(section_options) == 20
         section_result = client.get(
-            f"/api/v1/model/v4/tasks/{task_id}/sections/1"
+            f"/api/v1/model/v4/tasks/{task_id}/sections/{SECTION_IDS[0]}"
         ).json()
         assert len(section_result["time_seconds"]) == 25
         assert len(section_result["water_level_m"]) == 25
@@ -505,12 +567,14 @@ def test_v4_task_runs_through_api_broker_worker_postgis_and_artifact() -> None:
         assert len(artifact.sha256) == 64
 
 
-def test_legacy_claim_accepts_pre_schema_null_tasks() -> None:
+def test_legacy_claim_accepts_pre_schema_null_tasks(
+    authoritative_plan_id: int,
+) -> None:
     """Preserve tasks created before input_schema_version became mandatory."""
 
     with SessionLocal() as session:
         legacy = SimulationTask(
-            case_id=71,
+            case_id=CASE_ID,
             status="queued",
             progress=0,
             config={},
