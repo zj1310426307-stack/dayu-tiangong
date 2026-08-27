@@ -91,3 +91,6 @@ GitHub Actions 运行 [`33102252587`](https://github.com/zj1310426307-stack/dayu
 - artifacts：`model02-ubuntu-py311`、`model02-windows-py311`、`legacy-hydraulic-ubuntu-py311` 均存在。
 
 Ubuntu glibc 2.39 与 Windows MSVC 环境的五类 hash 完全相同；水量残差也都为 `1.0231815394945443e-12 m³`。因此 RC1 跨平台门判定为 PASS。
+
+发布证据 HEAD `e4fd8dd` 的 push run `33102637908` 和 PR #10 run `33102843115`
+均再次全绿；PR 保持未合并。

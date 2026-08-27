@@ -62,3 +62,7 @@ validation_policy_hash    bb70c5a3af5942d16c43ec8c7f490333653e7efa2051d2e734c66a
 ```
 
 首次失败和 RC1 通过历史均已保留。D1 RC1 判定 PASS；`main` 仍未合并。
+
+发布证据提交 `e4fd8dd` 的 push run `33102637908` 再次全绿；随后创建的 PR
+[#10](https://github.com/zj1310426307-stack/dayu-tiangong/pull/10) 在 run `33102843115`
+完成同一组四类 checks，PR 状态为 OPEN/CLEAN/MERGEABLE，未合并。
