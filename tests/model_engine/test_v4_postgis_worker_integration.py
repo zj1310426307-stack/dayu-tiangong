@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from hashlib import sha256
 from os import getenv
 from time import monotonic, sleep
 
+import httpx
 import pytest
 from redis import Redis
 from sqlalchemy import func, select
@@ -14,6 +16,7 @@ from app.database.session import SessionLocal
 from app.gis.models import (
     BoundaryCondition,
     DatasetVersion,
+    DispatchPlan,
     Gate,
     HydraulicTaskArtifact,
     HydraulicTaskControlEvent,
@@ -23,24 +26,23 @@ from app.gis.models import (
     Pump,
     River,
     SimulationCase,
+    SimulationCaseBoundary,
     SimulationTask,
 )
 from app.hydraulic.models import (
     HydraulicBranch,
     HydraulicCrossSection,
+    HydraulicCrossSectionPoint,
+    HydraulicCrossSectionProfile,
     HydraulicNetwork,
     HydraulicNode,
+    HydraulicReach,
 )
 from app.worker.celery_app import celery_app
 from app.worker.lifecycle import claim_task
-from app.worker.tasks import V4_QUEUE, run_hydraulic_v4_task
-from model.adapters import project_v4_to_v4_lite
+from app.worker.tasks import V4_QUEUE
 from model.provenance import snapshot_hash
-from model.solver.registry import (
-    D1_CAPABILITY_ID,
-    D1_RUNTIME_ADAPTER_ID,
-    D1_SOLVER_ID,
-)
+from model.solver.registry import D1_SOLVER_ID
 from tests.model_engine.helpers import native_v4_payload
 
 
@@ -54,10 +56,16 @@ def _point(longitude: float, latitude: float):
     return func.ST_SetSRID(func.ST_MakePoint(longitude, latitude), 4490)
 
 
-def _seed_authoritative_identities() -> int:
-    """Seed only the platform identities required by frozen D1 v4 evidence."""
+def _seed_authoritative_case() -> int:
+    """Seed the authoritative SimulationCase that must build the D1 v4 snapshot."""
 
     with SessionLocal() as session:
+        source = native_v4_payload()
+        runtime = source["numerical_policy"]
+        upstream_source = source["boundaries"]["upstream"]
+        downstream_source = source["boundaries"]["downstream"]
+        pump_source = source["structures"]["pumps"][0]
+        gate_source = source["structures"]["gates"][0]
         version = DatasetVersion(
             id=1,
             version="D2-CI-1",
@@ -69,21 +77,41 @@ def _seed_authoritative_identities() -> int:
         session.add(version)
         session.flush()
 
-        boundary = BoundaryCondition(
+        upstream_boundary = BoundaryCondition(
             id=41,
             dataset_version_id=version.id,
             name="D2 CI upstream",
             boundary_type="upstream_flow",
-            values={"value": 0.0},
+            values={
+                "time_seconds": upstream_source["time_seconds"],
+                "flow_m3_s": upstream_source["flow_m3_s"],
+            },
             unit="m3/s",
         )
-        session.add(boundary)
+        downstream_boundary = BoundaryCondition(
+            id=42,
+            dataset_version_id=version.id,
+            name="D2 CI downstream",
+            boundary_type="downstream_water_level",
+            values={
+                "time_seconds": downstream_source["time_seconds"],
+                "water_level_m": downstream_source["water_level_m"],
+            },
+            unit="m",
+        )
+        session.add_all([upstream_boundary, downstream_boundary])
         session.flush()
         simulation_case = SimulationCase(
             id=71,
-            name="D2 hosted Worker integration",
+            name="D1 platform integration",
             dataset_version_id=version.id,
-            boundary_condition_id=boundary.id,
+            boundary_condition_id=upstream_boundary.id,
+            v4_configuration={
+                "default_manning_n": 0.0,
+                "initial_state": source["initial_state"],
+                "numerical_policy": runtime,
+                "known_limitations": source["known_limitations"],
+            },
         )
         river = River(
             id=1,
@@ -107,6 +135,20 @@ def _seed_authoritative_identities() -> int:
         )
         session.add_all([simulation_case, river, network])
         session.flush()
+        session.add_all(
+            [
+                SimulationCaseBoundary(
+                    case_id=simulation_case.id,
+                    boundary_condition_id=upstream_boundary.id,
+                    role="upstream",
+                ),
+                SimulationCaseBoundary(
+                    case_id=simulation_case.id,
+                    boundary_condition_id=downstream_boundary.id,
+                    role="downstream",
+                ),
+            ]
+        )
 
         upstream = HydraulicNode(
             id=31,
@@ -125,6 +167,9 @@ def _seed_authoritative_identities() -> int:
             geometry=_point(113.20, 23.20),
         )
         session.add_all([upstream, downstream])
+        session.flush()
+        upstream_boundary.hydraulic_node_id = upstream.id
+        downstream_boundary.hydraulic_node_id = downstream.id
         session.flush()
         branch = HydraulicBranch(
             id=21,
@@ -146,6 +191,24 @@ def _seed_authoritative_identities() -> int:
         session.add(branch)
         session.flush()
 
+        session.add(
+            HydraulicReach(
+                id=81,
+                dataset_version_id=version.id,
+                branch_id=branch.id,
+                reach_code="R-D1",
+                reach_type="channel",
+                start_chainage_m=0.0,
+                end_chainage_m=7600.0,
+                upstream_node_id=upstream.id,
+                downstream_node_id=downstream.id,
+                length_m=7600.0,
+                geometry=func.ST_GeomFromText(
+                    "LINESTRING(113.10 23.10, 113.20 23.20)", 4490
+                ),
+            )
+        )
+
         for section_id in range(1, 21):
             session.add(
                 HydraulicCrossSection(
@@ -164,6 +227,32 @@ def _seed_authoritative_identities() -> int:
                 )
             )
         session.flush()
+        for section_id in range(1, 21):
+            profile = HydraulicCrossSectionProfile(
+                id=100 + section_id,
+                dataset_version_id=version.id,
+                cross_section_id=section_id,
+                topography_id="D1-IDENTICAL",
+                vertical_datum="1985 National Height Datum",
+                default_manning_n=0.03,
+                profile_hash=f"{section_id:064x}",
+                is_active=True,
+            )
+            session.add(profile)
+            session.flush()
+            for sequence, (offset, elevation) in enumerate(
+                ((0.0, 12.0), (10.0, 9.0), (20.0, 12.0))
+            ):
+                session.add(
+                    HydraulicCrossSectionPoint(
+                        dataset_version_id=version.id,
+                        profile_id=profile.id,
+                        sequence=sequence,
+                        distance=offset,
+                        elevation=elevation,
+                    )
+                )
+        session.flush()
 
         gate = Gate(
             id=51,
@@ -174,13 +263,17 @@ def _seed_authoritative_identities() -> int:
             gate_type="sluice",
             opening_direction="vertical",
             control_mode="automatic",
-            width=4.0,
-            height=2.0,
+            width=gate_source["width_m"],
+            height=gate_source["height_m"],
             max_flow=10.0,
-            bottom_elevation=9.0,
-            hydraulic_upstream_section_id=8,
-            hydraulic_downstream_section_id=9,
-            discharge_coefficient=0.62,
+            bottom_elevation=gate_source["sill_elevation_m"],
+            hydraulic_upstream_section_id=gate_source["interface"][
+                "upstream_section_id"
+            ],
+            hydraulic_downstream_section_id=gate_source["interface"][
+                "downstream_section_id"
+            ],
+            discharge_coefficient=gate_source["discharge_coefficient"],
             status="online",
             geometry=_point(113.14, 23.14),
         )
@@ -193,9 +286,14 @@ def _seed_authoritative_identities() -> int:
             design_flow=0.01,
             head=2.2,
             power=1.0,
-            efficiency_curve={"points": [[0.0001, 0.55], [0.003, 0.82], [0.01, 0.70]]},
-            head_curve={"points": [[0.0001, 2.2], [0.003, 1.8], [0.01, 1.0]]},
-            hydraulic_section_id=16,
+            efficiency_curve=pump_source["efficiency_curve"],
+            head_curve=pump_source["head_curve"],
+            hydraulic_section_id=pump_source["section_id"],
+            curve_policy_id="d1-piecewise-linear-qh-qeta-si-v1",
+            curve_unit="SI",
+            curve_source_revision="D1-RC1",
+            system_loss=pump_source["system_loss"],
+            outlet_stage=pump_source["outlet_stage"],
             unit_count=1,
             minimum_running_units=1,
             maximum_running_units=1,
@@ -203,39 +301,58 @@ def _seed_authoritative_identities() -> int:
             status="online",
             geometry=_point(113.18, 23.18),
         )
+        normalized_curve = {
+            "policy_id": pump.curve_policy_id,
+            "unit": pump.curve_unit,
+            "head_curve": pump_source["head_curve"],
+            "efficiency_curve": pump_source["efficiency_curve"],
+            "source_revision": pump.curve_source_revision,
+        }
+        pump.curve_hash = snapshot_hash(normalized_curve)
         session.add_all([gate, pump])
         session.flush()
 
-        projection = project_v4_to_v4_lite(native_v4_payload())
-        snapshot = projection.source_snapshot
-        task = SimulationTask(
-            case_id=simulation_case.id,
-            status="queued",
-            progress=0,
-            config={"storage_level": "full"},
-            input_schema_version="dayu.model-input.v4",
-            input_snapshot=snapshot,
-            input_snapshot_hash=snapshot_hash(snapshot),
-            engine_version="dayu-hydraulic-mvp",
-            engine_commit="cc6936d9d48d64c46a78ba85bed77c473e20cff3",
-            solver_id=D1_SOLVER_ID,
-            capability_id=D1_CAPABILITY_ID,
-            runtime_adapter_id=D1_RUNTIME_ADAPTER_ID,
-            runtime_projection_hash=projection.manifest["runtime_projection_hash"],
-            mesh_hash=projection.manifest["mesh_hash"],
-            solver_policy_hash=projection.manifest["solver_policy_hash"],
-            validation_policy_hash=projection.manifest["validation_policy_hash"],
-            registry_hash=projection.manifest["registry_hash"],
-            artifact_status="none",
-            queued_time=datetime.now(UTC),
+        native_controls = {
+            "gate_control": {
+                "opening_m": gate_source["opening_m"],
+                "threshold_water_level_m": gate_source["control"][
+                    "threshold_water_level_m"
+                ],
+            },
+            "pump_control": {
+                key: value
+                for key, value in pump_source["control"].items()
+                if key != "type"
+            },
+        }
+        frozen_snapshot = {
+            "schema_version": "dayu.dispatch-plan.v1",
+            "plan": {"evaluation_config": {"native_v4": native_controls}},
+            "actions": [],
+            "rules": [],
+        }
+        plan = DispatchPlan(
+            id=91,
+            dataset_version_id=version.id,
+            simulation_case_id=simulation_case.id,
+            name="D2 hosted D1 controls",
+            version=1,
+            status="frozen",
+            duration_seconds=runtime["duration_seconds"],
+            evaluation_config={"native_v4": native_controls},
+            storage_level="full",
+            created_by="github-actions",
+            frozen_time=datetime.now(UTC),
+            frozen_snapshot=frozen_snapshot,
+            frozen_snapshot_hash=snapshot_hash(frozen_snapshot),
         )
-        session.add(task)
+        session.add(plan)
         session.commit()
-        return task.id
+        return plan.id
 
 
-def test_v4_task_runs_through_real_broker_worker_and_postgis() -> None:
-    """Require both queues, broker delivery, durable results, and published evidence."""
+def test_v4_task_runs_through_api_broker_worker_postgis_and_artifact() -> None:
+    """Run readiness, API create/queue, Worker, PostGIS, and API reads end to end."""
 
     broker = getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
     assert Redis.from_url(broker).ping() is True
@@ -253,9 +370,100 @@ def test_v4_task_runs_through_real_broker_worker_and_postgis() -> None:
     assert any(V4_QUEUE in queues for queues in queue_sets.values()), queue_sets
     assert any("celery" in queues and V4_QUEUE not in queues for queues in queue_sets.values()), queue_sets
 
-    task_id = _seed_authoritative_identities()
-    async_result = run_hydraulic_v4_task.apply_async(args=[task_id], queue=V4_QUEUE)
-    assert async_result.get(timeout=300) == {"task_id": task_id, "status": "success"}
+    plan_id = _seed_authoritative_case()
+    base_url = getenv("D2_BACKEND_URL", "http://127.0.0.1:8001")
+    with httpx.Client(base_url=base_url, timeout=30.0) as client:
+        readiness_response = client.get(
+            "/api/v1/model-data/simulation-cases/71/input-v4/readiness",
+            params={"dispatch_plan_id": plan_id},
+        )
+        assert readiness_response.status_code == 200, readiness_response.text
+        readiness = readiness_response.json()
+        assert readiness["ready"] is True, readiness
+        assert readiness["errors"] == []
+        assert readiness["snapshot_summary"]["section_count"] == 20
+
+        preview_response = client.get(
+            "/api/v1/model-data/simulation-cases/71/input-v4/preview",
+            params={"dispatch_plan_id": plan_id},
+        )
+        assert preview_response.status_code == 200, preview_response.text
+        preview = preview_response.json()
+        assert preview["readiness"]["ready"] is True
+        assert preview["section_count"] == 20
+
+        create_response = client.post(
+            "/api/v1/model/tasks",
+            json={
+                "case_id": 71,
+                "input_schema_version": "dayu.model-input.v4",
+                "solver_id": D1_SOLVER_ID,
+                "dispatch_plan_id": plan_id,
+                "execution_mode": "validation",
+                "storage_level": "full",
+            },
+        )
+        assert create_response.status_code == 201, create_response.text
+        created = create_response.json()
+        task_id = int(created["id"])
+        assert created["status"] == "pending"
+        assert created["input_schema_version"] == "dayu.model-input.v4"
+
+        enqueue_response = client.post(f"/api/v1/model/tasks/{task_id}/enqueue")
+        assert enqueue_response.status_code == 200, enqueue_response.text
+        assert enqueue_response.json()["status"] == "queued"
+
+        deadline = monotonic() + 300.0
+        status_payload = {}
+        observed_progress: list[int] = []
+        while monotonic() < deadline:
+            status_response = client.get(f"/api/v1/model/tasks/{task_id}")
+            assert status_response.status_code == 200, status_response.text
+            status_payload = status_response.json()
+            observed_progress.append(int(status_payload["progress"]))
+            if status_payload["status"] in {"success", "failed", "cancelled"}:
+                break
+            sleep(0.5)
+        assert status_payload["status"] == "success", status_payload
+        assert observed_progress == sorted(observed_progress)
+
+        summary_response = client.get(f"/api/v1/model/v4/tasks/{task_id}/summary")
+        assert summary_response.status_code == 200, summary_response.text
+        summary = summary_response.json()
+        assert summary["result_schema_version"] == "dayu.hydraulic-result.v3"
+        assert summary["section_count"] == 20
+        assert summary["gate_row_count"] == 25
+        assert summary["pump_row_count"] == 25
+        assert summary["event_count"] == 3
+
+        section_options = client.get(
+            f"/api/v1/model/v4/tasks/{task_id}/sections"
+        ).json()
+        assert len(section_options) == 20
+        section_result = client.get(
+            f"/api/v1/model/v4/tasks/{task_id}/sections/1"
+        ).json()
+        assert len(section_result["time_seconds"]) == 25
+        assert len(section_result["water_level_m"]) == 25
+        assert len(client.get(f"/api/v1/model/v4/tasks/{task_id}/gates").json()) == 25
+        assert len(client.get(f"/api/v1/model/v4/tasks/{task_id}/pumps").json()) == 25
+        api_events = client.get(f"/api/v1/model/v4/tasks/{task_id}/events").json()
+        assert [row["time_seconds"] for row in api_events] == [
+            2940.0,
+            7740.0,
+            12540.0,
+        ]
+        artifact_rows = client.get(
+            f"/api/v1/model/v4/tasks/{task_id}/artifacts"
+        ).json()
+        assert len(artifact_rows) == 1
+        artifact_manifest = artifact_rows[0]
+        download = client.get(
+            f"/api/v1/model/v4/tasks/{task_id}/artifacts/"
+            f"{artifact_manifest['id']}/download"
+        )
+        assert download.status_code == 200, download.text
+        assert sha256(download.content).hexdigest() == artifact_manifest["sha256"]
 
     with SessionLocal() as session:
         task = session.get(SimulationTask, task_id)

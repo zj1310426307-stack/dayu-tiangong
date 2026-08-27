@@ -34,11 +34,12 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgis/postgis:16-3.4
+        image: timescale/timescaledb-ha:pg16.14-ts2.28.3-all
         env:
           POSTGRES_DB: dayu_tiangong
           POSTGRES_USER: dayu
           POSTGRES_PASSWORD: dayu_dev
+          TIMESCALEDB_TELEMETRY: "off"
         ports:
           - 5432:5432
         options: >-
@@ -56,8 +57,10 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: python -m pip install -r backend/requirements.txt
+      - name: Prepare migration evidence
+        run: mkdir -p outputs/ci/d2-migration
       - name: Upgrade to D2 head
-        run: alembic -c database/alembic.ini upgrade head
+        run: alembic -c database/alembic.ini upgrade head 2>&1 | tee outputs/ci/d2-migration/upgrade.log
       - name: Verify D2 schema
         run: >-
           python -c "from sqlalchemy import create_engine, inspect;
@@ -68,22 +71,30 @@ jobs:
           assert {'hydraulic_task_section_result','hydraulic_task_gate_result','hydraulic_task_pump_result','hydraulic_task_control_event','hydraulic_task_artifact'} <= tables;
           assert {'solver_id','capability_id','runtime_projection_hash','artifact_status'} <= cols"
       - name: Downgrade D2 migration
-        run: alembic -c database/alembic.ini downgrade 20260818_0019
+        run: alembic -c database/alembic.ini downgrade 20260818_0019 2>&1 | tee outputs/ci/d2-migration/downgrade.log
       - name: Re-upgrade to D2 head
-        run: alembic -c database/alembic.ini upgrade head
+        run: alembic -c database/alembic.ini upgrade head 2>&1 | tee outputs/ci/d2-migration/re-upgrade.log
       - name: Assert single head
         run: test "$(alembic -c database/alembic.ini heads | grep -c '(head)')" -eq 1
+      - name: Upload migration evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: d2-postgis-migration
+          path: outputs/ci/d2-migration/
+          if-no-files-found: warn
 
   worker-integration:
     name: Worker integration
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgis/postgis:16-3.4
+        image: timescale/timescaledb-ha:pg16.14-ts2.28.3-all
         env:
           POSTGRES_DB: dayu_tiangong
           POSTGRES_USER: dayu
           POSTGRES_PASSWORD: dayu_dev
+          TIMESCALEDB_TELEMETRY: "off"
         ports:
           - 5432:5432
         options: >-
@@ -114,11 +125,12 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: python -m pip install -r backend/requirements.txt
+      - name: Prepare Worker evidence
+        run: mkdir -p outputs/ci/d2-worker
       - name: Migrate PostGIS
-        run: alembic -c database/alembic.ini upgrade head
+        run: alembic -c database/alembic.ini upgrade head 2>&1 | tee outputs/ci/d2-worker/migration.log
       - name: Start Backend and isolated Workers
         run: |
-          mkdir -p outputs/ci/d2-worker
           nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 > outputs/ci/d2-worker/backend.log 2>&1 &
           nohup celery -A app.worker.celery_app.celery_app worker --loglevel=INFO --pool=solo --queues=celery --hostname=d2-legacy@%h > outputs/ci/d2-worker/legacy-worker.log 2>&1 &
           nohup celery -A app.worker.celery_app.celery_app worker --loglevel=INFO --pool=solo --queues=hydraulic-v4-d1 --hostname=d2-v4@%h > outputs/ci/d2-worker/v4-worker.log 2>&1 &
