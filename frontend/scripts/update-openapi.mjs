@@ -52,10 +52,21 @@ const requiredPaths = [
   '/api/v1/model-data/simulation-cases',
   '/api/v1/model-data/simulation-cases/{case_id}/input',
   '/api/v1/model-data/simulation-cases/{case_id}/input-v3',
+  '/api/v1/model-data/simulation-cases/{case_id}/input-v4/readiness',
+  '/api/v1/model-data/simulation-cases/{case_id}/input-v4/preview',
   '/api/v1/model/tasks', '/api/v1/model/tasks/{task_id}/run',
   '/api/v1/model/tasks/{task_id}', '/api/v1/model/results/{task_id}',
   '/api/v1/model/tasks/{task_id}/enqueue', '/api/v1/model/tasks/{task_id}/cancel',
   '/api/v1/model/tasks/{task_id}/retry', '/api/v1/model/tasks/{task_id}/snapshot',
+  '/api/v1/model/v4/tasks/{task_id}/sections',
+  '/api/v1/model/v4/tasks/{task_id}/sections/{section_id}',
+  '/api/v1/model/v4/tasks/{task_id}/gates',
+  '/api/v1/model/v4/tasks/{task_id}/pumps',
+  '/api/v1/model/v4/tasks/{task_id}/events',
+  '/api/v1/model/v4/tasks/{task_id}/summary',
+  '/api/v1/model/v4/tasks/{task_id}/artifacts',
+  '/api/v1/model/v4/tasks/{task_id}/artifacts/{artifact_id}/download',
+  '/api/v1/model/v4/shadow-pairs', '/api/v1/model/v4/shadow-pairs/{group_id}',
   '/api/v1/dispatch/plans', '/api/v1/dispatch/plans/{plan_id}',
   '/api/v1/dispatch/plans/{plan_id}/actions', '/api/v1/dispatch/plans/{plan_id}/rules',
   '/api/v1/dispatch/plans/{plan_id}/runs', '/api/v1/dispatch/runs',
@@ -387,6 +398,8 @@ export const updateSimulationCase = (caseId: number, body: SimulationCaseUpdate,
 export const deleteSimulationCase = (caseId: number, baseUrl = '') => requestJson<void>(\`/api/v1/model-data/simulation-cases/\${caseId}\`, { method: 'DELETE' }, baseUrl);
 export const getModelInput = (caseId: number, baseUrl = '') => requestJson<ModelInputSnapshot>(\`/api/v1/model-data/simulation-cases/\${caseId}/input\`, {}, baseUrl);
 export const getModelInputV3 = (caseId: number, baseUrl = '') => requestJson<Record<string, unknown>>(\`/api/v1/model-data/simulation-cases/\${caseId}/input-v3\`, {}, baseUrl);
+export const getModelInputV4Readiness = (caseId: number, dispatchPlanId: number, baseUrl = '') => requestJson<V4ReadinessResponse>(\`/api/v1/model-data/simulation-cases/\${caseId}/input-v4/readiness\${toQuery({ dispatch_plan_id: dispatchPlanId })}\`, {}, baseUrl);
+export const getModelInputV4Preview = (caseId: number, dispatchPlanId: number, baseUrl = '') => requestJson<V4PreviewResponse>(\`/api/v1/model-data/simulation-cases/\${caseId}/input-v4/preview\${toQuery({ dispatch_plan_id: dispatchPlanId })}\`, {}, baseUrl);
 export const runValidation = (datasetVersionId: number, baseUrl = '') => requestJson<ValidationReport>('/api/v1/validation/run', jsonOptions('POST', { dataset_version_id: datasetVersionId }), baseUrl);
 
 export const getHydraulicCapabilities = (baseUrl = '') => requestJson<HydraulicCapabilityResponse>('/api/v1/hydraulic/capabilities', {}, baseUrl);
@@ -428,6 +441,16 @@ export const cancelHydraulicTask = (taskId: number, baseUrl = '') => requestJson
 export const retryHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(\`/api/v1/model/tasks/\${taskId}/retry\`, { method: 'POST' }, baseUrl);
 export const getHydraulicTaskSnapshot = (taskId: number, baseUrl = '') => requestJson<TaskSnapshotResponse>(\`/api/v1/model/tasks/\${taskId}/snapshot\`, {}, baseUrl);
 export const getHydraulicResult = (taskId: number, sectionId?: number, baseUrl = '') => requestJson<SimulationResultResponse>(\`/api/v1/model/results/\${taskId}\${toQuery({ section_id: sectionId })}\`, {}, baseUrl);
+export const listHydraulicV4Sections = (taskId: number, baseUrl = '') => requestJson<Array<V4SectionOption>>(\`/api/v1/model/v4/tasks/\${taskId}/sections\`, {}, baseUrl);
+export const getHydraulicV4Section = (taskId: number, sectionId: number, baseUrl = '') => requestJson<V4SectionResultResponse>(\`/api/v1/model/v4/tasks/\${taskId}/sections/\${sectionId}\`, {}, baseUrl);
+export const getHydraulicV4Gates = (taskId: number, baseUrl = '') => requestJson<Array<V4GateResultRecord>>(\`/api/v1/model/v4/tasks/\${taskId}/gates\`, {}, baseUrl);
+export const getHydraulicV4Pumps = (taskId: number, baseUrl = '') => requestJson<Array<V4PumpResultRecord>>(\`/api/v1/model/v4/tasks/\${taskId}/pumps\`, {}, baseUrl);
+export const getHydraulicV4Events = (taskId: number, baseUrl = '') => requestJson<Array<V4ControlEventRecord>>(\`/api/v1/model/v4/tasks/\${taskId}/events\`, {}, baseUrl);
+export const getHydraulicV4Summary = (taskId: number, baseUrl = '') => requestJson<V4ResultSummary>(\`/api/v1/model/v4/tasks/\${taskId}/summary\`, {}, baseUrl);
+export const listHydraulicV4Artifacts = (taskId: number, baseUrl = '') => requestJson<Array<V4ArtifactManifest>>(\`/api/v1/model/v4/tasks/\${taskId}/artifacts\`, {}, baseUrl);
+export const downloadHydraulicV4Artifact = (taskId: number, artifactId: number, baseUrl = '') => requestBlob(\`/api/v1/model/v4/tasks/\${taskId}/artifacts/\${artifactId}/download\`, {}, baseUrl);
+export const createHydraulicV4ShadowPair = (body: V4ShadowCreate, baseUrl = '') => requestJson<V4ShadowPair>('/api/v1/model/v4/shadow-pairs', jsonOptions('POST', body), baseUrl);
+export const getHydraulicV4ShadowComparison = (groupId: number, baseUrl = '') => requestJson<V4ShadowComparison>(\`/api/v1/model/v4/shadow-pairs/\${groupId}\`, {}, baseUrl);
 
 export const listDispatchPlans = (params: DispatchListQuery = {}, baseUrl = '') => requestJson<PageResult<DispatchPlanRecord>>(\`/api/v1/dispatch/plans\${toQuery(params)}\`, {}, baseUrl);
 export const createDispatchPlan = (body: DispatchPlanCreate, baseUrl = '') => requestJson<DispatchPlanRecord>('/api/v1/dispatch/plans', jsonOptions('POST', body), baseUrl);
