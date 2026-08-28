@@ -76,6 +76,17 @@ def _seed_authoritative_case() -> int:
     """Seed the authoritative SimulationCase that must build the D1 v4 snapshot."""
 
     with SessionLocal() as session:
+        existing = (
+            session.get(DatasetVersion, DATASET_ID),
+            session.get(SimulationCase, CASE_ID),
+            session.get(DispatchPlan, PLAN_ID),
+        )
+        if all(item is not None for item in existing):
+            return PLAN_ID
+        if any(item is not None for item in existing):
+            raise RuntimeError(
+                "D2 integration identity namespace is only partially populated"
+            )
         source = native_v4_payload()
         source["dataset_version"]["id"] = DATASET_ID
         source["simulation_case"]["id"] = CASE_ID
@@ -98,6 +109,7 @@ def _seed_authoritative_case() -> int:
                 "id": section["profile_id"],
                 "cross_section_id": section["section_id"],
                 "profile_hash": section["profile_hash"],
+                "profile_hash_trust": "persisted/import-validated",
             }
             for section in source["cross_sections"]
         ]
@@ -165,7 +177,7 @@ def _seed_authoritative_case() -> int:
                 "default_manning_n": 0.0,
                 "initial_state": source["initial_state"],
                 "numerical_policy": runtime,
-                "known_limitations": source["known_limitations"],
+                "case_notes": source["case_notes"],
             },
         )
         river = River(
@@ -368,6 +380,8 @@ def _seed_authoritative_case() -> int:
         session.flush()
 
         native_controls = {
+            "gate_id": gate.id,
+            "pump_id": pump.id,
             "gate_control": {
                 "opening_m": gate_source["opening_m"],
                 "threshold_water_level_m": gate_source["control"][
@@ -575,6 +589,7 @@ def test_legacy_claim_accepts_pre_schema_null_tasks(
     with SessionLocal() as session:
         legacy = SimulationTask(
             case_id=CASE_ID,
+            dataset_version_id=DATASET_ID,
             status="queued",
             progress=0,
             config={},

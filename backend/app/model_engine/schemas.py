@@ -62,10 +62,14 @@ class SimulationTaskCreate(BaseModel):
                 raise ValueError(
                     "native v4 forbids runtime physical overrides: " + ", ".join(supplied)
                 )
-            if self.solver_id != D1_SOLVER_ID:
-                raise ValueError(f"native v4 requires solver_id={D1_SOLVER_ID}")
+            if self.solver_id is not None and self.solver_id != D1_SOLVER_ID:
+                raise ValueError(
+                    f"native v4 solver assertion must equal {D1_SOLVER_ID}"
+                )
             if self.dispatch_plan_id is None:
                 raise ValueError("native v4 requires one frozen dispatch_plan_id")
+            if self.storage_level != "full":
+                raise ValueError("native v4 supports storage_level=full only")
         elif self.dispatch_plan_id is not None:
             raise ValueError("dispatch_plan_id on the generic task endpoint is reserved for v4")
         return self
@@ -105,7 +109,17 @@ class SimulationTaskRecord(BaseModel):
     queued_time: datetime | None
     heartbeat_time: datetime | None
     cancel_requested: bool
-    retry_count: int
+    execution_attempt_count: int
+    manual_retry_count: int
+    infrastructure_retry_count: int
+    numerical_retry_count: int
+    retry_count: int = Field(
+        deprecated=True,
+        description=(
+            "Deprecated legacy aggregate retry counter; use infrastructure_retry_count "
+            "and numerical_retry_count for RC1 retry semantics."
+        ),
+    )
     accepted_step_count: int
     cfl_reduction_count: int
     positivity_retry_count: int
@@ -120,6 +134,9 @@ class SimulationTaskRecord(BaseModel):
     last_event: dict[str, Any] | None
     result_path: str | None
     error_message: str | None
+    last_infrastructure_error: str | None
+    retry_eligible: bool = False
+    retry_block_reason: str | None = None
     created_time: datetime
     start_time: datetime | None
     end_time: datetime | None

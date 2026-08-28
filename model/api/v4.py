@@ -21,7 +21,9 @@ from model.api.v4_lite import (
 from model.core.errors import HydraulicInputError
 from model.provenance import CANONICALIZATION_ID
 from model.solver.registry import (
+    D1_CAPABILITY,
     D1_CAPABILITY_ID,
+    D1_KNOWN_LIMITATIONS,
     D1_RUNTIME_ADAPTER_ID,
     D1_SOLVER_ID,
     MODEL_INPUT_V4,
@@ -87,6 +89,9 @@ class ProfileIdentity(StrictPlatformModel):
     id: PositiveId
     cross_section_id: PositiveId
     profile_hash: Sha256
+    profile_hash_trust: Literal["persisted/import-validated"] = (
+        "persisted/import-validated"
+    )
 
 
 class ControlPlanIdentity(StrictPlatformModel):
@@ -134,7 +139,19 @@ class ModelInputV4(StrictPlatformModel):
     numerical_policy: V4LiteSolver
     validation: ValidationPolicy
     provenance: PlatformProvenance
-    known_limitations: tuple[NonBlankText, ...] = Field(min_length=1)
+    capability_scope: tuple[NonBlankText, ...] = Field(
+        default_factory=lambda: D1_CAPABILITY.scope,
+        min_length=1,
+    )
+    capability_exclusions: tuple[NonBlankText, ...] = Field(
+        default_factory=lambda: D1_CAPABILITY.exclusions,
+        min_length=1,
+    )
+    case_notes: tuple[NonBlankText, ...] = ()
+    known_limitations: tuple[NonBlankText, ...] = Field(
+        default_factory=lambda: D1_KNOWN_LIMITATIONS,
+        min_length=1,
+    )
 
     @model_validator(mode="after")
     def validate_native_d1_scope(self) -> Self:
@@ -152,6 +169,12 @@ class ModelInputV4(StrictPlatformModel):
             raise ValueError("validation capability does not match solver selection")
         if self.validation.water_balance_tolerance != self.numerical_policy.water_balance_tolerance:
             raise ValueError("validation and numerical water-balance tolerances disagree")
+        if self.capability_scope != D1_CAPABILITY.scope:
+            raise ValueError("capability scope does not match the solver registry")
+        if self.capability_exclusions != D1_CAPABILITY.exclusions:
+            raise ValueError("capability exclusions do not match the solver registry")
+        if self.known_limitations != D1_KNOWN_LIMITATIONS:
+            raise ValueError("known limitations do not match the solver registry")
         branch = self.branches[0]
         if branch.network_id != self.network.id:
             raise ValueError("Branch does not belong to the selected hydraulic Network")
@@ -192,4 +215,3 @@ def parse_model_input_v4(payload: Mapping[str, Any]) -> ModelInputV4:
         raise HydraulicInputError(
             f"dayu.model-input.v4 validation failed: {exc}"
         ) from exc
-

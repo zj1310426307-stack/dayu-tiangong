@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from os import getenv
+from re import fullmatch
 from typing import Any, Mapping
 
 from sqlalchemy import select
@@ -35,18 +36,12 @@ from model.adapters import V4RuntimeProjection, project_v4_to_v4_lite
 from model.core.errors import HydraulicInputError
 from model.provenance import CANONICALIZATION_ID, snapshot_hash
 from model.solver.registry import (
+    D1_CAPABILITY,
     D1_CAPABILITY_ID,
+    D1_KNOWN_LIMITATIONS,
     D1_RUNTIME_ADAPTER_ID,
     D1_SOLVER_ID,
     registry_hash,
-)
-
-
-D1_KNOWN_LIMITATIONS = (
-    "single Branch, fully wet, forward strictly subcritical validation only",
-    "flat bed, identical Profile geometry, Manning n=0",
-    "one completed-interface Gate and one external Q-H/Q-efficiency Pump",
-    "not calibrated and not approved for production water decisions",
 )
 
 
@@ -85,6 +80,18 @@ def _collection(payload: Mapping[str, Any], key: str) -> list[Any]:
 
     value = payload.get(key)
     return value if isinstance(value, list) else []
+
+
+def _has_errors(issues: list[V4ReadinessIssue]) -> bool:
+    """Return whether a mixed readiness finding list contains a blocking item."""
+
+    return any(item.severity == "error" for item in issues)
+
+
+def _is_sha256(value: object) -> bool:
+    """Validate the canonical lowercase representation used by frozen identities."""
+
+    return isinstance(value, str) and fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
 def _time_range(series: object) -> tuple[float | None, float | None]:
@@ -376,6 +383,35 @@ def _curve_points(raw: object, *, ordinate: str) -> list[dict[str, float]] | Non
     return result
 
 
+def dispatch_plan_hash_matches(snapshot: object, stored_hash: object) -> bool:
+    """Recompute one frozen Dispatch Plan identity without trusting its metadata."""
+
+    return (
+        isinstance(snapshot, Mapping)
+        and _is_sha256(stored_hash)
+        and snapshot_hash(snapshot) == stored_hash
+    )
+
+
+def pump_curve_identity_payload(
+    *,
+    policy_id: object,
+    unit: object,
+    head_points: object,
+    efficiency_points: object,
+    source_revision: object,
+) -> dict[str, object]:
+    """Build the sole canonical Pump curve identity payload used by readiness."""
+
+    return {
+        "policy_id": policy_id,
+        "unit": unit,
+        "head_curve": {"points": head_points},
+        "efficiency_curve": {"points": efficiency_points},
+        "source_revision": source_revision,
+    }
+
+
 def _database_candidate(
     session: Session,
     case_id: int,
@@ -392,14 +428,35 @@ def _database_candidate(
             _issue("D2_CASE_NOT_FOUND", "simulation case does not exist", entity_id=case_id)
         ]
     dataset = session.get(DatasetVersion, case.dataset_version_id)
-    if dataset is None or not isinstance(dataset.content_hash, str) or len(dataset.content_hash) != 64:
+    if dataset is None or not _is_sha256(dataset.content_hash):
         issues.append(
             _issue(
                 "D2_DATASET_IDENTITY_INCOMPLETE",
-                "Dataset Version requires a 64-character content hash",
+                "Dataset Version requires a canonical lowercase SHA-256 content hash",
                 entity_type="dataset_version",
                 entity_id=case.dataset_version_id,
                 field_path="dataset_version.content_hash",
+            )
+        )
+    elif dataset.status not in {"approved", "published"}:
+        issues.append(
+            _issue(
+                "D2_DATASET_STATUS_NOT_AUTHORITATIVE",
+                "native v4 requires an approved or published Dataset Version",
+                entity_type="dataset_version",
+                entity_id=dataset.id,
+                field_path="dataset_version.status",
+            )
+        )
+    else:
+        issues.append(
+            _issue(
+                "D2_DATASET_HASH_PERSISTED_IDENTITY",
+                "the approved GIS-core Dataset identity is trusted as persisted; RC1 does not claim a full D2 content recomputation",
+                entity_type="dataset_version",
+                entity_id=dataset.id,
+                field_path="dataset_version.content_hash",
+                severity="warning",
             )
         )
     case_config = case.v4_configuration
@@ -413,15 +470,15 @@ def _database_candidate(
             )
         )
     plan = session.get(DispatchPlan, dispatch_plan_id)
-    if (
-        plan is None
-        or plan.status != "frozen"
-        or plan.simulation_case_id != case.id
-        or plan.dataset_version_id != case.dataset_version_id
-        or not isinstance(plan.frozen_snapshot, Mapping)
-        or not isinstance(plan.frozen_snapshot_hash, str)
-        or len(plan.frozen_snapshot_hash) != 64
-    ):
+    plan_structurally_valid = (
+        plan is not None
+        and plan.status == "frozen"
+        and plan.simulation_case_id == case.id
+        and plan.dataset_version_id == case.dataset_version_id
+        and isinstance(plan.frozen_snapshot, Mapping)
+        and _is_sha256(plan.frozen_snapshot_hash)
+    )
+    if not plan_structurally_valid:
         issues.append(
             _issue(
                 "D2_CONTROL_PLAN_NOT_FROZEN",
@@ -429,6 +486,18 @@ def _database_candidate(
                 entity_type="dispatch_plan",
                 entity_id=dispatch_plan_id,
                 field_path="control_plan",
+            )
+        )
+    elif not dispatch_plan_hash_matches(
+        plan.frozen_snapshot, plan.frozen_snapshot_hash
+    ):
+        issues.append(
+            _issue(
+                "D2_CONTROL_PLAN_HASH_MISMATCH",
+                "stored Dispatch Plan snapshot does not match its frozen hash",
+                entity_type="dispatch_plan",
+                entity_id=dispatch_plan_id,
+                field_path="control_plan.frozen_snapshot_hash",
             )
         )
     networks = list(
@@ -447,7 +516,7 @@ def _database_candidate(
                 field_path="network",
             )
         )
-    if issues:
+    if _has_errors(issues):
         return None, issues
     assert dataset is not None and isinstance(case_config, Mapping) and plan is not None
     network = networks[0]
@@ -497,15 +566,17 @@ def _database_candidate(
             )
         )
     for section in sections:
-        profile = session.scalar(
-            select(HydraulicCrossSectionProfile)
-            .where(
-                HydraulicCrossSectionProfile.cross_section_id == section.id,
-                HydraulicCrossSectionProfile.is_active.is_(True),
-            )
-            .order_by(HydraulicCrossSectionProfile.id.desc())
+        profiles = list(
+            session.scalars(
+                select(HydraulicCrossSectionProfile)
+                .where(
+                    HydraulicCrossSectionProfile.cross_section_id == section.id,
+                    HydraulicCrossSectionProfile.is_active.is_(True),
+                )
+                .order_by(HydraulicCrossSectionProfile.id)
+            ).all()
         )
-        if profile is None:
+        if not profiles:
             issues.append(
                 _issue(
                     "D2_PROFILE_MISSING",
@@ -513,6 +584,29 @@ def _database_candidate(
                     entity_type="cross_section",
                     entity_id=section.id,
                     field_path="cross_sections.profile",
+                )
+            )
+            continue
+        if len(profiles) > 1:
+            issues.append(
+                _issue(
+                    "D2_MULTIPLE_ACTIVE_PROFILES",
+                    "cross section has more than one active Profile; selection is ambiguous",
+                    entity_type="cross_section",
+                    entity_id=section.id,
+                    field_path="cross_sections.profile",
+                )
+            )
+            continue
+        profile = profiles[0]
+        if not _is_sha256(profile.profile_hash):
+            issues.append(
+                _issue(
+                    "D2_PROFILE_IDENTITY_INCOMPLETE",
+                    "active Profile requires a canonical lowercase SHA-256 identity",
+                    entity_type="cross_section_profile",
+                    entity_id=profile.id,
+                    field_path="cross_sections.profile.profile_hash",
                 )
             )
             continue
@@ -543,7 +637,18 @@ def _database_candidate(
                 "id": profile.id,
                 "cross_section_id": section.id,
                 "profile_hash": profile.profile_hash,
+                "profile_hash_trust": "persisted/import-validated",
             }
+        )
+    if profile_rows:
+        issues.append(
+            _issue(
+                "D2_PROFILE_HASH_PERSISTED_IDENTITY",
+                "Profile hashes are trusted as persisted/import-validated because historical import hash policies are not unambiguously reconstructable",
+                entity_type="cross_section_profile",
+                field_path="cross_section_profiles.profile_hash",
+                severity="warning",
+            )
         )
     boundaries = list(
         session.scalars(
@@ -556,11 +661,23 @@ def _database_candidate(
             .order_by(BoundaryCondition.id)
         ).all()
     )
-    upstream = next((item for item in boundaries if item.boundary_type == "upstream_flow"), None)
-    downstream = next(
-        (item for item in boundaries if item.boundary_type == "downstream_water_level"),
-        None,
-    )
+    upstream_candidates = [
+        item for item in boundaries if item.boundary_type == "upstream_flow"
+    ]
+    downstream_candidates = [
+        item for item in boundaries if item.boundary_type == "downstream_water_level"
+    ]
+    if len(upstream_candidates) != 1 or len(downstream_candidates) != 1:
+        issues.append(
+            _issue(
+                "D2_BOUNDARY_CARDINALITY_INVALID",
+                "case requires exactly one upstream-flow and one downstream-water-level boundary",
+                entity_type="boundary_condition",
+                field_path="boundaries",
+            )
+        )
+    upstream = upstream_candidates[0] if len(upstream_candidates) == 1 else None
+    downstream = downstream_candidates[0] if len(downstream_candidates) == 1 else None
     numerical = case_config.get("numerical_policy")
     duration = (
         float(numerical.get("duration_seconds"))
@@ -583,6 +700,8 @@ def _database_candidate(
     if (
         upstream is None
         or downstream is None
+        or upstream.dataset_version_id != case.dataset_version_id
+        or downstream.dataset_version_id != case.dataset_version_id
         or upstream.hydraulic_node_id != branch.upstream_node_id
         or downstream.hydraulic_node_id != branch.downstream_node_id
         or upstream_values is None
@@ -596,36 +715,6 @@ def _database_candidate(
                 field_path="boundaries",
             )
         )
-    gates = list(
-        session.scalars(
-            select(Gate)
-            .where(Gate.dataset_version_id == case.dataset_version_id)
-            .order_by(Gate.id)
-        ).all()
-    )
-    pumps = list(
-        session.scalars(
-            select(Pump)
-            .where(Pump.dataset_version_id == case.dataset_version_id)
-            .order_by(Pump.id)
-        ).all()
-    )
-    if len(gates) != 1 or len(pumps) != 1:
-        issues.extend(
-            _native_preflight(
-                {
-                    "branches": [{}],
-                    "cross_sections": section_rows,
-                    "structures": {
-                        "gates": [{} for _ in gates],
-                        "pumps": [{} for _ in pumps],
-                    },
-                }
-            )
-        )
-    if issues:
-        return None, issues
-    gate, pump = gates[0], pumps[0]
     plan_config = (
         plan.frozen_snapshot.get("plan", {}).get("evaluation_config", {}).get("native_v4")
         if isinstance(plan.frozen_snapshot.get("plan"), Mapping)
@@ -641,23 +730,83 @@ def _database_candidate(
                 field_path="control_plan.native_v4",
             )
         ]
+    gate_id = plan_config.get("gate_id")
+    pump_id = plan_config.get("pump_id")
+    if (
+        isinstance(gate_id, bool)
+        or not isinstance(gate_id, int)
+        or gate_id <= 0
+        or isinstance(pump_id, bool)
+        or not isinstance(pump_id, int)
+        or pump_id <= 0
+    ):
+        issues.append(
+            _issue(
+                "D2_STRUCTURE_SCOPE_MISSING",
+                "frozen native_v4 controls must explicitly bind gate_id and pump_id",
+                entity_type="dispatch_plan",
+                entity_id=plan.id,
+                field_path="control_plan.native_v4",
+            )
+        )
+        return None, issues
+    gate = session.scalar(
+        select(Gate).where(
+            Gate.id == gate_id,
+            Gate.dataset_version_id == case.dataset_version_id,
+        )
+    )
+    pump = session.scalar(
+        select(Pump).where(
+            Pump.id == pump_id,
+            Pump.dataset_version_id == case.dataset_version_id,
+        )
+    )
+    if gate is None or pump is None:
+        issues.append(
+            _issue(
+                "D2_STRUCTURE_SCOPE_INVALID",
+                "frozen Gate/Pump identity does not exist in the Case Dataset Version",
+                entity_type="structure",
+                field_path="control_plan.native_v4",
+            )
+        )
+        return None, issues
+    section_ids = {item.id for item in sections}
+    if (
+        gate.hydraulic_upstream_section_id not in section_ids
+        or gate.hydraulic_downstream_section_id not in section_ids
+        or pump.hydraulic_section_id not in section_ids
+    ):
+        issues.append(
+            _issue(
+                "D2_STRUCTURE_BRANCH_MISMATCH",
+                "frozen Gate/Pump hydraulic bindings must belong to the selected Branch",
+                entity_type="structure",
+                field_path="structures",
+            )
+        )
+    if _has_errors(issues):
+        return None, issues
     gate_control = plan_config.get("gate_control")
     pump_control = plan_config.get("pump_control")
     head_points = _curve_points(pump.head_curve, ordinate="head_m")
     efficiency_points = _curve_points(pump.efficiency_curve, ordinate="efficiency")
-    normalized_curve = {
-        "policy_id": pump.curve_policy_id,
-        "unit": pump.curve_unit,
-        "head_curve": {"points": head_points},
-        "efficiency_curve": {"points": efficiency_points},
-        "source_revision": pump.curve_source_revision,
-    }
+    normalized_curve = pump_curve_identity_payload(
+        policy_id=pump.curve_policy_id,
+        unit=pump.curve_unit,
+        head_points=head_points,
+        efficiency_points=efficiency_points,
+        source_revision=pump.curve_source_revision,
+    )
     if (
         head_points is None
         or efficiency_points is None
         or pump.curve_policy_id != "d1-piecewise-linear-qh-qeta-si-v1"
         or pump.curve_unit != "SI"
-        or not isinstance(pump.curve_hash, str)
+        or not isinstance(pump.curve_source_revision, str)
+        or not pump.curve_source_revision.strip()
+        or not _is_sha256(pump.curve_hash)
         or pump.curve_hash != snapshot_hash(normalized_curve)
         or not isinstance(pump.system_loss, Mapping)
         or not isinstance(pump.outlet_stage, Mapping)
@@ -816,11 +965,14 @@ def _database_candidate(
             "canonicalization_id": CANONICALIZATION_ID,
             "registry_hash": registry_hash(),
         },
-        "known_limitations": list(
-            case_config.get("known_limitations", D1_KNOWN_LIMITATIONS)
-        ),
+        "capability_scope": list(D1_CAPABILITY.scope),
+        "capability_exclusions": list(D1_CAPABILITY.exclusions),
+        "case_notes": list(case_config.get("case_notes", []))
+        if isinstance(case_config.get("case_notes", []), list)
+        else case_config.get("case_notes"),
+        "known_limitations": list(D1_KNOWN_LIMITATIONS),
     }
-    return candidate, []
+    return candidate, issues
 
 
 def assess_database_case(
@@ -839,21 +991,28 @@ def assess_database_case(
         engine_commit=engine_commit or getenv("ENGINE_COMMIT", "uncommitted"),
     )
     if candidate is None:
+        errors = [item for item in database_issues if item.severity == "error"]
+        warnings = [item for item in database_issues if item.severity == "warning"]
         readiness = V4ReadinessResponse(
             ready=False,
             solver_id=D1_SOLVER_ID,
             capability_id=D1_CAPABILITY_ID,
             runtime_adapter_id=D1_RUNTIME_ADAPTER_ID,
-            errors=database_issues,
-            warnings=[],
+            errors=errors,
+            warnings=warnings,
             snapshot_summary={"simulation_case_id": case_id},
             candidate_hashes={},
         )
         return NativeV4Assessment(readiness=readiness)
     assessment = assess_native_v4_snapshot(candidate)
     if database_issues:
-        assessment.readiness.errors.extend(database_issues)
-        assessment.readiness.ready = False
+        assessment.readiness.errors.extend(
+            item for item in database_issues if item.severity == "error"
+        )
+        assessment.readiness.warnings.extend(
+            item for item in database_issues if item.severity == "warning"
+        )
+        assessment.readiness.ready = not assessment.readiness.errors
     return assessment
 
 
@@ -929,8 +1088,18 @@ def preview_from_assessment(assessment: NativeV4Assessment) -> V4PreviewResponse
         else None,
         hashes=assessment.readiness.candidate_hashes,
         readiness=assessment.readiness,
+        capability_scope=[str(item) for item in snapshot.get("capability_scope", [])]
+        if isinstance(snapshot.get("capability_scope"), list)
+        else list(D1_CAPABILITY.scope),
+        capability_exclusions=[
+            str(item) for item in snapshot.get("capability_exclusions", [])
+        ]
+        if isinstance(snapshot.get("capability_exclusions"), list)
+        else list(D1_CAPABILITY.exclusions),
+        case_notes=[str(item) for item in snapshot.get("case_notes", [])]
+        if isinstance(snapshot.get("case_notes"), list)
+        else [],
         known_limitations=[str(item) for item in snapshot.get("known_limitations", [])]
         if isinstance(snapshot.get("known_limitations"), list)
         else list(D1_KNOWN_LIMITATIONS),
     )
-

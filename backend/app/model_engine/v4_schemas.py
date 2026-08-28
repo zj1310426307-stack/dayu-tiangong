@@ -50,6 +50,9 @@ class V4PreviewResponse(BaseModel):
     simulation_duration_seconds: float | None
     hashes: dict[str, str]
     readiness: V4ReadinessResponse
+    capability_scope: list[str]
+    capability_exclusions: list[str]
+    case_notes: list[str]
     known_limitations: list[str]
 
 
@@ -190,7 +193,7 @@ class V4ShadowComparison(BaseModel):
     """Return bounded diagnostic deltas for a shadow group."""
 
     group_id: int
-    status: Literal["pending", "ready", "failed", "not_ready"]
+    status: Literal["pending", "running", "cancelled", "ready", "failed", "not_ready"]
     diagnostic_disclaimer: str
     v3_task_id: int | None
     v4_task_id: int | None

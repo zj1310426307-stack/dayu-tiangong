@@ -28,6 +28,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   cancelHydraulicTask,
   createHydraulicTask,
+  downloadHydraulicV4Artifact,
   enqueueHydraulicTask,
   getHydraulicResult,
   getHydraulicV4Events,
@@ -45,6 +46,7 @@ import {
   type SimulationTaskCreate,
   type SimulationTaskRecord,
   type DispatchPlanRecord,
+  type V4ArtifactManifest,
   type V4ControlEventRecord,
   type V4GateResultRecord,
   type V4PumpResultRecord,
@@ -56,6 +58,17 @@ import { useDatasetVersion } from '../../context/DatasetVersionContext';
 
 const { Paragraph, Text, Title } = Typography;
 const D1_SOLVER_ID = 'saint-venant-fv-hll-ssp-rk2-d1-v1';
+const RETRY_BLOCKED_ARTIFACT_STATUSES = new Set([
+  'prepared',
+  'publishing',
+  'reconciliation_required',
+  'orphaned',
+]);
+
+function canRetryTask(task: SimulationTaskRecord): boolean {
+  return task.retry_eligible === true
+    && !RETRY_BLOCKED_ARTIFACT_STATUSES.has(task.artifact_status ?? '');
+}
 
 function HydraulicHeader({
   eyebrow,
@@ -351,8 +364,30 @@ export function HydraulicTasksPage() {
     { title: '进度', dataIndex: 'progress', width: 180, render: (value: number) => <Progress percent={value} size="small" /> },
     { title: '阶段', dataIndex: 'execution_phase', width: 150, render: (value: string | null) => value ?? '—' },
     { title: '模拟时刻 / CFL', key: 'runtime', width: 160, render: (_, task) => `${task.current_simulation_time?.toFixed(1) ?? '—'} s / ${task.current_cfl?.toFixed(3) ?? '—'}` },
-    { title: '接受步 / 重试', key: 'steps', width: 150, render: (_, task) => `${task.accepted_step_count} / ${task.retry_count}` },
-    { title: '重试分类', key: 'retry-breakdown', width: 230, render: (_, task) => `CFL ${task.cfl_reduction_count} · 正性 ${task.positivity_retry_count} · 事件 ${task.event_refinement_count} · 闸 ${task.gate_solver_retry_count} · 泵 ${task.pump_solver_retry_count}` },
+    { title: '接受步', dataIndex: 'accepted_step_count', width: 100 },
+    { title: '执行尝试', key: 'execution-attempts', width: 100, dataIndex: 'execution_attempt_count' },
+    { title: '人工重试', key: 'manual-retries', width: 100, dataIndex: 'manual_retry_count' },
+    { title: '基础设施重试', key: 'infrastructure-retries', width: 125, dataIndex: 'infrastructure_retry_count' },
+    { title: '数值重试', key: 'numerical-retries', width: 100, dataIndex: 'numerical_retry_count' },
+    { title: '数值重试分类', key: 'retry-breakdown', width: 230, render: (_, task) => `CFL ${task.cfl_reduction_count} · 正性 ${task.positivity_retry_count} · 事件 ${task.event_refinement_count} · 闸 ${task.gate_solver_retry_count} · 泵 ${task.pump_solver_retry_count}` },
+    {
+      title: '重试资格',
+      key: 'retry-eligibility',
+      width: 220,
+      render: (_, task) => {
+        const artifactStateBlocksRetry = RETRY_BLOCKED_ARTIFACT_STATUSES.has(task.artifact_status ?? '');
+        const eligible = canRetryTask(task);
+        return (
+          <Space direction="vertical" size={0}>
+            <Tag color={eligible ? 'success' : 'default'}>{eligible ? '可重试' : '不可重试'}</Tag>
+            {task.retry_block_reason && <Text type="secondary">{task.retry_block_reason}</Text>}
+            {artifactStateBlocksRetry && !task.retry_block_reason && (
+              <Text type="secondary">Artifact {task.artifact_status} 阶段不可重试</Text>
+            )}
+          </Space>
+        );
+      },
+    },
     { title: '心跳', dataIndex: 'heartbeat_time', width: 190, render: (value: string | null) => value ? new Date(value).toLocaleString() : '—' },
     { title: '创建时间', dataIndex: 'created_time', width: 190, render: (value: string) => new Date(value).toLocaleString() },
     { title: '错误信息', dataIndex: 'error_message', ellipsis: true, render: (value: string | null) => value || '—' },
@@ -364,7 +399,7 @@ export function HydraulicTasksPage() {
         <Space>
           {task.status === 'pending' && <Button size="small" icon={<PlayCircleOutlined />} onClick={() => void enqueuePending(task)}>入队</Button>}
           {['queued', 'running'].includes(task.status) && <Button size="small" danger onClick={async () => { await cancelHydraulicTask(task.id); await reload(); }}>取消</Button>}
-          {['failed', 'cancelled'].includes(task.status) && <Button size="small" onClick={async () => { await retryHydraulicTask(task.id); await reload(); }}>重试</Button>}
+          {canRetryTask(task) && <Button size="small" onClick={async () => { await retryHydraulicTask(task.id); await reload(); }}>重试</Button>}
           {task.status === 'success' && <Button size="small" icon={<AreaChartOutlined />} onClick={() => navigate(`/hydraulic/results?taskId=${task.id}`)}>结果</Button>}
         </Space>
       ),
@@ -381,7 +416,7 @@ export function HydraulicTasksPage() {
       />
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}
       <Card className="data-card">
-        <Table rowKey="id" loading={loading} dataSource={tasks} columns={columns} pagination={{ pageSize: 12 }} scroll={{ x: 2200 }} />
+        <Table rowKey="id" loading={loading} dataSource={tasks} columns={columns} pagination={{ pageSize: 12 }} scroll={{ x: 2750 }} />
       </Card>
     </div>
   );
@@ -465,6 +500,7 @@ export function HydraulicResultsPage() {
   const [v4Pumps, setV4Pumps] = useState<V4PumpResultRecord[]>([]);
   const [v4Events, setV4Events] = useState<V4ControlEventRecord[]>([]);
   const [v4Summary, setV4Summary] = useState<V4ResultSummary>();
+  const [downloadingArtifactId, setDownloadingArtifactId] = useState<number>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -596,6 +632,26 @@ export function HydraulicResultsPage() {
     setSearchParams(next);
   };
 
+  const downloadArtifact = async (artifact: V4ArtifactManifest) => {
+    if (artifact.status !== 'published') return;
+    setDownloadingArtifactId(artifact.id);
+    try {
+      const blob = await downloadHydraulicV4Artifact(taskId, artifact.id);
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = artifact.storage_key.split('/').at(-1) || `${artifact.artifact_type}-${artifact.id}`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (reason) {
+      message.error(reason instanceof Error ? reason.message : 'Artifact 下载失败');
+    } finally {
+      setDownloadingArtifactId(undefined);
+    }
+  };
+
   return (
     <div className="data-page hydraulic-page">
       <HydraulicHeader
@@ -712,11 +768,22 @@ export function HydraulicResultsPage() {
                   <Card className="data-card" title="Result v3 / Artifact">
                     <Space direction="vertical">
                       <Text>result schema: {v4Summary?.result_schema_version}</Text>
-                      {v4Summary?.artifacts.map((artifact) => (
-                        <a key={artifact.id} href={`/api/v1/model/v4/tasks/${taskId}/artifacts/${artifact.id}/download`}>
-                          {artifact.artifact_type} · {artifact.record_count} records · SHA-256 {artifact.sha256.slice(0, 16)}…
-                        </a>
-                      ))}
+                      {v4Summary?.artifacts.map((artifact) => {
+                        const downloadable = artifact.status === 'published';
+                        return (
+                          <Space key={artifact.id}>
+                            <Button
+                              type="link"
+                              disabled={!downloadable}
+                              loading={downloadingArtifactId === artifact.id}
+                              onClick={() => void downloadArtifact(artifact)}
+                            >
+                              {artifact.artifact_type} · {artifact.record_count} records · SHA-256 {artifact.sha256.slice(0, 16)}…
+                            </Button>
+                            <Tag color={downloadable ? 'success' : 'default'}>{artifact.status}</Tag>
+                          </Space>
+                        );
+                      })}
                     </Space>
                   </Card>
                 </>

@@ -8,7 +8,7 @@ import math
 from os import getenv
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.gis.models import (
@@ -30,7 +30,7 @@ from app.model_engine.provenance import ENGINE_VERSION, freeze_task_input, snaps
 from app.model_engine.v4_service import freeze_v4_task_input
 from model import HydraulicEngine
 from model.core.errors import HydraulicCancelledError
-from model.solver.registry import D1_CAPABILITY_ID, D1_RUNTIME_ADAPTER_ID, D1_SOLVER_ID
+from model.solver.registry import MODEL_INPUT_V4, task_solver_provenance
 
 
 class TaskNotFoundError(LookupError):
@@ -189,13 +189,108 @@ def _record(task: SimulationTask) -> SimulationTaskRecord:
     record.snapshot_summary = (
         snapshot_summary(task.input_snapshot) if task.input_snapshot is not None else None
     )
+    record.retry_block_reason = retry_block_reason(task)
+    record.retry_eligible = record.retry_block_reason is None
     return record
 
 
-def create_task(session: Session, payload: SimulationTaskCreate) -> SimulationTaskRecord:
-    """创建任务时立即冻结全部输入，后续业务数据修改不再影响本任务。"""
+def retry_block_reason(task: SimulationTask) -> str | None:
+    """Explain why one immutable task may or may not enter a manual retry."""
 
-    if session.get(SimulationCase, payload.case_id) is None:
+    if task.status == "success":
+        return "successful tasks are immutable; create a new task to recompute"
+    if task.status not in {"failed", "cancelled"}:
+        return "only failed or cancelled tasks can be retried"
+    if task.active_execution_token is not None:
+        return "an execution lease is still active"
+    if task.input_schema_version == "dayu.model-input.v4" and task.artifact_status not in {
+        None,
+        "none",
+        "failed",
+    }:
+        return (
+            f"artifact state {task.artifact_status!r} must be reconciled before retry"
+        )
+    return None
+
+
+def can_retry_task(task: SimulationTask) -> bool:
+    """Return the public retry eligibility derived from lifecycle and Artifact state."""
+
+    return retry_block_reason(task) is None
+
+
+def manual_retry_reset_values(task: SimulationTask) -> dict[str, object]:
+    """Build the complete runtime reset while omitting every frozen identity field."""
+
+    is_v4 = task.input_schema_version == "dayu.model-input.v4"
+    values: dict[str, object] = {
+        "status": "queued",
+        "progress": 0,
+        "cancel_requested": False,
+        "worker_id": None,
+        "queue_job_id": None,
+        "queued_time": datetime.now(UTC),
+        "start_time": None,
+        "end_time": None,
+        "heartbeat_time": None,
+        "current_simulation_time": None,
+        "current_cfl": None,
+        "accepted_step_count": 0,
+        "numerical_retry_count": 0,
+        "cfl_reduction_count": 0,
+        "positivity_retry_count": 0,
+        "event_refinement_count": 0,
+        "gate_solver_retry_count": 0,
+        "pump_solver_retry_count": 0,
+        "minimum_dt_failure_count": 0,
+        "last_event": None,
+        "execution_phase": None,
+        "active_execution_token": None,
+        "artifact_status": "none" if is_v4 else task.artifact_status,
+        "error_message": None,
+        "diagnostics": None,
+        "result_path": None,
+        "manual_retry_count": task.manual_retry_count + 1,
+        "retry_reason": task.error_message,
+    }
+    if not is_v4:
+        values["retry_count"] = task.retry_count + 1
+    return values
+
+
+def reset_task_for_manual_retry(session: Session, task: SimulationTask) -> SimulationTask:
+    """CAS-reset runtime telemetry while retaining every frozen input identity."""
+
+    reason = retry_block_reason(task)
+    if reason is not None:
+        raise TaskStateError(reason)
+    values = manual_retry_reset_values(task)
+    result = session.execute(
+        update(SimulationTask)
+        .where(
+            SimulationTask.id == task.id,
+            SimulationTask.status == task.status,
+            SimulationTask.active_execution_token.is_(None),
+        )
+        .values(**values)
+    )
+    if result.rowcount != 1:
+        session.rollback()
+        raise TaskStateError("task state changed while preparing manual retry")
+    session.commit()
+    session.expire_all()
+    current = session.get(SimulationTask, task.id)
+    if current is None:
+        raise TaskNotFoundError("simulation task does not exist")
+    return current
+
+
+def build_task_entity(session: Session, payload: SimulationTaskCreate) -> SimulationTask:
+    """Freeze and stage one task without committing the caller's transaction."""
+
+    simulation_case = session.get(SimulationCase, payload.case_id)
+    if simulation_case is None:
         raise TaskNotFoundError("simulation case does not exist")
     config = payload.model_dump(
         exclude={
@@ -213,6 +308,10 @@ def create_task(session: Session, payload: SimulationTaskCreate) -> SimulationTa
         config = {"storage_level": payload.storage_level}
     engine_commit = getenv("ENGINE_COMMIT", "uncommitted")
     try:
+        task_provenance = task_solver_provenance(
+            payload.input_schema_version,
+            solver_id=payload.solver_id,
+        )
         if payload.input_schema_version == "dayu.model-input.v4":
             assert payload.dispatch_plan_id is not None
             snapshot, digest, projection = freeze_v4_task_input(
@@ -236,16 +335,13 @@ def create_task(session: Session, payload: SimulationTaskCreate) -> SimulationTa
         raise TaskStateError(f"model input is not ready: {exc}") from exc
     task = SimulationTask(
         case_id=payload.case_id,
+        dataset_version_id=simulation_case.dataset_version_id,
         config=config,
         input_schema_version=payload.input_schema_version,
         input_snapshot=snapshot,
         input_snapshot_hash=digest,
         engine_version=ENGINE_VERSION,
         engine_commit=engine_commit,
-        solver_id=D1_SOLVER_ID if projection is not None else payload.solver_id,
-        capability_id=D1_CAPABILITY_ID if projection is not None else None,
-        runtime_adapter_id=D1_RUNTIME_ADAPTER_ID if projection is not None else None,
-        result_schema_version="dayu.hydraulic-result.v3" if projection is not None else None,
         execution_mode=payload.execution_mode if projection is not None else None,
         execution_phase="validating_snapshot" if projection is not None else None,
         runtime_projection_hash=(
@@ -258,10 +354,18 @@ def create_task(session: Session, payload: SimulationTaskCreate) -> SimulationTa
         validation_policy_hash=(
             str(projection["validation_policy_hash"]) if projection is not None else None
         ),
-        registry_hash=str(projection["registry_hash"]) if projection is not None else None,
         artifact_status="none" if projection is not None else None,
+        **task_provenance,
     )
     session.add(task)
+    session.flush()
+    return task
+
+
+def create_task(session: Session, payload: SimulationTaskCreate) -> SimulationTaskRecord:
+    """创建任务时立即冻结全部输入，后续业务数据修改不再影响本任务。"""
+
+    task = build_task_entity(session, payload)
     session.commit()
     session.refresh(task)
     return _record(task)
@@ -294,6 +398,10 @@ def run_task(session: Session, task_id: int) -> SimulationTaskRecord:
     task = session.get(SimulationTask, task_id)
     if task is None:
         raise TaskNotFoundError("simulation task does not exist")
+    if task.input_schema_version == MODEL_INPUT_V4:
+        raise TaskStateError(
+            "native-v4 tasks must run on the dedicated asynchronous Worker queue"
+        )
     if task.status != "pending":
         raise TaskStateError("only a pending task can be run")
 

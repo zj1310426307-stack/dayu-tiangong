@@ -25,6 +25,7 @@ from app.gis.models import (
 )
 from app.model_engine.provenance import ENGINE_VERSION, freeze_task_input
 from app.worker.tasks import run_hydraulic_task
+from model.solver.registry import MODEL_INPUT_V3, task_solver_provenance
 
 
 class DispatchNotFoundError(LookupError):
@@ -455,6 +456,31 @@ def delete_rule(session: Session, rule_id: int) -> None:
     session.commit()
 
 
+def _build_run_task(
+    plan: DispatchPlan,
+    config: dict[str, Any],
+    snapshot: dict[str, Any],
+    digest: str,
+    engine_commit: str,
+) -> SimulationTask:
+    """Build one v3 run task with complete Registry-owned provenance."""
+
+    return SimulationTask(
+        case_id=plan.simulation_case_id,
+        dataset_version_id=plan.dataset_version_id,
+        status="queued",
+        progress=0,
+        config=config,
+        input_schema_version=MODEL_INPUT_V3,
+        input_snapshot=snapshot,
+        input_snapshot_hash=digest,
+        engine_version=ENGINE_VERSION,
+        engine_commit=engine_commit,
+        queued_time=datetime.now(UTC),
+        **task_solver_provenance(MODEL_INPUT_V3),
+    )
+
+
 def create_run(session: Session, plan_id: int) -> DispatchRunRecord:
     """基于冻结计划创建基准/受控冻结任务并异步投递。"""
 
@@ -479,17 +505,11 @@ def create_run(session: Session, plan_id: int) -> DispatchRunRecord:
     ) = _freeze_run_snapshots(
         session, plan, config, commit
     )
-    baseline = SimulationTask(
-        case_id=plan.simulation_case_id, status="queued", progress=0, config=config,
-        input_schema_version="dayu.model-input.v3", input_snapshot=baseline_snapshot,
-        input_snapshot_hash=baseline_hash, engine_version=ENGINE_VERSION,
-        engine_commit=commit, queued_time=datetime.now(UTC),
+    baseline = _build_run_task(
+        plan, config, baseline_snapshot, baseline_hash, commit
     )
-    controlled = SimulationTask(
-        case_id=plan.simulation_case_id, status="queued", progress=0, config=config,
-        input_schema_version="dayu.model-input.v3", input_snapshot=controlled_snapshot,
-        input_snapshot_hash=controlled_hash, engine_version=ENGINE_VERSION,
-        engine_commit=commit, queued_time=datetime.now(UTC),
+    controlled = _build_run_task(
+        plan, config, controlled_snapshot, controlled_hash, commit
     )
     session.add_all((baseline, controlled))
     session.flush()

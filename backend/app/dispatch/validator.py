@@ -28,6 +28,30 @@ def validate_plan(session: Session, plan: DispatchPlan) -> ValidationReport:
     case = session.get(SimulationCase, plan.simulation_case_id)
     if case is None or case.dataset_version_id != plan.dataset_version_id:
         errors.append("计算方案不存在或与计划数据版本不一致")
+    native_v4 = (
+        plan.evaluation_config.get("native_v4")
+        if isinstance(plan.evaluation_config, dict)
+        else None
+    )
+    if native_v4 is not None:
+        if not isinstance(native_v4, dict):
+            errors.append("native_v4 评估配置必须是对象")
+        else:
+            for field, model, label in (
+                ("gate_id", Gate, "闸门"),
+                ("pump_id", Pump, "泵站"),
+            ):
+                asset_id = native_v4.get(field)
+                if (
+                    isinstance(asset_id, bool)
+                    or not isinstance(asset_id, int)
+                    or asset_id <= 0
+                ):
+                    errors.append(f"native_v4 必须显式绑定 {field}")
+                    continue
+                asset = session.get(model, asset_id)
+                if asset is None or asset.dataset_version_id != plan.dataset_version_id:
+                    errors.append(f"native_v4 {label} {asset_id} 不存在或跨数据版本")
     actions = list(session.scalars(select(DispatchAction).where(DispatchAction.plan_id == plan.id)).all())
     rules = list(session.scalars(select(DispatchRule).where(DispatchRule.plan_id == plan.id)).all())
     seen: set[tuple[str, int, float]] = set()

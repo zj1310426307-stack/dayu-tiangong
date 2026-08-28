@@ -39,3 +39,32 @@ def test_dispatch_detail_exposes_a_non_synthetic_24_hour_structure_view() -> Non
     assert "structureCoverage.every" in source
     assert "connectNulls: false" in source
     assert "空缺时段显式断线，不做插值或伪造补齐" in source
+
+
+def test_hydraulic_v4_rc1_separates_retry_state_and_gates_artifact_actions() -> None:
+    """RC1 lifecycle and numerical retries must remain distinct and backend-governed."""
+
+    source = HYDRAULIC_PAGE.read_text(encoding="utf-8")
+    for field_name in (
+        "execution_attempt_count",
+        "manual_retry_count",
+        "infrastructure_retry_count",
+        "numerical_retry_count",
+    ):
+        assert field_name in source
+
+    assert "task.retry_count" not in source
+    assert "task.retry_eligible === true" in source
+    assert "task.retry_block_reason" in source
+    assert "Rc1SimulationTaskRecord" not in source
+    assert "rc1TaskState" not in source
+    assert "downloadHydraulicV4Artifact(taskId, artifact.id)" in source
+    assert "artifact.status === 'published'" in source
+    assert "href={`/api/v1/model/v4/tasks/" not in source
+    for blocked_status in (
+        "prepared",
+        "publishing",
+        "reconciliation_required",
+        "orphaned",
+    ):
+        assert f"'{blocked_status}'" in source

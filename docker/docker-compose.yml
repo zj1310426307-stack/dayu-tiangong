@@ -210,6 +210,83 @@ services:
       retries: 8
       start_period: 20s
 
+  worker-v4:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    command:
+      [
+        "python",
+        "-m",
+        "celery",
+        "-A",
+        "app.worker.celery_app:celery_app",
+        "worker",
+        "--loglevel=INFO",
+        "--pool=solo",
+        "--queues=hydraulic-v4-d1",
+        "--hostname=d2-v4@%h",
+      ]
+    environment:
+      <<: *backend_environment
+      POSTGRES_USER: ${BACKEND_DB_USER:-dayu_backend}
+      POSTGRES_PASSWORD: ${BACKEND_DB_PASSWORD:?set BACKEND_DB_PASSWORD in an ignored .env file}
+    volumes:
+      - ${DAYU_STORAGE_HOST_PATH:-../backend/storage}:/app/backend/storage
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      app-bootstrap:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "celery -A app.worker.celery_app:celery_app inspect ping -d d2-v4@$${HOSTNAME} --timeout 3 | grep -q pong",
+        ]
+      interval: 15s
+      timeout: 8s
+      retries: 8
+      start_period: 20s
+
+  scheduler:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    command:
+      [
+        "python",
+        "-m",
+        "celery",
+        "-A",
+        "app.worker.celery_app:celery_app",
+        "beat",
+        "--loglevel=INFO",
+      ]
+    environment:
+      <<: *backend_environment
+      POSTGRES_USER: ${BACKEND_DB_USER:-dayu_backend}
+      POSTGRES_PASSWORD: ${BACKEND_DB_PASSWORD:?set BACKEND_DB_PASSWORD in an ignored .env file}
+    depends_on:
+      app-bootstrap:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "from pathlib import Path; cmd=Path('/proc/1/cmdline').read_bytes(); assert b'celery' in cmd and b'beat' in cmd",
+        ]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
   frontend:
     build:
       context: ..

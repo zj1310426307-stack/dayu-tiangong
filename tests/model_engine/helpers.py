@@ -7,7 +7,9 @@ from pathlib import Path
 
 from model.provenance import CANONICALIZATION_ID, snapshot_hash
 from model.solver.registry import (
+    D1_CAPABILITY,
     D1_CAPABILITY_ID,
+    D1_KNOWN_LIMITATIONS,
     D1_RUNTIME_ADAPTER_ID,
     D1_SOLVER_ID,
     registry_hash,
@@ -85,9 +87,8 @@ def native_v4_payload() -> dict:
             "canonicalization_id": CANONICALIZATION_ID,
             "registry_hash": registry_hash(),
         },
-        "known_limitations": [
-            "single Branch, fully wet, forward strictly subcritical validation only",
-            "not calibrated and not approved for production water decisions",
-        ],
+        "capability_scope": list(D1_CAPABILITY.scope),
+        "capability_exclusions": list(D1_CAPABILITY.exclusions),
+        "case_notes": ["fixture-owned operational note"],
+        "known_limitations": list(D1_KNOWN_LIMITATIONS),
     }
-

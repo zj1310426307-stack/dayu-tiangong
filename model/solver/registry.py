@@ -78,6 +78,16 @@ D1_CAPABILITY = SolverCapabilityManifest(
     ),
 )
 
+# Human-readable compatibility text is registry-owned.  It is kept separate from
+# the machine-readable scope/exclusions so clients can present stable warnings
+# without allowing a mutable SimulationCase to redefine scientific capability.
+D1_KNOWN_LIMITATIONS: Final = (
+    "single Branch, fully wet, forward strictly subcritical validation only",
+    "flat bed, identical Profile geometry, Manning n=0",
+    "one completed-interface Gate and one external Q-H/Q-efficiency Pump",
+    "not calibrated and not approved for production water decisions",
+)
+
 
 _REGISTRATIONS: tuple[SolverRegistration, ...] = (
     SolverRegistration(
@@ -125,6 +135,7 @@ def registry_manifest() -> dict[str, object]:
 
     return {
         "schema_version": REGISTRY_SCHEMA_VERSION,
+        "known_limitations": list(D1_KNOWN_LIMITATIONS),
         "registrations": [asdict(item) for item in _REGISTRATIONS],
     }
 
@@ -133,6 +144,36 @@ def registry_hash() -> str:
     """Return the deterministic registry identity used by task provenance."""
 
     return snapshot_hash(registry_manifest())
+
+
+def task_solver_provenance(
+    input_schema_version: str,
+    *,
+    solver_id: str | None = None,
+) -> dict[str, str | None]:
+    """Return the complete Registry-owned identity persisted on a task row.
+
+    Internal task producers use the same helper as the public task builder so
+    no caller can accidentally omit an adapter, capability, result schema, or
+    Registry hash while preserving its independently frozen input snapshot.
+    """
+
+    registration = resolve_solver(input_schema_version, solver_id=solver_id)
+    return {
+        "solver_id": registration.solver_id,
+        "capability_id": (
+            registration.capability.capability_id
+            if registration.capability is not None
+            else None
+        ),
+        "runtime_adapter_id": (
+            registration.runtime_adapter.runtime_adapter_id
+            if registration.runtime_adapter is not None
+            else None
+        ),
+        "result_schema_version": registration.result_schema_version,
+        "registry_hash": registry_hash(),
+    }
 
 
 def resolve_solver(
@@ -186,4 +227,3 @@ def registered_solver_ids() -> tuple[str, ...]:
     """List unique solver IDs for Worker capability declarations."""
 
     return tuple(dict.fromkeys(item.solver_id for item in _REGISTRATIONS))
-

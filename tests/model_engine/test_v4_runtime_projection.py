@@ -66,3 +66,42 @@ def test_registry_or_scope_mismatch_fails_before_projection() -> None:
     with pytest.raises(HydraulicInputError, match="at most 1 item"):
         project_v4_to_v4_lite(multi_branch)
 
+
+@pytest.mark.parametrize(
+    ("field", "message"),
+    [
+        ("capability_scope", "scope does not match"),
+        ("capability_exclusions", "exclusions do not match"),
+        ("known_limitations", "known limitations do not match"),
+    ],
+)
+def test_registry_owned_capability_cannot_be_redefined(
+    field: str, message: str
+) -> None:
+    """Reject a frozen snapshot that attempts to widen the D1 capability."""
+
+    payload = native_v4_payload()
+    payload[field] = ["production-approved"]
+    with pytest.raises(HydraulicInputError, match=message):
+        project_v4_to_v4_lite(payload)
+
+
+def test_pre_rc1_v4_snapshot_derives_additive_registry_metadata() -> None:
+    """Keep old frozen task payloads parseable while leaving runtime numerics unchanged."""
+
+    current = native_v4_payload()
+    legacy = copy.deepcopy(current)
+    for field in ("capability_scope", "capability_exclusions", "case_notes"):
+        legacy.pop(field)
+    for profile in legacy["cross_section_profiles"]:
+        profile.pop("profile_hash_trust", None)
+
+    current_projection = project_v4_to_v4_lite(current)
+    legacy_projection = project_v4_to_v4_lite(legacy)
+    assert legacy_projection.runtime_snapshot == current_projection.runtime_snapshot
+    assert legacy_projection.source.capability_scope == (
+        current_projection.source.capability_scope
+    )
+    assert legacy_projection.source.capability_exclusions == (
+        current_projection.source.capability_exclusions
+    )

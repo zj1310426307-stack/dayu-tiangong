@@ -389,18 +389,10 @@ def retry_task(task_id: int, session: SessionDependency) -> SimulationTaskRecord
     task = session.get(service.SimulationTask, task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="simulation task does not exist")
-    if task.status not in {"failed", "cancelled"}:
-        raise HTTPException(status_code=409, detail="only failed or cancelled tasks can be retried")
-    task.status = "queued"
-    task.progress = 0
-    task.cancel_requested = False
-    task.retry_count += 1
-    task.retry_reason = task.error_message
-    task.error_message = None
-    task.queued_time = datetime.now(UTC)
-    task.start_time = None
-    task.end_time = None
-    session.commit()
+    try:
+        task = service.reset_task_for_manual_retry(session, task)
+    except service.TaskStateError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     try:
         job = _deliver(task)
     except Exception as exc:

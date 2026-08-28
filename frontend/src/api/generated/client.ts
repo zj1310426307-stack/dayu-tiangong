@@ -1921,6 +1921,10 @@ export interface SimulationTaskRecord {
   "queued_time": string | null;
   "heartbeat_time": string | null;
   "cancel_requested": boolean;
+  "execution_attempt_count": number;
+  "manual_retry_count": number;
+  "infrastructure_retry_count": number;
+  "numerical_retry_count": number;
   "retry_count": number;
   "accepted_step_count": number;
   "cfl_reduction_count": number;
@@ -1936,6 +1940,9 @@ export interface SimulationTaskRecord {
   "last_event": Record<string, unknown> | null;
   "result_path": string | null;
   "error_message": string | null;
+  "last_infrastructure_error": string | null;
+  "retry_eligible"?: boolean;
+  "retry_block_reason"?: string | null;
   "created_time": string;
   "start_time": string | null;
   "end_time": string | null;
@@ -2083,6 +2090,9 @@ export interface V4PreviewResponse {
   "simulation_duration_seconds": number | null;
   "hashes": Record<string, string>;
   "readiness": V4ReadinessResponse;
+  "capability_scope": Array<string>;
+  "capability_exclusions": Array<string>;
+  "case_notes": Array<string>;
   "known_limitations": Array<string>;
 }
 
@@ -2157,7 +2167,7 @@ export interface V4SectionResultResponse {
 
 export interface V4ShadowComparison {
   "group_id": number;
-  "status": "pending" | "ready" | "failed" | "not_ready";
+  "status": "pending" | "running" | "cancelled" | "ready" | "failed" | "not_ready";
   "diagnostic_disclaimer": string;
   "v3_task_id": number | null;
   "v4_task_id": number | null;

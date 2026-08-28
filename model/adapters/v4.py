@@ -82,6 +82,12 @@ def project_v4_to_v4_lite(snapshot: Mapping[str, Any]) -> V4RuntimeProjection:
             "v3_adapter",
             "v2_fallback",
         ],
+        "provenance_only_fields": [
+            "capability_scope",
+            "capability_exclusions",
+            "case_notes",
+            "known_limitations",
+        ],
     }
     return V4RuntimeProjection(
         source=source,
@@ -90,4 +96,3 @@ def project_v4_to_v4_lite(snapshot: Mapping[str, Any]) -> V4RuntimeProjection:
         runtime_snapshot=runtime.model_dump(mode="json"),
         manifest=manifest,
     )
-

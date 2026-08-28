@@ -25,6 +25,7 @@ qgis/server/generated/*.isolation.json
 backend/storage/imports/
 backend/storage/ai-reports/
 backend/storage/conversions/
+backend/storage/hydraulic-evidence/
 
 # 本地环境与编辑器文件
 .env

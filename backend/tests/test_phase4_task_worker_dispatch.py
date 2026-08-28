@@ -168,9 +168,9 @@ def test_atomic_claim_cancel_stale_recovery_and_same_snapshot_retry() -> None:
         assert claimed.status == "cancel_requested"
         claimed.heartbeat_time = datetime.now(UTC) - timedelta(minutes=10)
         session.commit()
-        assert recover_stale_tasks(session, stale_seconds=120) == [task.id]
+        assert task.id in recover_stale_tasks(session, stale_seconds=120)
         session.refresh(claimed)
-        assert claimed.status == "failed"
+        assert claimed.status == "cancelled"
         assert claimed.input_snapshot_hash == original_hash
 
     celery_app.conf.task_always_eager = True
@@ -230,7 +230,8 @@ def test_worker_input_failure_is_persisted_without_retry() -> None:
     with SessionLocal() as session:
         case = _demo_case(session)
         task = SimulationTask(
-            case_id=case.id, status="queued", progress=0, config={},
+            case_id=case.id, dataset_version_id=case.dataset_version_id,
+            status="queued", progress=0, config={},
             input_schema_version="dayu.model-input.v2", input_snapshot=None,
         )
         session.add(task)

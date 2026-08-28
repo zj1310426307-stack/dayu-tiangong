@@ -36,29 +36,29 @@ def create_shadow_pair(session: Session, payload: V4ShadowCreate) -> V4ShadowPai
     """Freeze two independent inputs only when both platform builders are ready."""
 
     try:
-        v3_snapshot = build_model_input_v3(session, payload.case_id)
-    except ValueError as exc:
-        raise ValueError(f"shadow not_ready: v3: {exc}") from exc
-    if v3_snapshot is None:
-        raise LookupError("simulation case does not exist")
-    assessment = assess_database_case(
-        session, payload.case_id, payload.dispatch_plan_id
-    )
-    if not assessment.readiness.ready:
-        detail = "; ".join(
-            f"{item.code}: {item.message}" for item in assessment.readiness.errors
+        try:
+            v3_snapshot = build_model_input_v3(session, payload.case_id)
+        except ValueError as exc:
+            raise ValueError(f"shadow not_ready: v3: {exc}") from exc
+        if v3_snapshot is None:
+            raise LookupError("simulation case does not exist")
+        assessment = assess_database_case(
+            session, payload.case_id, payload.dispatch_plan_id
         )
-        raise ValueError(f"shadow not_ready: v4: {detail}")
-    group = SimulationTaskGroup(
-        case_id=payload.case_id,
-        group_type="shadow",
-        status="pending",
-    )
-    session.add(group)
-    session.commit()
-    session.refresh(group)
-    try:
-        v3 = service.create_task(
+        if not assessment.readiness.ready:
+            detail = "; ".join(
+                f"{item.code}: {item.message}" for item in assessment.readiness.errors
+            )
+            raise ValueError(f"shadow not_ready: v4: {detail}")
+
+        group = SimulationTaskGroup(
+            case_id=payload.case_id,
+            group_type="shadow",
+            status="pending",
+        )
+        session.add(group)
+        session.flush()
+        v3_task = service.build_task_entity(
             session,
             SimulationTaskCreate(
                 case_id=payload.case_id,
@@ -67,7 +67,7 @@ def create_shadow_pair(session: Session, payload: V4ShadowCreate) -> V4ShadowPai
                 storage_level="full",
             ),
         )
-        v4 = service.create_task(
+        v4_task = service.build_task_entity(
             session,
             SimulationTaskCreate(
                 case_id=payload.case_id,
@@ -78,32 +78,29 @@ def create_shadow_pair(session: Session, payload: V4ShadowCreate) -> V4ShadowPai
                 storage_level="full",
             ),
         )
-        v3_task = session.get(SimulationTask, v3.id)
-        v4_task = session.get(SimulationTask, v4.id)
-        if v3_task is None or v4_task is None:
-            raise RuntimeError("shadow task disappeared during creation")
         v3_task.comparison_group_id = group.id
         v3_task.group_role = "legacy-v3"
         v3_task.execution_mode = "shadow"
         v4_task.comparison_group_id = group.id
         v4_task.group_role = "native-v4"
+        group_id = int(group.id)
+        v3_task_id = int(v3_task.id)
+        v4_task_id = int(v4_task.id)
         session.commit()
     except Exception:
         session.rollback()
-        group = session.get(SimulationTaskGroup, group.id)
-        if group is not None:
-            group.status = "failed"
-            session.commit()
         raise
     return V4ShadowPair(
-        group_id=group.id,
-        status=group.status,
-        v3_task_id=v3.id,
-        v4_task_id=v4.id,
+        group_id=group_id,
+        status="pending",
+        v3_task_id=v3_task_id,
+        v4_task_id=v4_task_id,
     )
 
 
-def _tasks(session: Session, group_id: int) -> tuple[SimulationTaskGroup, SimulationTask | None, SimulationTask | None]:
+def _tasks(
+    session: Session, group_id: int
+) -> tuple[SimulationTaskGroup, SimulationTask | None, SimulationTask | None]:
     group = session.get(SimulationTaskGroup, group_id)
     if group is None:
         raise LookupError("shadow task group does not exist")
@@ -115,18 +112,36 @@ def _tasks(session: Session, group_id: int) -> tuple[SimulationTaskGroup, Simula
     return group, v3, v4
 
 
+def _persist_group_status(
+    session: Session, group: SimulationTaskGroup, status: str
+) -> None:
+    """Persist a derived group lifecycle state without rewriting unchanged rows."""
+
+    if group.status == status:
+        return
+    group.status = status
+    session.commit()
+
+
 def compare_shadow_pair(session: Session, group_id: int) -> V4ShadowComparison:
     """Compare common Section codes/times after both independent tasks succeed."""
 
     group, v3, v4 = _tasks(session, group_id)
     if v3 is None or v4 is None:
         status = "not_ready"
+        group_status = "failed"
         rows: list[V4ShadowSectionDelta] = []
-    elif v3.status in {"failed", "cancelled"} or v4.status in {"failed", "cancelled"}:
+    elif v3.status == "failed" or v4.status == "failed":
         status = "failed"
+        group_status = "failed"
+        rows = []
+    elif v3.status == "cancelled" or v4.status == "cancelled":
+        status = "cancelled"
+        group_status = "cancelled"
         rows = []
     elif v3.status != "success" or v4.status != "success":
-        status = "pending"
+        status = "pending" if v3.status == v4.status == "pending" else "running"
+        group_status = status
         rows = []
     else:
         legacy = session.scalars(
@@ -176,8 +191,8 @@ def compare_shadow_pair(session: Session, group_id: int) -> V4ShadowComparison:
                 )
             )
         status = "ready" if rows else "not_ready"
-        group.status = status
-        session.commit()
+        group_status = "ready" if rows else "failed"
+    _persist_group_status(session, group, group_status)
     return V4ShadowComparison(
         group_id=group.id,
         status=status,

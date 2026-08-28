@@ -7,10 +7,11 @@ from gzip import GzipFile
 from hashlib import sha256
 from io import BytesIO
 import math
-from os import fsync
+from os import fsync, replace
+from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.files import (
@@ -33,6 +34,7 @@ from app.model_engine.v4_schemas import (
     V4SectionOption,
     V4SectionResultResponse,
 )
+from app.worker.lifecycle import StaleExecutionError
 from model.adapters.v4 import V4RuntimeProjection
 from model.core.callbacks import check_cancellation
 from model.provenance import CANONICALIZATION_ID, canonical_json
@@ -43,6 +45,51 @@ RESULT_SCHEMA_VERSION = "dayu.hydraulic-result.v3"
 ARTIFACT_SCHEMA_VERSION = "dayu.hydraulic-stage-evidence.v1"
 ARTIFACT_TYPE = "stage-evidence"
 ARTIFACT_MEDIA_TYPE = "application/x-ndjson+gzip"
+
+
+def v4_attempt_staging_storage_key(
+    task_id: int,
+    execution_token: str,
+    artifact_sha256: str,
+) -> str:
+    """Return the exact token/hash-bound staging key for one execution attempt."""
+
+    if task_id <= 0:
+        raise ValueError("native-v4 task id must be positive")
+    if not execution_token or len(execution_token) > 64:
+        raise ValueError("native-v4 execution token is invalid")
+    token_hash = sha256(execution_token.encode("utf-8")).hexdigest()
+    return v4_attempt_staging_storage_key_from_hashes(
+        task_id,
+        token_hash,
+        artifact_sha256,
+    )
+
+
+def v4_attempt_staging_storage_key_from_hashes(
+    task_id: int,
+    execution_token_sha256: str,
+    artifact_sha256: str,
+) -> str:
+    """Rebuild a staging key without retaining or exposing the lease token."""
+
+    if task_id <= 0:
+        raise ValueError("native-v4 task id must be positive")
+    for value, label in (
+        (execution_token_sha256, "execution token"),
+        (artifact_sha256, "artifact"),
+    ):
+        if (
+            len(value) != 64
+            or value != value.lower()
+            or any(character not in "0123456789abcdef" for character in value)
+        ):
+            raise ValueError(f"native-v4 {label} sha256 is invalid")
+    return (
+        "hydraulic-evidence/staging/"
+        f"task-{task_id}-attempt-{execution_token_sha256[:24]}-"
+        f"{artifact_sha256[:24]}.jsonl.gz"
+    )
 
 
 def _finite_tree(value: Any, path: str = "result") -> None:
@@ -192,19 +239,79 @@ def _phase(callback: Callable[[str], None] | None, value: str) -> None:
         callback(value)
 
 
+def _fault(callback: Callable[[str], None] | None, value: str) -> None:
+    """仅供确定性故障注入测试使用；生产调用方不传入。"""
+
+    if callback is not None:
+        callback(value)
+
+
+def _task_diagnostics(
+    task: SimulationTask,
+    result: Mapping[str, Any],
+    projection: V4RuntimeProjection,
+    artifact: HydraulicTaskArtifact,
+    *,
+    artifact_status: str,
+) -> dict[str, Any]:
+    """构造 prepared/published 两阶段共用的完整科学来源。"""
+
+    return {
+        "input_schema_version": "dayu.model-input.v4",
+        "result_schema_version": RESULT_SCHEMA_VERSION,
+        "solver_id": D1_SOLVER_ID,
+        "capability_id": D1_CAPABILITY_ID,
+        "runtime_adapter_id": D1_RUNTIME_ADAPTER_ID,
+        "input_snapshot_hash": task.input_snapshot_hash,
+        "runtime_projection_hash": task.runtime_projection_hash,
+        "mesh_hash": task.mesh_hash,
+        "solver_policy_hash": task.solver_policy_hash,
+        "validation_policy_hash": task.validation_policy_hash,
+        "canonicalization_id": CANONICALIZATION_ID,
+        "engine_version": task.engine_version,
+        "engine_commit": task.engine_commit,
+        "numeric_platform": result["provenance"],
+        "water_balance": result["water_balance"],
+        "diagnostics": result["diagnostics"],
+        "capability_scope": list(projection.source.capability_scope),
+        "capability_exclusions": list(projection.source.capability_exclusions),
+        "case_notes": list(projection.source.case_notes),
+        "known_limitations": list(projection.source.known_limitations),
+        "artifact_manifest": {
+            "artifact_type": artifact.artifact_type,
+            "storage_key": artifact.storage_key,
+            "sha256": artifact.sha256,
+            "size_bytes": artifact.size_bytes,
+            "record_count": artifact.record_count,
+            "media_type": artifact.media_type,
+            "schema_version": artifact.schema_version,
+            "status": artifact_status,
+        },
+    }
+
+
 def persist_v4_result(
     session: Session,
     task: SimulationTask,
     engine_result: Any,
     projection: V4RuntimeProjection,
     *,
+    execution_token: str,
     cancel_check: object | None = None,
     phase_callback: Callable[[str], None] | None = None,
+    fault_hook: Callable[[str], None] | None = None,
 ) -> SimulationTask:
-    """Replace one non-success task's v4 outputs and publish its artifact safely."""
+    """Persist prepared rows, atomically publish the file, then CAS final success."""
 
     if task.status == "success":
         raise ValueError("a successful v4 task cannot be overwritten")
+    if (
+        task.status != "running"
+        or task.cancel_requested
+        or task.active_execution_token != execution_token
+    ):
+        raise StaleExecutionError("native-v4 attempt is not eligible for persistence")
+    task_id = int(task.id)
     result = engine_result.to_dict()
     _phase(phase_callback, "serializing")
     validate_v4_result(result, projection)
@@ -229,14 +336,25 @@ def persist_v4_result(
     storage_root = storage_directory("hydraulic-evidence")
     filename = f"task-{task.id}-stage-evidence-v1.jsonl.gz"
     storage_key = f"hydraulic-evidence/{filename}"
+    staging_key = v4_attempt_staging_storage_key(
+        task_id,
+        execution_token,
+        artifact_hash,
+    )
+    execution_token_hash = sha256(execution_token.encode("utf-8")).hexdigest()
+    staging_root = resolve_within(storage_root, "staging")
+    staging_filename = Path(staging_key).name
+    staging_target = resolve_within(configured_storage_root(), staging_key)
+    canonical_target = resolve_within(configured_storage_root(), storage_key)
     _phase(phase_callback, "persisting")
-    with atomic_output_path(storage_root, filename) as (temporary, _target):
+    with atomic_output_path(staging_root, staging_filename) as (temporary, _target):
         with temporary.open("wb") as handle:
             handle.write(artifact_bytes)
             handle.flush()
             fsync(handle.fileno())
         if sha256(temporary.read_bytes()).hexdigest() != artifact_hash:
             raise ValueError("temporary stage-evidence artifact failed hash verification")
+        _fault(fault_hook, "after_artifact_temp_ready")
         check_cancellation(cancel_check, "artifact_pre_persistence")
         for model in (
             HydraulicTaskSectionResult,
@@ -353,9 +471,16 @@ def persist_v4_result(
             session.add(
                 HydraulicTaskControlEvent(
                     task_id=task.id,
+                    dataset_version_id=dataset_id,
                     time_seconds=float(event["time"]),
                     structure_type=str(event["structure_type"]),
                     canonical_structure_id=structure_id,
+                    canonical_gate_id=(
+                        structure_id if event["structure_type"] == "gate" else None
+                    ),
+                    canonical_pump_id=(
+                        structure_id if event["structure_type"] == "pump" else None
+                    ),
                     event_type=str(event["action"]),
                     reason=event.get("reason"),
                     pre_state_json={
@@ -385,65 +510,181 @@ def persist_v4_result(
                 "canonicalization_id": CANONICALIZATION_ID,
                 "input_snapshot_hash": task.input_snapshot_hash,
                 "runtime_projection_hash": task.runtime_projection_hash,
+                "execution_token_sha256": execution_token_hash,
+                "staged_storage_key": staging_key,
+                "capability_scope": list(projection.source.capability_scope),
+                "capability_exclusions": list(
+                    projection.source.capability_exclusions
+                ),
+                "case_notes": list(projection.source.case_notes),
+                "known_limitations": list(projection.source.known_limitations),
             },
         )
         session.add(artifact)
-        task.artifact_status = "prepared"
-        task.execution_phase = "publishing_artifact"
+        session.flush()
+        prepared_diagnostics = _task_diagnostics(
+            task,
+            result,
+            projection,
+            artifact,
+            artifact_status="prepared",
+        )
+        prepared = session.execute(
+            update(SimulationTask)
+            .where(
+                SimulationTask.id == task_id,
+                SimulationTask.status == "running",
+                SimulationTask.cancel_requested.is_(False),
+                SimulationTask.active_execution_token == execution_token,
+            )
+            .values(
+                artifact_status="prepared",
+                execution_phase="publishing_artifact",
+                heartbeat_time=datetime.now(UTC),
+                result_schema_version=RESULT_SCHEMA_VERSION,
+                result_path=f"api://model/v4/tasks/{task_id}/summary",
+                diagnostics=prepared_diagnostics,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if prepared.rowcount != 1:
+            session.rollback()
+            raise StaleExecutionError(
+                "native-v4 prepared commit rejected for stale/cancelled attempt"
+            )
         session.commit()
+        _fault(fault_hook, "after_db_prepared_commit")
         _phase(phase_callback, "publishing_artifact")
         check_cancellation(cancel_check, "artifact_publish")
+        staging_lease = session.scalar(
+            select(SimulationTask.id)
+            .where(
+                SimulationTask.id == task_id,
+                SimulationTask.status == "running",
+                SimulationTask.cancel_requested.is_(False),
+                SimulationTask.active_execution_token == execution_token,
+            )
+            .with_for_update()
+        )
+        if staging_lease is None:
+            session.rollback()
+            raise StaleExecutionError(
+                "native-v4 attempt staging rejected for stale/cancelled attempt"
+            )
+    # Release the short staging lease only after the atomic attempt rename.  A
+    # stale recovery that wins before this lock prevents the rename entirely.
+    session.commit()
+    _fault(fault_hook, "after_atomic_rename")
     _phase(phase_callback, "finalizing")
+    check_cancellation(cancel_check, "artifact_final_cas")
+    _fault(fault_hook, "before_final_cas")
+
+    # The attempt-specific stage may exist after a process crash without ever
+    # touching the canonical download path.  Hold the task row lock from the
+    # token check through file promotion and the final DB CAS so stale recovery,
+    # cancellation, and a newer attempt cannot cross this publication window.
+    locked_task = session.scalar(
+        select(SimulationTask)
+        .where(
+            SimulationTask.id == task_id,
+            SimulationTask.status == "running",
+            SimulationTask.cancel_requested.is_(False),
+            SimulationTask.active_execution_token == execution_token,
+        )
+        .with_for_update()
+    )
+    if locked_task is None:
+        session.rollback()
+        raise StaleExecutionError(
+            "native-v4 final publication rejected for stale/cancelled attempt"
+        )
     artifact = session.scalar(
         select(HydraulicTaskArtifact).where(
-            HydraulicTaskArtifact.task_id == task.id,
+            HydraulicTaskArtifact.task_id == task_id,
             HydraulicTaskArtifact.artifact_type == ARTIFACT_TYPE,
             HydraulicTaskArtifact.schema_version == ARTIFACT_SCHEMA_VERSION,
-        )
+        ).with_for_update()
     )
     if artifact is None:
         raise ValueError("published artifact metadata disappeared")
-    artifact.status = "published"
-    artifact.published_time = datetime.now(UTC)
-    task.status = "success"
-    task.progress = 100
-    task.result_schema_version = RESULT_SCHEMA_VERSION
-    task.result_path = f"api://model/v4/tasks/{task.id}/summary"
-    task.artifact_status = "published"
-    task.execution_phase = "finalizing"
-    task.heartbeat_time = datetime.now(UTC)
-    task.end_time = datetime.now(UTC)
-    task.diagnostics = {
-        "input_schema_version": "dayu.model-input.v4",
-        "result_schema_version": RESULT_SCHEMA_VERSION,
-        "solver_id": D1_SOLVER_ID,
-        "capability_id": D1_CAPABILITY_ID,
-        "runtime_adapter_id": D1_RUNTIME_ADAPTER_ID,
-        "input_snapshot_hash": task.input_snapshot_hash,
-        "runtime_projection_hash": task.runtime_projection_hash,
-        "mesh_hash": task.mesh_hash,
-        "solver_policy_hash": task.solver_policy_hash,
-        "validation_policy_hash": task.validation_policy_hash,
-        "canonicalization_id": CANONICALIZATION_ID,
-        "engine_version": task.engine_version,
-        "engine_commit": task.engine_commit,
-        "numeric_platform": result["provenance"],
-        "water_balance": result["water_balance"],
-        "diagnostics": result["diagnostics"],
-        "known_limitations": list(projection.source.known_limitations),
-        "artifact_manifest": {
-            "artifact_type": artifact.artifact_type,
-            "storage_key": artifact.storage_key,
-            "sha256": artifact.sha256,
-            "size_bytes": artifact.size_bytes,
-            "record_count": artifact.record_count,
-            "media_type": artifact.media_type,
-            "schema_version": artifact.schema_version,
-            "status": artifact.status,
-        },
-    }
+    metadata = artifact.metadata_json if isinstance(artifact.metadata_json, dict) else {}
+    if (
+        artifact.status not in {"prepared", "publishing"}
+        or artifact.storage_key != storage_key
+        or artifact.sha256 != artifact_hash
+        or metadata.get("execution_token_sha256") != execution_token_hash
+        or metadata.get("staged_storage_key") != staging_key
+    ):
+        raise StaleExecutionError(
+            "native-v4 artifact metadata no longer belongs to this execution attempt"
+        )
+    if not staging_target.is_file():
+        raise ValueError("native-v4 attempt staging artifact disappeared")
+    if (
+        staging_target.stat().st_size != len(artifact_bytes)
+        or sha256(staging_target.read_bytes()).hexdigest() != artifact_hash
+    ):
+        raise ValueError("native-v4 attempt staging artifact failed final verification")
+    if canonical_target.exists():
+        raise ValueError(
+            "native-v4 canonical artifact already exists; reconciliation required"
+        )
+    replace(staging_target, canonical_target)
+    _fault(fault_hook, "after_final_publish_rename")
+    now = datetime.now(UTC)
+    published_diagnostics = _task_diagnostics(
+        locked_task,
+        result,
+        projection,
+        artifact,
+        artifact_status="published",
+    )
+    finalized = session.execute(
+        update(SimulationTask)
+        .where(
+            SimulationTask.id == task_id,
+            SimulationTask.status == "running",
+            SimulationTask.cancel_requested.is_(False),
+            SimulationTask.active_execution_token == execution_token,
+        )
+        .values(
+            status="success",
+            progress=100,
+            result_schema_version=RESULT_SCHEMA_VERSION,
+            result_path=f"api://model/v4/tasks/{task_id}/summary",
+            artifact_status="published",
+            execution_phase="finalizing",
+            heartbeat_time=now,
+            end_time=now,
+            error_message=None,
+            diagnostics=published_diagnostics,
+            last_execution_token=execution_token,
+            active_execution_token=None,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    if finalized.rowcount != 1:
+        session.rollback()
+        raise StaleExecutionError(
+            "native-v4 final success rejected for stale/cancelled attempt"
+        )
+    published = session.execute(
+        update(HydraulicTaskArtifact)
+        .where(
+            HydraulicTaskArtifact.id == artifact.id,
+            HydraulicTaskArtifact.status.in_(("prepared", "publishing")),
+        )
+        .values(status="published", published_time=now)
+        .execution_options(synchronize_session=False)
+    )
+    if published.rowcount != 1:
+        session.rollback()
+        raise StaleExecutionError("native-v4 artifact publication CAS was rejected")
     session.commit()
-    session.refresh(task)
+    session.expire_all()
+    task = session.get(SimulationTask, task_id)
+    if task is None:
+        raise LookupError("native-v4 task disappeared after successful finalization")
     return task
 
 
@@ -455,8 +696,20 @@ def require_successful_v4_task(session: Session, task_id: int) -> SimulationTask
         raise LookupError("simulation task does not exist")
     if task.input_schema_version != "dayu.model-input.v4":
         raise ValueError("requested task is not native v4")
-    if task.status != "success":
-        raise ValueError("native-v4 results are available only after success")
+    if task.status != "success" or task.artifact_status != "published":
+        raise ValueError(
+            "native-v4 results are available only after result/artifact publication"
+        )
+    published_artifact = session.scalar(
+        select(HydraulicTaskArtifact.id).where(
+            HydraulicTaskArtifact.task_id == task_id,
+            HydraulicTaskArtifact.artifact_type == ARTIFACT_TYPE,
+            HydraulicTaskArtifact.schema_version == ARTIFACT_SCHEMA_VERSION,
+            HydraulicTaskArtifact.status == "published",
+        )
+    )
+    if published_artifact is None:
+        raise ValueError("native-v4 published task has no published artifact metadata")
     return task
 
 
@@ -515,6 +768,9 @@ def read_v4_section_result(
 def artifact_manifest(artifact: HydraulicTaskArtifact) -> V4ArtifactManifest:
     """Convert persisted metadata without resolving or leaking an absolute path."""
 
+    metadata = dict(artifact.metadata_json)
+    metadata.pop("execution_token_sha256", None)
+    metadata.pop("staged_storage_key", None)
     return V4ArtifactManifest(
         id=artifact.id,
         artifact_type=artifact.artifact_type,
@@ -525,7 +781,7 @@ def artifact_manifest(artifact: HydraulicTaskArtifact) -> V4ArtifactManifest:
         media_type=artifact.media_type,
         schema_version=artifact.schema_version,
         status=artifact.status,
-        metadata=artifact.metadata_json,
+        metadata=metadata,
         created_time=artifact.created_time,
         published_time=artifact.published_time,
     )
@@ -606,5 +862,7 @@ __all__ = [
     "require_successful_v4_task",
     "resolve_v4_artifact_download",
     "validate_v4_result",
+    "v4_attempt_staging_storage_key",
+    "v4_attempt_staging_storage_key_from_hashes",
     "v4_result_summary",
 ]
