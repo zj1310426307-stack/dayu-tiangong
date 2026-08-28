@@ -3,8 +3,8 @@
 ## Current RC1 validation snapshot
 
 The active D2 candidate includes RC1 consistency changes beyond the historical D2
-hosted runs. Those historical runs must not be treated as evidence for the current RC1
-working tree.
+hosted runs. Current evidence is tied to validated implementation head `aab8d6a` and
+does not reuse historical D2 runs.
 
 | Validation scope | Current confirmed result |
 |---|---:|
@@ -18,20 +18,22 @@ working tree.
 | OpenAPI contract/update | **9 passed; no generated-client drift** |
 | Frontend typecheck | **PASS** |
 | Frontend production build | **PASS** |
+| Hosted `hydraulic-platform` / `model02` | **PASS — PR runs `33142739966` / `33142739961`** |
 
 The validation views overlap and are not summed. Skips are recorded as skips,
 not successes.
 
-## Pending RC1 gates
+## RC1 gates
 
 | Gate | Status |
 |---|---|
 | Migration 0021 local upgrade/downgrade/re-upgrade/single-head | **PASS** |
 | Complete Docker PostGIS/Redis/dual-Worker/scheduler/API/Artifact success and fault E2E | **PASS** |
-| Hosted hydraulic-platform, fault-recovery, MODEL02 cross-platform, legacy, OpenAPI, and frontend jobs | **Pending main-agent confirmation** |
-| GitHub required checks and branch protection for final RC1 contexts | **Pending main-agent confirmation** |
+| Hosted hydraulic-platform, fault-recovery, MODEL02 cross-platform, legacy, OpenAPI, and frontend jobs | **PASS on `aab8d6a`** |
+| GitHub required checks and branch protection for final RC1 contexts | **PASS — strict, 9 required contexts, force-push/deletion disabled** |
 
-The current decision is **Pending / NO-GO for RC1 release**. No RC1 PASS is declared.
+The current decision is **RC1 PASS / ready for independent review**. PR #11 remains
+OPEN; merge and D2 tag creation are not authorized by this report.
 Detailed evidence and root-cause mapping are maintained in
 `HYDRO-MODEL-02-D2-RC1-validation-report.md` and
 `../review/HYDRO-MODEL-02-D2-RC1-audit.md`.

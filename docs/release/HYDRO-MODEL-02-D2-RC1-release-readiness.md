@@ -3,7 +3,7 @@
 - Date: 2026-08-28
 - Scope: RC1 task-attempt, retry, freeze-integrity, Dataset constraint, Shadow, and
   Result/Artifact recovery hardening
-- Decision: **NOT READY — Pending Hosted CI and final protection gate**
+- Decision: **READY FOR INDEPENDENT REVIEW — RC1 gates PASS; PR remains OPEN**
 
 ## Confirmed candidate gates
 
@@ -20,8 +20,8 @@
 | OpenAPI generated-client contract | Confirmed: **9 passed; no drift** |
 | Frontend typecheck/build | Confirmed: **PASS / PASS** |
 
-These results support the candidate implementation but do not by themselves authorize
-an RC1 release.
+These results and the Hosted/protection evidence below support RC1 review. They do not
+authorize merging PR #11 or creating a D2 tag.
 
 ## Blocking release gates
 
@@ -29,11 +29,11 @@ an RC1 release.
 |---|---|---|
 | Migration 0021 local round-trip | **PASS** | Fresh empty database completed `0021 -> 0020 -> 0021`; one head confirmed |
 | Complete Docker E2E | **PASS** | Current RC1 code passed real success/fault chains with both Worker routes and beat recovery |
-| Hosted CI | **Pending main-agent confirmation** | Confirm all required success and fault-recovery jobs on the final RC1 commit |
-| GitHub main protection | **Pending main-agent confirmation** | Confirm required contexts after the final workflow is present; do not rely on an earlier protection snapshot |
+| Hosted CI | **PASS** | Implementation head `aab8d6a`; PR runs `33142739966` (`hydraulic-platform`) and `33142739961` (`model02`) all passed |
+| GitHub main protection | **PASS** | Strict mode and 9 required contexts; existing 8 preserved and exact `D2 fault recovery` appended only after Hosted success |
 
-Any Pending row keeps the release decision at **NOT READY**. No historical D2 run can
-substitute for a current RC1-head run.
+No historical D2 run is used as substitute evidence. The evidence-only documentation
+commit must pass the same required checks before final handoff.
 
 ## Release promotion checklist
 
@@ -42,18 +42,18 @@ substitute for a current RC1-head run.
   overlapping counts.
 - [x] Migration 0021 local round-trip confirmed by the main agent.
 - [x] Complete Docker success and fault E2E confirmed by the main agent.
-- [ ] Hosted hydraulic-platform/fault-recovery/MODEL02/legacy/frontend checks confirmed
+- [x] Hosted hydraulic-platform/fault-recovery/MODEL02/legacy/frontend checks confirmed
   on the final RC1 commit.
-- [ ] GitHub required checks and protection re-confirmed for all final contexts.
-- [ ] Final commit/PR evidence reviewed without merging as part of this document task.
+- [x] GitHub required checks and protection re-confirmed for all final contexts.
+- [x] Final implementation commit/PR evidence reviewed without merging as part of this document task.
 
 ## Accurate current statement
 
 > HYDRO-MODEL-02-D2-RC1 has implemented the candidate consistency hardening and has
 > confirmed local regression, fresh migration round-trip, real PostGIS/Redis fault,
-> and complete Docker success evidence. Hosted CI on the final pushed head and final
-> GitHub protection remain Pending; therefore RC1 is not yet declared PASS or
-> release-ready.
+> complete Docker success, final implementation-head Hosted CI, and strict main
+> protection with 9 required checks. RC1 gates PASS for independent review. PR #11
+> remains OPEN; merge and tag creation are explicitly outside this task.
 
 ## Continuing NO-GO
 

@@ -74,7 +74,9 @@ revisions through 0021, downgraded exactly to 0020, re-upgraded to 0021, and con
 RC1-only reconciliation state was intentionally rejected by the downgrade guard,
 confirming that evidence is not silently truncated.
 
-The local migration gate is **PASS**. RC1 still must not be declared PASS until the
-same 0021 upgrade/schema checks run successfully in Hosted PostgreSQL 16 with PostGIS
-and TimescaleDB on the final pushed commit. Historical 0020 Actions evidence is not
-used as substitute evidence.
+The local migration gate is **PASS**. Hosted PostgreSQL 16 with PostGIS and TimescaleDB
+also ran the 0021 upgrade/schema checks successfully on implementation head `aab8d6a`
+in `hydraulic-platform` PR run
+[`33142739966`](https://github.com/zj1310426307-stack/dayu-tiangong/actions/runs/33142739966)
+and matching push run `33142737984`. Historical 0020 Actions evidence is not used as
+substitute evidence.

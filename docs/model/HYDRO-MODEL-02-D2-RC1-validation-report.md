@@ -2,11 +2,13 @@
 
 ## Current decision
 
-The RC1 candidate has confirmed local, fresh-migration, PostGIS/Redis fault, and full
-Docker success evidence. Hosted checks and final branch-protection configuration have
-not yet run on the unpushed final commit. Current status is therefore **Pending /
-NO-GO for RC1 release**; this report does not declare
-`HYDRO-MODEL-02-D2-RC1 PASS`.
+The RC1 candidate has confirmed local, fresh-migration, PostGIS/Redis fault, full
+Docker, and Hosted evidence. The validated implementation head is
+`aab8d6a0cd99bb6b6113525c7cc2c313d6685b2e`; both push and pull-request runs passed,
+including the exact `D2 fault recovery` job. Main protection remains strict and now
+requires all original eight contexts plus `D2 fault recovery`. Current status is
+therefore **HYDRO-MODEL-02-D2-RC1 PASS / release-ready for independent review**.
+PR #11 remains OPEN and this report does not authorize merge or tagging.
 
 ## Confirmed evidence
 
@@ -22,6 +24,8 @@ NO-GO for RC1 release**; this report does not declare
 | OpenAPI contract/update suite | **9 passed; no drift** | Generated client matches the current backend contract |
 | Frontend typecheck | **PASS** | Type-level frontend contract completed |
 | Frontend production build | **PASS** | Production bundle completed |
+| Hosted `hydraulic-platform` | **PASS** | PR run [`33142739966`](https://github.com/zj1310426307-stack/dayu-tiangong/actions/runs/33142739966); includes Backend, migration, Worker, `D2 fault recovery`, OpenAPI, and D1 regression |
+| Hosted `model02` | **PASS** | PR run [`33142739961`](https://github.com/zj1310426307-stack/dayu-tiangong/actions/runs/33142739961); Ubuntu, Windows, legacy, and frontend contract all passed |
 
 The rows above are overlapping validation views and must not be summed into a global
 test count.
@@ -56,11 +60,12 @@ confirmed-evidence table are asserted here.
 |---|---|---|
 | Migration 0021 local round-trip | **PASS** | Fresh `0021 -> 0020 -> 0021`; single head `20260828_0021` |
 | Complete Docker success and fault E2E | **PASS** | Current code passed real PostGIS/Redis dual-Worker success and 122-test fault lists; scheduler and all runtime services healthy |
-| Hosted CI on final RC1 head | **Pending** | Current hydraulic-platform, fault-recovery, MODEL02 Ubuntu/Windows, legacy, OpenAPI, and frontend jobs |
-| GitHub branch protection | **Pending** | Main-agent confirmation that all final workflow contexts are required and protection remains active |
+| Hosted CI on validated RC1 implementation head | **PASS** | `aab8d6a`; PR runs `33142739966` and `33142739961`, plus matching push runs `33142737984` and `33142738012` |
+| GitHub branch protection | **PASS** | Strict mode; 9 required checks; original 8 preserved; admins enforced; force-push/deletion disabled |
 
-Historical D2 hosted run IDs do not validate the uncommitted/current RC1 candidate and
-are not reused as RC1 evidence.
+Historical D2 hosted run IDs are not reused as RC1 evidence. The evidence-only report
+commit that records these results must itself pass the unchanged required checks before
+handoff; it does not change runtime, migration, frontend, or workflow behavior.
 
 ## Scientific and operational boundary
 
