@@ -67,11 +67,13 @@ jobs:
           import os;
           i=inspect(create_engine(os.environ['DATABASE_URL']));
           tables=set(i.get_table_names());
-          cols={c['name'] for c in i.get_columns('simulation_task')};
+          task_cols={c['name'] for c in i.get_columns('simulation_task')};
+          event_cols={c['name'] for c in i.get_columns('hydraulic_task_control_event')};
           assert {'hydraulic_task_section_result','hydraulic_task_gate_result','hydraulic_task_pump_result','hydraulic_task_control_event','hydraulic_task_artifact'} <= tables;
-          assert {'solver_id','capability_id','runtime_projection_hash','artifact_status'} <= cols"
+          assert {'solver_id','capability_id','runtime_projection_hash','artifact_status','execution_attempt_count','manual_retry_count','infrastructure_retry_count','numerical_retry_count','active_execution_token','last_execution_token','last_infrastructure_error'} <= task_cols;
+          assert {'dataset_version_id','canonical_gate_id','canonical_pump_id'} <= event_cols"
       - name: Downgrade D2 migration
-        run: alembic -c database/alembic.ini downgrade 20260818_0019 2>&1 | tee outputs/ci/d2-migration/downgrade.log
+        run: alembic -c database/alembic.ini downgrade -1 2>&1 | tee outputs/ci/d2-migration/downgrade.log
       - name: Re-upgrade to D2 head
         run: alembic -c database/alembic.ini upgrade head 2>&1 | tee outputs/ci/d2-migration/re-upgrade.log
       - name: Assert single head
@@ -152,6 +154,92 @@ jobs:
         with:
           name: d2-worker-integration
           path: outputs/ci/d2-worker/
+          if-no-files-found: error
+
+  d2-fault-recovery:
+    name: D2 fault recovery
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: timescale/timescaledb-ha:pg16.14-ts2.28.3-all
+        env:
+          POSTGRES_DB: dayu_tiangong
+          POSTGRES_USER: dayu
+          POSTGRES_PASSWORD: dayu_dev
+          TIMESCALEDB_TELEMETRY: "off"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dayu -d dayu_tiangong"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://dayu:dayu_dev@localhost:5432/dayu_tiangong
+      TEST_DATABASE_URL: postgresql+psycopg://dayu:dayu_dev@localhost:5432/dayu_tiangong
+      CELERY_BROKER_URL: redis://localhost:6379/0
+      CELERY_RESULT_BACKEND: redis://localhost:6379/1
+      DAYU_STORAGE_ROOT: outputs/ci/d2-fault/storage
+      D2_FAULT_EVIDENCE_DIR: outputs/ci/d2-fault
+      RUN_D2_FAULT_INTEGRATION: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install -r backend/requirements.txt
+      - name: Prepare fault-recovery evidence
+        run: mkdir -p outputs/ci/d2-fault/storage
+      - name: Migrate PostGIS
+        run: alembic -c database/alembic.ini upgrade head 2>&1 | tee outputs/ci/d2-fault/migration.log
+      - name: Run D2 fault-recovery suite
+        run: |
+          python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q \
+            tests/model_engine/test_v4_execution_attempt.py \
+            tests/model_engine/test_v4_task_state_machine.py \
+            tests/model_engine/test_v4_reconciliation.py \
+            tests/model_engine/test_v4_finalization_races.py \
+            tests/model_engine/test_v4_dataset_integrity.py \
+            tests/model_engine/test_v4_freeze_integrity.py \
+            tests/model_engine/test_v4_worker_fault_e2e.py \
+            tests/model_engine/test_v4_worker_capability.py \
+            tests/model_engine/test_v4_sync_run_guard.py \
+            tests/model_engine/test_solver_registry.py \
+            tests/model_engine/test_v4_schema_metadata.py \
+            tests/model_engine/test_v4_rc1_schema_metadata.py \
+            tests/model_engine/test_v4_task_contract.py \
+            tests/model_engine/test_v4_shadow.py \
+            tests/model_engine/test_v4_manual_retry.py \
+            --junitxml=outputs/ci/d2-fault/junit.xml \
+            2>&1 | tee outputs/ci/d2-fault/pytest.log
+      - name: Collect reconciliation and quarantine evidence
+        if: always()
+        run: |
+          mkdir -p "$D2_FAULT_EVIDENCE_DIR"
+          if [ -d "$DAYU_STORAGE_ROOT/hydraulic-evidence/quarantine" ]; then
+            find "$DAYU_STORAGE_ROOT/hydraulic-evidence/quarantine" -type f -printf '%P\n' | sort > "$D2_FAULT_EVIDENCE_DIR/quarantine-manifest.txt"
+          else
+            : > "$D2_FAULT_EVIDENCE_DIR/quarantine-manifest.txt"
+          fi
+          python -c "import json, os; from pathlib import Path; root=Path(os.environ['D2_FAULT_EVIDENCE_DIR']); reports=sorted(path.relative_to(root).as_posix() for path in root.rglob('*.json') if path.name != 'reconciliation-index.json'); (root / 'reconciliation-index.json').write_text(json.dumps({'reports': reports}, indent=2, sort_keys=True) + '\n', encoding='utf-8')"
+          find "$D2_FAULT_EVIDENCE_DIR" -type f -printf '%P %s bytes\n' | sort > "$D2_FAULT_EVIDENCE_DIR/evidence-files.log"
+      - name: Upload D2 fault-recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: d2-fault-recovery
+          path: outputs/ci/d2-fault/
           if-no-files-found: error
 
   frontend-openapi:
