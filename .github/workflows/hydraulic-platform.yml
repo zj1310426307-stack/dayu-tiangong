@@ -363,6 +363,7 @@ jobs:
           docker run --rm --network host \
             --env DATABASE_URL --env TEST_DATABASE_URL \
             --env CELERY_BROKER_URL --env CELERY_RESULT_BACKEND \
+            --env DAYU_STORAGE_ROOT \
             --env RUN_D2_FAULT_INTEGRATION=1 \
             --env D2_FAULT_EVIDENCE_DIR=/workspace/outputs/ci/d2-shipping/fault-evidence \
             --volume "$PWD:/workspace:ro" \
