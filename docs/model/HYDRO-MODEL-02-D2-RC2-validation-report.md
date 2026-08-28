@@ -2,10 +2,12 @@
 
 ## Candidate decision
 
-Local RC2 validation is **PASS**. Hosted validation remains pending until the
-committed PR head completes the exact `D2 shipping runtime` job. The PR therefore
-remains open and RC2 is not yet merge-ready. Historical D2/RC1 runs are not used as
-RC2 evidence.
+RC2 validation is **PASS** locally and on GitHub Hosted runners for implementation
+candidate `5e6a0aed399ad4a5b17614e21f4923a1aacfaf98`. The exact
+`D2 shipping runtime` job passed twice for that SHA, its immutable evidence artifact
+is available, and main protection now contains the preserved nine contexts plus the
+exact tenth shipping context. PR #11 remains open and is **MERGE READY FOR
+INDEPENDENT REVIEW**; this task does not authorize merge or tag creation.
 
 ## Required evidence
 
@@ -19,11 +21,13 @@ RC2 evidence.
 | OpenAPI generated client / frontend typecheck and build | PASS: generator hash unchanged (`FCC281B5...D98E`); typecheck and Vite production build passed |
 | Docker shared image / OCI revision / Python 3.12 | PASS locally: CPython 3.12.13, OCI revision injection, identical Backend/legacy/v4 Worker identity, Compose shared SHA image |
 | Real shipping-image native-v4 success E2E | PASS: 2/2 against temporary PostGIS, Redis, Backend and both Workers |
-| Hosted exact `D2 shipping runtime` | Pending final candidate SHA |
-| Existing Hosted required checks | Pending final candidate SHA |
-| Main protection 9 -> 10 contexts | Must occur only after exact shipping job succeeds |
+| Hosted exact `D2 shipping runtime` | PASS twice on candidate SHA: runs `33156277870` and `33156280523`; jobs `98799690207` and `98799698419` |
+| Immutable Hosted evidence | PASS: artifact `d2-runtime-build-identity` (`9679812945`), SHA-256 digest `6187b466bf5e1b29f6ea41675b3c33f0840a060c9bb45821f444db1e725db9d5`, not expired |
+| Existing Hosted required checks | PASS on candidate SHA; all Linux, Windows, frontend, contract, migration, Worker, D1 and D2 fault gates succeeded |
+| Main protection 9 -> 10 contexts | PASS after first shipping success: strict mode retained, all nine contexts preserved, exact `D2 shipping runtime` appended with GitHub Actions app binding |
 
 The 816-pass full-suite count is authoritative and is not added to overlapping
 targeted suite counts. Local Docker used the pre-commit audit SHA only to validate
-the injection and matching mechanism; it is not release evidence. Hosted must build
-the committed PR SHA before this report can declare merge readiness.
+the injection and matching mechanism; it is not release evidence. Hosted built and
+exercised the committed implementation candidate SHA above. Any later
+documentation-only commit must still pass the protected PR checks before merge.
