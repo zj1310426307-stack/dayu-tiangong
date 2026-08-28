@@ -1,45 +1,43 @@
 # HYDRO-MODEL-02-D2 Validation Report
 
-## Frozen D1 comparison
+## Current RC1 validation snapshot
 
-The v4 platform projection produces the same six-hour D1 result with and without
-callbacks:
+The active D2 candidate includes RC1 consistency changes beyond the historical D2
+hosted runs. Those historical runs must not be treated as evidence for the current RC1
+working tree.
 
-| Evidence | Frozen value |
+| Validation scope | Current confirmed result |
 |---|---:|
-| Gate open | 2940 s |
-| Pump start | 7740 s |
-| Pump stop | 12540 s |
-| Accepted steps | 381 |
-| Pump external volume | 22.023440130973746 m³ |
-| Pump input energy | 0.12252120603722051 kWh |
-| Relative water-balance error | 4.748482309112566e-16 |
-| Water-balance status | pass |
+| `tests/model_engine` | **118 passed / 35 skipped** |
+| Full repository regression | **799 passed / 106 skipped** |
+| `tests/model02` | **355 passed** |
+| Real PostGIS/Redis Hosted-equivalent fault list | **122 passed** |
+| Fresh migration `0021 -> 0020 -> 0021` / one head | **PASS / `20260828_0021`** |
+| Docker dual-Worker success E2E | **2 passed; all runtime services healthy** |
+| Python compileall | **PASS** |
+| OpenAPI contract/update | **9 passed; no generated-client drift** |
+| Frontend typecheck | **PASS** |
+| Frontend production build | **PASS** |
 
-## Local validation
+The validation views overlap and are not summed. Skips are recorded as skips,
+not successes.
 
-The configured project Python environment completed `724 passed / 73 skipped` in the
-full `tests + backend/tests` aggregate. The explicit skips require unavailable local
-PostGIS/DGIS/QGIS services and are not counted as local passes. The suite includes
-native-v4 contracts, registry,
-readiness, projection/freeze, callback/cancel, result/artifact quality, API/shadow
-contracts, full MODEL-02, Gate/Pump integration, and Phase 4 Gate regressions. Frontend
-typecheck and production build passed; OpenAPI regeneration was deterministic.
+## Pending RC1 gates
 
-The real PostGIS/Redis/dual-Worker test is deliberately skipped locally because this
-host has no Docker command. Local static migration inspection is not counted as a real
-database PASS.
+| Gate | Status |
+|---|---|
+| Migration 0021 local upgrade/downgrade/re-upgrade/single-head | **PASS** |
+| Complete Docker PostGIS/Redis/dual-Worker/scheduler/API/Artifact success and fault E2E | **PASS** |
+| Hosted hydraulic-platform, fault-recovery, MODEL02 cross-platform, legacy, OpenAPI, and frontend jobs | **Pending main-agent confirmation** |
+| GitHub required checks and branch protection for final RC1 contexts | **Pending main-agent confirmation** |
 
-## Hosted integration contract
+The current decision is **Pending / NO-GO for RC1 release**. No RC1 PASS is declared.
+Detailed evidence and root-cause mapping are maintained in
+`HYDRO-MODEL-02-D2-RC1-validation-report.md` and
+`../review/HYDRO-MODEL-02-D2-RC1-audit.md`.
 
-`hydraulic-platform` runs five named jobs: Backend v4 contract, PostGIS migration,
-Worker integration, Frontend OpenAPI, and D1 regression. The Worker test requires real
-PostGIS, Redis, a legacy Celery Worker, a dedicated v4 Worker, and a live backend. It
-executes readiness, preview, API task create/enqueue/poll, Worker claim/progress/success,
-authoritative database rows, summary/Section/Gate/Pump/Event API reads, artifact manifest,
-download, and hash verification.
+## Boundary
 
-Hosted `hydraulic-platform` run `33113201345` passed all five jobs, including migration
-and Worker integration. Hosted `model02` run `33113201378` passed Ubuntu, Windows,
-Legacy hydraulic, and Frontend contract. Final branch-head checks remain enforced by
-PR #11 before merge.
+The RC1 work does not expand the frozen D1 scientific scope. Production IAM,
+multi-tenancy, remote Artifact durability, distributed crash recovery, engineering
+calibration, and real command dispatch remain outside this validation.
