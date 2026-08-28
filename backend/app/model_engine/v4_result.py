@@ -36,6 +36,7 @@ from app.model_engine.v4_schemas import (
 )
 from app.worker.lifecycle import StaleExecutionError
 from model.adapters.v4 import V4RuntimeProjection
+from model.build_identity import RuntimeBuildIdentity, current_runtime_build_identity
 from model.core.callbacks import check_cancellation
 from model.provenance import CANONICALIZATION_ID, canonical_json
 from model.solver.registry import D1_CAPABILITY_ID, D1_RUNTIME_ADAPTER_ID, D1_SOLVER_ID
@@ -251,6 +252,7 @@ def _task_diagnostics(
     result: Mapping[str, Any],
     projection: V4RuntimeProjection,
     artifact: HydraulicTaskArtifact,
+    executed_build_identity: RuntimeBuildIdentity,
     *,
     artifact_status: str,
 ) -> dict[str, Any]:
@@ -270,6 +272,25 @@ def _task_diagnostics(
         "canonicalization_id": CANONICALIZATION_ID,
         "engine_version": task.engine_version,
         "engine_commit": task.engine_commit,
+        "solver_build_id": task.solver_build_id,
+        "build_mode": task.build_mode,
+        "build_verified": task.build_verified,
+        "unverified_build": not task.build_verified,
+        "runtime_build_identity": {
+            "task_requested": {
+                "engine_version": task.engine_version,
+                "engine_commit": task.engine_commit,
+                "solver_build_id": task.solver_build_id,
+                "build_mode": task.build_mode,
+                "build_verified": task.build_verified,
+                "unverified_build": not task.build_verified,
+                "registry_hash": task.registry_hash,
+            },
+            "worker_executed": {
+                **executed_build_identity.provenance(),
+                "registry_hash": task.registry_hash,
+            },
+        },
         "numeric_platform": result["provenance"],
         "water_balance": result["water_balance"],
         "diagnostics": result["diagnostics"],
@@ -297,12 +318,14 @@ def persist_v4_result(
     projection: V4RuntimeProjection,
     *,
     execution_token: str,
+    executed_build_identity: RuntimeBuildIdentity | None = None,
     cancel_check: object | None = None,
     phase_callback: Callable[[str], None] | None = None,
     fault_hook: Callable[[str], None] | None = None,
 ) -> SimulationTask:
     """Persist prepared rows, atomically publish the file, then CAS final success."""
 
+    worker_build = executed_build_identity or current_runtime_build_identity()
     if task.status == "success":
         raise ValueError("a successful v4 task cannot be overwritten")
     if (
@@ -510,6 +533,16 @@ def persist_v4_result(
                 "canonicalization_id": CANONICALIZATION_ID,
                 "input_snapshot_hash": task.input_snapshot_hash,
                 "runtime_projection_hash": task.runtime_projection_hash,
+                "engine_version": task.engine_version,
+                "engine_commit": task.engine_commit,
+                "solver_build_id": task.solver_build_id,
+                "build_mode": task.build_mode,
+                "build_verified": task.build_verified,
+                "unverified_build": not task.build_verified,
+                "worker_executed_build": {
+                    **worker_build.provenance(),
+                    "registry_hash": task.registry_hash,
+                },
                 "execution_token_sha256": execution_token_hash,
                 "staged_storage_key": staging_key,
                 "capability_scope": list(projection.source.capability_scope),
@@ -527,6 +560,7 @@ def persist_v4_result(
             result,
             projection,
             artifact,
+            worker_build,
             artifact_status="prepared",
         )
         prepared = session.execute(
@@ -637,6 +671,7 @@ def persist_v4_result(
         result,
         projection,
         artifact,
+        worker_build,
         artifact_status="published",
     )
     finalized = session.execute(

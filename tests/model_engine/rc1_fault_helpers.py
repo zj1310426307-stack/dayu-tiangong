@@ -127,6 +127,12 @@ def task_snapshot(task_id: int) -> dict[str, Any]:
             "infrastructure_retry_count": task.infrastructure_retry_count,
             "numerical_retry_count": task.numerical_retry_count,
             "queue_job_id": task.queue_job_id,
+            "delivery_attempt_count": task.delivery_attempt_count,
+            "last_delivery_time": (
+                task.last_delivery_time.isoformat()
+                if task.last_delivery_time is not None
+                else None
+            ),
             "active_execution_token": task.active_execution_token,
             "last_execution_token": task.last_execution_token,
             "current_simulation_time": task.current_simulation_time,

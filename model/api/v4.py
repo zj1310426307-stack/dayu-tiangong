@@ -19,6 +19,12 @@ from model.api.v4_lite import (
     V4LiteStructures,
 )
 from model.core.errors import HydraulicInputError
+from model.build_identity import (
+    BUILD_IDENTITY_SCHEMA,
+    ENGINE_VERSION,
+    is_git_sha,
+    solver_build_id,
+)
 from model.provenance import CANONICALIZATION_ID
 from model.solver.registry import (
     D1_CAPABILITY,
@@ -34,6 +40,10 @@ from model.solver.registry import (
 
 NonBlankText = Annotated[str, StringConstraints(strict=True, min_length=1)]
 Sha256 = Annotated[str, StringConstraints(strict=True, pattern=r"^[0-9a-f]{64}$")]
+SolverBuildId = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=r"^dayu\.solver-build\.v1:[0-9a-f]{64}$"),
+]
 PositiveId = Annotated[int, Field(strict=True, gt=0)]
 
 
@@ -113,10 +123,38 @@ class ValidationPolicy(StrictPlatformModel):
 class PlatformProvenance(StrictPlatformModel):
     """Freeze non-recursive engine, registry, and canonicalization identities."""
 
-    engine_version: NonBlankText
+    engine_version: Literal[ENGINE_VERSION]
     engine_commit: NonBlankText
+    solver_build_id: SolverBuildId
+    build_identity_schema: Literal[BUILD_IDENTITY_SCHEMA]
+    build_mode: Literal["development", "ci", "release"]
+    build_verified: bool
+    unverified_build: bool
     canonicalization_id: Literal[CANONICALIZATION_ID]
     registry_hash: Sha256
+
+    @model_validator(mode="after")
+    def validate_runtime_build_identity(self) -> Self:
+        """Require a reproducible build ID and fail closed in CI/release modes."""
+
+        if self.registry_hash != registry_hash():
+            raise ValueError("platform solver registry hash does not match this runtime")
+        valid_commit = is_git_sha(self.engine_commit)
+        expected_verified = valid_commit and self.build_mode in {"ci", "release"}
+        if self.build_verified != expected_verified:
+            raise ValueError("build_verified must be derived from build mode and Git SHA")
+        if self.unverified_build != (not self.build_verified):
+            raise ValueError("unverified_build must be the inverse of build_verified")
+        if self.build_mode in {"ci", "release"} and not self.build_verified:
+            raise ValueError(f"{self.build_mode} provenance requires a verified Git SHA")
+        expected = solver_build_id(
+            engine_version=self.engine_version,
+            engine_commit=self.engine_commit,
+            registry_hash=self.registry_hash,
+        )
+        if self.solver_build_id != expected:
+            raise ValueError("solver_build_id is not reproducible from build provenance")
+        return self
 
 
 class ModelInputV4(StrictPlatformModel):

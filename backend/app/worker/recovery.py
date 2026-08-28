@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Callable
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 
 from app.database.session import SessionLocal
 from app.gis.models import SimulationTask
@@ -15,6 +15,8 @@ from app.worker.lifecycle import recover_stale_tasks
 
 
 Delivery = Callable[[SimulationTask], object]
+MAX_DELIVERY_ATTEMPTS = 3
+DELIVERY_RETRY_LIMIT_CODE = "D2_DELIVERY_RETRY_LIMIT"
 
 
 def recover_stale_running_tasks(stale_seconds: int = 120) -> list[int]:
@@ -47,7 +49,11 @@ def redeliver_stale_queued_tasks(
     limit: int = 100,
     deliver: Delivery | None = None,
 ) -> list[int]:
-    """用 queued_time CAS 恢复 DB commit 与 broker publish 之间的投递缺口。"""
+    """Boundedly redeliver stale queued work, including lost published messages.
+
+    ``queue_job_id`` records a broker acknowledgement, not durable evidence that
+    its message still exists.  Attempt/time leases own retry eligibility instead.
+    """
 
     if stale_seconds < 1:
         raise ValueError("stale_seconds must be positive")
@@ -61,18 +67,64 @@ def redeliver_stale_queued_tasks(
             select(
                 SimulationTask.id,
                 SimulationTask.queued_time,
+                SimulationTask.last_delivery_time,
+                SimulationTask.delivery_attempt_count,
             )
             .where(
                 SimulationTask.status == "queued",
                 SimulationTask.active_execution_token.is_(None),
-                SimulationTask.queue_job_id.is_(None),
-                SimulationTask.queued_time.is_not(None),
-                SimulationTask.queued_time < cutoff,
+                SimulationTask.cancel_requested.is_(False),
+                or_(
+                    SimulationTask.last_delivery_time < cutoff,
+                    (
+                        SimulationTask.last_delivery_time.is_(None)
+                        & SimulationTask.queued_time.is_not(None)
+                        & (SimulationTask.queued_time < cutoff)
+                    ),
+                ),
             )
-            .order_by(SimulationTask.queued_time, SimulationTask.id)
+            .order_by(
+                SimulationTask.last_delivery_time.nullsfirst(),
+                SimulationTask.queued_time,
+                SimulationTask.id,
+            )
             .limit(limit)
         ).all()
         for candidate in candidates:
+            last_delivery_predicate = (
+                SimulationTask.last_delivery_time == candidate.last_delivery_time
+                if candidate.last_delivery_time is not None
+                else SimulationTask.last_delivery_time.is_(None)
+            )
+            if candidate.delivery_attempt_count >= MAX_DELIVERY_ATTEMPTS:
+                failed = session.execute(
+                    update(SimulationTask)
+                    .where(
+                        SimulationTask.id == candidate.id,
+                        SimulationTask.status == "queued",
+                        SimulationTask.active_execution_token.is_(None),
+                        SimulationTask.cancel_requested.is_(False),
+                        SimulationTask.delivery_attempt_count
+                        == candidate.delivery_attempt_count,
+                        last_delivery_predicate,
+                    )
+                    .values(
+                        status="failed",
+                        progress=100,
+                        queue_job_id=None,
+                        error_message=(
+                            f"{DELIVERY_RETRY_LIMIT_CODE}: queued delivery remained "
+                            f"unclaimed after {MAX_DELIVERY_ATTEMPTS} attempts"
+                        ),
+                        last_infrastructure_error=DELIVERY_RETRY_LIMIT_CODE,
+                        end_time=datetime.now(UTC),
+                    )
+                )
+                if failed.rowcount == 1:
+                    session.commit()
+                else:
+                    session.rollback()
+                continue
             reserved_time = datetime.now(UTC)
             reserved = session.execute(
                 update(SimulationTask)
@@ -80,10 +132,16 @@ def redeliver_stale_queued_tasks(
                     SimulationTask.id == candidate.id,
                     SimulationTask.status == "queued",
                     SimulationTask.active_execution_token.is_(None),
-                    SimulationTask.queue_job_id.is_(None),
-                    SimulationTask.queued_time == candidate.queued_time,
+                    SimulationTask.cancel_requested.is_(False),
+                    SimulationTask.delivery_attempt_count
+                    == candidate.delivery_attempt_count,
+                    last_delivery_predicate,
                 )
-                .values(queued_time=reserved_time)
+                .values(
+                    queue_job_id=None,
+                    delivery_attempt_count=candidate.delivery_attempt_count + 1,
+                    last_delivery_time=reserved_time,
+                )
             )
             if reserved.rowcount != 1:
                 session.rollback()
@@ -100,7 +158,9 @@ def redeliver_stale_queued_tasks(
                     .where(
                         SimulationTask.id == candidate.id,
                         SimulationTask.status == "queued",
-                        SimulationTask.queued_time == reserved_time,
+                        SimulationTask.delivery_attempt_count
+                        == candidate.delivery_attempt_count + 1,
+                        SimulationTask.last_delivery_time == reserved_time,
                     )
                     .values(
                         last_infrastructure_error=(
@@ -116,9 +176,14 @@ def redeliver_stale_queued_tasks(
                 .where(
                     SimulationTask.id == candidate.id,
                     SimulationTask.status == "queued",
-                    SimulationTask.queued_time == reserved_time,
+                    SimulationTask.delivery_attempt_count
+                    == candidate.delivery_attempt_count + 1,
+                    SimulationTask.last_delivery_time == reserved_time,
                 )
-                .values(queue_job_id=str(getattr(job, "id", "recovered-delivery")))
+                .values(
+                    queue_job_id=str(getattr(job, "id", "recovered-delivery")),
+                    last_infrastructure_error=None,
+                )
             )
             session.commit()
             delivered.append(candidate.id)
@@ -138,3 +203,12 @@ def recover_hydraulic_tasks() -> dict[str, list[int]]:
         "stale_running": stale_running,
         "redelivered": redelivered,
     }
+
+
+__all__ = [
+    "DELIVERY_RETRY_LIMIT_CODE",
+    "MAX_DELIVERY_ATTEMPTS",
+    "recover_hydraulic_tasks",
+    "recover_stale_running_tasks",
+    "redeliver_stale_queued_tasks",
+]

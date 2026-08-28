@@ -360,12 +360,29 @@ export function HydraulicTasksPage() {
     { title: '方案 ID', dataIndex: 'case_id', width: 100 },
     { title: 'Schema', dataIndex: 'input_schema_version', width: 150, render: (value: string | null) => value?.replace('dayu.model-input.', 'v') ?? '—' },
     { title: '求解器 / 能力', key: 'solver', width: 260, render: (_, task) => <Space direction="vertical" size={0}><Text>{task.solver_id ?? 'legacy default'}</Text><Text type="secondary">{task.capability_id ?? '—'}</Text></Space> },
+    {
+      title: '运行构建',
+      key: 'runtime-build',
+      width: 230,
+      render: (_, task) => (
+        <Space direction="vertical" size={0}>
+          <Space size={4}>
+            <Tag color={task.build_verified ? 'success' : 'warning'}>{task.build_verified ? '已验证' : '开发构建'}</Tag>
+            <Text>{task.build_mode ?? '—'}</Text>
+          </Space>
+          <Text type="secondary" title={task.solver_build_id ?? undefined}>
+            {task.engine_commit?.slice(0, 12) ?? '—'} · {task.solver_build_id?.slice(-12) ?? '—'}
+          </Text>
+        </Space>
+      ),
+    },
     { title: '状态', dataIndex: 'status', width: 110, render: statusTag },
     { title: '进度', dataIndex: 'progress', width: 180, render: (value: number) => <Progress percent={value} size="small" /> },
     { title: '阶段', dataIndex: 'execution_phase', width: 150, render: (value: string | null) => value ?? '—' },
     { title: '模拟时刻 / CFL', key: 'runtime', width: 160, render: (_, task) => `${task.current_simulation_time?.toFixed(1) ?? '—'} s / ${task.current_cfl?.toFixed(3) ?? '—'}` },
     { title: '接受步', dataIndex: 'accepted_step_count', width: 100 },
     { title: '执行尝试', key: 'execution-attempts', width: 100, dataIndex: 'execution_attempt_count' },
+    { title: '投递尝试', key: 'delivery-attempts', width: 100, dataIndex: 'delivery_attempt_count' },
     { title: '人工重试', key: 'manual-retries', width: 100, dataIndex: 'manual_retry_count' },
     { title: '基础设施重试', key: 'infrastructure-retries', width: 125, dataIndex: 'infrastructure_retry_count' },
     { title: '数值重试', key: 'numerical-retries', width: 100, dataIndex: 'numerical_retry_count' },
@@ -416,7 +433,7 @@ export function HydraulicTasksPage() {
       />
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}
       <Card className="data-card">
-        <Table rowKey="id" loading={loading} dataSource={tasks} columns={columns} pagination={{ pageSize: 12 }} scroll={{ x: 2750 }} />
+        <Table rowKey="id" loading={loading} dataSource={tasks} columns={columns} pagination={{ pageSize: 12 }} scroll={{ x: 3100 }} />
       </Card>
     </div>
   );

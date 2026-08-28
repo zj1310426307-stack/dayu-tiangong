@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from os import getenv
 from re import fullmatch
 from typing import Any, Mapping
 
@@ -33,6 +32,7 @@ from app.model_engine.v4_schemas import (
     V4ReadinessResponse,
 )
 from model.adapters import V4RuntimeProjection, project_v4_to_v4_lite
+from model.build_identity import RuntimeBuildIdentity, current_runtime_build_identity
 from model.core.errors import HydraulicInputError
 from model.provenance import CANONICALIZATION_ID, snapshot_hash
 from model.solver.registry import (
@@ -417,7 +417,7 @@ def _database_candidate(
     case_id: int,
     dispatch_plan_id: int,
     *,
-    engine_commit: str,
+    build_identity: RuntimeBuildIdentity,
 ) -> tuple[dict[str, Any] | None, list[V4ReadinessIssue]]:
     """Read only authoritative database rows and assemble one candidate snapshot."""
 
@@ -960,8 +960,7 @@ def _database_candidate(
             else None,
         },
         "provenance": {
-            "engine_version": getenv("HYDRAULIC_ENGINE_VERSION", "dayu-hydraulic-4.0.0"),
-            "engine_commit": engine_commit,
+            **build_identity.provenance(),
             "canonicalization_id": CANONICALIZATION_ID,
             "registry_hash": registry_hash(),
         },
@@ -980,15 +979,16 @@ def assess_database_case(
     case_id: int,
     dispatch_plan_id: int,
     *,
-    engine_commit: str | None = None,
+    build_identity: RuntimeBuildIdentity | None = None,
 ) -> NativeV4Assessment:
     """Build and preflight one database-backed candidate without persisting a task."""
 
+    runtime_identity = build_identity or current_runtime_build_identity()
     candidate, database_issues = _database_candidate(
         session,
         case_id,
         dispatch_plan_id,
-        engine_commit=engine_commit or getenv("ENGINE_COMMIT", "uncommitted"),
+        build_identity=runtime_identity,
     )
     if candidate is None:
         errors = [item for item in database_issues if item.severity == "error"]
@@ -1005,6 +1005,16 @@ def assess_database_case(
         )
         return NativeV4Assessment(readiness=readiness)
     assessment = assess_native_v4_snapshot(candidate)
+    if not runtime_identity.verified:
+        assessment.readiness.warnings.append(
+            _issue(
+                "D2_RUNTIME_BUILD_UNVERIFIED",
+                "development runtime has no verified immutable Git build identity",
+                entity_type="runtime_build",
+                field_path="provenance.build_verified",
+                severity="warning",
+            )
+        )
     if database_issues:
         assessment.readiness.errors.extend(
             item for item in database_issues if item.severity == "error"
@@ -1021,7 +1031,7 @@ def freeze_v4_task_input(
     case_id: int,
     dispatch_plan_id: int,
     *,
-    engine_commit: str,
+    build_identity: RuntimeBuildIdentity,
 ) -> tuple[dict[str, Any], str, dict[str, Any]]:
     """Freeze one ready v4 source plus its independently recomputable projection manifest."""
 
@@ -1029,7 +1039,7 @@ def freeze_v4_task_input(
         session,
         case_id,
         dispatch_plan_id,
-        engine_commit=engine_commit,
+        build_identity=build_identity,
     )
     if not assessment.readiness.ready or assessment.projection is None:
         details = "; ".join(

@@ -23,7 +23,7 @@ from model.solver.registry import (
     D1_SOLVER_ID,
     task_solver_provenance,
 )
-from tests.model_engine.helpers import native_v4_payload
+from tests.model_engine.helpers import TEST_BUILD_IDENTITY, native_v4_payload
 
 
 def _task(**changes):
@@ -39,6 +39,11 @@ def _task(**changes):
         "solver_policy_hash": projection.manifest["solver_policy_hash"],
         "validation_policy_hash": projection.manifest["validation_policy_hash"],
         "registry_hash": projection.manifest["registry_hash"],
+        "engine_version": TEST_BUILD_IDENTITY.engine_version,
+        "engine_commit": TEST_BUILD_IDENTITY.engine_commit,
+        "solver_build_id": TEST_BUILD_IDENTITY.solver_build_id,
+        "build_mode": TEST_BUILD_IDENTITY.build_mode,
+        "build_verified": TEST_BUILD_IDENTITY.verified,
     }
     values.update(changes)
     return SimpleNamespace(**values)

@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import UTC, datetime
 import math
-from os import getenv
 from typing import Any
 
 from sqlalchemy import select, update
@@ -26,9 +25,15 @@ from app.model_engine.schemas import (
     SimulationTaskCreate,
     SimulationTaskRecord,
 )
-from app.model_engine.provenance import ENGINE_VERSION, freeze_task_input, snapshot_summary
+from app.model_engine.provenance import freeze_task_input, snapshot_summary
 from app.model_engine.v4_service import freeze_v4_task_input
 from model import HydraulicEngine
+from model.build_identity import (
+    BuildIdentityError,
+    RuntimeBuildIdentity,
+    assert_runtime_build_matches,
+    current_runtime_build_identity,
+)
 from model.core.errors import HydraulicCancelledError
 from model.solver.registry import MODEL_INPUT_V4, task_solver_provenance
 
@@ -230,6 +235,8 @@ def manual_retry_reset_values(task: SimulationTask) -> dict[str, object]:
         "cancel_requested": False,
         "worker_id": None,
         "queue_job_id": None,
+        "delivery_attempt_count": 0,
+        "last_delivery_time": None,
         "queued_time": datetime.now(UTC),
         "start_time": None,
         "end_time": None,
@@ -306,8 +313,8 @@ def build_task_entity(session: Session, payload: SimulationTaskCreate) -> Simula
         # A native-v4 task may carry execution/storage metadata only.  All physical
         # and numerical values are frozen from authoritative platform records.
         config = {"storage_level": payload.storage_level}
-    engine_commit = getenv("ENGINE_COMMIT", "uncommitted")
     try:
+        build_identity = current_runtime_build_identity()
         task_provenance = task_solver_provenance(
             payload.input_schema_version,
             solver_id=payload.solver_id,
@@ -318,7 +325,7 @@ def build_task_entity(session: Session, payload: SimulationTaskCreate) -> Simula
                 session,
                 payload.case_id,
                 payload.dispatch_plan_id,
-                engine_commit=engine_commit,
+                build_identity=build_identity,
             )
         else:
             snapshot, digest = freeze_task_input(
@@ -326,12 +333,12 @@ def build_task_entity(session: Session, payload: SimulationTaskCreate) -> Simula
                 payload.case_id,
                 config,
                 schema_version=payload.input_schema_version,
-                engine_commit=engine_commit,
+                build_identity=build_identity,
             )
             projection = None
     except LookupError as exc:
         raise TaskNotFoundError(str(exc)) from exc
-    except ValueError as exc:
+    except (BuildIdentityError, ValueError) as exc:
         raise TaskStateError(f"model input is not ready: {exc}") from exc
     task = SimulationTask(
         case_id=payload.case_id,
@@ -340,8 +347,11 @@ def build_task_entity(session: Session, payload: SimulationTaskCreate) -> Simula
         input_schema_version=payload.input_schema_version,
         input_snapshot=snapshot,
         input_snapshot_hash=digest,
-        engine_version=ENGINE_VERSION,
-        engine_commit=engine_commit,
+        engine_version=build_identity.engine_version,
+        engine_commit=build_identity.engine_commit,
+        solver_build_id=build_identity.solver_build_id,
+        build_mode=build_identity.build_mode,
+        build_verified=build_identity.verified,
         execution_mode=payload.execution_mode if projection is not None else None,
         execution_phase="validating_snapshot" if projection is not None else None,
         runtime_projection_hash=(
@@ -412,6 +422,14 @@ def run_task(session: Session, task_id: int) -> SimulationTaskRecord:
     session.commit()
 
     try:
+        executed_build_identity = assert_runtime_build_matches(
+            expected_engine_version=task.engine_version,
+            expected_engine_commit=task.engine_commit,
+            expected_solver_build_id=task.solver_build_id,
+            expected_build_mode=task.build_mode,
+            expected_verified=task.build_verified,
+            expected_registry_hash=task.registry_hash,
+        )
         snapshot = task.input_snapshot
         if snapshot is None:
             raise TaskStateError("legacy task has no frozen input snapshot")
@@ -422,7 +440,12 @@ def run_task(session: Session, task_id: int) -> SimulationTaskRecord:
         task.progress = 80
         session.flush()
 
-        return persist_engine_result(session, task, engine_result)
+        return persist_engine_result(
+            session,
+            task,
+            engine_result,
+            executed_build_identity=executed_build_identity,
+        )
     except HydraulicCancelledError as exc:
         session.rollback()
         cancelled = session.get(SimulationTask, task_id)
@@ -451,7 +474,11 @@ def run_task(session: Session, task_id: int) -> SimulationTaskRecord:
 
 
 def persist_engine_result(
-    session: Session, task: SimulationTask, engine_result: Any
+    session: Session,
+    task: SimulationTask,
+    engine_result: Any,
+    *,
+    executed_build_identity: RuntimeBuildIdentity | None = None,
 ) -> SimulationTaskRecord:
     """通过唯一入口持久化 v1/v2/v3 结果并完成 success 状态。"""
 
@@ -568,9 +595,27 @@ def persist_engine_result(
                     reason=item.get("reason"),
                 )
             )
+    worker_build = executed_build_identity or current_runtime_build_identity()
     task.status = "success"
     task.progress = 100
-    task.diagnostics = engine_result.diagnostics
+    task.diagnostics = {
+        **dict(engine_result.diagnostics),
+        "runtime_build_identity": {
+            "task_requested": {
+                "engine_version": task.engine_version,
+                "engine_commit": task.engine_commit,
+                "solver_build_id": task.solver_build_id,
+                "build_mode": task.build_mode,
+                "build_verified": task.build_verified,
+                "unverified_build": not task.build_verified,
+                "registry_hash": task.registry_hash,
+            },
+            "worker_executed": {
+                **worker_build.provenance(),
+                "registry_hash": task.registry_hash,
+            },
+        },
+    }
     task.result_path = f"database://simulation_result?task_id={task.id}"
     task.end_time = datetime.now(UTC)
     task.heartbeat_time = datetime.now(UTC)

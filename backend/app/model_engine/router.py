@@ -326,6 +326,9 @@ def get_task_snapshot(task_id: int, session: SessionDependency) -> TaskSnapshotR
         input_snapshot_hash=task.input_snapshot_hash,
         engine_version=task.engine_version or "unknown",
         engine_commit=task.engine_commit or "unknown",
+        solver_build_id=task.solver_build_id,
+        build_mode=task.build_mode,
+        build_verified=task.build_verified,
         snapshot=task.input_snapshot,
     )
 
@@ -345,14 +348,14 @@ def enqueue_task(task_id: int, session: SessionDependency) -> SimulationTaskReco
         raise HTTPException(status_code=409, detail="only a pending task can be queued")
     task.status = "queued"
     task.queued_time = datetime.now(UTC)
+    task.delivery_attempt_count += 1
+    task.last_delivery_time = task.queued_time
     session.commit()
     try:
         job = _deliver(task)
     except Exception as exc:
-        task.status = "failed"
-        task.progress = 100
-        task.error_message = "queue broker unavailable"
-        task.end_time = datetime.now(UTC)
+        task.queue_job_id = None
+        task.last_infrastructure_error = "queue broker unavailable; recovery pending"
         session.commit()
         raise HTTPException(status_code=503, detail="queue broker unavailable") from exc
     task.queue_job_id = str(job.id)
@@ -393,13 +396,14 @@ def retry_task(task_id: int, session: SessionDependency) -> SimulationTaskRecord
         task = service.reset_task_for_manual_retry(session, task)
     except service.TaskStateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    task.delivery_attempt_count += 1
+    task.last_delivery_time = datetime.now(UTC)
+    session.commit()
     try:
         job = _deliver(task)
     except Exception as exc:
-        task.status = "failed"
-        task.progress = 100
-        task.error_message = "queue broker unavailable"
-        task.end_time = datetime.now(UTC)
+        task.queue_job_id = None
+        task.last_infrastructure_error = "queue broker unavailable; recovery pending"
         session.commit()
         raise HTTPException(status_code=503, detail="queue broker unavailable") from exc
     task.queue_job_id = str(job.id)

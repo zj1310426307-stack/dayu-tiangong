@@ -89,6 +89,9 @@ class SimulationTaskRecord(BaseModel):
     input_snapshot_hash: str | None
     engine_version: str | None
     engine_commit: str | None
+    solver_build_id: str | None
+    build_mode: str | None
+    build_verified: bool
     solver_id: str | None
     capability_id: str | None
     runtime_adapter_id: str | None
@@ -105,6 +108,8 @@ class SimulationTaskRecord(BaseModel):
     group_role: str | None
     snapshot_summary: dict[str, Any] | None = None
     queue_job_id: str | None
+    delivery_attempt_count: int
+    last_delivery_time: datetime | None
     worker_id: str | None
     queued_time: datetime | None
     heartbeat_time: datetime | None
@@ -150,6 +155,9 @@ class TaskSnapshotResponse(BaseModel):
     input_snapshot_hash: str
     engine_version: str
     engine_commit: str
+    solver_build_id: str | None
+    build_mode: str | None
+    build_verified: bool
     snapshot: dict[str, Any]
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import runpy
 from pathlib import Path
 
+from model.build_identity import current_runtime_build_identity
 from model.provenance import CANONICALIZATION_ID, snapshot_hash
 from model.solver.registry import (
     D1_CAPABILITY,
@@ -14,6 +15,9 @@ from model.solver.registry import (
     D1_SOLVER_ID,
     registry_hash,
 )
+
+
+TEST_BUILD_IDENTITY = current_runtime_build_identity()
 
 
 def d1_runtime_payload() -> dict:
@@ -82,8 +86,7 @@ def native_v4_payload() -> dict:
             "water_balance_tolerance": runtime["solver"]["water_balance_tolerance"],
         },
         "provenance": {
-            "engine_version": runtime["provenance"]["engine_version"],
-            "engine_commit": "cc6936d9d48d64c46a78ba85bed77c473e20cff3",
+            **TEST_BUILD_IDENTITY.provenance(),
             "canonicalization_id": CANONICALIZATION_ID,
             "registry_hash": registry_hash(),
         },

@@ -41,6 +41,7 @@ from app.hydraulic.models import (
 from app.worker.celery_app import celery_app
 from app.worker.lifecycle import claim_task
 from app.worker.tasks import V4_QUEUE
+from model.build_identity import current_runtime_build_identity
 from model.provenance import snapshot_hash
 from model.solver.registry import D1_SOLVER_ID
 from tests.model_engine.helpers import native_v4_payload
@@ -458,6 +459,11 @@ def test_v4_task_runs_through_api_broker_worker_postgis_and_artifact(
         assert readiness["ready"] is True, readiness
         assert readiness["errors"] == []
         assert readiness["snapshot_summary"]["section_count"] == 20
+        runtime_identity = current_runtime_build_identity()
+        warning_codes = {item["code"] for item in readiness["warnings"]}
+        assert ("D2_RUNTIME_BUILD_UNVERIFIED" in warning_codes) is (
+            not runtime_identity.verified
+        )
 
         preview_response = client.get(
             f"/api/v1/model-data/simulation-cases/{CASE_ID}/input-v4/preview",
@@ -484,6 +490,9 @@ def test_v4_task_runs_through_api_broker_worker_postgis_and_artifact(
         task_id = int(created["id"])
         assert created["status"] == "pending"
         assert created["input_schema_version"] == "dayu.model-input.v4"
+        assert created["engine_commit"] == runtime_identity.engine_commit
+        assert created["solver_build_id"] == runtime_identity.solver_build_id
+        assert created["build_verified"] is runtime_identity.verified
 
         enqueue_response = client.post(f"/api/v1/model/tasks/{task_id}/enqueue")
         assert enqueue_response.status_code == 200, enqueue_response.text
@@ -511,6 +520,13 @@ def test_v4_task_runs_through_api_broker_worker_postgis_and_artifact(
         assert summary["gate_row_count"] == 25
         assert summary["pump_row_count"] == 25
         assert summary["event_count"] == 3
+        executed_identity = summary["provenance"]["runtime_build_identity"]
+        assert executed_identity["task_requested"]["solver_build_id"] == (
+            runtime_identity.solver_build_id
+        )
+        assert executed_identity["worker_executed"]["solver_build_id"] == (
+            runtime_identity.solver_build_id
+        )
 
         section_options = client.get(
             f"/api/v1/model/v4/tasks/{task_id}/sections"

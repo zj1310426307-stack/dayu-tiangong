@@ -1,5 +1,10 @@
 # HYDRO-MODEL-02-D2 Known Limitations
 
+> RC2 does not expand this scientific or production boundary. Build identity and
+> bounded redelivery do not provide calibration, production water-decision approval,
+> public IAM/RBAC, multi-tenancy, remote object-store HA, distributed transactions,
+> or multi-version Worker routing.
+
 D2 is platform integration of the already frozen D1 scientific subset. It is
 validation software, not a calibrated production water-decision system. RC1 integrity
 work does not expand that scope and is not declared PASS by this document.

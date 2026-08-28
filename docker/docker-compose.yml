@@ -1,6 +1,16 @@
 # GIS-RESET-01 unified runtime: PostGIS + GeoServer + FastAPI + OpenLayers/Nginx.
 name: dayu-tiangong-phase1
 
+x-backend-runtime: &backend_runtime
+  image: dayu-backend:${ENGINE_COMMIT:?ENGINE_COMMIT is required}
+  build:
+    context: ..
+    dockerfile: docker/backend.Dockerfile
+    args:
+      ENGINE_VERSION: ${DAYU_ENGINE_VERSION:-dayu-hydraulic-4.0.0}
+      ENGINE_COMMIT: ${ENGINE_COMMIT:?ENGINE_COMMIT is required}
+      BUILD_MODE: ${DAYU_BUILD_MODE:-release}
+
 services:
   database:
     build:
@@ -33,9 +43,7 @@ services:
       retries: 10
 
   migrate:
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
+    <<: *backend_runtime
     command: ["python", "-m", "alembic", "-c", "../database/alembic.ini", "upgrade", "head"]
     environment: &backend_environment
       POSTGRES_HOST: database
@@ -46,7 +54,9 @@ services:
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       DAYU_STORAGE_ROOT: /app/backend/storage
-      ENGINE_COMMIT: ${ENGINE_COMMIT:-local-compose}
+      ENGINE_COMMIT: ${ENGINE_COMMIT:?ENGINE_COMMIT is required}
+      DAYU_ENGINE_VERSION: ${DAYU_ENGINE_VERSION:-dayu-hydraulic-4.0.0}
+      DAYU_BUILD_MODE: ${DAYU_BUILD_MODE:-release}
       ENABLE_SYNC_MODEL_RUN: ${ENABLE_SYNC_MODEL_RUN:-0}
       AI_LLM_PROVIDER: ${AI_LLM_PROVIDER:-local}
       AI_LLM_BASE_URL: ${AI_LLM_BASE_URL:-}
@@ -57,9 +67,7 @@ services:
         condition: service_healthy
 
   seed:
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
+    <<: *backend_runtime
     command: ["python", "../database/seed/demo_data.py"]
     environment: *backend_environment
     depends_on:
@@ -67,9 +75,7 @@ services:
         condition: service_completed_successfully
 
   qgis-bootstrap:
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
+    <<: *backend_runtime
     command: ["python", "../database/bootstrap_qgis.py"]
     environment:
       <<: *backend_environment
@@ -83,9 +89,7 @@ services:
         condition: service_completed_successfully
 
   app-bootstrap:
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
+    <<: *backend_runtime
     command: ["python", "../database/bootstrap_app.py"]
     environment:
       <<: *backend_environment
@@ -118,9 +122,7 @@ services:
         condition: service_healthy
 
   geoserver-init:
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
+    <<: *backend_runtime
     command: ["python", "../geoserver/bootstrap.py"]
     environment:
       <<: *backend_environment
@@ -142,9 +144,7 @@ services:
         condition: service_completed_successfully
 
   gis-catalog-seed:
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
+    <<: *backend_runtime
     command: ["python", "../database/seed/gis_catalog.py"]
     environment:
       <<: *backend_environment
@@ -154,9 +154,7 @@ services:
         condition: service_completed_successfully
 
   backend:
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
+    <<: *backend_runtime
     environment:
       <<: *backend_environment
       POSTGRES_USER: ${BACKEND_DB_USER:-dayu_backend}
@@ -186,9 +184,7 @@ services:
       retries: 6
 
   worker:
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
+    <<: *backend_runtime
     command: ["python", "-m", "celery", "-A", "app.worker.celery_app:celery_app", "worker", "--loglevel=INFO", "--pool=solo"]
     environment:
       <<: *backend_environment
@@ -211,9 +207,7 @@ services:
       start_period: 20s
 
   worker-v4:
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
+    <<: *backend_runtime
     command:
       [
         "python",
@@ -252,9 +246,7 @@ services:
       start_period: 20s
 
   scheduler:
-    build:
-      context: ..
-      dockerfile: docker/backend.Dockerfile
+    <<: *backend_runtime
     command:
       [
         "python",

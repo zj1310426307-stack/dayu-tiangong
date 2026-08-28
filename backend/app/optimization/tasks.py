@@ -20,7 +20,6 @@ from app.gis.models import (
     SimulationTask,
     StructureResult,
 )
-from app.model_engine.provenance import ENGINE_VERSION
 from app.worker.celery_app import celery_app
 from app.worker.tasks import run_hydraulic_task
 from model.metrics import evaluate_metrics
@@ -148,9 +147,20 @@ def _build_candidate_simulation_task(
         input_schema_version=MODEL_INPUT_V2,
         input_snapshot=candidate_snapshot,
         input_snapshot_hash=snapshot_hash(candidate_snapshot),
-        engine_version=ENGINE_VERSION,
+        engine_version=(candidate_snapshot.get("provenance") or {}).get(
+            "engine_version"
+        ),
         engine_commit=(candidate_snapshot.get("provenance") or {}).get(
-            "engine_commit", "uncommitted"
+            "engine_commit"
+        ),
+        solver_build_id=(candidate_snapshot.get("provenance") or {}).get(
+            "solver_build_id"
+        ),
+        build_mode=(candidate_snapshot.get("provenance") or {}).get("build_mode"),
+        build_verified=bool(
+            (candidate_snapshot.get("provenance") or {}).get(
+                "build_verified", False
+            )
         ),
         queued_time=datetime.now(UTC),
         **task_solver_provenance(MODEL_INPUT_V2),

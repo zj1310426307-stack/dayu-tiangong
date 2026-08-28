@@ -1599,7 +1599,8 @@ class SimulationTask(Base):
         CheckConstraint(
             "retry_count >= 0 AND execution_attempt_count >= 0 "
             "AND manual_retry_count >= 0 AND infrastructure_retry_count >= 0 "
-            "AND numerical_retry_count >= 0 AND accepted_step_count >= 0 "
+            "AND numerical_retry_count >= 0 AND delivery_attempt_count >= 0 "
+            "AND accepted_step_count >= 0 "
             "AND cfl_reduction_count >= 0 AND positivity_retry_count >= 0 "
             "AND event_refinement_count >= 0 AND gate_solver_retry_count >= 0 "
             "AND pump_solver_retry_count >= 0 AND minimum_dt_failure_count >= 0",
@@ -1609,6 +1610,10 @@ class SimulationTask(Base):
             "(active_execution_token IS NULL OR length(active_execution_token) BETWEEN 1 AND 64) "
             "AND (last_execution_token IS NULL OR length(last_execution_token) BETWEEN 1 AND 64)",
             name="ck_simulation_task_execution_token_length",
+        ),
+        CheckConstraint(
+            "build_mode IS NULL OR build_mode IN ('development','ci','release')",
+            name="ck_simulation_task_build_mode",
         ),
         UniqueConstraint(
             "comparison_group_id", "group_role",
@@ -1620,6 +1625,11 @@ class SimulationTask(Base):
         Index("ix_simulation_task_case_id", "case_id"),
         Index("ix_simulation_task_dataset_version_id", "dataset_version_id"),
         Index("ix_simulation_task_status", "status"),
+        Index(
+            "ix_simulation_task_queued_delivery_recovery",
+            "status",
+            "last_delivery_time",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -1637,6 +1647,11 @@ class SimulationTask(Base):
     input_snapshot_hash: Mapped[str | None] = mapped_column(String(64))
     engine_version: Mapped[str | None] = mapped_column(String(64))
     engine_commit: Mapped[str | None] = mapped_column(String(64))
+    solver_build_id: Mapped[str | None] = mapped_column(String(96))
+    build_mode: Mapped[str | None] = mapped_column(String(16))
+    build_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
     solver_id: Mapped[str | None] = mapped_column(String(96))
     capability_id: Mapped[str | None] = mapped_column(String(96))
     runtime_adapter_id: Mapped[str | None] = mapped_column(String(96))
@@ -1654,6 +1669,10 @@ class SimulationTask(Base):
     )
     group_role: Mapped[str | None] = mapped_column(String(16))
     queue_job_id: Mapped[str | None] = mapped_column(String(128))
+    delivery_attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    last_delivery_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     worker_id: Mapped[str | None] = mapped_column(String(128))
     queued_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     heartbeat_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

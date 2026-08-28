@@ -1,5 +1,10 @@
 # HYDRO-MODEL-02-D2 Validation Report
 
+> RC2 superseding gate: D2 additionally requires immutable runtime build matching,
+> migration 0022, bounded recovery of stale queued messages even with a non-null job
+> marker, and the Python 3.12 Hosted `D2 shipping runtime` job. Current evidence is
+> tracked in `HYDRO-MODEL-02-D2-RC2-validation-report.md`; older runs are not reused.
+
 ## Current RC1 validation snapshot
 
 The active D2 candidate includes RC1 consistency changes beyond the historical D2

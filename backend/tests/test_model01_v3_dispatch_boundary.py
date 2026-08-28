@@ -22,6 +22,7 @@ from app.hydraulic.model_input import _build_structure_control_envelopes
 from app.model_engine import service as model_service
 from app.model_engine import provenance as task_provenance
 from app.model_engine.schemas import SimulationTaskCreate
+from model.build_identity import RuntimeBuildIdentity, current_runtime_build_identity
 from model.provenance import snapshot_hash
 
 
@@ -173,12 +174,13 @@ def test_freeze_task_input_passes_plan_before_hash_and_merges_provenance(
     )
     monkeypatch.setattr(task_provenance, "adapt_v3_to_v2", lambda snapshot: {})
     fake_session = object()
+    build_identity = current_runtime_build_identity()
     snapshot, digest = task_provenance.freeze_task_input(
         fake_session,
         17,
         {"duration_seconds": 3600.0},
         schema_version="dayu.model-input.v3",
-        engine_commit="commit-abc",
+        build_identity=build_identity,
         dispatch_plan=dispatch_plan,
     )
 
@@ -188,8 +190,7 @@ def test_freeze_task_input_passes_plan_before_hash_and_merges_provenance(
     assert snapshot["provenance"] == {
         "source_refs": {"survey_batch": "SURVEY-2026"},
         "validation_report": "quality-report.xlsx",
-        "engine_version": task_provenance.ENGINE_VERSION,
-        "engine_commit": "commit-abc",
+        **build_identity.provenance(),
         "input_schema_version": "dayu.model-input.v3",
     }
     assert digest == snapshot_hash(snapshot)
@@ -210,12 +211,13 @@ def test_freeze_task_input_rejects_non_object_provenance(
     )
     monkeypatch.setattr(task_provenance, "adapt_v3_to_v2", lambda snapshot: {})
     with pytest.raises(ValueError, match="provenance must be an object"):
+        build_identity = current_runtime_build_identity()
         task_provenance.freeze_task_input(
             object(),
             17,
             {},
             schema_version="dayu.model-input.v3",
-            engine_commit="commit-abc",
+            build_identity=build_identity,
         )
 
 
@@ -234,7 +236,7 @@ def test_dispatch_run_freezes_independent_baseline_and_controlled_v3_inputs(
         config: dict[str, object],
         *,
         schema_version: str,
-        engine_commit: str,
+        build_identity: RuntimeBuildIdentity,
         dispatch_plan: dict[str, object] | None = None,
     ) -> tuple[dict[str, object], str]:
         calls.append({
@@ -242,7 +244,7 @@ def test_dispatch_run_freezes_independent_baseline_and_controlled_v3_inputs(
             "case_id": case_id,
             "config": config,
             "schema_version": schema_version,
-            "engine_commit": engine_commit,
+            "build_identity": build_identity,
             "dispatch_plan": dispatch_plan,
         })
         label = "controlled" if dispatch_plan is not None else "baseline"
@@ -251,8 +253,9 @@ def test_dispatch_run_freezes_independent_baseline_and_controlled_v3_inputs(
     monkeypatch.setattr(
         dispatch_service, "freeze_task_input", fake_freeze_task_input
     )
+    build_identity = current_runtime_build_identity()
     result = dispatch_service._freeze_run_snapshots(
-        object(), plan, {"duration_seconds": 3600.0}, "commit-abc"
+        object(), plan, {"duration_seconds": 3600.0}, build_identity
     )
 
     assert result == (
@@ -560,6 +563,9 @@ def _queued_dispatch_objects() -> tuple[SimpleNamespace, SimpleNamespace, Simple
         "status": "queued",
         "progress": 0,
         "queue_job_id": None,
+        "delivery_attempt_count": 0,
+        "last_delivery_time": None,
+        "last_infrastructure_error": None,
         "error_message": None,
         "end_time": None,
     }
@@ -579,10 +585,10 @@ class _CommitCounter:
         self.commits += 1
 
 
-def test_dispatch_queue_failure_before_first_delivery_is_durably_failed(
+def test_dispatch_queue_failure_before_first_delivery_remains_recoverable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A broker outage cannot leave either task or the run permanently queued."""
+    """A broker outage leaves durable queued intent for periodic recovery."""
 
     run, baseline, controlled = _queued_dispatch_objects()
     session = _CommitCounter()
@@ -595,18 +601,20 @@ def test_dispatch_queue_failure_before_first_delivery_is_durably_failed(
     with pytest.raises(dispatch_service.DispatchQueueError) as raised:
         dispatch_service._enqueue_run_tasks(session, run, baseline, controlled)
 
-    assert "no tasks were enqueued" in str(raised.value)
-    assert session.commits == 1
-    assert {baseline.status, controlled.status, run.status} == {"failed"}
-    assert baseline.progress == controlled.progress == run.progress == 100
-    assert baseline.end_time is controlled.end_time is run.end_time
+    assert "recovery pending" in str(raised.value)
+    assert session.commits == 2
+    assert {baseline.status, controlled.status, run.status} == {"queued"}
+    assert baseline.delivery_attempt_count == 1
+    assert controlled.delivery_attempt_count == 0
+    assert baseline.last_delivery_time is not None
+    assert "recovery pending" in baseline.last_infrastructure_error
     assert dispatch_router._error(raised.value).status_code == 503
 
 
-def test_dispatch_queue_failure_after_baseline_records_partial_delivery(
+def test_dispatch_queue_failure_after_baseline_records_recoverable_partial_delivery(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A second delivery failure preserves the first job ID and fails its sibling."""
+    """A second failure preserves both queued intents and the first job marker."""
 
     run, baseline, controlled = _queued_dispatch_objects()
     session = _CommitCounter()
@@ -624,14 +632,16 @@ def test_dispatch_queue_failure_after_baseline_records_partial_delivery(
         dispatch_service._enqueue_run_tasks(session, run, baseline, controlled)
 
     assert calls == [101, 102]
-    assert session.commits == 2
+    assert session.commits == 4
     assert baseline.status == "queued"
     assert baseline.queue_job_id == "baseline-job"
-    assert controlled.status == "failed"
-    assert controlled.progress == 100
+    assert controlled.status == "queued"
+    assert controlled.progress == 0
     assert controlled.queue_job_id is None
-    assert run.status == "failed"
+    assert controlled.delivery_attempt_count == 1
+    assert controlled.last_delivery_time is not None
+    assert run.status == "queued"
     assert run.queue_job_id == "baseline-job"
     assert "baseline_job_id=baseline-job" in str(raised.value)
-    assert "controlled task was not enqueued" in run.error_message
+    assert "durable recovery pending" in run.error_message
     assert dispatch_router._error(raised.value).status_code == 503

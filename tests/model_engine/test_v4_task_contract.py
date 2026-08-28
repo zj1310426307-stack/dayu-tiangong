@@ -75,8 +75,8 @@ def test_native_v4_snapshot_summary_reads_nested_structures() -> None:
     assert summary["pump_count"] == 1
 
 
-def test_openapi_deprecates_legacy_retry_count_and_exposes_rc1_counters() -> None:
-    """Direct callers must migrate from the ambiguous aggregate retry counter."""
+def test_openapi_exposes_rc2_build_and_delivery_contract() -> None:
+    """Expose immutable runtime identity and bounded delivery state to clients."""
 
     task_schema = create_app().openapi()["components"]["schemas"]["SimulationTaskRecord"]
     properties = task_schema["properties"]
@@ -85,3 +85,8 @@ def test_openapi_deprecates_legacy_retry_count_and_exposes_rc1_counters() -> Non
     assert "numerical_retry_count" in properties
     assert "execution_attempt_count" in properties
     assert "manual_retry_count" in properties
+    assert "solver_build_id" in properties
+    assert "build_mode" in properties
+    assert "build_verified" in properties
+    assert "delivery_attempt_count" in properties
+    assert "last_delivery_time" in properties

@@ -36,6 +36,12 @@ def test_gp1_six_hour_gate_pump_benchmark_closes_all_budgets() -> None:
         for event in document["control_events"]
     ]
     assert events == [("gate", "open"), ("pump", "start"), ("pump", "stop")]
+    assert [event["time"] for event in document["control_events"]] == [
+        2940.0,
+        7740.0,
+        12540.0,
+    ]
+    assert document["diagnostics"]["step_count"] == 381
 
     pump = document["pumps"][0]
     assert pump["control_state"][0] == "off"

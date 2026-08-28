@@ -346,8 +346,8 @@ def test_worker_lost_duplicate_stale_recovery_redelivery_publishes_once(
 
 
 @requires_fault_services
-def test_stale_queued_delivery_publish_gap_is_retried_by_periodic_recovery() -> None:
-    """A DB-committed queue intent survives one unavailable broker publication."""
+def test_stale_queued_delivery_is_bounded_even_with_non_null_job_id() -> None:
+    """Lost acknowledged messages are retried by lease, interval, and hard limit."""
 
     task_id = _create_queued_task()
     calls = 0
@@ -376,8 +376,20 @@ def test_stale_queued_delivery_publish_gap_is_retried_by_periodic_recovery() -> 
             assert task is not None
             assert task.status == "queued"
             assert task.queue_job_id is None
+            assert task.delivery_attempt_count == 1
             assert "publish failed" in str(task.last_infrastructure_error)
-            task.queued_time = datetime.now(UTC) - timedelta(minutes=10)
+        for _scan in range(5):
+            assert redeliver_stale_queued_tasks(
+                stale_seconds=60,
+                deliver=unavailable_then_published,
+            ) == []
+        assert calls == 1
+
+        with SessionLocal() as session:
+            task = session.get(SimulationTask, task_id)
+            assert task is not None
+            task.queue_job_id = "acknowledged-but-lost"
+            task.last_delivery_time = datetime.now(UTC) - timedelta(minutes=10)
             session.commit()
 
         assert redeliver_stale_queued_tasks(
@@ -389,13 +401,42 @@ def test_stale_queued_delivery_publish_gap_is_retried_by_periodic_recovery() -> 
             assert task is not None
             assert task.status == "queued"
             assert task.queue_job_id == "recovered-delivery-id"
-            task.queued_time = datetime.now(UTC) - timedelta(minutes=10)
+            assert task.delivery_attempt_count == 2
+        for _scan in range(5):
+            assert redeliver_stale_queued_tasks(
+                stale_seconds=60,
+                deliver=unavailable_then_published,
+            ) == []
+        assert calls == 2
+
+        with SessionLocal() as session:
+            task = session.get(SimulationTask, task_id)
+            assert task is not None
+            task.last_delivery_time = datetime.now(UTC) - timedelta(minutes=10)
+            session.commit()
+        assert redeliver_stale_queued_tasks(
+            stale_seconds=60,
+            deliver=unavailable_then_published,
+        ) == [task_id]
+        assert calls == 3
+
+        with SessionLocal() as session:
+            task = session.get(SimulationTask, task_id)
+            assert task is not None
+            assert task.delivery_attempt_count == 3
+            assert task.queue_job_id == "recovered-delivery-id"
+            task.last_delivery_time = datetime.now(UTC) - timedelta(minutes=10)
             session.commit()
         assert redeliver_stale_queued_tasks(
             stale_seconds=60,
             deliver=unavailable_then_published,
         ) == []
-        assert calls == 2
+        assert calls == 3
+        with SessionLocal() as session:
+            task = session.get(SimulationTask, task_id)
+            assert task is not None
+            assert task.status == "failed"
+            assert "D2_DELIVERY_RETRY_LIMIT" in str(task.error_message)
         write_evidence("queued-delivery-recovery", task_snapshot(task_id))
     finally:
         delete_task(task_id)

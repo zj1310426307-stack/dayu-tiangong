@@ -140,12 +140,12 @@ def test_rc1_result_rows_have_dataset_composite_identities() -> None:
     }
 
 
-def test_0021_is_the_single_reversible_head_with_fail_fast_guards() -> None:
-    """Keep 0020 immutable while making 0021 the sole guarded migration head."""
+def test_0021_remains_immutable_below_the_rc2_migration_head() -> None:
+    """Keep the RC1 migration immutable while RC2 extends its single lineage."""
 
     config = Config(str(REPOSITORY_ROOT / "database" / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["20260828_0021"]
+    assert script.get_heads() == ["20260828_0022"]
 
     source = MIGRATION.read_text(encoding="utf-8")
     assert 'down_revision: str | None = "20260828_0020"' in source

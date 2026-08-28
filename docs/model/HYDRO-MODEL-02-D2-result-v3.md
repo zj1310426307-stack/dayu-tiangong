@@ -1,5 +1,10 @@
 # HYDRO-MODEL-02-D2 Hydraulic Result v3
 
+> RC2 provenance addendum: result diagnostics and Artifact metadata bind
+> `engine_version`, `engine_commit`, `solver_build_id`, `build_mode`, and
+> `build_verified`. Diagnostics preserve both task-requested and Worker-executed
+> identities, which are matched before solving.
+
 ## Contract
 
 `dayu.hydraulic-result.v3` is the platform result identity for native-v4 tasks. The

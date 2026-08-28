@@ -5,7 +5,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from fastapi import HTTPException
 
+from app.model_engine import router
 from app.model_engine.service import (
     can_retry_task,
     manual_retry_reset_values,
@@ -76,6 +78,7 @@ def test_v4_manual_retry_resets_all_runtime_telemetry_only() -> None:
     for field in (
         "worker_id",
         "queue_job_id",
+        "last_delivery_time",
         "start_time",
         "end_time",
         "heartbeat_time",
@@ -91,6 +94,7 @@ def test_v4_manual_retry_resets_all_runtime_telemetry_only() -> None:
         assert values[field] is None
     for field in (
         "progress",
+        "delivery_attempt_count",
         "accepted_step_count",
         "numerical_retry_count",
         "cfl_reduction_count",
@@ -124,3 +128,41 @@ def test_legacy_retry_count_remains_a_compatibility_counter() -> None:
     )
     assert values["retry_count"] == 18
     assert values["manual_retry_count"] == 3
+
+
+def test_initial_broker_failure_leaves_a_bounded_recovery_intent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task = SimpleNamespace(
+        id=9,
+        status="pending",
+        queued_time=None,
+        delivery_attempt_count=0,
+        last_delivery_time=None,
+        queue_job_id="stale-marker",
+        last_infrastructure_error=None,
+    )
+    commits = 0
+
+    class Session:
+        def get(self, _model: object, task_id: int) -> object:
+            assert task_id == task.id
+            return task
+
+        def commit(self) -> None:
+            nonlocal commits
+            commits += 1
+
+    def unavailable(_task: object) -> object:
+        raise ConnectionError("injected broker failure")
+
+    monkeypatch.setattr(router, "_deliver", unavailable)
+    with pytest.raises(HTTPException) as error:
+        router.enqueue_task(task.id, Session())  # type: ignore[arg-type]
+    assert error.value.status_code == 503
+    assert task.status == "queued"
+    assert task.queue_job_id is None
+    assert task.delivery_attempt_count == 1
+    assert task.last_delivery_time == task.queued_time
+    assert "recovery pending" in task.last_infrastructure_error
+    assert commits == 2

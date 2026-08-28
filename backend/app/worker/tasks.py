@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import socket
+from datetime import UTC, datetime
 from time import monotonic
 from typing import Any
 
@@ -31,6 +32,12 @@ from app.worker.lifecycle import (
 )
 from model import HydraulicEngine
 from model.adapters import V4RuntimeProjection, project_v4_to_v4_lite
+from model.build_identity import (
+    RuntimeBuildIdentity,
+    RuntimeBuildMismatchError,
+    assert_runtime_build_matches,
+    current_runtime_build_identity,
+)
 from model.core.errors import HydraulicCancelledError, HydraulicInputError
 from model.provenance import snapshot_hash
 from model.solver.registry import (
@@ -49,9 +56,33 @@ V4_WORKER_CAPABILITIES = {
 INFRASTRUCTURE_ERRORS = (ConnectionError, TimeoutError, OSError, OperationalError)
 
 
-def validate_v4_worker_task(task: SimulationTask) -> V4RuntimeProjection:
+def validate_worker_build_identity(
+    task: SimulationTask,
+    runtime_identity: RuntimeBuildIdentity | None = None,
+) -> RuntimeBuildIdentity:
+    """Reject a claimed task unless the executing process is its frozen build."""
+
+    try:
+        return assert_runtime_build_matches(
+            expected_engine_version=task.engine_version,
+            expected_engine_commit=task.engine_commit,
+            expected_solver_build_id=task.solver_build_id,
+            expected_build_mode=task.build_mode,
+            expected_verified=task.build_verified,
+            expected_registry_hash=task.registry_hash,
+            actual=runtime_identity,
+        )
+    except RuntimeBuildMismatchError as exc:
+        raise HydraulicInputError(str(exc)) from exc
+
+
+def validate_v4_worker_task(
+    task: SimulationTask,
+    runtime_identity: RuntimeBuildIdentity | None = None,
+) -> V4RuntimeProjection:
     """Recompute every frozen v4 identity after claim and fail closed on drift."""
 
+    validate_worker_build_identity(task, runtime_identity)
     if task.input_snapshot is None or task.input_snapshot_hash is None:
         raise HydraulicInputError("native-v4 task has no frozen input snapshot")
     registered = task_solver_provenance(str(task.input_schema_version))
@@ -222,6 +253,23 @@ def _handle_infrastructure_error(
         message=f"{type(exc).__name__}: {exc}",
     )
     if outcome == "requeued":
+        delivery_time = datetime.now(UTC)
+        reserved = session.execute(
+            update(SimulationTask)
+            .where(
+                SimulationTask.id == task_id,
+                SimulationTask.status == "queued",
+                SimulationTask.active_execution_token.is_(None),
+            )
+            .values(
+                delivery_attempt_count=SimulationTask.delivery_attempt_count + 1,
+                last_delivery_time=delivery_time,
+            )
+        )
+        if reserved.rowcount != 1:
+            session.rollback()
+            return "stale"
+        session.commit()
         retry_signal = celery_task.retry(exc=exc, countdown=1, throw=False)
         request_id = getattr(getattr(celery_task, "request", None), "id", None)
         queue_job_id = str(request_id or f"retry-task-{task_id}")
@@ -232,6 +280,7 @@ def _handle_infrastructure_error(
                 SimulationTask.status == "queued",
                 SimulationTask.active_execution_token.is_(None),
                 SimulationTask.queue_job_id.is_(None),
+                SimulationTask.last_delivery_time == delivery_time,
             )
             .values(queue_job_id=queue_job_id)
         )
@@ -282,6 +331,7 @@ def run_hydraulic_task(self, task_id: int) -> dict[str, str | int]:
             )
 
         try:
+            executed_build_identity = validate_worker_build_identity(task)
             if task.input_snapshot is None:
                 raise HydraulicInputError("task has no frozen input snapshot")
             result = HydraulicEngine().run(
@@ -298,7 +348,14 @@ def run_hydraulic_task(self, task_id: int) -> dict[str, str | int]:
                 task,
                 result,
                 execution_token=execution_token,
-                persist=persist_engine_result,
+                persist=lambda active_session, active_task, active_result: (
+                    persist_engine_result(
+                        active_session,
+                        active_task,
+                        active_result,
+                        executed_build_identity=executed_build_identity,
+                    )
+                ),
             )
             return {"task_id": task_id, "status": "success"}
         except HydraulicCancelledError as exc:
@@ -394,7 +451,8 @@ def run_hydraulic_v4_task(self, task_id: int) -> dict[str, str | int]:
 
         try:
             phase("validating_snapshot")
-            projection = validate_v4_worker_task(task)
+            executed_build_identity = current_runtime_build_identity()
+            projection = validate_v4_worker_task(task, executed_build_identity)
             phase("projecting_runtime")
             duration = float(projection.runtime.solver.duration_seconds)
             phase("solving")
@@ -459,6 +517,7 @@ def run_hydraulic_v4_task(self, task_id: int) -> dict[str, str | int]:
                 result,
                 projection,
                 execution_token=execution_token,
+                executed_build_identity=executed_build_identity,
                 cancel_check=cancelled,
                 phase_callback=phase,
             )

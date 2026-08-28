@@ -49,6 +49,11 @@ def project_v4_to_v4_lite(snapshot: Mapping[str, Any]) -> V4RuntimeProjection:
         "provenance": {
             "engine_version": source.provenance.engine_version,
             "engine_commit": source.provenance.engine_commit,
+            "solver_build_id": source.provenance.solver_build_id,
+            "build_identity_schema": source.provenance.build_identity_schema,
+            "build_mode": source.provenance.build_mode,
+            "build_verified": source.provenance.build_verified,
+            "unverified_build": source.provenance.unverified_build,
             "validation_policy_version": source.validation.validation_policy_version,
         },
     }
@@ -65,6 +70,12 @@ def project_v4_to_v4_lite(snapshot: Mapping[str, Any]) -> V4RuntimeProjection:
         "solver_policy_hash": v4_lite_solver_policy_hash(runtime),
         "validation_policy_hash": v4_lite_validation_policy_hash(runtime),
         "registry_hash": registry_hash(),
+        "solver_build_id": source.provenance.solver_build_id,
+        "engine_commit": source.provenance.engine_commit,
+        "build_identity_schema": source.provenance.build_identity_schema,
+        "build_mode": source.provenance.build_mode,
+        "build_verified": source.provenance.build_verified,
+        "unverified_build": source.provenance.unverified_build,
         "canonicalization_id": CANONICALIZATION_ID,
         "copied_fields": [
             "dataset_version",

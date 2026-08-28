@@ -8,6 +8,7 @@ from app.dispatch import service as dispatch_service
 from app.model_engine import service
 from app.model_engine.schemas import SimulationTaskCreate
 from app.optimization import tasks as optimization_tasks
+from model.build_identity import current_runtime_build_identity
 from model.core.errors import HydraulicInputError
 from model.provenance import snapshot_hash
 from model.solver.registry import (
@@ -204,17 +205,19 @@ def test_dispatch_baseline_and_controlled_tasks_share_registry_authority() -> No
     baseline_snapshot = {"schema_version": MODEL_INPUT_V3, "role": "baseline"}
     controlled_snapshot = {"schema_version": MODEL_INPUT_V3, "role": "controlled"}
 
+    build_identity = current_runtime_build_identity()
     baseline = dispatch_service._build_run_task(  # type: ignore[arg-type]
-        plan, config, baseline_snapshot, "1" * 64, "dispatch-commit"
+        plan, config, baseline_snapshot, "1" * 64, build_identity
     )
     controlled = dispatch_service._build_run_task(  # type: ignore[arg-type]
-        plan, config, controlled_snapshot, "2" * 64, "dispatch-commit"
+        plan, config, controlled_snapshot, "2" * 64, build_identity
     )
 
     for task in (baseline, controlled):
         _assert_complete_task_provenance(task, MODEL_INPUT_V3)
         assert task.dataset_version_id == 29
         assert task.config == config
+        assert task.solver_build_id == build_identity.solver_build_id
     assert baseline.input_snapshot is baseline_snapshot
     assert baseline.input_snapshot_hash == "1" * 64
     assert controlled.input_snapshot is controlled_snapshot

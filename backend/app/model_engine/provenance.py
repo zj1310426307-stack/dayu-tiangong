@@ -9,10 +9,8 @@ from sqlalchemy.orm import Session
 from app.dataset.service import build_model_input, build_model_input_v2
 from app.hydraulic.model_input import build_model_input_v3
 from model.adapters import adapt_v3_to_v2
+from model.build_identity import ENGINE_VERSION, RuntimeBuildIdentity
 from model.provenance import snapshot_hash
-
-
-ENGINE_VERSION = "dayu-hydraulic-4.0.0"
 
 
 def freeze_task_input(
@@ -21,7 +19,7 @@ def freeze_task_input(
     config: dict[str, Any],
     *,
     schema_version: str,
-    engine_commit: str,
+    build_identity: RuntimeBuildIdentity,
     dispatch_plan: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """构建完整任务输入；返回冻结 JSON 和与其一一对应的哈希。
@@ -42,7 +40,7 @@ def freeze_task_input(
                 "runtime_overrides": config,
             },
             dispatch_plan=dispatch_plan,
-            engine_version=ENGINE_VERSION,
+            engine_version=build_identity.engine_version,
         )
     elif schema_version == "dayu.model-input.v2":
         snapshot = build_model_input_v2(
@@ -56,7 +54,7 @@ def freeze_task_input(
                 "runtime_overrides": config,
             },
             dispatch_plan=dispatch_plan,
-            engine_version=ENGINE_VERSION,
+            engine_version=build_identity.engine_version,
         )
     else:
         if dispatch_plan is not None:
@@ -78,8 +76,7 @@ def freeze_task_input(
         raise ValueError("model input provenance must be an object")
     snapshot["provenance"] = {
         **existing_provenance,
-        "engine_version": ENGINE_VERSION,
-        "engine_commit": engine_commit,
+        **build_identity.provenance(),
         "input_schema_version": schema_version,
     }
     return snapshot, snapshot_hash(snapshot)

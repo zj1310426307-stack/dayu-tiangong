@@ -1,5 +1,13 @@
 # HYDRO-MODEL-02-D2 Worker Lifecycle
 
+> RC2 addendum: a queued task now has a separate delivery lease
+> (`delivery_attempt_count`, `last_delivery_time`). A non-null `queue_job_id` is only
+> a historical publish marker. Stale queued work with no active execution token is
+> eligible for compare-and-swap redelivery at intervals of at least 90 seconds,
+> including when that marker is non-null. The third unclaimed delivery is the last;
+> a later stale scan fails the task with `D2_DELIVERY_RETRY_LIMIT`. After claim,
+> legacy and native-v4 Workers match the frozen runtime build before solving.
+
 ## Routing, claim, and lease
 
 Native v4 uses the dedicated Celery queue `hydraulic-v4-d1`. The Worker declares only

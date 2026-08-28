@@ -834,6 +834,16 @@ class V4LiteProvenance(StrictContractModel):
 
     engine_version: NonBlankText
     engine_commit: NonBlankText
+    # RC2 authoritative projections carry the complete runtime identity.  These
+    # remain optional only for the frozen standalone D1 fixtures predating D2.
+    solver_build_id: Annotated[
+        str,
+        StringConstraints(pattern=r"^dayu\.solver-build\.v1:[0-9a-f]{64}$"),
+    ] | None = None
+    build_identity_schema: Literal["dayu.runtime-build.v1"] | None = None
+    build_mode: Literal["development", "ci", "release"] | None = None
+    build_verified: bool | None = None
+    unverified_build: bool | None = None
     validation_policy_version: Literal[
         "v4-lite-1",
         "v4-lite-2",

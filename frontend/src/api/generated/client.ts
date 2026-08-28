@@ -1901,6 +1901,9 @@ export interface SimulationTaskRecord {
   "input_snapshot_hash": string | null;
   "engine_version": string | null;
   "engine_commit": string | null;
+  "solver_build_id": string | null;
+  "build_mode": string | null;
+  "build_verified": boolean;
   "solver_id": string | null;
   "capability_id": string | null;
   "runtime_adapter_id": string | null;
@@ -1917,6 +1920,8 @@ export interface SimulationTaskRecord {
   "group_role": string | null;
   "snapshot_summary"?: Record<string, unknown> | null;
   "queue_job_id": string | null;
+  "delivery_attempt_count": number;
+  "last_delivery_time": string | null;
   "worker_id": string | null;
   "queued_time": string | null;
   "heartbeat_time": string | null;
@@ -1994,6 +1999,9 @@ export interface TaskSnapshotResponse {
   "input_snapshot_hash": string;
   "engine_version": string;
   "engine_commit": string;
+  "solver_build_id": string | null;
+  "build_mode": string | null;
+  "build_verified": boolean;
   "snapshot": Record<string, unknown>;
 }
 
