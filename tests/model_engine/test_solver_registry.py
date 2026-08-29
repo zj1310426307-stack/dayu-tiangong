@@ -20,6 +20,7 @@ from model.solver.registry import (
     D3A_2_CAPABILITY_ID,
     D3A_2_RUNTIME_ADAPTER_ID,
     D3A_3_CAPABILITY_ID,
+    D3A_3_RUNTIME_ADAPTER_ID,
     LEGACY_NETWORK_SOLVER,
     LEGACY_SINGLE_RIVER_SOLVER,
     MODEL_INPUT_V2,
@@ -91,12 +92,12 @@ def test_v1_v2_v3_routes_remain_legacy_and_v4_is_native() -> None:
     assert native.runtime_adapter.runtime_schema_version == "dayu.model-input.v4-lite"
     assert native.runtime_adapter.runtime_schema_version != "dayu.model-input.v2"
     assert registry_hash() == (
-        "5fa439e8e084aead690403a6c537a725446df64790b4226b953e159d3f0fbb2a"
+        "a6521e8c4968c44b98ce4a79d816377029376781b09e16afc2c1ac5b4a46f0a2"
     )
 
 
-def test_d3a_catalog_unlocks_manning_and_explicit_slope_only() -> None:
-    """Expose D3A-1/2 explicitly while keeping engineering Profiles blocked."""
+def test_d3a_catalog_unlocks_engineering_profiles_after_science_gates() -> None:
+    """Expose each sequentially validated D3A single-river capability."""
 
     catalog = capability_catalog()
     assert tuple(item.capability_id for item in catalog) == (
@@ -109,11 +110,12 @@ def test_d3a_catalog_unlocks_manning_and_explicit_slope_only() -> None:
         "supported",
         "supported",
         "supported",
-        "blocked",
+        "supported",
     )
     assert resolve_capability(D1_CAPABILITY_ID).status == "supported"
     assert resolve_capability(D3A_1_CAPABILITY_ID).status == "supported"
     assert resolve_capability(D3A_2_CAPABILITY_ID).status == "supported"
+    assert resolve_capability(D3A_3_CAPABILITY_ID).status == "supported"
     d3a = resolve_solver(
         "dayu.model-input.v4",
         capability_id=D3A_1_CAPABILITY_ID,
@@ -126,8 +128,12 @@ def test_d3a_catalog_unlocks_manning_and_explicit_slope_only() -> None:
         runtime_adapter_id=D3A_2_RUNTIME_ADAPTER_ID,
     )
     assert d3a_2.engine_route == "finite-volume-d3a-2-v4"
-    with pytest.raises(HydraulicInputError, match="scientifically blocked"):
-        resolve_capability(D3A_3_CAPABILITY_ID)
+    d3a_3 = resolve_solver(
+        "dayu.model-input.v4",
+        capability_id=D3A_3_CAPABILITY_ID,
+        runtime_adapter_id=D3A_3_RUNTIME_ADAPTER_ID,
+    )
+    assert d3a_3.engine_route == "finite-volume-d3a-3-v4"
 
 
 @pytest.mark.parametrize(

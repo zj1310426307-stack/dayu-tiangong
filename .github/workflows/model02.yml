@@ -135,8 +135,11 @@ jobs:
           tests/model02/test_d3a_manning_science.py
           tests/model02/test_d3a_manning_gate_pump.py
           tests/model02/test_d3a_slope_science.py
+          tests/model02/test_nonprismatic_moving_convergence.py
+          tests/model02/test_d3a_nonprismatic_science.py
           tests/model_engine/test_v4_d3a_1_execution.py
           tests/model_engine/test_v4_d3a_2_execution.py
+          tests/model_engine/test_v4_d3a_3_execution.py
           tests/model_engine/test_d3a_2_schema_metadata.py
           tests/model_engine/test_v4_readiness.py
           tests/model_engine/test_solver_registry.py

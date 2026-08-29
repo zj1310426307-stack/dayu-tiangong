@@ -11,6 +11,7 @@ from app.model_engine.v4_service import (
 from tests.model_engine.helpers import (
     native_v4_d3a_1_payload,
     native_v4_d3a_2_payload,
+    native_v4_d3a_3_payload,
     native_v4_payload,
 )
 
@@ -73,6 +74,28 @@ def test_valid_d3a_2_candidate_requires_explicit_bed_authority() -> None:
 
     payload["cross_sections"][0]["bed_elevation_source"] = None
     assert "D3A_2_BED_AUTHORITY_UNCONFIRMED" in _codes(payload)
+
+
+def test_valid_d3a_3_candidate_requires_gradual_profile_variation() -> None:
+    """Engineering Profiles are ready only inside the frozen smoothness gate."""
+
+    payload = native_v4_d3a_3_payload()
+    assessment = assess_native_v4_snapshot(payload)
+    assert assessment.readiness.ready is True
+    assert not assessment.readiness.errors
+    preview = preview_from_assessment(assessment)
+    assert "adjacent-hydraulic-relative-change-at-most-0.25" in (
+        preview.capability_scope
+    )
+
+    section = payload["cross_sections"][10]
+    bed = section["bed_elevation_m"]
+    section["points"] = [
+        {"offset_m": 0.0, "elevation_m": bed + 3.0},
+        {"offset_m": 1.5, "elevation_m": bed},
+        {"offset_m": 3.0, "elevation_m": bed + 3.0},
+    ]
+    assert "D3A_3_PROFILE_CHANGE_ABRUPT" in _codes(payload)
 
 
 @pytest.mark.parametrize(

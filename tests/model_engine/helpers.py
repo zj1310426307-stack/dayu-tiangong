@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import math
 import runpy
 from pathlib import Path
 
@@ -22,6 +23,10 @@ from model.solver.registry import (
     D3A_2_CAPABILITY_ID,
     D3A_2_KNOWN_LIMITATIONS,
     D3A_2_RUNTIME_ADAPTER_ID,
+    D3A_3_CAPABILITY,
+    D3A_3_CAPABILITY_ID,
+    D3A_3_KNOWN_LIMITATIONS,
+    D3A_3_RUNTIME_ADAPTER_ID,
     registry_hash,
 )
 
@@ -183,4 +188,54 @@ def native_v4_d3a_2_payload() -> dict:
     payload["capability_scope"] = list(D3A_2_CAPABILITY.scope)
     payload["capability_exclusions"] = list(D3A_2_CAPABILITY.exclusions)
     payload["known_limitations"] = list(D3A_2_KNOWN_LIMITATIONS)
+    return payload
+
+
+def native_v4_d3a_3_payload() -> dict:
+    """Select D3A-3 and apply one mild contraction/expansion Profile family."""
+
+    payload = copy.deepcopy(native_v4_d3a_2_payload())
+    payload["solver_selection"] = {
+        "solver_id": D1_SOLVER_ID,
+        "capability_id": D3A_3_CAPABILITY_ID,
+        "runtime_adapter_id": D3A_3_RUNTIME_ADAPTER_ID,
+    }
+    section_count = len(payload["cross_sections"])
+    for index, section in enumerate(payload["cross_sections"]):
+        phase = index / (section_count - 1)
+        width = 20.0 * (1.0 - 0.12 * math.sin(math.pi * phase))
+        bed = section["bed_elevation_m"]
+        section["points"] = [
+            {"offset_m": 0.0, "elevation_m": bed + 3.0},
+            {"offset_m": 0.5 * width, "elevation_m": bed},
+            {"offset_m": width, "elevation_m": bed + 3.0},
+        ]
+        section["profile_hash"] = f"{300 + section['section_id']:064x}"
+        section["bed_elevation_confirmed_by"] = "HYDRO-MODEL-02-D3A-3"
+    payload["cross_section_profiles"] = [
+        {
+            "id": item["profile_id"],
+            "cross_section_id": item["section_id"],
+            "profile_hash": item["profile_hash"],
+        }
+        for item in payload["cross_sections"]
+    ]
+    payload["numerical_policy"]["geometry_policy"] = (
+        "nonprismatic-engineering-linear-path-v1"
+    )
+    payload["numerical_policy"]["geometry_source"] = (
+        "hydraulic-function-linear-face-v1"
+    )
+    payload["boundaries"]["downstream"]["water_level_m"] = [9.79, 9.79, 9.79]
+    payload["control_plan"]["policy_id"] = "d3a-3-gate-pump-control-v1"
+    payload["validation"] = {
+        "validation_policy_version": "d3a-3-v1",
+        "capability_id": D3A_3_CAPABILITY_ID,
+        "water_balance_tolerance": payload["numerical_policy"][
+            "water_balance_tolerance"
+        ],
+    }
+    payload["capability_scope"] = list(D3A_3_CAPABILITY.scope)
+    payload["capability_exclusions"] = list(D3A_3_CAPABILITY.exclusions)
+    payload["known_limitations"] = list(D3A_3_KNOWN_LIMITATIONS)
     return payload

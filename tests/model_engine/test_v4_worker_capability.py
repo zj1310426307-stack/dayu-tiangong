@@ -23,6 +23,7 @@ from model.solver.registry import (
     D1_SOLVER_ID,
     D3A_1_CAPABILITY_ID,
     D3A_2_CAPABILITY_ID,
+    D3A_3_CAPABILITY_ID,
     task_solver_provenance,
 )
 from tests.model_engine.helpers import TEST_BUILD_IDENTITY, native_v4_payload
@@ -54,13 +55,14 @@ def _task(**changes):
     return SimpleNamespace(**values)
 
 
-def test_v4_worker_declares_the_explicit_d1_d3a_1_and_d3a_2_capabilities() -> None:
+def test_v4_worker_declares_all_explicit_d1_and_d3a_capabilities() -> None:
     assert V4_WORKER_CAPABILITIES == {
         "supported_solver_ids": (D1_SOLVER_ID,),
         "supported_capability_ids": (
             D1_CAPABILITY_ID,
             D3A_1_CAPABILITY_ID,
             D3A_2_CAPABILITY_ID,
+            D3A_3_CAPABILITY_ID,
         ),
     }
     assert celery_app.conf.task_routes["dayu.run_hydraulic_v4_task"]["queue"] == V4_QUEUE
