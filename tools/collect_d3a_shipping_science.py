@@ -50,8 +50,17 @@ def collect(evidence_dir: Path, final_convergence: Path) -> None:
 
     report = json.loads(final_convergence.read_text(encoding="utf-8"))
     levels = report.get("levels")
-    if report.get("status") != "pass" or not isinstance(levels, list) or len(levels) != 4:
-        raise ValueError("FINAL convergence artifact is not a four-level PASS")
+    completion_gates = report.get("completion_gates")
+    if (
+        report.get("schema_version") != "dayu.d3a-final-convergence.v2"
+        or report.get("status") != "pass"
+        or not isinstance(levels, list)
+        or len(levels) != 4
+        or not isinstance(completion_gates, dict)
+        or not completion_gates
+        or not all(value is True for value in completion_gates.values())
+    ):
+        raise ValueError("FIX1 FINAL convergence artifact is not a four-level v2 PASS")
     runtime = runtime_build_diagnostic()
     if runtime["python"]["major_minor"] != "3.12":
         raise ValueError("D3A shipping science must execute on Python 3.12")

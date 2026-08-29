@@ -1,6 +1,8 @@
 {
   "schema_version": "dayu.d3a-final-convergence.v1",
   "scenario_id": "d3a-rc1-final-physical-coordinate-v1",
+  "status": "superseded-pre-FIX1",
+  "evidence_classification": "historical-smoke-only",
   "generated_on": "2026-08-30",
   "level_selection": {
     "cell_counts": [60, 70, 80],

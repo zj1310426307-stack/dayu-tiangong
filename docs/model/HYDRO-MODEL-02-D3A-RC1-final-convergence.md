@@ -1,5 +1,11 @@
 # HYDRO-MODEL-02-D3A-RC1 FINAL Convergence
 
+> **FIX1 状态：`superseded-pre-FIX1`。** 本页保留 60/70/80 历史 smoke 证据，
+> 不再作为发布空间收敛证据。其 refinement ratio 小于 1.5，Pump/monitor 位置随
+> 网格漂移，并曾把 5 s event-locator tolerance 与 spatial error 混为一谈。严格
+> 证据已迁移到
+> [FIX1 convergence](./HYDRO-MODEL-02-D3A-RC1-FIX1-convergence.md)。
+
 ## 同一物理问题
 
 所有空间层使用同一里程函数：
@@ -26,4 +32,5 @@ Gate 固定在 `x=3040 m` 的物理 face，各层均精确映射；Pump 固定�
 
 Gate event differences 为 `3.4122 s → 2.5577 s`，Pump 为 `0→0 s`。Gate downstream peak H、Pump source peak H、peak Q、Gate volume、Pump volume 和 Pump energy 的 `|fine-medium|` 均小于 `|medium-coarse|`。时间细化后的 Gate volume 相对差 `0.2164%`，其余核心体积/能量/peak Q 差不大于 `0.2%`。
 
-完整机器可读证据见 [final-convergence.json](../../outputs/d3a/final-convergence.json)。
+完整历史机器证据见 [final-convergence.json](../../outputs/d3a/final-convergence.json)，
+其状态已标记为 `superseded-pre-FIX1 / historical-smoke-only`。

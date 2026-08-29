@@ -1,5 +1,10 @@
 # HYDRO-MODEL-02-D3A-RC1 Validation Report
 
+> **FIX1 更新：** 下列 implementation head `8da24aa` 与 60/70/80 结果仅为
+> pre-FIX1 历史记录，不再支持 RC1 merge-ready 结论。当前严格状态见
+> [FIX1 validation report](./HYDRO-MODEL-02-D3A-RC1-FIX1-validation-report.md)；
+> 在 FIX1 最终 Hosted checks 闭合前，PR #12 为 `NO-GO`。
+
 - 日期：2026-08-30
 - 本地实现：PASS
 - Hosted RC1：PASS（implementation head `8da24aa12f05f9e13731c85b69ed864961c748dd`）

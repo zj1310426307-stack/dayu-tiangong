@@ -139,7 +139,7 @@ jobs:
           tests/model02/test_nonprismatic_moving_convergence.py
           tests/model02/test_d3a_nonprismatic_science.py
           tests/model02/test_d3a_runtime_envelope.py
-          tests/model02/test_d3a_final_convergence.py
+          tests/model02/test_d3a_final_convergence_fix1.py
           tests/model_engine/test_v4_d3a_1_execution.py
           tests/model_engine/test_v4_d3a_2_execution.py
           tests/model_engine/test_v4_d3a_3_execution.py
@@ -188,7 +188,7 @@ jobs:
             --volume "$PWD:/workspace:ro" \
             --volume "$PWD/outputs:/workspace/outputs" \
             --workdir /workspace \
-            --env D3A_FINAL_CONVERGENCE_ARTIFACT=outputs/ci/d3a-shipping-science/final-convergence.json \
+            --env D3A_FINAL_CONVERGENCE_FIX1_ARTIFACT=outputs/ci/d3a-shipping-science/final-convergence-fix1.json \
             "dayu-d3a-science:$ENGINE_COMMIT" \
             python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q \
             tests/model02/test_d3a_manning_science.py \
@@ -197,14 +197,14 @@ jobs:
             tests/model02/test_nonprismatic_moving_convergence.py \
             tests/model02/test_d3a_nonprismatic_science.py \
             tests/model02/test_d3a_runtime_envelope.py \
-            tests/model02/test_d3a_final_convergence.py \
+            tests/model02/test_d3a_final_convergence_fix1.py \
             tests/model_engine/test_v4_d3a_1_execution.py \
             tests/model_engine/test_v4_d3a_2_execution.py \
             tests/model_engine/test_v4_d3a_3_execution.py \
             tests/model_engine/test_v4_d3a_runtime_envelope.py \
             --junitxml=outputs/ci/d3a-shipping-science/junit.xml
       - name: Collect Python, build, Registry and envelope identities
-        if: always() && hashFiles('outputs/ci/d3a-shipping-science/final-convergence.json') != ''
+        if: always() && hashFiles('outputs/ci/d3a-shipping-science/final-convergence-fix1.json') != ''
         run: |
           docker run --rm \
             --volume "$PWD:/workspace:ro" \
@@ -213,7 +213,7 @@ jobs:
             "dayu-d3a-science:$ENGINE_COMMIT" \
             python tools/collect_d3a_shipping_science.py \
             --evidence-dir outputs/ci/d3a-shipping-science \
-            --final-convergence outputs/ci/d3a-shipping-science/final-convergence.json
+            --final-convergence outputs/ci/d3a-shipping-science/final-convergence-fix1.json
       - name: Summarize D3A shipping JUnit
         if: always() && hashFiles('outputs/ci/d3a-shipping-science/junit.xml') != ''
         run: >-
