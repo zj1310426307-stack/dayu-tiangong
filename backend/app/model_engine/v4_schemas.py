@@ -145,6 +145,20 @@ class V4ArtifactManifest(BaseModel):
     published_time: datetime | None
 
 
+class V4RuntimeEnvelopeDiagnostics(BaseModel):
+    """Expose the bounded D3A science extrema without a free-form JSON cast."""
+
+    runtime_envelope_status: Literal["pass"]
+    minimum_water_depth_m: float
+    minimum_discharge_m3s: float
+    maximum_froude_number: float
+    maximum_friction_number: float
+    friction_retry_count: int
+    friction_predictor_reduction_count: int
+    predicted_minimum_friction_dt: float
+    runtime_envelope_retry_count: int
+
+
 class V4ResultSummary(BaseModel):
     """Return result-v3 provenance, quality evidence, and bounded counts."""
 
@@ -156,6 +170,7 @@ class V4ResultSummary(BaseModel):
     pump_row_count: int
     event_count: int
     artifacts: list[V4ArtifactManifest]
+    runtime_envelope: V4RuntimeEnvelopeDiagnostics | None = None
 
 
 class V4ShadowCreate(BaseModel):

@@ -2161,6 +2161,19 @@ export interface V4ResultSummary {
   "pump_row_count": number;
   "event_count": number;
   "artifacts": Array<V4ArtifactManifest>;
+  "runtime_envelope"?: V4RuntimeEnvelopeDiagnostics | null;
+}
+
+export interface V4RuntimeEnvelopeDiagnostics {
+  "runtime_envelope_status": "pass";
+  "minimum_water_depth_m": number;
+  "minimum_discharge_m3s": number;
+  "maximum_froude_number": number;
+  "maximum_friction_number": number;
+  "friction_retry_count": number;
+  "friction_predictor_reduction_count": number;
+  "predicted_minimum_friction_dt": number;
+  "runtime_envelope_retry_count": number;
 }
 
 export interface V4SectionOption {

@@ -31,6 +31,7 @@ from app.gis.models import (
 from app.model_engine.v4_schemas import (
     V4ArtifactManifest,
     V4ResultSummary,
+    V4RuntimeEnvelopeDiagnostics,
     V4SectionOption,
     V4SectionResultResponse,
 )
@@ -955,6 +956,29 @@ def v4_result_summary(session: Session, task_id: int) -> V4ResultSummary:
 
     task = require_successful_v4_task(session, task_id)
     provenance = task.diagnostics or {}
+    numerical_diagnostics = provenance.get("diagnostics")
+    runtime_envelope = None
+    if (
+        task.capability_id
+        in {D3A_1_CAPABILITY_ID, D3A_2_CAPABILITY_ID, D3A_3_CAPABILITY_ID}
+        and isinstance(numerical_diagnostics, Mapping)
+    ):
+        runtime_envelope = V4RuntimeEnvelopeDiagnostics.model_validate(
+            {
+                key: numerical_diagnostics[key]
+                for key in (
+                    "runtime_envelope_status",
+                    "minimum_water_depth_m",
+                    "minimum_discharge_m3s",
+                    "maximum_froude_number",
+                    "maximum_friction_number",
+                    "friction_retry_count",
+                    "friction_predictor_reduction_count",
+                    "predicted_minimum_friction_dt",
+                    "runtime_envelope_retry_count",
+                )
+            }
+        )
     artifacts = list_v4_artifacts(session, task_id)
     return V4ResultSummary(
         task_id=task.id,
@@ -971,6 +995,7 @@ def v4_result_summary(session: Session, task_id: int) -> V4ResultSummary:
         .filter(HydraulicTaskControlEvent.task_id == task_id)
         .count(),
         artifacts=artifacts,
+        runtime_envelope=runtime_envelope,
     )
 
 
