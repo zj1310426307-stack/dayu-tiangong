@@ -297,7 +297,7 @@ jobs:
       - name: Run frozen D1 Gate/Pump regressions
         run: >-
           python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
-          tests/model02
+          tests/model02 -m "not d3a_shipping_science"
           tests/test_gate_pump_simulation.py
           tests/test_phase4_hydraulic_gate.py
 

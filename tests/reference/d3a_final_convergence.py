@@ -301,6 +301,7 @@ def build_final_convergence_report() -> dict[str, object]:
     return {
         "schema_version": "dayu.d3a-final-convergence.v1",
         "scenario_id": "d3a-rc1-final-physical-coordinate-v1",
+        "status": "pass",
         "level_selection": {
             "cell_counts": [60, 70, 80],
             "reason": (

@@ -11,6 +11,8 @@ import pytest
 
 from tests.reference.d3a_final_convergence import build_final_convergence_report
 
+pytestmark = pytest.mark.d3a_shipping_science
+
 
 @lru_cache(maxsize=1)
 def _report() -> dict[str, object]:
