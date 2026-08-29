@@ -5,7 +5,9 @@
 - D2 main merge SHA / D3A base：`a40a9f8a5728d6d03c127409491a38321540ac99`
 - D2 annotated tag：`hydro-model-02-d2-rc2`，解引用后指向上述 main merge commit
 - FINAL PR：[#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12)，`NOT MERGED`
-- 总结论：`HYDRO-MODEL-02-D3A PASS`
+- 历史总结论：2026-08-29 初始候选曾记录 `HYDRO-MODEL-02-D3A PASS`
+- 当前独立审查：`CHANGES REQUESTED`
+- D3A-RC1：`PENDING`；动态包络、FINAL 收敛和 Python 3.12 shipping science 未闭合前，历史 PASS 不作为当前 release decision
 
 ## Capability registry
 

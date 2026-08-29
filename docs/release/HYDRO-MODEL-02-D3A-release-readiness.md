@@ -1,7 +1,9 @@
 # HYDRO-MODEL-02-D3A Release Readiness
 
 - 日期：2026-08-29
-- 状态：`PASS — PR REVIEW READY`
+- 历史状态：2026-08-29 初始候选曾记录 `PASS — PR REVIEW READY`
+- 当前独立审查：`CHANGES REQUESTED`
+- D3A-RC1：`PENDING`；RC1 全部门关闭前，PR #12 为 `NO-GO`
 - PR：[#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12)
 - Merge status：`NOT MERGED`
 - D3A tag：不创建
