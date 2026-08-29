@@ -3,7 +3,7 @@
 - 日期：2026-08-29
 - 能力 ID：`single-branch-gate-pump-manning-v1`
 - 验证策略：`d3a-1-v1`
-- 状态：本地科学门通过，等待 Hosted CI 封口
+- 状态：`D3A-1 PASS`
 
 ## 1. 方程与数值处理
 

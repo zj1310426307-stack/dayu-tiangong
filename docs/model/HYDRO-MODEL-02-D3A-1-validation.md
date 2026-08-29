@@ -2,8 +2,8 @@
 
 - 日期：2026-08-29
 - 本地结论：`PASS`
-- Hosted 结论：等待当前候选提交运行
-- 总结论：Hosted 封口前不得标记 D3A-1 完成，也不得进入 D3A-2
+- Hosted 结论：`PASS`
+- 总结论：`D3A-1 PASS`，允许按顺序进入 D3A-2
 
 ## 1. M1：friction-only 解析衰减
 
@@ -75,7 +75,20 @@ stage operating point 均由 accepted-stage evidence 复核。
 - D1 的 `n=0` 路由仍显式存在，D3A-1 不覆盖或自动替换 D1；
 - D3A-2 与 D3A-3 继续在 capability catalog 中保持 `blocked`。
 
-## 6. 尚待封口
+## 6. Hosted 封口
 
-当前候选仍须通过 GitHub Hosted 的原有 D2 checks 与新增 `D3A scientific validation`
-job。Hosted 全绿后才能将本报告总判定更新为 `D3A-1 PASS`，然后开始床坡阶段。
+候选 `13bb729` 的 `model02` run `33250092402` 首次全绿；同一候选的
+`hydraulic-platform` run `33250092381` 暴露真实 PostGIS/Redis/Shipping 测试夹具仍按
+旧合同创建 v4 任务、缺少显式 D1 capability。没有放宽新合同；修复提交 `19f5da5`
+将所有 D2 夹具显式固定回 D1。
+
+修复后：
+
+- `model02` run `33250290994`：SUCCESS；
+- `hydraulic-platform` run `33250291019`：SUCCESS；
+- 新增 `D3A scientific validation`、Ubuntu/Windows MODEL02、Legacy、Frontend、
+  Backend v4、PostGIS migration、real Worker、D2 fault recovery、D1 regression、
+  Python 3.12 shipping runtime 全部通过。
+
+因此 M1、M2、空间/时间细化、正糙率 Gate/Pump、D1/D2 回归与 Hosted 门均已满足，
+D3A-1 判定为 `PASS`。
