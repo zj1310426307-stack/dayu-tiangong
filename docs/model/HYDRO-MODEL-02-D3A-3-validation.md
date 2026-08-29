@@ -42,3 +42,12 @@
 ## 结论
 
 D3A-3 通过 P1/P2/P3、网格/时间加密、不同 Profile Gate/Pump 组合和 D1/D2/D3A-1/2 回归后，可以作为受限的“单河渐变工程断面验证能力”发布。它不是通用一维河网、突变建筑物或生产预报能力。
+
+## Hosted 封口
+
+2026-08-29 在候选提交 `169c3846e26da373710abd4b271b84804cdb5b52` 上完成：
+
+- `model02` run [`33254053757`](https://github.com/zj1310426307-stack/dayu-tiangong/actions/runs/33254053757)：D3A scientific validation、Frontend contract、Legacy hydraulic、MODEL02 Ubuntu Python 3.11、MODEL02 Windows Python 3.11 全部成功；
+- `hydraulic-platform` run [`33254053772`](https://github.com/zj1310426307-stack/dayu-tiangong/actions/runs/33254053772)：D1 regression、D2 shipping runtime、D2 fault recovery、Backend v4 contract、Worker integration、PostGIS migration、Frontend OpenAPI 全部成功。
+
+因此 D3A-3 科学门、跨平台门、D1/D2 冻结回归和 immutable shipping-runtime 均为 `PASS`。最终交付 PR 为 [#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12)，状态必须保持 `NOT MERGED`。
