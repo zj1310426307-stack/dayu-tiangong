@@ -202,25 +202,28 @@ RC1 run `33102252587`、最终 HEAD run `33102637908` 与 PR #10 run `3310284311
 均全绿，测试 artifacts 已核对；PR [#10](https://github.com/zj1310426307-stack/dayu-tiangong/pull/10)
 保持 OPEN，未合并 `main`。
 
-## HYDRO-MODEL-02-D3A-RC1
+## HYDRO-MODEL-02-D3A-RC1-FIX1
 
 D3A-RC1 在 single Branch、fully wet、forward、`Fr<=0.8` 的冻结边界内增加动态
-runtime envelope、SSP-RK2 全阶段 fail-closed 检查、摩阻时间步预测器，以及同一物理
-问题的 60/70/80 空间收敛和 fine CFL/2 时间细化。Python 3.12 发布镜像使用独立
-`D3A shipping science` 门验证，不以开发环境 Python 代替发布运行时。
+runtime envelope、SSP-RK2 全阶段 fail-closed 检查和摩阻时间步预测器。FIX1 将
+旧 60/70/80 证据降级为 `superseded-pre-FIX1`，改用运行前冻结的 18/54/162
+structure-aligned odd3 网格：Gate/Pump/monitor 三层位置误差均为 0 m，六项 smooth
+metrics 和 Gate event 空间差均下降，并独立报告观测阶、Richardson 估计和 5 s
+event-locator tolerance。
 
-本地证据为 698 passed / 37 skipped / 0 failed，前端类型检查和生产构建通过；
-implementation head `8da24aa` 的 push/PR 四项 hosted workflows 全绿，Python 3.12
-发布制品 47/47 通过，main 已增加第 11 项 required check。当前为
-`RC1 GATES PASS / MERGE READY FOR INDEPENDENT REVIEW`。PR
-[#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12) 保持 OPEN，本文不授权
-合并、创建 D3A tag 或启动 D3B。完整证据见：
+FIX1 本地 Python 3.12 发布镜像为 7/7；MODEL02 375/375、D2/native-v4
+152 passed + 33 external-service skipped、legacy/D1 26/26，OpenAPI 0 drift，前端
+typecheck/build 通过。当前为 `FIX1 LOCAL PASS / HOSTED PENDING / PR NO-GO`。
+PR [#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12) 保持 OPEN，本文
+不授权合并、创建 D3A tag 或启动 D3B。完整 FIX1 证据见：
 
-- `docs/review/HYDRO-MODEL-02-D3A-RC1-audit.md`
+- `docs/review/HYDRO-MODEL-02-D3A-RC1-FIX1-audit.md`
+- `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1-grid-family.md`
+- `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1-event-error.md`
+- `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1-convergence.md`
 - `docs/model/HYDRO-MODEL-02-D3A-RC1-runtime-envelope.md`
-- `docs/model/HYDRO-MODEL-02-D3A-RC1-final-convergence.md`
-- `docs/model/HYDRO-MODEL-02-D3A-RC1-validation-report.md`
-- `docs/release/HYDRO-MODEL-02-D3A-RC1-release-readiness.md`
+- `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1-validation-report.md`
+- `docs/release/HYDRO-MODEL-02-D3A-RC1-FIX1-release-readiness.md`
 
 ## 当前边界
 
