@@ -1030,6 +1030,13 @@ class MvpDiagnostics(StrictResultModel):
     diagnostic_flags: tuple[NonBlankText, ...]
     maximum_friction_number: NonNegativeFinite | None = None
     friction_retry_count: NonNegativeInt | None = None
+    friction_predictor_reduction_count: NonNegativeInt | None = None
+    predicted_minimum_friction_dt: PositiveFinite | None = None
+    minimum_water_depth_m: PositiveFinite | None = None
+    minimum_discharge_m3s: FiniteNumber | None = None
+    maximum_froude_number: NonNegativeFinite | None = None
+    runtime_envelope_retry_count: NonNegativeInt | None = None
+    runtime_envelope_status: Literal["pass"] | None = None
 
     @model_validator(mode="after")
     def validate_flags(self) -> Self:
@@ -1041,6 +1048,25 @@ class MvpDiagnostics(StrictResultModel):
             self.friction_retry_count is None
         ):
             raise ValueError("Manning diagnostics must be exposed as one complete pair")
+        predictor = (
+            self.friction_predictor_reduction_count,
+            self.predicted_minimum_friction_dt,
+        )
+        if any(value is None for value in predictor) != all(
+            value is None for value in predictor
+        ):
+            raise ValueError("friction predictor diagnostics must be a complete pair")
+        envelope = (
+            self.minimum_water_depth_m,
+            self.minimum_discharge_m3s,
+            self.maximum_froude_number,
+            self.runtime_envelope_retry_count,
+            self.runtime_envelope_status,
+        )
+        if any(value is None for value in envelope) != all(
+            value is None for value in envelope
+        ):
+            raise ValueError("runtime-envelope diagnostics must be complete")
         return self
 
     @model_serializer(mode="wrap")
@@ -1051,6 +1077,15 @@ class MvpDiagnostics(StrictResultModel):
         if self.maximum_friction_number is None:
             payload.pop("maximum_friction_number", None)
             payload.pop("friction_retry_count", None)
+        if self.friction_predictor_reduction_count is None:
+            payload.pop("friction_predictor_reduction_count", None)
+            payload.pop("predicted_minimum_friction_dt", None)
+        if self.runtime_envelope_status is None:
+            payload.pop("minimum_water_depth_m", None)
+            payload.pop("minimum_discharge_m3s", None)
+            payload.pop("maximum_froude_number", None)
+            payload.pop("runtime_envelope_retry_count", None)
+            payload.pop("runtime_envelope_status", None)
         return payload
 
 
@@ -1078,6 +1113,10 @@ class MvpResultProvenance(StrictResultModel):
         "d3a-3-v1",
     ]
     solver_policy_hash: Sha256 | None = None
+    validation_policy_hash: Sha256 | None = None
+    registry_hash: Sha256 | None = None
+    runtime_envelope_id: NonBlankText | None = None
+    runtime_envelope_hash: Sha256 | None = None
 
     @model_validator(mode="after")
     def validate_versioned_solver_policy(self) -> Self:
@@ -1090,6 +1129,21 @@ class MvpResultProvenance(StrictResultModel):
             raise ValueError(
                 f"{self.validation_policy_version} result requires solver_policy_hash"
             )
+        d3a = self.validation_policy_version in {
+            "d3a-1-v1",
+            "d3a-2-v1",
+            "d3a-3-v1",
+        }
+        envelope_provenance = (
+            self.validation_policy_hash,
+            self.registry_hash,
+            self.runtime_envelope_id,
+            self.runtime_envelope_hash,
+        )
+        if d3a and any(value is None for value in envelope_provenance):
+            raise ValueError("D3A result requires complete runtime-envelope provenance")
+        if not d3a and any(value is not None for value in envelope_provenance):
+            raise ValueError("pre-D3A result must not add runtime-envelope provenance")
         return self
 
     @model_serializer(mode="wrap")
@@ -1099,6 +1153,11 @@ class MvpResultProvenance(StrictResultModel):
         payload = handler(self)
         if self.validation_policy_version == "v4-lite-1":
             payload.pop("solver_policy_hash", None)
+        if self.runtime_envelope_id is None:
+            payload.pop("validation_policy_hash", None)
+            payload.pop("registry_hash", None)
+            payload.pop("runtime_envelope_id", None)
+            payload.pop("runtime_envelope_hash", None)
         return payload
 
 
@@ -1308,13 +1367,28 @@ class MvpHydraulicResult(StrictResultModel):
                 or self.diagnostics.friction_retry_count is None
                 or self.diagnostics.maximum_friction_number <= 0.0
                 or self.diagnostics.maximum_friction_number > 0.1 + 1.0e-12
+                or self.diagnostics.friction_predictor_reduction_count is None
+                or self.diagnostics.predicted_minimum_friction_dt is None
+                or self.diagnostics.minimum_water_depth_m is None
+                or self.diagnostics.minimum_discharge_m3s is None
+                or self.diagnostics.maximum_froude_number is None
+                or self.diagnostics.runtime_envelope_retry_count is None
+                or self.diagnostics.runtime_envelope_status != "pass"
+                or self.diagnostics.maximum_froude_number > 0.8 + 1.0e-12
             ):
-                raise ValueError(f"{version} requires bounded Manning diagnostics")
+                raise ValueError(
+                    f"{version} requires bounded Manning and runtime-envelope diagnostics"
+                )
         elif (
             self.diagnostics.maximum_friction_number is not None
             or self.diagnostics.friction_retry_count is not None
+            or self.diagnostics.friction_predictor_reduction_count is not None
+            or self.diagnostics.predicted_minimum_friction_dt is not None
+            or self.diagnostics.runtime_envelope_status is not None
         ):
-            raise ValueError("pre-D3A result must not expose Manning diagnostics")
+            raise ValueError(
+                "pre-D3A result must not expose Manning/runtime-envelope diagnostics"
+            )
         event_key_set = set(event_keys)
         gate_ids = {item.gate_id for item in self.gates}
         pump_ids = {item.pump_id for item in self.pumps}

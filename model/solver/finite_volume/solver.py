@@ -16,10 +16,16 @@ from model.solver.finite_volume.geometry_source import (
     MAX_ADJACENT_HYDRAULIC_RELATIVE_CHANGE,
     adjacent_hydraulic_relative_change,
 )
+from model.solver.finite_volume.friction import estimate_manning_time_step
 from model.solver.finite_volume.integrator import StepResult, advance_with_retries
 from model.solver.finite_volume.mesh import FiniteVolumeMesh
 from model.solver.finite_volume.pump import HydraulicExternalPump
 from model.solver.finite_volume.state import HydraulicState
+from model.solver.finite_volume.runtime_envelope import (
+    CapabilityRuntimeEnvelope,
+    RuntimeEnvelopeObservation,
+    require_runtime_envelope,
+)
 from model.solver.finite_volume.structures import (
     BracketedOneShotStageThreshold,
     ControlBracketEvidence,
@@ -63,6 +69,8 @@ class SingleBranchConfig:
     maximum_steps: int = 1_000_000
     water_balance_tolerance: float = 0.01
     maximum_friction_number: float | None = None
+    friction_predictor_safety_factor: float | None = None
+    runtime_envelope: CapabilityRuntimeEnvelope | None = None
     scheme: Literal["hll", "rusanov"] = "hll"
     equilibrium_mode: Literal["standard", "uniform-manning-reference"] = "standard"
     geometry_source_mode: Literal[
@@ -107,6 +115,16 @@ class SingleBranchConfig:
             or self.maximum_friction_number <= 0.0
         ):
             raise ValueError("maximum_friction_number must be finite and positive")
+        if self.friction_predictor_safety_factor is not None:
+            if self.maximum_friction_number is None:
+                raise ValueError(
+                    "friction predictor requires maximum_friction_number"
+                )
+            if (
+                not math.isfinite(self.friction_predictor_safety_factor)
+                or not 0.0 < self.friction_predictor_safety_factor < 1.0
+            ):
+                raise ValueError("friction predictor safety factor must lie in (0, 1)")
         if self.equilibrium_mode not in ("standard", "uniform-manning-reference"):
             raise ValueError("unsupported finite-volume equilibrium_mode")
         if self.geometry_source_mode not in (
@@ -159,6 +177,23 @@ class SingleBranchConfig:
             raise ValueError(
                 "D3A Manning capabilities require maximum_friction_number=0.1"
             )
+        if self.runtime_envelope is not None:
+            if self.structure_capability not in {
+                "d3a-1-single-branch-gate-pump-manning-v1",
+                "d3a-2-single-branch-gate-pump-manning-slope-v1",
+                "d3a-3-single-branch-gate-pump-engineering-profile-v1",
+            }:
+                raise ValueError("runtime envelope is only enabled for D3A capabilities")
+            expected_depth = max(self.dry_depth, 1.0e-9)
+            if not math.isclose(
+                self.runtime_envelope.minimum_water_depth_m,
+                expected_depth,
+                rel_tol=0.0,
+                abs_tol=1.0e-15,
+            ):
+                raise ValueError(
+                    "runtime envelope wet-depth threshold must match dry_depth"
+                )
 
 
 @dataclass(frozen=True)
@@ -185,6 +220,13 @@ class SingleBranchDiagnostics:
     pump_solver_retry_count: int
     maximum_friction_number: float
     friction_retry_count: int
+    friction_predictor_reduction_count: int
+    predicted_minimum_friction_dt: float | None
+    minimum_water_depth_m: float | None
+    minimum_discharge_m3s: float | None
+    maximum_froude_number: float | None
+    runtime_envelope_retry_count: int
+    runtime_envelope_status: Literal["pass", "not_applicable"]
     minimum_dt_failure_count: int
     diagnostic_flags: tuple[str, ...]
 
@@ -1314,6 +1356,14 @@ def solve_single_branch(
         gates=gates,
         pumps=pumps,
     )
+    envelope_observation: RuntimeEnvelopeObservation | None = None
+    if config.runtime_envelope is not None:
+        envelope_observation = require_runtime_envelope(
+            mesh=mesh,
+            state=current,
+            envelope=config.runtime_envelope,
+            checkpoint="initial accepted state",
+        )
     initial_storage = storage(mesh, initial_state)
     output_states = [current]
     steps: list[StepResult] = []
@@ -1326,6 +1376,8 @@ def solve_single_branch(
     total_event_refinements = 0
     gate_solver_retries = 0
     pump_solver_retries = 0
+    friction_predictor_reductions = 0
+    predicted_friction_dts: list[float] = []
     last_event: dict[str, object] | None = None
     boundary_flag = (
         "boundary_closure_subcritical_mvp_zero_gradient_companion"
@@ -1338,6 +1390,10 @@ def solve_single_branch(
     }
     if config.maximum_friction_number is not None:
         flags.add("friction_number_retry_gate_v1")
+    if config.friction_predictor_safety_factor is not None:
+        flags.add("accepted_state_manning_friction_dt_predictor_v1")
+    if config.runtime_envelope is not None:
+        flags.add(config.runtime_envelope.runtime_envelope_id)
     if config.nonprismatic_scope == NONPRISMATIC_MOVING_ENERGY_SCOPE:
         flags.add(NONPRISMATIC_MOVING_ENERGY_SCOPE)
     if config.nonprismatic_scope == NONPRISMATIC_ENGINEERING_SCOPE:
@@ -1377,6 +1433,21 @@ def solve_single_branch(
             item for item in event_candidates if item > current.time + _TIME_TOLERANCE
         )
         requested_dt = min(config.maximum_dt, next_event - current.time)
+        if config.friction_predictor_safety_factor is not None:
+            predictor = estimate_manning_time_step(
+                mesh=mesh,
+                area=current.area,
+                discharge=current.discharge,
+                maximum_friction_number=config.maximum_friction_number,
+            )
+            if math.isfinite(predictor.time_step):
+                predicted_friction_dts.append(predictor.time_step)
+                predictor_limit = (
+                    config.friction_predictor_safety_factor * predictor.time_step
+                )
+                if predictor_limit < requested_dt - 1.0e-12:
+                    requested_dt = predictor_limit
+                    friction_predictor_reductions += 1
         trial_dt = requested_dt
         event_refinement_count = 0
         accepted_brackets: dict[tuple[str, str], ControlBracketEvidence] = {}
@@ -1396,6 +1467,7 @@ def solve_single_branch(
                 equilibrium_reference=equilibrium_reference,
                 geometry_source_mode=config.geometry_source_mode,
                 maximum_friction_number=config.maximum_friction_number,
+                runtime_envelope=config.runtime_envelope,
                 cancel_check=cancel_check,
             )
             crossing_candidates = detect_bracketed_crossings(
@@ -1438,6 +1510,21 @@ def solve_single_branch(
             pumps=pumps,
             brackets=accepted_brackets,
         )
+        if config.runtime_envelope is not None:
+            accepted_observation = require_runtime_envelope(
+                mesh=mesh,
+                state=current,
+                envelope=config.runtime_envelope,
+                checkpoint="accepted state",
+            )
+            step_observation = step.runtime_envelope_observation
+            if step_observation is None:
+                raise NumericalStateError(
+                    "D3A accepted step omitted runtime-envelope evidence"
+                )
+            envelope_observation = envelope_observation.merged(
+                step_observation
+            ).merged(accepted_observation)
         step = replace(step, state=current)
         steps.append(step)
         control_events.extend(accepted_control_events)
@@ -1484,6 +1571,9 @@ def solve_single_branch(
                     "positivity_retry_count": (
                         current.diagnostics.retry_count
                         - sum(item.friction_retry_count for item in steps)
+                        - sum(
+                            item.runtime_envelope_retry_count for item in steps
+                        )
                     ),
                     "event_refinement_count": total_event_refinements,
                     "gate_solver_retry_count": gate_solver_retries,
@@ -1494,6 +1584,22 @@ def solve_single_branch(
                     ),
                     "friction_retry_count": sum(
                         item.friction_retry_count for item in steps
+                    ),
+                    "friction_predictor_reduction_count": (
+                        friction_predictor_reductions
+                    ),
+                    "predicted_minimum_friction_dt": (
+                        min(predicted_friction_dts)
+                        if predicted_friction_dts
+                        else None
+                    ),
+                    "runtime_envelope_retry_count": sum(
+                        item.runtime_envelope_retry_count for item in steps
+                    ),
+                    "runtime_envelope_status": (
+                        envelope_observation.status
+                        if envelope_observation is not None
+                        else "not_applicable"
                     ),
                     "minimum_dt_failure_count": 0,
                     "last_event": last_event,
@@ -1511,6 +1617,14 @@ def solve_single_branch(
         )
         flags.add("moving_reference_preservation_quality_v1")
     final_storage = storage(mesh, current)
+    if config.runtime_envelope is not None:
+        final_observation = require_runtime_envelope(
+            mesh=mesh,
+            state=current,
+            envelope=config.runtime_envelope,
+            checkpoint="final result",
+        )
+        envelope_observation = envelope_observation.merged(final_observation)
     storage_change = final_storage - initial_storage
     expected_change = upstream_volume - downstream_volume - pump_volume
     residual = storage_change - expected_change
@@ -1537,6 +1651,9 @@ def solve_single_branch(
         default=0.0,
     )
     friction_retry_count = sum(step.friction_retry_count for step in steps)
+    runtime_envelope_retry_count = sum(
+        step.runtime_envelope_retry_count for step in steps
+    )
     return SingleBranchResult(
         states=tuple(output_states),
         steps=tuple(steps),
@@ -1557,13 +1674,40 @@ def solve_single_branch(
             step_count=current.diagnostics.step_count,
             cfl_reduction_count=current.diagnostics.time_step_reduction_count,
             positivity_retry_count=(
-                current.diagnostics.retry_count - friction_retry_count
+                current.diagnostics.retry_count
+                - friction_retry_count
+                - runtime_envelope_retry_count
             ),
             event_refinement_count=total_event_refinements,
             gate_solver_retry_count=gate_solver_retries,
             pump_solver_retry_count=pump_solver_retries,
             maximum_friction_number=maximum_accepted_friction_number,
             friction_retry_count=friction_retry_count,
+            friction_predictor_reduction_count=friction_predictor_reductions,
+            predicted_minimum_friction_dt=(
+                min(predicted_friction_dts) if predicted_friction_dts else None
+            ),
+            minimum_water_depth_m=(
+                envelope_observation.minimum_water_depth_m
+                if envelope_observation is not None
+                else None
+            ),
+            minimum_discharge_m3s=(
+                envelope_observation.minimum_discharge_m3s
+                if envelope_observation is not None
+                else None
+            ),
+            maximum_froude_number=(
+                envelope_observation.maximum_froude_number
+                if envelope_observation is not None
+                else None
+            ),
+            runtime_envelope_retry_count=runtime_envelope_retry_count,
+            runtime_envelope_status=(
+                envelope_observation.status
+                if envelope_observation is not None
+                else "not_applicable"
+            ),
             minimum_dt_failure_count=0,
             diagnostic_flags=tuple(sorted(flags)),
         ),

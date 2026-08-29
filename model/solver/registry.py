@@ -7,6 +7,10 @@ from typing import Final, Literal
 
 from model.core.errors import HydraulicInputError
 from model.provenance import snapshot_hash
+from model.solver.finite_volume.runtime_envelope import (
+    D3A_RUNTIME_ENVELOPE_ID,
+    runtime_envelope_manifest_hash,
+)
 
 
 MODEL_INPUT_V1: Final = "dayu.model-input.v1"
@@ -37,6 +41,8 @@ class SolverCapabilityManifest:
     capability_id: str
     scope: tuple[str, ...]
     exclusions: tuple[str, ...]
+    runtime_envelope_id: str | None = None
+    runtime_envelope_hash: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +62,8 @@ class CapabilityCatalogEntry:
     scope: tuple[str, ...]
     exclusions: tuple[str, ...]
     warnings: tuple[str, ...]
+    runtime_envelope_id: str | None = None
+    runtime_envelope_hash: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +144,8 @@ D3A_1_CAPABILITY = SolverCapabilityManifest(
         "reverse-or-supercritical-flow",
         "calibration-or-production-decision",
     ),
+    runtime_envelope_id=D3A_RUNTIME_ENVELOPE_ID,
+    runtime_envelope_hash=runtime_envelope_manifest_hash(D3A_RUNTIME_ENVELOPE_ID),
 )
 
 D3A_1_KNOWN_LIMITATIONS: Final = (
@@ -168,6 +178,8 @@ D3A_2_CAPABILITY = SolverCapabilityManifest(
         "reverse-or-supercritical-flow",
         "calibration-or-production-decision",
     ),
+    runtime_envelope_id=D3A_RUNTIME_ENVELOPE_ID,
+    runtime_envelope_hash=runtime_envelope_manifest_hash(D3A_RUNTIME_ENVELOPE_ID),
 )
 
 D3A_2_KNOWN_LIMITATIONS: Final = (
@@ -202,6 +214,8 @@ D3A_3_CAPABILITY = SolverCapabilityManifest(
         "bridges-culverts-weirs-or-floodplain-zoning",
         "calibration-or-production-decision",
     ),
+    runtime_envelope_id=D3A_RUNTIME_ENVELOPE_ID,
+    runtime_envelope_hash=runtime_envelope_manifest_hash(D3A_RUNTIME_ENVELOPE_ID),
 )
 
 D3A_3_KNOWN_LIMITATIONS: Final = (
@@ -234,6 +248,8 @@ _CAPABILITY_CATALOG: tuple[CapabilityCatalogEntry, ...] = (
         scope=D3A_1_CAPABILITY.scope,
         exclusions=D3A_1_CAPABILITY.exclusions,
         warnings=D3A_1_KNOWN_LIMITATIONS,
+        runtime_envelope_id=D3A_1_CAPABILITY.runtime_envelope_id,
+        runtime_envelope_hash=D3A_1_CAPABILITY.runtime_envelope_hash,
     ),
     CapabilityCatalogEntry(
         capability_id=D3A_2_CAPABILITY_ID,
@@ -244,6 +260,8 @@ _CAPABILITY_CATALOG: tuple[CapabilityCatalogEntry, ...] = (
         scope=D3A_2_CAPABILITY.scope,
         exclusions=D3A_2_CAPABILITY.exclusions,
         warnings=D3A_2_KNOWN_LIMITATIONS,
+        runtime_envelope_id=D3A_2_CAPABILITY.runtime_envelope_id,
+        runtime_envelope_hash=D3A_2_CAPABILITY.runtime_envelope_hash,
     ),
     CapabilityCatalogEntry(
         capability_id=D3A_3_CAPABILITY_ID,
@@ -254,6 +272,8 @@ _CAPABILITY_CATALOG: tuple[CapabilityCatalogEntry, ...] = (
         scope=D3A_3_CAPABILITY.scope,
         exclusions=D3A_3_CAPABILITY.exclusions,
         warnings=D3A_3_KNOWN_LIMITATIONS,
+        runtime_envelope_id=D3A_3_CAPABILITY.runtime_envelope_id,
+        runtime_envelope_hash=D3A_3_CAPABILITY.runtime_envelope_hash,
     ),
 )
 
@@ -341,13 +361,26 @@ _REGISTRATIONS: tuple[SolverRegistration, ...] = (
 def registry_manifest() -> dict[str, object]:
     """Return the canonical JSON-shaped registry without runtime callables."""
 
-    return {
+    def without_none(value: object) -> object:
+        """Keep pre-RC1 entries byte-compatible while adding D3A-only fields."""
+
+        if isinstance(value, dict):
+            return {
+                key: without_none(item)
+                for key, item in value.items()
+                if item is not None
+            }
+        if isinstance(value, list):
+            return [without_none(item) for item in value]
+        return value
+
+    return without_none({
         "schema_version": REGISTRY_SCHEMA_VERSION,
         "capability_catalog_schema_version": CAPABILITY_CATALOG_SCHEMA_VERSION,
         "capability_catalog": [asdict(item) for item in _CAPABILITY_CATALOG],
         "known_limitations": list(D1_KNOWN_LIMITATIONS),
         "registrations": [asdict(item) for item in _REGISTRATIONS],
-    }
+    })
 
 
 def capability_catalog() -> tuple[CapabilityCatalogEntry, ...]:

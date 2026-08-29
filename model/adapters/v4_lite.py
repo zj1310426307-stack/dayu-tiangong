@@ -61,8 +61,11 @@ from model.solver.finite_volume import (
     StageHysteresisMinimumRuntime,
     UpstreamDischargeBoundary,
     solve_single_branch,
+    resolve_runtime_envelope,
 )
 from model.solver.finite_volume.boundary import boundary_algorithm_id
+from model.solver.finite_volume.capabilities import require_solver_capability
+from model.solver.registry import registry_hash
 
 MESH_HASH_SCHEMA = "dayu.finite-volume-mesh.v1"
 MESH_HASH_SCHEMA_V2 = "dayu.finite-volume-mesh.v2"
@@ -74,8 +77,12 @@ SOLVER_POLICY_HASH_SCHEMA_V5 = "dayu.solver-policy.v5"
 SOLVER_POLICY_HASH_SCHEMA_V6 = "dayu.solver-policy.v6"
 SOLVER_POLICY_HASH_SCHEMA_V7 = "dayu.solver-policy.v7"
 SOLVER_POLICY_HASH_SCHEMA_V8 = "dayu.solver-policy.v8"
+SOLVER_POLICY_HASH_SCHEMA_V9 = "dayu.solver-policy.v9"
 RUNTIME_PROJECTION_HASH_SCHEMA = "dayu.v4-lite.runtime-projection.v1"
 VALIDATION_POLICY_HASH_SCHEMA = "dayu.v4-lite.validation-policy.v1"
+VALIDATION_POLICY_HASH_SCHEMA_V2 = "dayu.v4-lite.validation-policy.v2"
+
+_D3A_VALIDATION_VERSIONS = frozenset({"d3a-1-v1", "d3a-2-v1", "d3a-3-v1"})
 
 
 def build_v4_lite_mesh(model_input: V4LiteInput) -> FiniteVolumeMesh:
@@ -168,14 +175,26 @@ def v4_lite_runtime_projection_hash(model_input: V4LiteInput) -> str:
 def v4_lite_validation_policy_hash(model_input: V4LiteInput) -> str:
     """Hash the immutable public validation-policy identity independently."""
 
+    version = model_input.provenance.validation_policy_version
     manifest = {
-        "schema_version": VALIDATION_POLICY_HASH_SCHEMA,
+        "schema_version": (
+            VALIDATION_POLICY_HASH_SCHEMA_V2
+            if version in _D3A_VALIDATION_VERSIONS
+            else VALIDATION_POLICY_HASH_SCHEMA
+        ),
         "canonicalization_id": CANONICALIZATION_ID,
         "input_schema_version": model_input.schema_version,
-        "validation_policy_version": (
-            model_input.provenance.validation_policy_version
-        ),
+        "validation_policy_version": version,
     }
+    if version in _D3A_VALIDATION_VERSIONS:
+        capability = require_solver_capability(version)
+        envelope = resolve_runtime_envelope(
+            capability.manifest.runtime_envelope_id
+        )
+        manifest["runtime_envelope"] = {
+            **envelope.manifest(),
+            "manifest_hash": envelope.manifest_hash,
+        }
     return snapshot_hash(manifest)
 
 
@@ -245,8 +264,9 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
     solver = model_input.solver
     manifest = {
         "schema_version": (
-            SOLVER_POLICY_HASH_SCHEMA_V8
-            if model_input.provenance.validation_policy_version == "d3a-3-v1"
+            SOLVER_POLICY_HASH_SCHEMA_V9
+            if model_input.provenance.validation_policy_version
+            in _D3A_VALIDATION_VERSIONS
             else (
                 SOLVER_POLICY_HASH_SCHEMA_V7
                 if model_input.provenance.validation_policy_version == "d3a-2-v1"
@@ -323,6 +343,31 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
             "maximum_relative_change": 0.25,
             "classification": "validation-only-gradually-varying",
             "abrupt_transition_claim": False,
+        }
+    if model_input.provenance.validation_policy_version in _D3A_VALIDATION_VERSIONS:
+        capability = require_solver_capability(
+            model_input.provenance.validation_policy_version
+        )
+        envelope = resolve_runtime_envelope(
+            capability.manifest.runtime_envelope_id
+        )
+        manifest["solver"]["runtime_envelope"] = {
+            **envelope.manifest(),
+            "manifest_hash": envelope.manifest_hash,
+            "checkpoints": [
+                "initial-state",
+                "first-euler-stage",
+                "second-euler-stage",
+                "blended-candidate",
+                "accepted-state",
+                "final-result",
+            ],
+        }
+        manifest["solver"]["friction_time_step_predictor"] = {
+            "policy": capability.manifest.friction_time_step_predictor_id,
+            "safety_factor": capability.manifest.friction_predictor_safety_factor,
+            "equation": "maximum-mu-over-current-k-abs-q-v1",
+            "stage_retry_gate_preserved": True,
         }
     if model_input.provenance.validation_policy_version in {
         "v4-lite-4",
@@ -1159,6 +1204,19 @@ def _result(
                 {
                     "maximum_friction_number": evidence.maximum_friction_number,
                     "friction_retry_count": evidence.friction_retry_count,
+                    "friction_predictor_reduction_count": (
+                        evidence.friction_predictor_reduction_count
+                    ),
+                    "predicted_minimum_friction_dt": (
+                        evidence.predicted_minimum_friction_dt
+                    ),
+                    "minimum_water_depth_m": evidence.minimum_water_depth_m,
+                    "minimum_discharge_m3s": evidence.minimum_discharge_m3s,
+                    "maximum_froude_number": evidence.maximum_froude_number,
+                    "runtime_envelope_retry_count": (
+                        evidence.runtime_envelope_retry_count
+                    ),
+                    "runtime_envelope_status": evidence.runtime_envelope_status,
                 }
                 if model_input.provenance.validation_policy_version
                 in {"d3a-1-v1", "d3a-2-v1", "d3a-3-v1"}
@@ -1180,6 +1238,27 @@ def _result(
                 if model_input.provenance.validation_policy_version != "v4-lite-1"
                 else {}
             ),
+            **(
+                {
+                    "validation_policy_hash": (
+                        v4_lite_validation_policy_hash(model_input)
+                    ),
+                    "registry_hash": registry_hash(),
+                    "runtime_envelope_id": (
+                        require_solver_capability(
+                            model_input.provenance.validation_policy_version
+                        ).manifest.runtime_envelope_id
+                    ),
+                    "runtime_envelope_hash": resolve_runtime_envelope(
+                        require_solver_capability(
+                            model_input.provenance.validation_policy_version
+                        ).manifest.runtime_envelope_id
+                    ).manifest_hash,
+                }
+                if model_input.provenance.validation_policy_version
+                in _D3A_VALIDATION_VERSIONS
+                else {}
+            ),
         ),
     )
 
@@ -1195,6 +1274,18 @@ def run_v4_lite(
     frozen_snapshot = json.loads(canonical_json(snapshot))
     input_snapshot_hash = snapshot_hash(frozen_snapshot)
     model_input = parse_v4_lite_input(frozen_snapshot)
+    capability = (
+        require_solver_capability(model_input.provenance.validation_policy_version)
+        if model_input.provenance.validation_policy_version
+        in {"v4-lite-7", *_D3A_VALIDATION_VERSIONS}
+        else None
+    )
+    runtime_envelope = (
+        resolve_runtime_envelope(capability.manifest.runtime_envelope_id)
+        if capability is not None
+        and capability.manifest.runtime_envelope_id is not None
+        else None
+    )
     mesh = build_v4_lite_mesh(model_input)
     gates, pumps = _structures(model_input)
     runtime = solve_single_branch(
@@ -1217,6 +1308,12 @@ def run_v4_lite(
                 in {"d3a-1-v1", "d3a-2-v1", "d3a-3-v1"}
                 else None
             ),
+            friction_predictor_safety_factor=(
+                capability.manifest.friction_predictor_safety_factor
+                if capability is not None
+                else None
+            ),
+            runtime_envelope=runtime_envelope,
             scheme="hll",
             equilibrium_mode=_runtime_equilibrium_mode(model_input),
             geometry_source_mode=model_input.solver.geometry_source,
@@ -1267,6 +1364,7 @@ __all__ = [
     "RUNTIME_PROJECTION_HASH_SCHEMA",
     "SOLVER_POLICY_HASH_SCHEMA",
     "SOLVER_POLICY_HASH_SCHEMA_V8",
+    "SOLVER_POLICY_HASH_SCHEMA_V9",
     "VALIDATION_POLICY_HASH_SCHEMA",
     "build_v4_lite_mesh",
     "run_v4_lite",

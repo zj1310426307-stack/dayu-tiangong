@@ -20,6 +20,9 @@ class NumericalPolicyManifest:
     pump_efficiency_policy: str
     pump_control_policy: str
     supported_scope: tuple[str, ...]
+    runtime_envelope_id: str | None = None
+    friction_time_step_predictor_id: str | None = None
+    friction_predictor_safety_factor: float | None = None
 
 
 @dataclass(frozen=True)
@@ -88,6 +91,9 @@ D3A_1_MANNING_STRONG_COUPLING = SolverCapability(
             "water-balance-tolerance-at-most-1e-10",
             "maximum-friction-number-0.1",
         ),
+        runtime_envelope_id="fully-wet-forward-fr08-v1",
+        friction_time_step_predictor_id="accepted-state-manning-mu-v1",
+        friction_predictor_safety_factor=0.8,
     ),
 )
 
@@ -119,6 +125,9 @@ D3A_2_MANNING_SLOPE_STRONG_COUPLING = SolverCapability(
             "water-balance-tolerance-at-most-1e-10",
             "maximum-friction-number-0.1",
         ),
+        runtime_envelope_id="fully-wet-forward-fr08-v1",
+        friction_time_step_predictor_id="accepted-state-manning-mu-v1",
+        friction_predictor_safety_factor=0.8,
     ),
 )
 
@@ -152,6 +161,9 @@ D3A_3_ENGINEERING_PROFILE_STRONG_COUPLING = SolverCapability(
             "maximum-friction-number-0.1",
             "validation-only",
         ),
+        runtime_envelope_id="fully-wet-forward-fr08-v1",
+        friction_time_step_predictor_id="accepted-state-manning-mu-v1",
+        friction_predictor_safety_factor=0.8,
     ),
 )
 

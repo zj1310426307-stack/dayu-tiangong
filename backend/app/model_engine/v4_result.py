@@ -43,7 +43,9 @@ from model.solver.registry import (
     D3A_1_CAPABILITY_ID,
     D3A_2_CAPABILITY_ID,
     D3A_3_CAPABILITY_ID,
+    resolve_capability,
 )
+from model.solver.finite_volume.runtime_envelope import resolve_runtime_envelope
 
 
 RESULT_SCHEMA_VERSION = "dayu.hydraulic-result.v3"
@@ -178,12 +180,57 @@ def validate_v4_result(
             if isinstance(diagnostics, Mapping)
             else None
         )
+        capability = resolve_capability(
+            projection.source.solver_selection.capability_id
+        )
+        envelope = resolve_runtime_envelope(capability.runtime_envelope_id)
+        minimum_depth = (
+            float(diagnostics.get("minimum_water_depth_m", -math.inf))
+            if isinstance(diagnostics, Mapping)
+            else -math.inf
+        )
+        minimum_discharge = (
+            float(diagnostics.get("minimum_discharge_m3s", -math.inf))
+            if isinstance(diagnostics, Mapping)
+            else -math.inf
+        )
+        maximum_froude = (
+            float(diagnostics.get("maximum_froude_number", math.inf))
+            if isinstance(diagnostics, Mapping)
+            else math.inf
+        )
+        envelope_retries = (
+            diagnostics.get("runtime_envelope_retry_count")
+            if isinstance(diagnostics, Mapping)
+            else None
+        )
+        predictor_reductions = (
+            diagnostics.get("friction_predictor_reduction_count")
+            if isinstance(diagnostics, Mapping)
+            else None
+        )
+        predicted_friction_dt = (
+            float(diagnostics.get("predicted_minimum_friction_dt", -math.inf))
+            if isinstance(diagnostics, Mapping)
+            else -math.inf
+        )
         if (
             not 0.0 < maximum_friction <= 0.1 + 1.0e-12
             or not isinstance(friction_retries, int)
             or friction_retries < 0
+            or diagnostics.get("runtime_envelope_status") != "pass"
+            or minimum_depth <= envelope.minimum_water_depth_m
+            or minimum_discharge < -envelope.reverse_flow_tolerance_m3s
+            or maximum_froude > envelope.maximum_froude_number + 1.0e-12
+            or not isinstance(envelope_retries, int)
+            or envelope_retries < 0
+            or not isinstance(predictor_reductions, int)
+            or predictor_reductions < 0
+            or predicted_friction_dt <= 0.0
         ):
-            raise ValueError("D3A-1 Manning diagnostics failed their frozen gate")
+            raise ValueError(
+                "D3A Manning/runtime-envelope diagnostics failed their frozen gate"
+            )
     gate_evidence = result.get("controlled_gate_coupling_evidence")
     pump_evidence = result.get("pump_coupling_evidence")
     if not isinstance(gate_evidence, list) or len(gate_evidence) != 1:
@@ -214,6 +261,25 @@ def validate_v4_result(
         raise ValueError("runtime result mesh hash does not match the frozen task")
     if provenance.get("solver_policy_hash") != projection.manifest["solver_policy_hash"]:
         raise ValueError("runtime result solver-policy hash does not match the task")
+    if projection.source.solver_selection.capability_id in {
+        D3A_1_CAPABILITY_ID,
+        D3A_2_CAPABILITY_ID,
+        D3A_3_CAPABILITY_ID,
+    }:
+        capability = resolve_capability(
+            projection.source.solver_selection.capability_id
+        )
+        if (
+            provenance.get("validation_policy_hash")
+            != projection.manifest["validation_policy_hash"]
+            or provenance.get("registry_hash")
+            != projection.manifest["registry_hash"]
+            or provenance.get("runtime_envelope_id")
+            != capability.runtime_envelope_id
+            or provenance.get("runtime_envelope_hash")
+            != capability.runtime_envelope_hash
+        ):
+            raise ValueError("runtime-envelope provenance does not match the task")
 
 
 def build_stage_evidence_artifact(
