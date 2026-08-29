@@ -202,6 +202,24 @@ RC1 run `33102252587`、最终 HEAD run `33102637908` 与 PR #10 run `3310284311
 均全绿，测试 artifacts 已核对；PR [#10](https://github.com/zj1310426307-stack/dayu-tiangong/pull/10)
 保持 OPEN，未合并 `main`。
 
+## HYDRO-MODEL-02-D3A-RC1
+
+D3A-RC1 在 single Branch、fully wet、forward、`Fr<=0.8` 的冻结边界内增加动态
+runtime envelope、SSP-RK2 全阶段 fail-closed 检查、摩阻时间步预测器，以及同一物理
+问题的 60/70/80 空间收敛和 fine CFL/2 时间细化。Python 3.12 发布镜像使用独立
+`D3A shipping science` 门验证，不以开发环境 Python 代替发布运行时。
+
+本地证据为 698 passed / 37 skipped / 0 failed，前端类型检查和生产构建通过；当前
+仍为 `LOCAL PASS / HOSTED PENDING / NO-GO`。PR
+[#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12) 保持 OPEN，本文不授权
+合并、创建 D3A tag 或启动 D3B。完整证据见：
+
+- `docs/review/HYDRO-MODEL-02-D3A-RC1-audit.md`
+- `docs/model/HYDRO-MODEL-02-D3A-RC1-runtime-envelope.md`
+- `docs/model/HYDRO-MODEL-02-D3A-RC1-final-convergence.md`
+- `docs/model/HYDRO-MODEL-02-D3A-RC1-validation-report.md`
+- `docs/release/HYDRO-MODEL-02-D3A-RC1-release-readiness.md`
+
 ## 当前边界
 
 这是工程原型和受控本地部署基线，不是生产高可用系统。统一 IAM、真实模型率定、PLC/SCADA 接入、生产 TLS/密钥托管、审计归档、备份恢复演练和集群高可用仍需后续建设。新发布 GIS 版本也不会自动成为已率定的水动力模型版本。

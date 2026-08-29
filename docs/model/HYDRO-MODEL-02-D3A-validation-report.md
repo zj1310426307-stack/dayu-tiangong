@@ -57,3 +57,7 @@ Readiness、runtime adapter、validation policy、结果 provenance、OpenAPI �
 大禹·天工 native 1D Saint-Venant 模型已在单 Branch、全湿、正向严格亚临界边界内，通过独立科学门扩展到有效 Manning 摩阻、显式非零床坡和连续变化的非同 tabulated Profiles，并在一个 completed-interface Gate 与一个 external Q-H/Q-η Pump 综合 synthetic benchmark 中完成质量、收敛、水量和构建来源验证。
 
 能力限制以 [D3A known limitations](./HYDRO-MODEL-02-D3A-known-limitations.md) 为准。
+
+## RC1 覆盖说明（2026-08-30）
+
+以上 2026-08-29 指标是历史候选证据，不再构成当前 release decision。当前结论以 [D3A-RC1 validation report](./HYDRO-MODEL-02-D3A-RC1-validation-report.md) 为准：本地实现/科学 PASS，hosted 首次运行 PENDING，PR #12 继续 NO-GO。

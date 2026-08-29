@@ -46,3 +46,7 @@
 ## D3B readiness
 
 D3A 的数值与平台门已闭合，可以进入 D3B 真实小型单河闸泵工程验证。D3B 必须补充可追溯的真实断面、床高、糙率依据、闸泵参数、边界过程、运行记录和水位/流量观测，并进行率定、事件复现和误差统计；在此之前不得升级为生产能力声明。
+
+## RC1 覆盖说明（2026-08-30）
+
+本文件的全勾选清单与 D3B readiness 是 2026-08-29 历史候选结论，已被独立审查撤回。当前唯一有效判定见 [D3A-RC1 release readiness](./HYDRO-MODEL-02-D3A-RC1-release-readiness.md)：`LOCAL PASS / HOSTED PENDING / NO-GO`。不得据本历史文件合并 PR、打 tag 或启动 D3B。
