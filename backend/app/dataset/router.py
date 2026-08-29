@@ -31,6 +31,7 @@ from model.solver.registry import (
     D1_CAPABILITY_ID,
     D3A_1_CAPABILITY_ID,
     D3A_2_CAPABILITY_ID,
+    D3A_3_CAPABILITY_ID,
 )
 
 
@@ -228,6 +229,7 @@ def read_model_input_v4_readiness(
         D1_CAPABILITY_ID,
         D3A_1_CAPABILITY_ID,
         D3A_2_CAPABILITY_ID,
+        D3A_3_CAPABILITY_ID,
     ] = Query(
         default=D1_CAPABILITY_ID
     ),
@@ -255,6 +257,7 @@ def read_model_input_v4_preview(
         D1_CAPABILITY_ID,
         D3A_1_CAPABILITY_ID,
         D3A_2_CAPABILITY_ID,
+        D3A_3_CAPABILITY_ID,
     ] = Query(
         default=D1_CAPABILITY_ID
     ),

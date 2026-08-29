@@ -1894,7 +1894,7 @@ export interface SimulationTaskCreate {
   "minimum_depth"?: number | null;
   "input_schema_version"?: "dayu.model-input.v1" | "dayu.model-input.v2" | "dayu.model-input.v3" | "dayu.model-input.v4";
   "solver_id"?: string | null;
-  "capability_id"?: "single-branch-gate-external-pump-d1-v1" | "single-branch-gate-pump-manning-v1" | "single-branch-gate-pump-manning-slope-v1" | null;
+  "capability_id"?: "single-branch-gate-external-pump-d1-v1" | "single-branch-gate-pump-manning-v1" | "single-branch-gate-pump-manning-slope-v1" | "single-branch-gate-pump-engineering-profile-v1" | null;
   "dispatch_plan_id"?: number | null;
   "execution_mode"?: "validation" | "shadow";
   "allow_fallback_boundary"?: boolean;

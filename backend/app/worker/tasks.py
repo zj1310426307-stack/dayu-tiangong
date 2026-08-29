@@ -45,6 +45,7 @@ from model.solver.registry import (
     D1_SOLVER_ID,
     D3A_1_CAPABILITY_ID,
     D3A_2_CAPABILITY_ID,
+    D3A_3_CAPABILITY_ID,
     registry_hash,
     task_solver_provenance,
 )
@@ -57,6 +58,7 @@ V4_WORKER_CAPABILITIES = {
         D1_CAPABILITY_ID,
         D3A_1_CAPABILITY_ID,
         D3A_2_CAPABILITY_ID,
+        D3A_3_CAPABILITY_ID,
     ),
 }
 INFRASTRUCTURE_ERRORS = (ConnectionError, TimeoutError, OSError, OperationalError)

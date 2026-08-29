@@ -36,6 +36,8 @@ from model.solver.registry import (
     D3A_1_RUNTIME_ADAPTER_ID,
     D3A_2_CAPABILITY_ID,
     D3A_2_RUNTIME_ADAPTER_ID,
+    D3A_3_CAPABILITY_ID,
+    D3A_3_RUNTIME_ADAPTER_ID,
     MODEL_INPUT_V4,
     registry_hash,
     resolve_capability,
@@ -66,11 +68,13 @@ class SolverSelection(StrictPlatformModel):
         D1_CAPABILITY_ID,
         D3A_1_CAPABILITY_ID,
         D3A_2_CAPABILITY_ID,
+        D3A_3_CAPABILITY_ID,
     ]
     runtime_adapter_id: Literal[
         D1_RUNTIME_ADAPTER_ID,
         D3A_1_RUNTIME_ADAPTER_ID,
         D3A_2_RUNTIME_ADAPTER_ID,
+        D3A_3_RUNTIME_ADAPTER_ID,
     ]
 
 
@@ -126,17 +130,24 @@ class ControlPlanIdentity(StrictPlatformModel):
         "d1-gate-pump-control-v1",
         "d3a-1-gate-pump-control-v1",
         "d3a-2-gate-pump-control-v1",
+        "d3a-3-gate-pump-control-v1",
     ]
 
 
 class ValidationPolicy(StrictPlatformModel):
     """Freeze the selected validation policy separately from numerical settings."""
 
-    validation_policy_version: Literal["v4-lite-7", "d3a-1-v1", "d3a-2-v1"]
+    validation_policy_version: Literal[
+        "v4-lite-7",
+        "d3a-1-v1",
+        "d3a-2-v1",
+        "d3a-3-v1",
+    ]
     capability_id: Literal[
         D1_CAPABILITY_ID,
         D3A_1_CAPABILITY_ID,
         D3A_2_CAPABILITY_ID,
+        D3A_3_CAPABILITY_ID,
     ]
     water_balance_tolerance: Annotated[float, Field(strict=True, gt=0.0, le=1.0e-10)]
 
@@ -245,6 +256,7 @@ class ModelInputV4(StrictPlatformModel):
             D1_CAPABILITY_ID: "d1-gate-pump-control-v1",
             D3A_1_CAPABILITY_ID: "d3a-1-gate-pump-control-v1",
             D3A_2_CAPABILITY_ID: "d3a-2-gate-pump-control-v1",
+            D3A_3_CAPABILITY_ID: "d3a-3-gate-pump-control-v1",
         }[self.solver_selection.capability_id]
         if self.control_plan.policy_id != expected_control_policy:
             raise ValueError("control-plan policy does not match solver capability")

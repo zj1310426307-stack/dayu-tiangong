@@ -61,6 +61,7 @@ const D1_SOLVER_ID = 'saint-venant-fv-hll-ssp-rk2-d1-v1';
 const D1_CAPABILITY_ID = 'single-branch-gate-external-pump-d1-v1';
 const D3A_1_CAPABILITY_ID = 'single-branch-gate-pump-manning-v1';
 const D3A_2_CAPABILITY_ID = 'single-branch-gate-pump-manning-slope-v1';
+const D3A_3_CAPABILITY_ID = 'single-branch-gate-pump-engineering-profile-v1';
 const RETRY_BLOCKED_ARTIFACT_STATUSES = new Set([
   'prepared',
   'publishing',
@@ -240,7 +241,7 @@ export function HydraulicConfigPage() {
                     { value: D1_CAPABILITY_ID, label: 'D1 validation · n=0' },
                     { value: D3A_1_CAPABILITY_ID, label: 'D3A-1 Manning · 0<n≤0.10' },
                     { value: D3A_2_CAPABILITY_ID, label: 'D3A-2 Manning + Slope · 显式河床' },
-                    { value: 'single-branch-gate-pump-engineering-profile-v1', label: 'D3A-3 Engineering Profiles · 未解锁', disabled: true },
+                    { value: D3A_3_CAPABILITY_ID, label: 'D3A-3 Engineering Profiles · 渐变断面' },
                   ]} />
                 </Form.Item>
               </Col>
@@ -299,13 +300,13 @@ export function HydraulicConfigPage() {
               className="data-alert"
               showIcon
               type={readiness?.ready ? 'success' : readiness ? 'error' : 'info'}
-              message={readiness?.ready ? `${selectedCapabilityId === D3A_2_CAPABILITY_ID ? 'D3A-2 Manning + Slope' : selectedCapabilityId === D3A_1_CAPABILITY_ID ? 'D3A-1 Manning' : 'D1'} v4 readiness 通过` : readinessLoading ? '正在检查 v4 readiness' : '请选择科学能力、工况与冻结调度方案'}
+              message={readiness?.ready ? `${selectedCapabilityId === D3A_3_CAPABILITY_ID ? 'D3A-3 Engineering Profiles' : selectedCapabilityId === D3A_2_CAPABILITY_ID ? 'D3A-2 Manning + Slope' : selectedCapabilityId === D3A_1_CAPABILITY_ID ? 'D3A-1 Manning' : 'D1'} v4 readiness 通过` : readinessLoading ? '正在检查 v4 readiness' : '请选择科学能力、工况与冻结调度方案'}
               description={readiness ? (
                 <Space direction="vertical" size={2}>
                   <Text>solver: {readiness.solver_id}</Text>
                   <Text>capability: {readiness.capability_id}</Text>
                   {readiness.errors.map((item) => <Text type="danger" key={`${item.code}-${item.field_path}`}>{item.code} · {item.message}</Text>)}
-                  <Text type="secondary">单 Branch · 全湿 · 正向严格亚临界 · {selectedCapabilityId === D3A_2_CAPABILITY_ID ? '正有效 Manning、显式线性河床、相同局部断面形状' : selectedCapabilityId === D3A_1_CAPABILITY_ID ? '正有效 Manning、平床、相同断面' : 'n=0、平床、相同断面'} · 1 Gate · 1 external Pump · 仅验证用途 · 非生产率定</Text>
+                  <Text type="secondary">单 Branch · 全湿 · 正向严格亚临界 · {selectedCapabilityId === D3A_3_CAPABILITY_ID ? '正有效 Manning、显式下降河床、相邻 A/T/P/I1 变化率≤0.25 的渐变非同断面' : selectedCapabilityId === D3A_2_CAPABILITY_ID ? '正有效 Manning、显式线性河床、相同局部断面形状' : selectedCapabilityId === D3A_1_CAPABILITY_ID ? '正有效 Manning、平床、相同断面' : 'n=0、平床、相同断面'} · 1 Gate · 1 external Pump · 仅验证用途 · 非生产率定</Text>
                 </Space>
               ) : undefined}
             />

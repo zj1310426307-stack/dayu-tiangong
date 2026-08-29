@@ -12,6 +12,10 @@ from model.solver.finite_volume.diagnostics import NumericalStateError, require_
 from model.solver.finite_volume.event_locator import detect_bracketed_crossings
 from model.solver.finite_volume.flux import GRAVITY
 from model.solver.finite_volume.geometry import pressure_moment
+from model.solver.finite_volume.geometry_source import (
+    MAX_ADJACENT_HYDRAULIC_RELATIVE_CHANGE,
+    adjacent_hydraulic_relative_change,
+)
 from model.solver.finite_volume.integrator import StepResult, advance_with_retries
 from model.solver.finite_volume.mesh import FiniteVolumeMesh
 from model.solver.finite_volume.pump import HydraulicExternalPump
@@ -40,6 +44,9 @@ NONPRISMATIC_LAKE_SCOPE = "lake-at-rest-v1"
 NONPRISMATIC_MOVING_ENERGY_SCOPE = (
     "fully-wet-subcritical-frictionless-energy-reference-v1"
 )
+NONPRISMATIC_ENGINEERING_SCOPE = (
+    "fully-wet-subcritical-manning-slope-engineering-v1"
+)
 
 
 @dataclass(frozen=True)
@@ -65,6 +72,7 @@ class SingleBranchConfig:
     nonprismatic_scope: Literal[
         "lake-at-rest-v1",
         "fully-wet-subcritical-frictionless-energy-reference-v1",
+        "fully-wet-subcritical-manning-slope-engineering-v1",
     ] = NONPRISMATIC_LAKE_SCOPE
     structure_event_policy: Literal[
         "accepted-state-discrete-v1",
@@ -77,6 +85,7 @@ class SingleBranchConfig:
         "d1-single-branch-gate-pump-v1",
         "d3a-1-single-branch-gate-pump-manning-v1",
         "d3a-2-single-branch-gate-pump-manning-slope-v1",
+        "d3a-3-single-branch-gate-pump-engineering-profile-v1",
     ] = "legacy-v1"
 
     def __post_init__(self) -> None:
@@ -108,10 +117,12 @@ class SingleBranchConfig:
         if self.nonprismatic_scope not in (
             NONPRISMATIC_LAKE_SCOPE,
             NONPRISMATIC_MOVING_ENERGY_SCOPE,
+            NONPRISMATIC_ENGINEERING_SCOPE,
         ):
             raise ValueError("unsupported finite-volume nonprismatic_scope")
         if (
-            self.nonprismatic_scope == NONPRISMATIC_MOVING_ENERGY_SCOPE
+            self.nonprismatic_scope
+            in {NONPRISMATIC_MOVING_ENERGY_SCOPE, NONPRISMATIC_ENGINEERING_SCOPE}
             and self.geometry_source_mode != "hydraulic-function-linear-face-v1"
         ):
             raise ValueError(
@@ -137,11 +148,13 @@ class SingleBranchConfig:
             "d1-single-branch-gate-pump-v1",
             "d3a-1-single-branch-gate-pump-manning-v1",
             "d3a-2-single-branch-gate-pump-manning-slope-v1",
+            "d3a-3-single-branch-gate-pump-engineering-profile-v1",
         }:
             raise ValueError("unsupported finite-volume structure_capability")
         if self.structure_capability in {
             "d3a-1-single-branch-gate-pump-manning-v1",
             "d3a-2-single-branch-gate-pump-manning-slope-v1",
+            "d3a-3-single-branch-gate-pump-engineering-profile-v1",
         } and self.maximum_friction_number != 0.1:
             raise ValueError(
                 "D3A Manning capabilities require maximum_friction_number=0.1"
@@ -759,6 +772,96 @@ def _validate_nonprismatic_moving_energy_scope(
         raise ValueError(f"{scope} downstream H must match the final cell")
 
 
+def _validate_nonprismatic_engineering_scope(
+    *,
+    mesh: FiniteVolumeMesh,
+    initial_state: HydraulicState,
+    boundaries: BoundaryPair,
+    config: SingleBranchConfig,
+    gates: Sequence[FixedGate],
+    pumps: Sequence[OnOffPump | HydraulicExternalPump],
+) -> None:
+    """Guard the D3A-3 gradually varying engineering validation envelope."""
+
+    scope = NONPRISMATIC_ENGINEERING_SCOPE
+    if gates or pumps:
+        if config.structure_capability != (
+            "d3a-3-single-branch-gate-pump-engineering-profile-v1"
+        ):
+            raise ValueError(f"{scope} structures require the D3A-3 capability")
+        if len(gates) != 1 or len(pumps) != 1:
+            raise ValueError(f"{scope} requires exactly one Gate and one Pump")
+    if boundaries.boundary_closure != "subcritical-characteristic-v1":
+        raise ValueError(f"{scope} requires characteristic boundaries")
+    if config.equilibrium_mode != "standard":
+        raise ValueError(f"{scope} uses the standard equilibrium mode")
+    if len(mesh.cells) < 3:
+        raise ValueError(f"{scope} requires at least three cells")
+    if any(not 0.0 < cell.manning_n <= 0.10 for cell in mesh.cells):
+        raise ValueError(f"{scope} requires effective Manning n in (0, 0.10]")
+
+    beds = tuple(cell.bed_elevation for cell in mesh.cells)
+    if any(right >= left for left, right in zip(beds, beds[1:])):
+        raise ValueError(f"{scope} requires a strictly descending explicit bed")
+
+    local_shapes: list[tuple[tuple[float, float], ...]] = []
+    for cell in mesh.cells:
+        points = getattr(cell.geometry, "points", None)
+        if not isinstance(points, tuple) or len(points) < 3:
+            raise ValueError(f"{scope} requires legal tabulated Profile geometry")
+        local_shapes.append(
+            tuple(
+                (
+                    round(float(offset), 12),
+                    round(float(elevation) - cell.bed_elevation, 12),
+                )
+                for offset, elevation in points
+            )
+        )
+    if len(set(local_shapes)) < 2:
+        raise ValueError(f"{scope} requires non-identical local Profile shapes")
+    changes = tuple(
+        adjacent_hydraulic_relative_change(left.geometry, right.geometry)
+        for left, right in zip(mesh.cells, mesh.cells[1:])
+    )
+    if any(change > MAX_ADJACENT_HYDRAULIC_RELATIVE_CHANGE for change in changes):
+        maximum = max(changes)
+        raise ValueError(
+            f"{scope} adjacent Profile change {maximum:.6g} exceeds "
+            f"{MAX_ADJACENT_HYDRAULIC_RELATIVE_CHANGE:.6g}"
+        )
+
+    wet_margin = max(config.dry_depth, 1.0e-9)
+    for cell, area, discharge in zip(
+        mesh.cells,
+        initial_state.area,
+        initial_state.discharge,
+    ):
+        stage = cell.geometry.stage_from_area(area)
+        if stage - cell.bed_elevation <= wet_margin:
+            raise ValueError(f"{scope} requires every initial cell fully wet")
+        if discharge < 0.0:
+            raise ValueError(f"{scope} prohibits reverse initial discharge")
+        top_width = float(cell.geometry.top_width(stage))
+        if area <= 0.0 or top_width <= 0.0:
+            raise ValueError(f"{scope} requires positive hydraulic geometry")
+        celerity = math.sqrt(GRAVITY * area / top_width)
+        froude = abs(discharge / area) / celerity
+        if not math.isfinite(froude) or froude > _MOVING_REFERENCE_MAXIMUM_FROUDE:
+            raise ValueError(f"{scope} requires initial Froude number <= 0.8")
+
+    if any(value <= 0.0 for value in boundaries.upstream.series.values):
+        raise ValueError(f"{scope} requires a strictly positive inflow hydrograph")
+    final_stage = mesh.cells[-1].geometry.stage_from_area(initial_state.area[-1])
+    downstream_values = boundaries.downstream.series.values
+    if any(
+        value - mesh.cells[-1].bed_elevation <= wet_margin
+        or value > final_stage
+        for value in downstream_values
+    ):
+        raise ValueError(f"{scope} downstream process must stay wet and non-rising")
+
+
 def _validate_moving_reference_preservation(
     *,
     mesh: FiniteVolumeMesh,
@@ -921,7 +1024,10 @@ def _validate_completed_gate_scope(
     d3a_2_scope = config.structure_capability == (
         "d3a-2-single-branch-gate-pump-manning-slope-v1"
     )
-    gate_pump_scope = d1_scope or d3a_1_scope or d3a_2_scope
+    d3a_3_scope = config.structure_capability == (
+        "d3a-3-single-branch-gate-pump-engineering-profile-v1"
+    )
+    gate_pump_scope = d1_scope or d3a_1_scope or d3a_2_scope or d3a_3_scope
     completed = tuple(gate for gate in gates if gate.uses_completed_interface)
     if not completed:
         if gate_pump_scope:
@@ -951,8 +1057,15 @@ def _validate_completed_gate_scope(
         )
     if config.equilibrium_mode != "standard":
         raise ValueError("completed-interface scope requires standard equilibrium")
-    if config.geometry_source_mode != "hydrostatic-reconstruction-v1":
-        raise ValueError("completed-interface scope requires hydrostatic reconstruction")
+    expected_geometry_source = (
+        "hydraulic-function-linear-face-v1"
+        if d3a_3_scope
+        else "hydrostatic-reconstruction-v1"
+    )
+    if config.geometry_source_mode != expected_geometry_source:
+        raise ValueError(
+            f"completed-interface scope requires {expected_geometry_source}"
+        )
     if boundaries.boundary_closure != "subcritical-characteristic-v1":
         raise ValueError("completed-interface scope requires characteristic boundaries")
     reference = mesh.cells[0]
@@ -985,6 +1098,21 @@ def _validate_completed_gate_scope(
         beds = tuple(cell.bed_elevation for cell in mesh.cells)
         if any(right >= left for left, right in zip(beds, beds[1:])):
             raise ValueError("D3A-2 requires a strictly descending bed")
+    elif d3a_3_scope:
+        if any(
+            not isinstance(getattr(cell.geometry, "points", None), tuple)
+            for cell in mesh.cells
+        ):
+            raise ValueError("D3A-3 requires tabulated Profile geometry")
+        beds = tuple(cell.bed_elevation for cell in mesh.cells)
+        if any(right >= left for left, right in zip(beds, beds[1:])):
+            raise ValueError("D3A-3 requires a strictly descending explicit bed")
+        if any(
+            adjacent_hydraulic_relative_change(left.geometry, right.geometry)
+            > MAX_ADJACENT_HYDRAULIC_RELATIVE_CHANGE
+            for left, right in zip(mesh.cells, mesh.cells[1:])
+        ):
+            raise ValueError("D3A-3 requires gradually varying adjacent Profiles")
     else:
         if any(cell.geometry != reference.geometry for cell in mesh.cells[1:]):
             raise ValueError("completed-interface scope requires one prismatic section")
@@ -998,7 +1126,7 @@ def _validate_completed_gate_scope(
             for cell in mesh.cells[1:]
         ):
             raise ValueError("completed-interface scope requires a flat bed")
-    if d3a_1_scope or d3a_2_scope:
+    if d3a_1_scope or d3a_2_scope or d3a_3_scope:
         if any(cell.manning_n <= 0.0 for cell in mesh.cells):
             raise ValueError("D3A completed-interface scope requires positive Manning n")
     elif any(cell.manning_n != 0.0 for cell in mesh.cells):
@@ -1034,9 +1162,9 @@ def _validate_completed_gate_scope(
         right = mesh.cells[gate.face_index + 1].geometry.stage_from_area(
             initial_state.area[gate.face_index + 1]
         )
-        if d3a_2_scope and left <= right:
-            raise ValueError("D3A-2 controlled Gate requires positive initial head")
-        if not d3a_2_scope and not math.isclose(
+        if (d3a_2_scope or d3a_3_scope) and left <= right:
+            raise ValueError("D3A sloping-bed Gate requires positive initial head")
+        if not (d3a_2_scope or d3a_3_scope) and not math.isclose(
             left, right, rel_tol=0.0, abs_tol=1.0e-12
         ):
             raise ValueError(
@@ -1134,8 +1262,17 @@ def solve_single_branch(
                 gates=gates,
                 pumps=pumps,
             )
-        else:
+        elif config.nonprismatic_scope == NONPRISMATIC_MOVING_ENERGY_SCOPE:
             _validate_nonprismatic_moving_energy_scope(
+                mesh=mesh,
+                initial_state=initial_state,
+                boundaries=boundaries,
+                config=config,
+                gates=gates,
+                pumps=pumps,
+            )
+        else:
+            _validate_nonprismatic_engineering_scope(
                 mesh=mesh,
                 initial_state=initial_state,
                 boundaries=boundaries,
@@ -1203,6 +1340,9 @@ def solve_single_branch(
         flags.add("friction_number_retry_gate_v1")
     if config.nonprismatic_scope == NONPRISMATIC_MOVING_ENERGY_SCOPE:
         flags.add(NONPRISMATIC_MOVING_ENERGY_SCOPE)
+    if config.nonprismatic_scope == NONPRISMATIC_ENGINEERING_SCOPE:
+        flags.add(NONPRISMATIC_ENGINEERING_SCOPE)
+        flags.add("adjacent-profile-relative-change-at-most-0.25-v1")
     if any(isinstance(gate.control, OneShotStageThreshold) for gate in gates) or any(
         isinstance(pump.control, OneShotStageThreshold) for pump in pumps
     ):

@@ -122,6 +122,39 @@ D3A_2_MANNING_SLOPE_STRONG_COUPLING = SolverCapability(
     ),
 )
 
+D3A_3_ENGINEERING_PROFILE_STRONG_COUPLING = SolverCapability(
+    capability_id="single-branch-gate-pump-engineering-profile-v1",
+    validation_policy_version="d3a-3-v1",
+    manifest=NumericalPolicyManifest(
+        schema_version="dayu.model-input.v4-lite",
+        solver_id="saint-venant-finite-volume-hll-ssp-rk2",
+        geometry_policy="nonprismatic-engineering-linear-path-v1",
+        boundary_policy="subcritical-characteristic-v1",
+        friction_policy="manning-semi-implicit-positive-effective-section-v1",
+        gate_coupling_policy="submerged-orifice-energy-momentum-v1",
+        pump_coupling_policy="qh-operating-point-external-sink-v1",
+        pump_curve_policy="piecewise-linear-qh-v1",
+        pump_efficiency_policy="piecewise-linear-q-efficiency-v1",
+        pump_control_policy="stage-hysteresis-min-runtime-v1",
+        supported_scope=(
+            "single-branch",
+            "fully-wet",
+            "forward-strictly-subcritical",
+            "explicit-strictly-descending-bed",
+            "continuous-gradually-varying-tabulated-profiles",
+            "adjacent-hydraulic-relative-change-at-most-0.25",
+            "positive-section-effective-manning-at-most-0.10",
+            "one-completed-interface-gate",
+            "one-external-sink-pump",
+            "strictly-positive-upstream-hydrograph",
+            "wet-non-rising-downstream-stage-process",
+            "water-balance-tolerance-at-most-1e-10",
+            "maximum-friction-number-0.1",
+            "validation-only",
+        ),
+    ),
+)
+
 _CAPABILITIES = {
     D1_PUMP_STRONG_COUPLING.validation_policy_version: D1_PUMP_STRONG_COUPLING,
     D3A_1_MANNING_STRONG_COUPLING.validation_policy_version: (
@@ -129,6 +162,9 @@ _CAPABILITIES = {
     ),
     D3A_2_MANNING_SLOPE_STRONG_COUPLING.validation_policy_version: (
         D3A_2_MANNING_SLOPE_STRONG_COUPLING
+    ),
+    D3A_3_ENGINEERING_PROFILE_STRONG_COUPLING.validation_policy_version: (
+        D3A_3_ENGINEERING_PROFILE_STRONG_COUPLING
     ),
 }
 
@@ -148,6 +184,7 @@ __all__ = [
     "D1_PUMP_STRONG_COUPLING",
     "D3A_1_MANNING_STRONG_COUPLING",
     "D3A_2_MANNING_SLOPE_STRONG_COUPLING",
+    "D3A_3_ENGINEERING_PROFILE_STRONG_COUPLING",
     "NumericalPolicyManifest",
     "SolverCapability",
     "require_solver_capability",

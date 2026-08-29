@@ -10,6 +10,7 @@ from model.solver.registry import (
     D1_SOLVER_ID,
     D3A_1_CAPABILITY_ID,
     D3A_2_CAPABILITY_ID,
+    D3A_3_CAPABILITY_ID,
 )
 
 
@@ -44,6 +45,7 @@ class SimulationTaskCreate(BaseModel):
         D1_CAPABILITY_ID,
         D3A_1_CAPABILITY_ID,
         D3A_2_CAPABILITY_ID,
+        D3A_3_CAPABILITY_ID,
     ] | None = None
     dispatch_plan_id: int | None = Field(default=None, gt=0)
     execution_mode: Literal["validation", "shadow"] = "validation"

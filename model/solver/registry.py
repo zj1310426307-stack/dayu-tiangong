@@ -25,6 +25,7 @@ V3_RUNTIME_ADAPTER_ID: Final = "v3-to-v2-v1"
 D1_RUNTIME_ADAPTER_ID: Final = "v4-to-v4-lite-7-d1-v1"
 D3A_1_RUNTIME_ADAPTER_ID: Final = "v4-to-d3a-1-v1"
 D3A_2_RUNTIME_ADAPTER_ID: Final = "v4-to-d3a-2-v1"
+D3A_3_RUNTIME_ADAPTER_ID: Final = "v4-to-d3a-3-v1"
 REGISTRY_SCHEMA_VERSION: Final = "dayu.solver-registry.v1"
 CAPABILITY_CATALOG_SCHEMA_VERSION: Final = "dayu.solver-capability-catalog.v1"
 
@@ -177,6 +178,41 @@ D3A_2_KNOWN_LIMITATIONS: Final = (
     "not calibrated and not approved for production water decisions",
 )
 
+D3A_3_CAPABILITY = SolverCapabilityManifest(
+    capability_id=D3A_3_CAPABILITY_ID,
+    scope=(
+        "single-branch",
+        "fully-wet",
+        "forward-strictly-subcritical",
+        "positive-section-effective-manning",
+        "explicit-nonzero-descending-bed-slope",
+        "continuous-gradually-varying-nonidentical-tabulated-profiles",
+        "adjacent-hydraulic-relative-change-at-most-0.25",
+        "one-completed-interface-gate",
+        "one-external-qh-qeta-pump",
+        "validation-only",
+    ),
+    exclusions=(
+        "abrupt-or-disconnected-section-topology",
+        "unconfirmed-or-inferred-bed-elevation",
+        "lateral-compound-roughness",
+        "multi-branch-or-junction",
+        "wetting-drying",
+        "reverse-or-supercritical-flow",
+        "bridges-culverts-weirs-or-floodplain-zoning",
+        "calibration-or-production-decision",
+    ),
+)
+
+D3A_3_KNOWN_LIMITATIONS: Final = (
+    "single Branch, fully wet, forward strictly subcritical validation only",
+    "explicit descending bed and continuous gradually varying tabulated Profiles",
+    "adjacent A/T/P/I1 relative change at most 0.25; abrupt transitions prohibited",
+    "one effective Manning scalar per Section/cell in (0, 0.10]",
+    "one completed-interface Gate and one external Q-H/Q-efficiency Pump",
+    "not calibrated and not approved for production water decisions",
+)
+
 
 _CAPABILITY_CATALOG: tuple[CapabilityCatalogEntry, ...] = (
     CapabilityCatalogEntry(
@@ -212,32 +248,12 @@ _CAPABILITY_CATALOG: tuple[CapabilityCatalogEntry, ...] = (
     CapabilityCatalogEntry(
         capability_id=D3A_3_CAPABILITY_ID,
         display_name="D3A-3 Engineering Profiles",
-        status="blocked",
+        status="supported",
         validation_policy_version="d3a-3-v1",
-        runtime_adapter_id="v4-to-d3a-3-v1",
-        scope=(
-            "single-branch",
-            "fully-wet",
-            "forward-strictly-subcritical",
-            "positive-section-effective-manning",
-            "explicit-nonzero-bed-slope",
-            "continuous-nonidentical-tabulated-profiles",
-            "one-completed-interface-gate",
-            "one-external-qh-qeta-pump",
-            "validation-only",
-        ),
-        exclusions=(
-            "abrupt-or-disconnected-section-topology",
-            "lateral-compound-roughness",
-            "multi-branch-or-junction",
-            "wetting-drying",
-            "reverse-or-supercritical-flow",
-            "calibration-or-production-decision",
-        ),
-        warnings=(
-            "blocked until D3A-1/2 and P1/P2/P3 independent gates pass",
-            "not a general one-dimensional river-network capability",
-        ),
+        runtime_adapter_id=D3A_3_RUNTIME_ADAPTER_ID,
+        scope=D3A_3_CAPABILITY.scope,
+        exclusions=D3A_3_CAPABILITY.exclusions,
+        warnings=D3A_3_KNOWN_LIMITATIONS,
     ),
 )
 
@@ -304,6 +320,19 @@ _REGISTRATIONS: tuple[SolverRegistration, ...] = (
             source_schema_version=MODEL_INPUT_V4,
             runtime_schema_version="dayu.model-input.v4-lite",
             validation_policy_version="d3a-2-v1",
+        ),
+    ),
+    SolverRegistration(
+        input_schema_version=MODEL_INPUT_V4,
+        solver_id=D1_SOLVER_ID,
+        result_schema_version="dayu.hydraulic-result.v3",
+        engine_route="finite-volume-d3a-3-v4",
+        capability=D3A_3_CAPABILITY,
+        runtime_adapter=RuntimeAdapterRegistration(
+            runtime_adapter_id=D3A_3_RUNTIME_ADAPTER_ID,
+            source_schema_version=MODEL_INPUT_V4,
+            runtime_schema_version="dayu.model-input.v4-lite",
+            validation_policy_version="d3a-3-v1",
         ),
     ),
 )

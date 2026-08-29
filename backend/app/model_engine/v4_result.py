@@ -39,7 +39,11 @@ from model.adapters.v4 import V4RuntimeProjection
 from model.build_identity import RuntimeBuildIdentity, current_runtime_build_identity
 from model.core.callbacks import check_cancellation
 from model.provenance import CANONICALIZATION_ID, canonical_json
-from model.solver.registry import D3A_1_CAPABILITY_ID, D3A_2_CAPABILITY_ID
+from model.solver.registry import (
+    D3A_1_CAPABILITY_ID,
+    D3A_2_CAPABILITY_ID,
+    D3A_3_CAPABILITY_ID,
+)
 
 
 RESULT_SCHEMA_VERSION = "dayu.hydraulic-result.v3"
@@ -162,6 +166,7 @@ def validate_v4_result(
     if projection.source.solver_selection.capability_id in {
         D3A_1_CAPABILITY_ID,
         D3A_2_CAPABILITY_ID,
+        D3A_3_CAPABILITY_ID,
     }:
         maximum_friction = (
             float(diagnostics.get("maximum_friction_number", math.inf))

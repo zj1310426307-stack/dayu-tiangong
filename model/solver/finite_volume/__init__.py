@@ -37,7 +37,9 @@ from model.solver.finite_volume.friction import (
 )
 from model.solver.finite_volume.geometry import pressure_moment, pressure_moment_from_area
 from model.solver.finite_volume.geometry_source import (
+    MAX_ADJACENT_HYDRAULIC_RELATIVE_CHANGE,
     LinearHydraulicFaceGeometry,
+    adjacent_hydraulic_relative_change,
     geometry_pressure_source,
     hydraulic_path_interface_flux,
     internal_face_geometry,
@@ -137,6 +139,7 @@ from model.solver.finite_volume.roughness import (
     ZonedRoughnessMesh,
 )
 from model.solver.finite_volume.solver import (
+    NONPRISMATIC_ENGINEERING_SCOPE,
     NONPRISMATIC_LAKE_SCOPE,
     NONPRISMATIC_MOVING_ENERGY_SCOPE,
     SingleBranchConfig,
@@ -186,6 +189,7 @@ __all__ = [
     "HydrostaticReconstruction",
     "InterfaceFlux",
     "LinearHydraulicFaceGeometry",
+    "MAX_ADJACENT_HYDRAULIC_RELATIVE_CHANGE",
     "ManningCellStageEvidence",
     "ManningEvidenceContractError",
     "InternalStructureStageEvidence",
@@ -207,6 +211,7 @@ __all__ = [
     "NodeSolver",
     "NONPRISMATIC_LAKE_SCOPE",
     "NONPRISMATIC_MOVING_ENERGY_SCOPE",
+    "NONPRISMATIC_ENGINEERING_SCOPE",
     "NumericalFlux",
     "NumericalStateError",
     "OneShotStageThreshold",
@@ -250,6 +255,7 @@ __all__ = [
     "advance_with_retries",
     "advance_network_with_retries",
     "apply_manning_friction",
+    "adjacent_hydraulic_relative_change",
     "apply_manning_friction_with_evidence",
     "characteristic_potential",
     "cfl_number_for_step",

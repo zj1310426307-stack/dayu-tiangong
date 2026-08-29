@@ -35,13 +35,19 @@ from app.model_engine.v4_schemas import (
 from model.adapters import V4RuntimeProjection, project_v4_to_v4_lite
 from model.build_identity import RuntimeBuildIdentity, current_runtime_build_identity
 from model.core.errors import HydraulicInputError
+from model.geometry.sections import TabulatedSectionGeometry
 from model.provenance import CANONICALIZATION_ID, snapshot_hash
+from model.solver.finite_volume.geometry_source import (
+    MAX_ADJACENT_HYDRAULIC_RELATIVE_CHANGE,
+    adjacent_hydraulic_relative_change,
+)
 from model.solver.registry import (
     D1_CAPABILITY_ID,
     D1_RUNTIME_ADAPTER_ID,
     D1_SOLVER_ID,
     D3A_1_CAPABILITY_ID,
     D3A_2_CAPABILITY_ID,
+    D3A_3_CAPABILITY_ID,
     MODEL_INPUT_V4,
     registry_hash,
     resolve_capability,
@@ -186,7 +192,11 @@ def _native_preflight(payload: Mapping[str, Any]) -> list[V4ReadinessIssue]:
                     field_path="cross_sections.default_manning_n",
                 )
             )
-        if capability_id in {D3A_1_CAPABILITY_ID, D3A_2_CAPABILITY_ID} and (
+        if capability_id in {
+            D3A_1_CAPABILITY_ID,
+            D3A_2_CAPABILITY_ID,
+            D3A_3_CAPABILITY_ID,
+        } and (
             isinstance(manning_n, bool)
             or not isinstance(manning_n, (int, float))
             or not 0.0 < float(manning_n) <= 0.10
@@ -200,7 +210,7 @@ def _native_preflight(payload: Mapping[str, Any]) -> list[V4ReadinessIssue]:
                     field_path="cross_sections.default_manning_n",
                 )
             )
-        if capability_id == D3A_2_CAPABILITY_ID:
+        if capability_id in {D3A_2_CAPABILITY_ID, D3A_3_CAPABILITY_ID}:
             authority = (
                 section.get("bed_elevation_m"),
                 section.get("bed_elevation_source"),
@@ -217,14 +227,19 @@ def _native_preflight(payload: Mapping[str, Any]) -> list[V4ReadinessIssue]:
             ):
                 issues.append(
                     _issue(
-                        "D3A_2_BED_AUTHORITY_UNCONFIRMED",
-                        "D3A-2 requires explicit bed elevation with source, actor, and time",
+                        (
+                            "D3A_2_BED_AUTHORITY_UNCONFIRMED"
+                            if capability_id == D3A_2_CAPABILITY_ID
+                            else "D3A_3_BED_AUTHORITY_UNCONFIRMED"
+                        ),
+                        f"{'D3A-2' if capability_id == D3A_2_CAPABILITY_ID else 'D3A-3'} "
+                        "requires explicit bed elevation with source, actor, and time",
                         entity_type="cross_section",
                         entity_id=section.get("section_id"),
                         field_path="cross_sections.bed_elevation_m",
                     )
                 )
-    if capability_id == D3A_2_CAPABILITY_ID:
+    if capability_id in {D3A_2_CAPABILITY_ID, D3A_3_CAPABILITY_ID}:
         profile_signatures = {
             tuple(
                 (
@@ -255,7 +270,11 @@ def _native_preflight(payload: Mapping[str, Any]) -> list[V4ReadinessIssue]:
             for section in sections
             if isinstance(section, Mapping)
         }
-    if sections and len(profile_signatures) != 1:
+    if (
+        sections
+        and capability_id != D3A_3_CAPABILITY_ID
+        and len(profile_signatures) != 1
+    ):
         issues.append(
             _issue(
                 "D2_PROFILE_MISMATCH",
@@ -264,6 +283,51 @@ def _native_preflight(payload: Mapping[str, Any]) -> list[V4ReadinessIssue]:
                 field_path="cross_sections.points",
             )
         )
+    if sections and capability_id == D3A_3_CAPABILITY_ID:
+        if len(profile_signatures) < 2:
+            issues.append(
+                _issue(
+                    "D3A_3_PROFILE_VARIATION_REQUIRED",
+                    "D3A-3 requires at least two non-identical local Profile shapes",
+                    entity_type="cross_section_profile",
+                    field_path="cross_sections.points",
+                )
+            )
+        try:
+            geometries = tuple(
+                TabulatedSectionGeometry.from_points(
+                    tuple(
+                        (float(point["offset_m"]), float(point["elevation_m"]))
+                        for point in section["points"]
+                    )
+                )
+                for section in sections
+            )
+            changes = tuple(
+                adjacent_hydraulic_relative_change(left, right)
+                for left, right in zip(geometries, geometries[1:])
+            )
+            if any(
+                change > MAX_ADJACENT_HYDRAULIC_RELATIVE_CHANGE
+                for change in changes
+            ):
+                issues.append(
+                    _issue(
+                        "D3A_3_PROFILE_CHANGE_ABRUPT",
+                        "D3A-3 adjacent A/T/P/I1 relative change exceeds 0.25",
+                        entity_type="cross_section_profile",
+                        field_path="cross_sections.points",
+                    )
+                )
+        except (KeyError, TypeError, ValueError) as exc:
+            issues.append(
+                _issue(
+                    "D3A_3_PROFILE_SMOOTHNESS_INVALID",
+                    f"D3A-3 Profile smoothness cannot be established: {exc}",
+                    entity_type="cross_section_profile",
+                    field_path="cross_sections.points",
+                )
+            )
     if capability_id == D3A_2_CAPABILITY_ID and all(
         isinstance(section, Mapping)
         and isinstance(section.get("bed_elevation_m"), (int, float))
@@ -292,6 +356,22 @@ def _native_preflight(payload: Mapping[str, Any]) -> list[V4ReadinessIssue]:
                 _issue(
                     "D3A_2_BED_SLOPE_INVALID",
                     "D3A-2 requires one explicit strictly descending linear bed",
+                    entity_type="cross_section",
+                    field_path="cross_sections.bed_elevation_m",
+                )
+            )
+    if capability_id == D3A_3_CAPABILITY_ID and all(
+        isinstance(section, Mapping)
+        and isinstance(section.get("bed_elevation_m"), (int, float))
+        and not isinstance(section.get("bed_elevation_m"), bool)
+        for section in sections
+    ):
+        beds = tuple(float(section["bed_elevation_m"]) for section in sections)
+        if not beds or any(right >= left for left, right in zip(beds, beds[1:])):
+            issues.append(
+                _issue(
+                    "D3A_3_BED_SLOPE_INVALID",
+                    "D3A-3 requires an explicit strictly descending bed",
                     entity_type="cross_section",
                     field_path="cross_sections.bed_elevation_m",
                 )
@@ -716,7 +796,11 @@ def _database_candidate(
                 field_path="simulation_case.v4_configuration.default_manning_n",
             )
         )
-    if capability_id in {D3A_1_CAPABILITY_ID, D3A_2_CAPABILITY_ID} and (
+    if capability_id in {
+        D3A_1_CAPABILITY_ID,
+        D3A_2_CAPABILITY_ID,
+        D3A_3_CAPABILITY_ID,
+    } and (
         isinstance(configured_manning, bool)
         or not isinstance(configured_manning, (int, float))
         or not 0.0 < float(configured_manning) <= 0.10
@@ -793,7 +877,7 @@ def _database_candidate(
                     for point in points
                 ],
             }
-        if capability_id == D3A_2_CAPABILITY_ID:
+        if capability_id in {D3A_2_CAPABILITY_ID, D3A_3_CAPABILITY_ID}:
             if (
                 section.bed_elevation_m is None
                 or section.bed_elevation_source
@@ -1145,6 +1229,7 @@ def _database_candidate(
                 D1_CAPABILITY_ID: "d1-gate-pump-control-v1",
                 D3A_1_CAPABILITY_ID: "d3a-1-gate-pump-control-v1",
                 D3A_2_CAPABILITY_ID: "d3a-2-gate-pump-control-v1",
+                D3A_3_CAPABILITY_ID: "d3a-3-gate-pump-control-v1",
             }[capability_id],
         },
         "numerical_policy": numerical,
