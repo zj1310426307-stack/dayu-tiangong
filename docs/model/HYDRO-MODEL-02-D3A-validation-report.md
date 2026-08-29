@@ -60,4 +60,4 @@ Readiness、runtime adapter、validation policy、结果 provenance、OpenAPI �
 
 ## RC1 覆盖说明（2026-08-30）
 
-以上 2026-08-29 指标是历史候选证据，不再构成当前 release decision。当前结论以 [D3A-RC1 validation report](./HYDRO-MODEL-02-D3A-RC1-validation-report.md) 为准：本地实现/科学 PASS，hosted 首次运行 PENDING，PR #12 继续 NO-GO。
+以上 2026-08-29 指标是历史候选证据，不再构成当前 release decision。当前结论以 [D3A-RC1 validation report](./HYDRO-MODEL-02-D3A-RC1-validation-report.md) 为准：本地与 hosted 机器门 PASS，PR #12 仅进入独立审查，仍未合并且未创建 D3A tag。

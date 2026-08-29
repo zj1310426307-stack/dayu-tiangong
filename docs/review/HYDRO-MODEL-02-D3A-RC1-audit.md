@@ -14,12 +14,13 @@ RC1 已在代码和本地科学证据上关闭独立审查提出的三项 P0 缺
 ```text
 LOCAL IMPLEMENTATION: PASS
 LOCAL SCIENCE: PASS
-HOSTED RC1 CHECKS: PENDING FIRST RUN
+HOSTED RC1 CHECKS: PASS
+MAIN REQUIRED CHECKS: 11 (D3A shipping science ADDED)
 PR #12: NOT MERGED
 D3A TAG: NOT CREATED
 ```
 
-Hosted 首次成功、check context 核对和 main required-check 配置仍是发布外部门，不能由本地结果替代。
+Implementation head `8da24aa12f05f9e13731c85b69ed864961c748dd` 的 push/PR 四项 hosted workflows 均成功；发布镜像 artifact 已核对，精确 check context 已在首次成功后加入 main 保护。机器门闭合不替代独立审查，也不构成合并或打 tag 授权。
 
 ## 变更追踪
 

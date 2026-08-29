@@ -209,8 +209,10 @@ runtime envelope、SSP-RK2 全阶段 fail-closed 检查、摩阻时间步预测�
 问题的 60/70/80 空间收敛和 fine CFL/2 时间细化。Python 3.12 发布镜像使用独立
 `D3A shipping science` 门验证，不以开发环境 Python 代替发布运行时。
 
-本地证据为 698 passed / 37 skipped / 0 failed，前端类型检查和生产构建通过；当前
-仍为 `LOCAL PASS / HOSTED PENDING / NO-GO`。PR
+本地证据为 698 passed / 37 skipped / 0 failed，前端类型检查和生产构建通过；
+implementation head `8da24aa` 的 push/PR 四项 hosted workflows 全绿，Python 3.12
+发布制品 47/47 通过，main 已增加第 11 项 required check。当前为
+`RC1 GATES PASS / MERGE READY FOR INDEPENDENT REVIEW`。PR
 [#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12) 保持 OPEN，本文不授权
 合并、创建 D3A tag 或启动 D3B。完整证据见：
 

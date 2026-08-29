@@ -1,6 +1,6 @@
 # HYDRO-MODEL-02-D3A-RC1 Release Readiness
 
-- 当前：`LOCAL PASS / HOSTED PENDING / NO-GO`
+- 当前：`RC1 GATES PASS / MERGE READY FOR INDEPENDENT REVIEW`
 - PR：[#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12)，`NOT MERGED`
 - D3A tag：未创建
 
@@ -18,12 +18,12 @@
 
 ## Merge 前必须完成
 
-- [ ] 推送当前 head 到 PR #12；
-- [ ] `D3A scientific validation`（Ubuntu Python 3.11）SUCCESS；
-- [ ] `D3A shipping science`（发布镜像 Python 3.12）SUCCESS；
-- [ ] MODEL02 Ubuntu/Windows、Frontend contract、hydraulic-platform 和 D2 既有 required checks 全部 SUCCESS；
-- [ ] 下载并核对 `d3a-shipping-science` artifact 内容；
-- [ ] 确认真正的 hosted check context 后，将其加入 main required checks，保留全部既有 checks；
-- [ ] PR review 无未解决 blocker。
+- [x] implementation head `8da24aa` 已推送到 PR #12；
+- [x] `D3A scientific validation`（Ubuntu Python 3.11）SUCCESS；
+- [x] `D3A shipping science`（发布镜像 Python 3.12）SUCCESS；
+- [x] MODEL02 Ubuntu/Windows、Frontend contract、hydraulic-platform 和 D2 既有 required checks 全部 SUCCESS；
+- [x] `d3a-shipping-science` artifact 已下载并核对；
+- [x] 精确 context 已追加到 main required checks，原 10 项完整保留；
+- [x] PR 无 review、comment 或未解决 conversation blocker。
 
-满足以上条件后才可另行执行 merge decision。本文不授权合并 PR #12，不授权创建 D3A tag，也不授权创建 D3B 分支。
+机器放行门已满足，下一步是独立审查与另行 merge decision。本文不授权合并 PR #12，不授权创建 D3A tag，也不授权创建 D3B 分支。

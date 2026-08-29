@@ -49,4 +49,4 @@ D3A 的数值与平台门已闭合，可以进入 D3B 真实小型单河闸泵�
 
 ## RC1 覆盖说明（2026-08-30）
 
-本文件的全勾选清单与 D3B readiness 是 2026-08-29 历史候选结论，已被独立审查撤回。当前唯一有效判定见 [D3A-RC1 release readiness](./HYDRO-MODEL-02-D3A-RC1-release-readiness.md)：`LOCAL PASS / HOSTED PENDING / NO-GO`。不得据本历史文件合并 PR、打 tag 或启动 D3B。
+本文件的全勾选清单与 D3B readiness 是 2026-08-29 历史候选结论，已被独立审查撤回。当前唯一有效判定见 [D3A-RC1 release readiness](./HYDRO-MODEL-02-D3A-RC1-release-readiness.md)：`RC1 GATES PASS / MERGE READY FOR INDEPENDENT REVIEW`。不得据本历史文件或机器门自行合并 PR、打 tag 或启动 D3B。
