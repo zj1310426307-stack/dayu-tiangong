@@ -20,7 +20,6 @@ from app.gis.models import (
     SimulationTask,
     StructureResult,
 )
-from app.model_engine.provenance import ENGINE_VERSION
 from app.worker.celery_app import celery_app
 from app.worker.tasks import run_hydraulic_task
 from model.metrics import evaluate_metrics
@@ -30,6 +29,7 @@ from optimization.constraints import validate_candidate
 from optimization.objectives import evaluate_objectives
 from optimization.pareto import non_dominated_sort
 from optimization.scheduler import build_dispatch_space
+from model.solver.registry import MODEL_INPUT_V2, task_solver_provenance
 
 
 def _dispatch_space(snapshot: dict[str, Any]) -> tuple[list[tuple[float, float]], list[dict[str, Any]]]:
@@ -120,6 +120,51 @@ def _decode_plan(
         "rules": [],
         "safety_notice": "simulation only; no command is sent to real equipment",
     }
+
+
+def _build_candidate_simulation_task(
+    optimization_task: OptimizationTask,
+    candidate_snapshot: dict[str, Any],
+    *,
+    duration: float,
+    algorithm: dict[str, Any],
+) -> SimulationTask:
+    """Build one v2 candidate task with Registry-owned route provenance."""
+
+    return SimulationTask(
+        case_id=optimization_task.simulation_case_id,
+        dataset_version_id=optimization_task.dataset_version_id,
+        status="queued",
+        progress=0,
+        config={
+            "duration_seconds": duration,
+            "time_step_seconds": algorithm["time_step_seconds"],
+            "output_interval_seconds": algorithm["output_interval_seconds"],
+            "storage_level": "full",
+            "section_geometry": "rectangular",
+            "allow_fallback_boundary": False,
+        },
+        input_schema_version=MODEL_INPUT_V2,
+        input_snapshot=candidate_snapshot,
+        input_snapshot_hash=snapshot_hash(candidate_snapshot),
+        engine_version=(candidate_snapshot.get("provenance") or {}).get(
+            "engine_version"
+        ),
+        engine_commit=(candidate_snapshot.get("provenance") or {}).get(
+            "engine_commit"
+        ),
+        solver_build_id=(candidate_snapshot.get("provenance") or {}).get(
+            "solver_build_id"
+        ),
+        build_mode=(candidate_snapshot.get("provenance") or {}).get("build_mode"),
+        build_verified=bool(
+            (candidate_snapshot.get("provenance") or {}).get(
+                "build_verified", False
+            )
+        ),
+        queued_time=datetime.now(UTC),
+        **task_solver_provenance(MODEL_INPUT_V2),
+    )
 
 
 def _candidate_metrics(task_id: int) -> dict[str, Any]:
@@ -297,24 +342,11 @@ def run_optimization_task(self: Any, task_id: int) -> dict[str, str | int]:
                     candidate_snapshot = copy.deepcopy(hydraulic_snapshot)
                     candidate_snapshot["dispatch_plan"] = plan
                     candidate_snapshot.setdefault("provenance", {})["optimization_candidate_id"] = candidate.id
-                    simulation = SimulationTask(
-                        case_id=task.simulation_case_id,
-                        status="queued",
-                        progress=0,
-                        config={
-                            "duration_seconds": duration,
-                            "time_step_seconds": algorithm["time_step_seconds"],
-                            "output_interval_seconds": algorithm["output_interval_seconds"],
-                            "storage_level": "full",
-                            "section_geometry": "rectangular",
-                            "allow_fallback_boundary": False,
-                        },
-                        input_schema_version="dayu.model-input.v2",
-                        input_snapshot=candidate_snapshot,
-                        input_snapshot_hash=snapshot_hash(candidate_snapshot),
-                        engine_version=ENGINE_VERSION,
-                        engine_commit=(candidate_snapshot.get("provenance") or {}).get("engine_commit", "uncommitted"),
-                        queued_time=datetime.now(UTC),
+                    simulation = _build_candidate_simulation_task(
+                        task,
+                        candidate_snapshot,
+                        duration=duration,
+                        algorithm=algorithm,
                     )
                     session.add(simulation)
                     session.commit()

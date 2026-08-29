@@ -1097,7 +1097,20 @@ class Gate(Base):
             "status IN ('online', 'offline', 'maintenance', 'fault')",
             name="ck_gate_status",
         ),
+        UniqueConstraint("id", "dataset_version_id", name="uq_gate_id_version"),
         UniqueConstraint("dataset_version_id", "gate_code", name="uq_gate_version_code"),
+        ForeignKeyConstraint(
+            ["hydraulic_upstream_section_id", "dataset_version_id"],
+            ["hydraulic.cross_section.id", "hydraulic.cross_section.dataset_version_id"],
+            name="fk_gate_d2_upstream_section_version",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["hydraulic_downstream_section_id", "dataset_version_id"],
+            ["hydraulic.cross_section.id", "hydraulic.cross_section.dataset_version_id"],
+            name="fk_gate_d2_downstream_section_version",
+            ondelete="RESTRICT",
+        ),
         Index("ix_gate_geometry_gist", "geometry", postgresql_using="gist"),
         Index("ix_gate_river_id", "river_id"),
         Index("ix_gate_dataset_version_id", "dataset_version_id"),
@@ -1121,6 +1134,8 @@ class Gate(Base):
         ForeignKey("river_segment.id", ondelete="SET NULL")
     )
     station: Mapped[float | None] = mapped_column(Float)
+    hydraulic_upstream_section_id: Mapped[int | None] = mapped_column(Integer)
+    hydraulic_downstream_section_id: Mapped[int | None] = mapped_column(Integer)
     upstream_node_id: Mapped[int | None] = mapped_column(
         ForeignKey("river_node.id", ondelete="SET NULL")
     )
@@ -1159,7 +1174,14 @@ class Pump(Base):
             "status IN ('online', 'offline', 'maintenance', 'fault')",
             name="ck_pump_status",
         ),
+        UniqueConstraint("id", "dataset_version_id", name="uq_pump_id_version"),
         UniqueConstraint("dataset_version_id", "pump_code", name="uq_pump_version_code"),
+        ForeignKeyConstraint(
+            ["hydraulic_section_id", "dataset_version_id"],
+            ["hydraulic.cross_section.id", "hydraulic.cross_section.dataset_version_id"],
+            name="fk_pump_d2_section_version",
+            ondelete="RESTRICT",
+        ),
         Index("ix_pump_geometry_gist", "geometry", postgresql_using="gist"),
         Index("ix_pump_river_id", "river_id"),
         Index("ix_pump_dataset_version_id", "dataset_version_id"),
@@ -1177,6 +1199,13 @@ class Pump(Base):
     power: Mapped[float] = mapped_column(Float, nullable=False)
     efficiency_curve: Mapped[dict[str, list[list[float]]]] = mapped_column(JSON, nullable=False)
     head_curve: Mapped[dict[str, list[list[float]]] | None] = mapped_column(JSON)
+    hydraulic_section_id: Mapped[int | None] = mapped_column(Integer)
+    curve_policy_id: Mapped[str | None] = mapped_column(String(64))
+    curve_unit: Mapped[str | None] = mapped_column(String(32))
+    curve_source_revision: Mapped[str | None] = mapped_column(String(64))
+    curve_hash: Mapped[str | None] = mapped_column(String(64))
+    system_loss: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    outlet_stage: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     intake_node_id: Mapped[int | None] = mapped_column(
         ForeignKey("river_node.id", ondelete="SET NULL")
     )
@@ -1423,6 +1452,12 @@ class BoundaryCondition(Base):
         UniqueConstraint(
             "dataset_version_id", "name", name="uq_boundary_condition_version_name"
         ),
+        ForeignKeyConstraint(
+            ["hydraulic_node_id", "dataset_version_id"],
+            ["hydraulic.node.id", "hydraulic.node.dataset_version_id"],
+            name="fk_boundary_d2_hydraulic_node_version",
+            ondelete="RESTRICT",
+        ),
         Index("ix_boundary_condition_dataset_version_id", "dataset_version_id"),
     )
 
@@ -1435,6 +1470,7 @@ class BoundaryCondition(Base):
     target_node_id: Mapped[int | None] = mapped_column(
         ForeignKey("river_node.id", ondelete="SET NULL")
     )
+    hydraulic_node_id: Mapped[int | None] = mapped_column(Integer)
     values: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
@@ -1448,6 +1484,9 @@ class SimulationCase(Base):
     __tablename__ = "simulation_case"
     __table_args__ = (
         UniqueConstraint("name", name="uq_simulation_case_name"),
+        UniqueConstraint(
+            "id", "dataset_version_id", name="uq_simulation_case_id_dataset"
+        ),
         Index("ix_simulation_case_dataset_version_id", "dataset_version_id"),
     )
 
@@ -1460,12 +1499,16 @@ class SimulationCase(Base):
     boundary_condition_id: Mapped[int] = mapped_column(
         ForeignKey("boundary_condition.id", ondelete="RESTRICT"), nullable=False
     )
+    v4_configuration: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
     dataset_version: Mapped[DatasetVersion] = relationship(back_populates="simulation_cases")
-    tasks: Mapped[list["SimulationTask"]] = relationship(back_populates="simulation_case")
+    tasks: Mapped[list["SimulationTask"]] = relationship(
+        back_populates="simulation_case",
+        foreign_keys="SimulationTask.case_id",
+    )
     boundary_links: Mapped[list["SimulationCaseBoundary"]] = relationship(
         back_populates="simulation_case", cascade="all, delete-orphan"
     )
@@ -1496,11 +1539,41 @@ class SimulationCaseBoundary(Base):
     simulation_case: Mapped[SimulationCase] = relationship(back_populates="boundary_links")
 
 
+class SimulationTaskGroup(Base):
+    """Group independent tasks for a diagnostic v3/v4 shadow comparison."""
+
+    __tablename__ = "simulation_task_group"
+    __table_args__ = (
+        CheckConstraint("group_type IN ('shadow')", name="ck_simulation_task_group_type"),
+        CheckConstraint(
+            "status IN ('pending','running','ready','not_ready','failed','cancelled')",
+            name="ck_simulation_task_group_status",
+        ),
+        Index("ix_simulation_task_group_case_id", "case_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    case_id: Mapped[int] = mapped_column(
+        ForeignKey("simulation_case.id", ondelete="RESTRICT"), nullable=False
+    )
+    group_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, server_default="pending")
+    created_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class SimulationTask(Base):
     """Persist one reproducible hydraulic execution and its lifecycle state."""
 
     __tablename__ = "simulation_task"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["case_id", "dataset_version_id"],
+            ["simulation_case.id", "simulation_case.dataset_version_id"],
+            name="fk_simulation_task_case_dataset",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "status IN ('pending', 'queued', 'running', 'cancel_requested', "
             "'cancelled', 'success', 'failed')",
@@ -1509,14 +1582,61 @@ class SimulationTask(Base):
         CheckConstraint(
             "progress BETWEEN 0 AND 100", name="ck_simulation_task_progress"
         ),
+        CheckConstraint(
+            "execution_mode IS NULL OR execution_mode IN ('validation','shadow')",
+            name="ck_simulation_task_execution_mode",
+        ),
+        CheckConstraint(
+            "group_role IS NULL OR group_role IN ('legacy-v3','native-v4')",
+            name="ck_simulation_task_group_role",
+        ),
+        CheckConstraint(
+            "artifact_status IS NULL OR artifact_status IN "
+            "('none','preparing','prepared','publishing','published','failed',"
+            "'orphaned','reconciliation_required')",
+            name="ck_simulation_task_artifact_status",
+        ),
+        CheckConstraint(
+            "retry_count >= 0 AND execution_attempt_count >= 0 "
+            "AND manual_retry_count >= 0 AND infrastructure_retry_count >= 0 "
+            "AND numerical_retry_count >= 0 AND delivery_attempt_count >= 0 "
+            "AND accepted_step_count >= 0 "
+            "AND cfl_reduction_count >= 0 AND positivity_retry_count >= 0 "
+            "AND event_refinement_count >= 0 AND gate_solver_retry_count >= 0 "
+            "AND pump_solver_retry_count >= 0 AND minimum_dt_failure_count >= 0",
+            name="ck_simulation_task_counters_nonnegative",
+        ),
+        CheckConstraint(
+            "(active_execution_token IS NULL OR length(active_execution_token) BETWEEN 1 AND 64) "
+            "AND (last_execution_token IS NULL OR length(last_execution_token) BETWEEN 1 AND 64)",
+            name="ck_simulation_task_execution_token_length",
+        ),
+        CheckConstraint(
+            "build_mode IS NULL OR build_mode IN ('development','ci','release')",
+            name="ck_simulation_task_build_mode",
+        ),
+        UniqueConstraint(
+            "comparison_group_id", "group_role",
+            name="uq_simulation_task_group_role",
+        ),
+        UniqueConstraint(
+            "id", "dataset_version_id", name="uq_simulation_task_id_dataset"
+        ),
         Index("ix_simulation_task_case_id", "case_id"),
+        Index("ix_simulation_task_dataset_version_id", "dataset_version_id"),
         Index("ix_simulation_task_status", "status"),
+        Index(
+            "ix_simulation_task_queued_delivery_recovery",
+            "status",
+            "last_delivery_time",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     case_id: Mapped[int] = mapped_column(
         ForeignKey("simulation_case.id", ondelete="RESTRICT"), nullable=False
     )
+    dataset_version_id: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="pending"
     )
@@ -1527,7 +1647,32 @@ class SimulationTask(Base):
     input_snapshot_hash: Mapped[str | None] = mapped_column(String(64))
     engine_version: Mapped[str | None] = mapped_column(String(64))
     engine_commit: Mapped[str | None] = mapped_column(String(64))
+    solver_build_id: Mapped[str | None] = mapped_column(String(96))
+    build_mode: Mapped[str | None] = mapped_column(String(16))
+    build_verified: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    solver_id: Mapped[str | None] = mapped_column(String(96))
+    capability_id: Mapped[str | None] = mapped_column(String(96))
+    runtime_adapter_id: Mapped[str | None] = mapped_column(String(96))
+    result_schema_version: Mapped[str | None] = mapped_column(String(48))
+    execution_mode: Mapped[str | None] = mapped_column(String(16))
+    execution_phase: Mapped[str | None] = mapped_column(String(32))
+    runtime_projection_hash: Mapped[str | None] = mapped_column(String(64))
+    mesh_hash: Mapped[str | None] = mapped_column(String(64))
+    solver_policy_hash: Mapped[str | None] = mapped_column(String(64))
+    validation_policy_hash: Mapped[str | None] = mapped_column(String(64))
+    registry_hash: Mapped[str | None] = mapped_column(String(64))
+    artifact_status: Mapped[str | None] = mapped_column(String(32))
+    comparison_group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("simulation_task_group.id", ondelete="SET NULL")
+    )
+    group_role: Mapped[str | None] = mapped_column(String(16))
     queue_job_id: Mapped[str | None] = mapped_column(String(128))
+    delivery_attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    last_delivery_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     worker_id: Mapped[str | None] = mapped_column(String(128))
     queued_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     heartbeat_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -1535,10 +1680,33 @@ class SimulationTask(Base):
         Boolean, nullable=False, server_default="false"
     )
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    execution_attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    manual_retry_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    infrastructure_retry_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    numerical_retry_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    active_execution_token: Mapped[str | None] = mapped_column(String(64))
+    last_execution_token: Mapped[str | None] = mapped_column(String(64))
+    last_infrastructure_error: Mapped[str | None] = mapped_column(Text)
+    accepted_step_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    cfl_reduction_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    positivity_retry_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    event_refinement_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    gate_solver_retry_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    pump_solver_retry_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    minimum_dt_failure_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     retry_reason: Mapped[str | None] = mapped_column(Text)
     current_simulation_time: Mapped[float | None] = mapped_column(Float)
     current_cfl: Mapped[float | None] = mapped_column(Float)
     diagnostics: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    last_event: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     result_path: Mapped[str | None] = mapped_column(Text)
     error_message: Mapped[str | None] = mapped_column(Text)
     created_time: Mapped[datetime] = mapped_column(
@@ -1547,10 +1715,254 @@ class SimulationTask(Base):
     start_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    simulation_case: Mapped[SimulationCase] = relationship(back_populates="tasks")
+    simulation_case: Mapped[SimulationCase] = relationship(
+        back_populates="tasks", foreign_keys=[case_id]
+    )
     results: Mapped[list["SimulationResult"]] = relationship(
         back_populates="task", cascade="all, delete-orphan"
     )
+
+
+class HydraulicTaskSectionResult(Base):
+    """Persist authoritative v4 Section output without public compatibility IDs."""
+
+    __tablename__ = "hydraulic_task_section_result"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["task_id", "dataset_version_id"],
+            ["simulation_task.id", "simulation_task.dataset_version_id"],
+            name="fk_d2_section_result_task_dataset",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["hydraulic_cross_section_id", "dataset_version_id"],
+            ["hydraulic.cross_section.id", "hydraulic.cross_section.dataset_version_id"],
+            name="fk_d2_section_result_section_version",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["branch_id", "dataset_version_id"],
+            ["hydraulic.branch.id", "hydraulic.branch.dataset_version_id"],
+            name="fk_d2_section_result_branch_version",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "task_id", "hydraulic_cross_section_id", "time_seconds",
+            name="uq_d2_section_result_task_section_time",
+        ),
+        Index("ix_d2_section_result_task_time", "task_id", "time_seconds"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("simulation_task.id", ondelete="CASCADE"), nullable=False
+    )
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="RESTRICT"), nullable=False
+    )
+    hydraulic_cross_section_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    section_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    branch_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    chainage_m: Mapped[float] = mapped_column(Float, nullable=False)
+    time_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    water_level_m: Mapped[float] = mapped_column(Float, nullable=False)
+    flow_m3s: Mapped[float] = mapped_column(Float, nullable=False)
+    velocity_m_s: Mapped[float] = mapped_column(Float, nullable=False)
+    control_volume_m3: Mapped[float] = mapped_column(Float, nullable=False)
+
+
+class HydraulicTaskGateResult(Base):
+    """Persist D1 Gate series with authoritative asset and evidence fields."""
+
+    __tablename__ = "hydraulic_task_gate_result"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["task_id", "dataset_version_id"],
+            ["simulation_task.id", "simulation_task.dataset_version_id"],
+            name="fk_d2_gate_result_task_dataset",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["canonical_gate_id", "dataset_version_id"],
+            ["gate.id", "gate.dataset_version_id"],
+            name="fk_d2_gate_result_gate_version",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "task_id", "canonical_gate_id", "time_seconds",
+            name="uq_d2_gate_result_task_gate_time",
+        ),
+        Index("ix_d2_gate_result_task_time", "task_id", "time_seconds"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("simulation_task.id", ondelete="CASCADE"), nullable=False
+    )
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="RESTRICT"), nullable=False
+    )
+    canonical_gate_id: Mapped[int] = mapped_column(
+        ForeignKey("gate.id", ondelete="RESTRICT"), nullable=False
+    )
+    time_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    opening_m: Mapped[float] = mapped_column(Float, nullable=False)
+    flow_m3s: Mapped[float] = mapped_column(Float, nullable=False)
+    upstream_stage_m: Mapped[float] = mapped_column(Float, nullable=False)
+    downstream_stage_m: Mapped[float] = mapped_column(Float, nullable=False)
+    head_loss_m: Mapped[float | None] = mapped_column(Float)
+    reaction_force_per_density: Mapped[float | None] = mapped_column(Float)
+    regime: Mapped[str | None] = mapped_column(String(48))
+
+
+class HydraulicTaskPumpResult(Base):
+    """Persist D1 hydraulic Pump operating-point and energy series."""
+
+    __tablename__ = "hydraulic_task_pump_result"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["task_id", "dataset_version_id"],
+            ["simulation_task.id", "simulation_task.dataset_version_id"],
+            name="fk_d2_pump_result_task_dataset",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["canonical_pump_id", "dataset_version_id"],
+            ["pump.id", "pump.dataset_version_id"],
+            name="fk_d2_pump_result_pump_version",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "task_id", "canonical_pump_id", "time_seconds",
+            name="uq_d2_pump_result_task_pump_time",
+        ),
+        Index("ix_d2_pump_result_task_time", "task_id", "time_seconds"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("simulation_task.id", ondelete="CASCADE"), nullable=False
+    )
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="RESTRICT"), nullable=False
+    )
+    canonical_pump_id: Mapped[int] = mapped_column(
+        ForeignKey("pump.id", ondelete="RESTRICT"), nullable=False
+    )
+    time_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    control_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    running_units: Mapped[int] = mapped_column(Integer, nullable=False)
+    flow_m3s: Mapped[float] = mapped_column(Float, nullable=False)
+    source_stage_m: Mapped[float] = mapped_column(Float, nullable=False)
+    outlet_stage_m: Mapped[float] = mapped_column(Float, nullable=False)
+    pump_head_m: Mapped[float] = mapped_column(Float, nullable=False)
+    system_head_m: Mapped[float] = mapped_column(Float, nullable=False)
+    efficiency: Mapped[float] = mapped_column(Float, nullable=False)
+    input_power_kw: Mapped[float] = mapped_column(Float, nullable=False)
+    cumulative_energy_kwh: Mapped[float] = mapped_column(Float, nullable=False)
+    iterations: Mapped[int] = mapped_column(Integer, nullable=False)
+    regime: Mapped[str | None] = mapped_column(String(48))
+
+
+class HydraulicTaskControlEvent(Base):
+    """Persist accepted v4 control events without a legacy DispatchRun dependency."""
+
+    __tablename__ = "hydraulic_task_control_event"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["task_id", "dataset_version_id"],
+            ["simulation_task.id", "simulation_task.dataset_version_id"],
+            name="fk_d2_control_event_task_dataset",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "structure_type IN ('gate','pump')",
+            name="ck_d2_control_event_structure_type",
+        ),
+        CheckConstraint(
+            "(structure_type = 'gate' AND canonical_gate_id IS NOT NULL "
+            "AND canonical_pump_id IS NULL "
+            "AND canonical_gate_id = canonical_structure_id) OR "
+            "(structure_type = 'pump' AND canonical_pump_id IS NOT NULL "
+            "AND canonical_gate_id IS NULL "
+            "AND canonical_pump_id = canonical_structure_id)",
+            name="ck_d2_control_event_typed_identity",
+        ),
+        ForeignKeyConstraint(
+            ["canonical_gate_id", "dataset_version_id"],
+            ["gate.id", "gate.dataset_version_id"],
+            name="fk_d2_control_event_gate_version",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["canonical_pump_id", "dataset_version_id"],
+            ["pump.id", "pump.dataset_version_id"],
+            name="fk_d2_control_event_pump_version",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "task_id", "time_seconds", "structure_type", "canonical_structure_id", "event_type",
+            name="uq_d2_control_event_identity",
+        ),
+        Index("ix_d2_control_event_task_time", "task_id", "time_seconds"),
+        Index("ix_d2_control_event_dataset_version", "dataset_version_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("simulation_task.id", ondelete="CASCADE"), nullable=False
+    )
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="RESTRICT"), nullable=False
+    )
+    time_seconds: Mapped[float] = mapped_column(Float, nullable=False)
+    structure_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    canonical_structure_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    canonical_gate_id: Mapped[int | None] = mapped_column(Integer)
+    canonical_pump_id: Mapped[int | None] = mapped_column(Integer)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[str | None] = mapped_column(Text)
+    pre_state_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    post_command_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+
+
+class HydraulicTaskArtifact(Base):
+    """Register deterministic evidence files before controlled publication/download."""
+
+    __tablename__ = "hydraulic_task_artifact"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('prepared','publishing','published','failed','orphaned',"
+            "'reconciliation_required')",
+            name="ck_d2_artifact_status",
+        ),
+        CheckConstraint("length(sha256) = 64", name="ck_d2_artifact_sha256"),
+        CheckConstraint("size_bytes >= 0", name="ck_d2_artifact_size"),
+        CheckConstraint("record_count >= 0", name="ck_d2_artifact_record_count"),
+        UniqueConstraint(
+            "task_id", "artifact_type", "schema_version",
+            name="uq_d2_artifact_task_type_schema",
+        ),
+        Index("ix_d2_artifact_task_status", "task_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    task_id: Mapped[int] = mapped_column(
+        ForeignKey("simulation_task.id", ondelete="CASCADE"), nullable=False
+    )
+    artifact_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    storage_key: Mapped[str] = mapped_column(Text, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    record_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    media_type: Mapped[str] = mapped_column(String(96), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    published_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class SimulationResult(Base):

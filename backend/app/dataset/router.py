@@ -9,6 +9,8 @@ from app.common.http import commit_or_conflict, not_found
 from app.database.session import get_database_session
 from app.dataset import service
 from app.hydraulic.model_input import build_model_input_v3
+from app.model_engine.v4_schemas import V4PreviewResponse, V4ReadinessResponse
+from app.model_engine.v4_service import assess_database_case, preview_from_assessment
 from app.dataset.schemas import (
     BoundaryConditionCreate,
     BoundaryConditionRecord,
@@ -206,3 +208,35 @@ def read_model_input_v3(case_id: int, session: SessionDependency) -> dict[str, o
     if snapshot is None:
         raise not_found("计算方案")
     return snapshot
+
+
+@router.get(
+    "/simulation-cases/{case_id}/input-v4/readiness",
+    response_model=V4ReadinessResponse,
+    summary="Check restricted native-v4 D1 readiness",
+)
+def read_model_input_v4_readiness(
+    case_id: int,
+    session: SessionDependency,
+    dispatch_plan_id: int = Query(gt=0),
+) -> V4ReadinessResponse:
+    """Return structured fail-closed findings without creating or freezing a task."""
+
+    return assess_database_case(session, case_id, dispatch_plan_id).readiness
+
+
+@router.get(
+    "/simulation-cases/{case_id}/input-v4/preview",
+    response_model=V4PreviewResponse,
+    summary="Preview restricted native-v4 D1 input identities and hashes",
+)
+def read_model_input_v4_preview(
+    case_id: int,
+    session: SessionDependency,
+    dispatch_plan_id: int = Query(gt=0),
+) -> V4PreviewResponse:
+    """Return a bounded summary; the complete snapshot remains on the task audit route."""
+
+    return preview_from_assessment(
+        assess_database_case(session, case_id, dispatch_plan_id)
+    )

@@ -16,6 +16,22 @@ RUN apt-get update \
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Build arguments live below the expensive dependency layers so a new source SHA
+# does not invalidate the Python/GDAL runtime cache.
+ARG ENGINE_VERSION=dayu-hydraulic-4.0.0
+ARG ENGINE_COMMIT
+ARG BUILD_MODE=release
+ARG SOURCE_URL=https://github.com/zj1310426307-stack/dayu-tiangong
+
+ENV DAYU_ENGINE_VERSION=${ENGINE_VERSION} \
+    ENGINE_COMMIT=${ENGINE_COMMIT} \
+    DAYU_BUILD_MODE=${BUILD_MODE}
+
+LABEL org.opencontainers.image.title="Dayu Tiangong hydraulic runtime" \
+      org.opencontainers.image.source=${SOURCE_URL} \
+      org.opencontainers.image.version=${ENGINE_VERSION} \
+      org.opencontainers.image.revision=${ENGINE_COMMIT}
+
 # 后端运行时镜像包含后端源码、数据库迁移和导入模板，不挂载前端树。
 COPY backend ./backend
 COPY database ./database
@@ -25,6 +41,10 @@ COPY optimization ./optimization
 COPY geoserver ./geoserver
 COPY docs/templates ./docs/templates
 COPY outputs/HYDRO-DATA-01-20260818 ./outputs/HYDRO-DATA-01-20260818
+
+# A CI/release image is invalid unless its immutable SHA and Registry-bound build
+# identity can be resolved during the image build itself.
+RUN python -c "from model.build_identity import current_runtime_build_identity; current_runtime_build_identity()"
 
 WORKDIR /app/backend
 

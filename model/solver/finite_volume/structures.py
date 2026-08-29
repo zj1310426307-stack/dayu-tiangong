@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Literal, Mapping
 
+from model.core.callbacks import check_cancellation
 from model.solver.finite_volume.flux import GRAVITY
 from model.solver.finite_volume.pump_curve import PumpOperatingPointEvidence
 
@@ -551,6 +552,7 @@ class FixedGate:
         context: StructureStageContext,
         state: Mapping[str, object],
         actual_opening: float,
+        cancel_check: object | None = None,
     ) -> StructureStageFlow:
         """Solve the restricted submerged-orifice energy equation by bisection."""
 
@@ -600,6 +602,7 @@ class FixedGate:
         energy_residual = residual(flow)
         iterations = 0
         for iterations in range(1, self.maximum_iterations + 1):
+            check_cancellation(cancel_check, "gate_root_iteration")
             flow = 0.5 * (lower + upper)
             energy_residual = residual(flow)
             if abs(energy_residual) <= self.equation_tolerance:
@@ -776,6 +779,8 @@ class FixedGate:
         self,
         context: StructureStageContext,
         control_state: Mapping[str, object] | None = None,
+        *,
+        cancel_check: object | None = None,
     ) -> StructureStageFlow:
         """Evaluate flow using only the command frozen before this RK stage."""
 
@@ -805,6 +810,7 @@ class FixedGate:
                 context=context,
                 state=state,
                 actual_opening=float(actual_opening),
+                cancel_check=cancel_check,
             )
 
         head_difference = context.upstream_stage - context.downstream_stage

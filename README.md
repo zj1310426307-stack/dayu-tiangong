@@ -1,5 +1,10 @@
 # 大禹·天工
 
+> Docker Compose requires an explicit `ENGINE_COMMIT`. Local development may use
+> `DAYU_BUILD_MODE=development` with `ENGINE_COMMIT=development-unverified`; CI and
+> release require the actual lowercase 40-character Git SHA. Backend and both
+> hydraulic Workers share the resulting `dayu-backend:<ENGINE_COMMIT>` image.
+
 面向河网数字孪生的水利数据治理、水动力计算、闸泵调度、多目标优化与 AI 辅助平台。
 
 ## 持续优化 01

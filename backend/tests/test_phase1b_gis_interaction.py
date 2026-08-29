@@ -50,6 +50,7 @@ def _build_interaction_fixture() -> tuple[int, int, int, int]:
         assert section is not None and gate is not None
         task = SimulationTask(
             case_id=case.id,
+            dataset_version_id=case.dataset_version_id,
             status="success",
             progress=100,
             config={},
@@ -184,6 +185,7 @@ def test_interaction_frame_rejects_cross_version_and_cross_run_mixing() -> None:
             assert case is not None
             other_task = SimulationTask(
                 case_id=case.id,
+                dataset_version_id=case.dataset_version_id,
                 status="success",
                 progress=100,
                 config={},

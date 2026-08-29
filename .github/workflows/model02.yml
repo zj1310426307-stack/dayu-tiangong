@@ -7,6 +7,11 @@ on:
 permissions:
   contents: read
 
+env:
+  ENGINE_COMMIT: ${{ github.sha }}
+  DAYU_ENGINE_VERSION: dayu-hydraulic-4.0.0
+  DAYU_BUILD_MODE: ci
+
 jobs:
   model02:
     name: MODEL02 ${{ matrix.platform }} Python ${{ matrix.python-version }}

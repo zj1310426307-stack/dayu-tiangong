@@ -9,10 +9,8 @@ from sqlalchemy.orm import Session
 from app.dataset.service import build_model_input, build_model_input_v2
 from app.hydraulic.model_input import build_model_input_v3
 from model.adapters import adapt_v3_to_v2
+from model.build_identity import ENGINE_VERSION, RuntimeBuildIdentity
 from model.provenance import snapshot_hash
-
-
-ENGINE_VERSION = "dayu-hydraulic-4.0.0"
 
 
 def freeze_task_input(
@@ -21,7 +19,7 @@ def freeze_task_input(
     config: dict[str, Any],
     *,
     schema_version: str,
-    engine_commit: str,
+    build_identity: RuntimeBuildIdentity,
     dispatch_plan: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str]:
     """构建完整任务输入；返回冻结 JSON 和与其一一对应的哈希。
@@ -30,6 +28,8 @@ def freeze_task_input(
     public 标识到 hydraulic 标识的严格重写。
     """
 
+    if schema_version == "dayu.model-input.v4":
+        raise ValueError("native v4 must use freeze_v4_task_input with a frozen Dispatch Plan")
     if schema_version == "dayu.model-input.v3":
         snapshot = build_model_input_v3(
             session,
@@ -40,7 +40,7 @@ def freeze_task_input(
                 "runtime_overrides": config,
             },
             dispatch_plan=dispatch_plan,
-            engine_version=ENGINE_VERSION,
+            engine_version=build_identity.engine_version,
         )
     elif schema_version == "dayu.model-input.v2":
         snapshot = build_model_input_v2(
@@ -54,7 +54,7 @@ def freeze_task_input(
                 "runtime_overrides": config,
             },
             dispatch_plan=dispatch_plan,
-            engine_version=ENGINE_VERSION,
+            engine_version=build_identity.engine_version,
         )
     else:
         if dispatch_plan is not None:
@@ -76,8 +76,7 @@ def freeze_task_input(
         raise ValueError("model input provenance must be an object")
     snapshot["provenance"] = {
         **existing_provenance,
-        "engine_version": ENGINE_VERSION,
-        "engine_commit": engine_commit,
+        **build_identity.provenance(),
         "input_schema_version": schema_version,
     }
     return snapshot, snapshot_hash(snapshot)
@@ -85,6 +84,16 @@ def freeze_task_input(
 
 def snapshot_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
     """返回可安全展示的数量和来源摘要，不把大型 JSON 塞入任务列表。"""
+
+    structures = snapshot.get("structures")
+    nested_gates = structures.get("gates", []) if isinstance(structures, dict) else []
+    nested_pumps = structures.get("pumps", []) if isinstance(structures, dict) else []
+    boundaries = snapshot.get("boundaries", snapshot.get("boundary_conditions", []))
+    boundary_count = (
+        len(boundaries)
+        if isinstance(boundaries, (list, tuple, dict))
+        else 0
+    )
 
     return {
         "schema_version": snapshot.get("schema_version"),
@@ -94,9 +103,9 @@ def snapshot_summary(snapshot: dict[str, Any]) -> dict[str, Any]:
         "section_count": len(snapshot.get("cross_sections", [])),
         "reach_count": len(snapshot.get("reaches", [])),
         "profile_count": len(snapshot.get("cross_section_profiles", [])),
-        "boundary_count": len(snapshot.get("boundary_conditions", [])),
-        "gate_count": len(snapshot.get("gates", [])),
-        "pump_count": len(snapshot.get("pumps", [])),
+        "boundary_count": boundary_count,
+        "gate_count": len(nested_gates or snapshot.get("gates", [])),
+        "pump_count": len(nested_pumps or snapshot.get("pumps", [])),
         "coordinate_system": snapshot.get(
             "coordinate_reference", snapshot.get("coordinate_system", "CGCS2000 (EPSG:4490)")
         ),

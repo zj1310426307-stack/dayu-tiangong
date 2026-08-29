@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from os import getenv
 from typing import Any
 
 from sqlalchemy import func, select
@@ -23,8 +22,10 @@ from app.gis.models import (
     DispatchAction, DispatchEvent, DispatchPlan, DispatchRule, DispatchRun,
     JunctionResult, SimulationCase, SimulationTask, StructureResult,
 )
-from app.model_engine.provenance import ENGINE_VERSION, freeze_task_input
+from app.model_engine.provenance import freeze_task_input
 from app.worker.tasks import run_hydraulic_task
+from model.build_identity import RuntimeBuildIdentity, current_runtime_build_identity
+from model.solver.registry import MODEL_INPUT_V3, task_solver_provenance
 
 
 class DispatchNotFoundError(LookupError):
@@ -47,20 +48,16 @@ def _enqueue_run_tasks(
 ) -> None:
     """Durably record complete, failed, or partial two-task queue delivery."""
 
+    baseline.delivery_attempt_count += 1
+    baseline.last_delivery_time = datetime.now(UTC)
+    session.commit()
     try:
         baseline_job = run_hydraulic_task.delay(baseline.id)
     except Exception as exc:
-        now = datetime.now(UTC)
-        message = "dispatch queue broker unavailable; no tasks were enqueued"
-        for task in (baseline, controlled):
-            task.status = "failed"
-            task.progress = 100
-            task.error_message = message
-            task.end_time = now
-        run.status = "failed"
-        run.progress = 100
+        message = "dispatch queue broker unavailable; durable recovery pending"
+        baseline.queue_job_id = None
+        baseline.last_infrastructure_error = message
         run.error_message = message
-        run.end_time = now
         session.commit()
         raise DispatchQueueError(message) from exc
 
@@ -70,21 +67,19 @@ def _enqueue_run_tasks(
     # broker call; otherwise a partial delivery would have no audit trail.
     session.commit()
 
+    controlled.delivery_attempt_count += 1
+    controlled.last_delivery_time = datetime.now(UTC)
+    session.commit()
     try:
         controlled_job = run_hydraulic_task.delay(controlled.id)
     except Exception as exc:
-        now = datetime.now(UTC)
         message = (
             "dispatch queue broker unavailable after baseline enqueue; "
-            f"baseline_job_id={baseline_job.id}, controlled task was not enqueued"
+            f"baseline_job_id={baseline_job.id}; durable recovery pending"
         )
-        controlled.status = "failed"
-        controlled.progress = 100
-        controlled.error_message = message
-        controlled.end_time = now
-        run.status = "failed"
+        controlled.queue_job_id = None
+        controlled.last_infrastructure_error = message
         run.error_message = message
-        run.end_time = now
         session.commit()
         raise DispatchQueueError(message) from exc
 
@@ -97,7 +92,7 @@ def _freeze_run_snapshots(
     session: Session,
     plan: DispatchPlan,
     config: dict[str, Any],
-    engine_commit: str,
+    build_identity: RuntimeBuildIdentity,
 ) -> tuple[dict[str, Any], str, dict[str, Any], str]:
     """Freeze independent baseline/controlled v3 inputs through one identity boundary."""
 
@@ -107,14 +102,14 @@ def _freeze_run_snapshots(
             plan.simulation_case_id,
             config,
             schema_version="dayu.model-input.v3",
-            engine_commit=engine_commit,
+            build_identity=build_identity,
         )
         controlled_snapshot, controlled_hash = freeze_task_input(
             session,
             plan.simulation_case_id,
             config,
             schema_version="dayu.model-input.v3",
-            engine_commit=engine_commit,
+            build_identity=build_identity,
             dispatch_plan=plan.frozen_snapshot,
         )
     except (LookupError, ValueError) as exc:
@@ -455,6 +450,34 @@ def delete_rule(session: Session, rule_id: int) -> None:
     session.commit()
 
 
+def _build_run_task(
+    plan: DispatchPlan,
+    config: dict[str, Any],
+    snapshot: dict[str, Any],
+    digest: str,
+    build_identity: RuntimeBuildIdentity,
+) -> SimulationTask:
+    """Build one v3 run task with complete Registry-owned provenance."""
+
+    return SimulationTask(
+        case_id=plan.simulation_case_id,
+        dataset_version_id=plan.dataset_version_id,
+        status="queued",
+        progress=0,
+        config=config,
+        input_schema_version=MODEL_INPUT_V3,
+        input_snapshot=snapshot,
+        input_snapshot_hash=digest,
+        engine_version=build_identity.engine_version,
+        engine_commit=build_identity.engine_commit,
+        solver_build_id=build_identity.solver_build_id,
+        build_mode=build_identity.build_mode,
+        build_verified=build_identity.verified,
+        queued_time=datetime.now(UTC),
+        **task_solver_provenance(MODEL_INPUT_V3),
+    )
+
+
 def create_run(session: Session, plan_id: int) -> DispatchRunRecord:
     """基于冻结计划创建基准/受控冻结任务并异步投递。"""
 
@@ -470,26 +493,20 @@ def create_run(session: Session, plan_id: int) -> DispatchRunRecord:
         "allow_fallback_boundary": False,
         "section_geometry": "tabulated",
     }
-    commit = getenv("ENGINE_COMMIT", "uncommitted")
+    build_identity = current_runtime_build_identity()
     (
         baseline_snapshot,
         baseline_hash,
         controlled_snapshot,
         controlled_hash,
     ) = _freeze_run_snapshots(
-        session, plan, config, commit
+        session, plan, config, build_identity
     )
-    baseline = SimulationTask(
-        case_id=plan.simulation_case_id, status="queued", progress=0, config=config,
-        input_schema_version="dayu.model-input.v3", input_snapshot=baseline_snapshot,
-        input_snapshot_hash=baseline_hash, engine_version=ENGINE_VERSION,
-        engine_commit=commit, queued_time=datetime.now(UTC),
+    baseline = _build_run_task(
+        plan, config, baseline_snapshot, baseline_hash, build_identity
     )
-    controlled = SimulationTask(
-        case_id=plan.simulation_case_id, status="queued", progress=0, config=config,
-        input_schema_version="dayu.model-input.v3", input_snapshot=controlled_snapshot,
-        input_snapshot_hash=controlled_hash, engine_version=ENGINE_VERSION,
-        engine_commit=commit, queued_time=datetime.now(UTC),
+    controlled = _build_run_task(
+        plan, config, controlled_snapshot, controlled_hash, build_identity
     )
     session.add_all((baseline, controlled))
     session.flush()

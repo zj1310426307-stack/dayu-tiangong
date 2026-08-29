@@ -443,6 +443,7 @@ def test_migration_and_atomic_dual_write_round_trip() -> None:
         assert runnable_input is not None
         task = SimulationTask(
             case_id=case.id,
+            dataset_version_id=case.dataset_version_id,
             status="running",
             progress=80,
             config=run_config,

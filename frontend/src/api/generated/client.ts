@@ -1882,7 +1882,10 @@ export interface SimulationTaskCreate {
   "initial_water_level"?: number | null;
   "initial_flow"?: number | null;
   "minimum_depth"?: number | null;
-  "input_schema_version"?: "dayu.model-input.v1" | "dayu.model-input.v2" | "dayu.model-input.v3";
+  "input_schema_version"?: "dayu.model-input.v1" | "dayu.model-input.v2" | "dayu.model-input.v3" | "dayu.model-input.v4";
+  "solver_id"?: string | null;
+  "dispatch_plan_id"?: number | null;
+  "execution_mode"?: "validation" | "shadow";
   "allow_fallback_boundary"?: boolean;
   "section_geometry"?: "rectangular" | "tabulated";
   "storage_level"?: "summary" | "key_sections" | "full";
@@ -1898,19 +1901,53 @@ export interface SimulationTaskRecord {
   "input_snapshot_hash": string | null;
   "engine_version": string | null;
   "engine_commit": string | null;
+  "solver_build_id": string | null;
+  "build_mode": string | null;
+  "build_verified": boolean;
+  "solver_id": string | null;
+  "capability_id": string | null;
+  "runtime_adapter_id": string | null;
+  "result_schema_version": string | null;
+  "execution_mode": string | null;
+  "execution_phase": string | null;
+  "runtime_projection_hash": string | null;
+  "mesh_hash": string | null;
+  "solver_policy_hash": string | null;
+  "validation_policy_hash": string | null;
+  "registry_hash": string | null;
+  "artifact_status": string | null;
+  "comparison_group_id": number | null;
+  "group_role": string | null;
   "snapshot_summary"?: Record<string, unknown> | null;
   "queue_job_id": string | null;
+  "delivery_attempt_count": number;
+  "last_delivery_time": string | null;
   "worker_id": string | null;
   "queued_time": string | null;
   "heartbeat_time": string | null;
   "cancel_requested": boolean;
+  "execution_attempt_count": number;
+  "manual_retry_count": number;
+  "infrastructure_retry_count": number;
+  "numerical_retry_count": number;
   "retry_count": number;
+  "accepted_step_count": number;
+  "cfl_reduction_count": number;
+  "positivity_retry_count": number;
+  "event_refinement_count": number;
+  "gate_solver_retry_count": number;
+  "pump_solver_retry_count": number;
+  "minimum_dt_failure_count": number;
   "retry_reason": string | null;
   "current_simulation_time": number | null;
   "current_cfl": number | null;
   "diagnostics": Record<string, unknown> | null;
+  "last_event": Record<string, unknown> | null;
   "result_path": string | null;
   "error_message": string | null;
+  "last_infrastructure_error": string | null;
+  "retry_eligible"?: boolean;
+  "retry_block_reason"?: string | null;
   "created_time": string;
   "start_time": string | null;
   "end_time": string | null;
@@ -1962,6 +1999,9 @@ export interface TaskSnapshotResponse {
   "input_snapshot_hash": string;
   "engine_version": string;
   "engine_commit": string;
+  "solver_build_id": string | null;
+  "build_mode": string | null;
+  "build_verified": boolean;
   "snapshot": Record<string, unknown>;
 }
 
@@ -2005,6 +2045,164 @@ export interface TraceResponse {
   "pumps": Array<SpatialFeature>;
   "cross_sections": Array<SpatialFeature>;
   "crs"?: "EPSG:4490";
+}
+
+export interface V4ArtifactManifest {
+  "id": number;
+  "artifact_type": string;
+  "storage_key": string;
+  "sha256": string;
+  "size_bytes": number;
+  "record_count": number;
+  "media_type": string;
+  "schema_version": string;
+  "status": string;
+  "metadata": Record<string, unknown>;
+  "created_time": string;
+  "published_time": string | null;
+}
+
+export interface V4ControlEventRecord {
+  "time_seconds": number;
+  "structure_type": string;
+  "canonical_structure_id": number;
+  "event_type": string;
+  "reason": string | null;
+  "pre_state_json": Record<string, unknown> | null;
+  "post_command_json": Record<string, unknown> | null;
+}
+
+export interface V4GateResultRecord {
+  "time_seconds": number;
+  "canonical_gate_id": number;
+  "opening_m": number;
+  "flow_m3s": number;
+  "upstream_stage_m": number;
+  "downstream_stage_m": number;
+  "head_loss_m": number | null;
+  "reaction_force_per_density": number | null;
+  "regime": string | null;
+}
+
+export interface V4PreviewResponse {
+  "schema_version": string;
+  "solver_id": string;
+  "capability_id": string;
+  "dataset_version_id": number | null;
+  "simulation_case_id": number | null;
+  "branch": Record<string, unknown> | null;
+  "section_count": number;
+  "gate": Record<string, unknown> | null;
+  "pump": Record<string, unknown> | null;
+  "boundary_time_range": Record<string, number | null>;
+  "simulation_duration_seconds": number | null;
+  "hashes": Record<string, string>;
+  "readiness": V4ReadinessResponse;
+  "capability_scope": Array<string>;
+  "capability_exclusions": Array<string>;
+  "case_notes": Array<string>;
+  "known_limitations": Array<string>;
+}
+
+export interface V4PumpResultRecord {
+  "time_seconds": number;
+  "canonical_pump_id": number;
+  "control_state": string;
+  "running_units": number;
+  "flow_m3s": number;
+  "source_stage_m": number;
+  "outlet_stage_m": number;
+  "pump_head_m": number;
+  "system_head_m": number;
+  "efficiency": number;
+  "input_power_kw": number;
+  "cumulative_energy_kwh": number;
+  "iterations": number;
+  "regime": string | null;
+}
+
+export interface V4ReadinessIssue {
+  "code": string;
+  "severity": "error" | "warning";
+  "entity_type": string;
+  "entity_id"?: number | string | null;
+  "field_path": string;
+  "message": string;
+}
+
+export interface V4ReadinessResponse {
+  "ready": boolean;
+  "solver_id": string;
+  "capability_id": string;
+  "runtime_adapter_id": string;
+  "errors": Array<V4ReadinessIssue>;
+  "warnings": Array<V4ReadinessIssue>;
+  "snapshot_summary"?: Record<string, unknown>;
+  "candidate_hashes"?: Record<string, string>;
+}
+
+export interface V4ResultSummary {
+  "task_id": number;
+  "result_schema_version": "dayu.hydraulic-result.v3";
+  "provenance": Record<string, unknown>;
+  "section_count": number;
+  "gate_row_count": number;
+  "pump_row_count": number;
+  "event_count": number;
+  "artifacts": Array<V4ArtifactManifest>;
+}
+
+export interface V4SectionOption {
+  "hydraulic_cross_section_id": number;
+  "section_code": string;
+  "branch_id": number;
+  "chainage_m": number;
+}
+
+export interface V4SectionResultResponse {
+  "hydraulic_cross_section_id": number;
+  "section_code": string;
+  "branch_id": number;
+  "chainage_m": number;
+  "task_id": number;
+  "time_seconds": Array<number>;
+  "water_level_m": Array<number>;
+  "flow_m3s": Array<number>;
+  "velocity_m_s": Array<number>;
+  "control_volume_m3": Array<number>;
+  "available_sections": Array<V4SectionOption>;
+}
+
+export interface V4ShadowComparison {
+  "group_id": number;
+  "status": "pending" | "running" | "cancelled" | "ready" | "failed" | "not_ready";
+  "diagnostic_disclaimer": string;
+  "v3_task_id": number | null;
+  "v4_task_id": number | null;
+  "sections": Array<V4ShadowSectionDelta>;
+}
+
+export interface V4ShadowCreate {
+  "case_id": number;
+  "dispatch_plan_id": number;
+}
+
+export interface V4ShadowPair {
+  "group_id": number;
+  "status": string;
+  "v3_task_id": number;
+  "v4_task_id": number;
+  "diagnostic_only"?: boolean;
+}
+
+export interface V4ShadowSectionDelta {
+  "section_code": string;
+  "time_seconds": Array<number>;
+  "water_level_delta_m": Array<number>;
+  "flow_delta_m3s": Array<number>;
+  "maximum_absolute_water_level_delta_m": number;
+  "maximum_absolute_flow_delta_m3s": number;
+  "peak_flow_time_delta_seconds": number;
 }
 
 export interface ValidationError {
@@ -2321,6 +2519,8 @@ export const updateSimulationCase = (caseId: number, body: SimulationCaseUpdate,
 export const deleteSimulationCase = (caseId: number, baseUrl = '') => requestJson<void>(`/api/v1/model-data/simulation-cases/${caseId}`, { method: 'DELETE' }, baseUrl);
 export const getModelInput = (caseId: number, baseUrl = '') => requestJson<ModelInputSnapshot>(`/api/v1/model-data/simulation-cases/${caseId}/input`, {}, baseUrl);
 export const getModelInputV3 = (caseId: number, baseUrl = '') => requestJson<Record<string, unknown>>(`/api/v1/model-data/simulation-cases/${caseId}/input-v3`, {}, baseUrl);
+export const getModelInputV4Readiness = (caseId: number, dispatchPlanId: number, baseUrl = '') => requestJson<V4ReadinessResponse>(`/api/v1/model-data/simulation-cases/${caseId}/input-v4/readiness${toQuery({ dispatch_plan_id: dispatchPlanId })}`, {}, baseUrl);
+export const getModelInputV4Preview = (caseId: number, dispatchPlanId: number, baseUrl = '') => requestJson<V4PreviewResponse>(`/api/v1/model-data/simulation-cases/${caseId}/input-v4/preview${toQuery({ dispatch_plan_id: dispatchPlanId })}`, {}, baseUrl);
 export const runValidation = (datasetVersionId: number, baseUrl = '') => requestJson<ValidationReport>('/api/v1/validation/run', jsonOptions('POST', { dataset_version_id: datasetVersionId }), baseUrl);
 
 export const getHydraulicCapabilities = (baseUrl = '') => requestJson<HydraulicCapabilityResponse>('/api/v1/hydraulic/capabilities', {}, baseUrl);
@@ -2362,6 +2562,16 @@ export const cancelHydraulicTask = (taskId: number, baseUrl = '') => requestJson
 export const retryHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(`/api/v1/model/tasks/${taskId}/retry`, { method: 'POST' }, baseUrl);
 export const getHydraulicTaskSnapshot = (taskId: number, baseUrl = '') => requestJson<TaskSnapshotResponse>(`/api/v1/model/tasks/${taskId}/snapshot`, {}, baseUrl);
 export const getHydraulicResult = (taskId: number, sectionId?: number, baseUrl = '') => requestJson<SimulationResultResponse>(`/api/v1/model/results/${taskId}${toQuery({ section_id: sectionId })}`, {}, baseUrl);
+export const listHydraulicV4Sections = (taskId: number, baseUrl = '') => requestJson<Array<V4SectionOption>>(`/api/v1/model/v4/tasks/${taskId}/sections`, {}, baseUrl);
+export const getHydraulicV4Section = (taskId: number, sectionId: number, baseUrl = '') => requestJson<V4SectionResultResponse>(`/api/v1/model/v4/tasks/${taskId}/sections/${sectionId}`, {}, baseUrl);
+export const getHydraulicV4Gates = (taskId: number, baseUrl = '') => requestJson<Array<V4GateResultRecord>>(`/api/v1/model/v4/tasks/${taskId}/gates`, {}, baseUrl);
+export const getHydraulicV4Pumps = (taskId: number, baseUrl = '') => requestJson<Array<V4PumpResultRecord>>(`/api/v1/model/v4/tasks/${taskId}/pumps`, {}, baseUrl);
+export const getHydraulicV4Events = (taskId: number, baseUrl = '') => requestJson<Array<V4ControlEventRecord>>(`/api/v1/model/v4/tasks/${taskId}/events`, {}, baseUrl);
+export const getHydraulicV4Summary = (taskId: number, baseUrl = '') => requestJson<V4ResultSummary>(`/api/v1/model/v4/tasks/${taskId}/summary`, {}, baseUrl);
+export const listHydraulicV4Artifacts = (taskId: number, baseUrl = '') => requestJson<Array<V4ArtifactManifest>>(`/api/v1/model/v4/tasks/${taskId}/artifacts`, {}, baseUrl);
+export const downloadHydraulicV4Artifact = (taskId: number, artifactId: number, baseUrl = '') => requestBlob(`/api/v1/model/v4/tasks/${taskId}/artifacts/${artifactId}/download`, {}, baseUrl);
+export const createHydraulicV4ShadowPair = (body: V4ShadowCreate, baseUrl = '') => requestJson<V4ShadowPair>('/api/v1/model/v4/shadow-pairs', jsonOptions('POST', body), baseUrl);
+export const getHydraulicV4ShadowComparison = (groupId: number, baseUrl = '') => requestJson<V4ShadowComparison>(`/api/v1/model/v4/shadow-pairs/${groupId}`, {}, baseUrl);
 
 export const listDispatchPlans = (params: DispatchListQuery = {}, baseUrl = '') => requestJson<PageResult<DispatchPlanRecord>>(`/api/v1/dispatch/plans${toQuery(params)}`, {}, baseUrl);
 export const createDispatchPlan = (body: DispatchPlanCreate, baseUrl = '') => requestJson<DispatchPlanRecord>('/api/v1/dispatch/plans', jsonOptions('POST', body), baseUrl);

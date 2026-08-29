@@ -1,0 +1,447 @@
+name: hydraulic-platform
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: backend:.
+  ENGINE_COMMIT: ${{ github.sha }}
+  DAYU_ENGINE_VERSION: dayu-hydraulic-4.0.0
+  DAYU_BUILD_MODE: ci
+
+jobs:
+  backend-v4-contract:
+    name: Backend v4 contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install -r backend/requirements.txt
+      - run: python -m compileall -q model backend/app
+      - name: Run native-v4 contract suite
+        run: >-
+          python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
+          tests/model_engine
+          --ignore=tests/model_engine/test_v4_postgis_worker_integration.py
+
+  postgis-migration:
+    name: PostGIS migration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: timescale/timescaledb-ha:pg16.14-ts2.28.3-all
+        env:
+          POSTGRES_DB: dayu_tiangong
+          POSTGRES_USER: dayu
+          POSTGRES_PASSWORD: dayu_dev
+          TIMESCALEDB_TELEMETRY: "off"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dayu -d dayu_tiangong"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://dayu:dayu_dev@localhost:5432/dayu_tiangong
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install -r backend/requirements.txt
+      - name: Prepare migration evidence
+        run: mkdir -p outputs/ci/d2-migration
+      - name: Upgrade to D2 head
+        run: alembic -c database/alembic.ini upgrade head 2>&1 | tee outputs/ci/d2-migration/upgrade.log
+      - name: Verify D2 schema
+        run: >-
+          python -c "from sqlalchemy import create_engine, inspect;
+          import os;
+          i=inspect(create_engine(os.environ['DATABASE_URL']));
+          tables=set(i.get_table_names());
+          task_cols={c['name'] for c in i.get_columns('simulation_task')};
+          event_cols={c['name'] for c in i.get_columns('hydraulic_task_control_event')};
+          assert {'hydraulic_task_section_result','hydraulic_task_gate_result','hydraulic_task_pump_result','hydraulic_task_control_event','hydraulic_task_artifact'} <= tables;
+          assert {'solver_id','capability_id','runtime_projection_hash','artifact_status','execution_attempt_count','manual_retry_count','infrastructure_retry_count','numerical_retry_count','active_execution_token','last_execution_token','last_infrastructure_error','solver_build_id','build_mode','build_verified','delivery_attempt_count','last_delivery_time'} <= task_cols;
+          assert {'dataset_version_id','canonical_gate_id','canonical_pump_id'} <= event_cols"
+      - name: Downgrade D2 migration
+        run: alembic -c database/alembic.ini downgrade -1 2>&1 | tee outputs/ci/d2-migration/downgrade.log
+      - name: Re-upgrade to D2 head
+        run: alembic -c database/alembic.ini upgrade head 2>&1 | tee outputs/ci/d2-migration/re-upgrade.log
+      - name: Assert single head
+        run: test "$(alembic -c database/alembic.ini heads | grep -c '(head)')" -eq 1
+      - name: Upload migration evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: d2-postgis-migration
+          path: outputs/ci/d2-migration/
+          if-no-files-found: warn
+
+  worker-integration:
+    name: Worker integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: timescale/timescaledb-ha:pg16.14-ts2.28.3-all
+        env:
+          POSTGRES_DB: dayu_tiangong
+          POSTGRES_USER: dayu
+          POSTGRES_PASSWORD: dayu_dev
+          TIMESCALEDB_TELEMETRY: "off"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dayu -d dayu_tiangong"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://dayu:dayu_dev@localhost:5432/dayu_tiangong
+      CELERY_BROKER_URL: redis://localhost:6379/0
+      CELERY_RESULT_BACKEND: redis://localhost:6379/1
+      DAYU_STORAGE_ROOT: outputs/ci/d2-worker/storage
+      RUN_D2_INTEGRATION: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install -r backend/requirements.txt
+      - name: Prepare Worker evidence
+        run: mkdir -p outputs/ci/d2-worker
+      - name: Migrate PostGIS
+        run: alembic -c database/alembic.ini upgrade head 2>&1 | tee outputs/ci/d2-worker/migration.log
+      - name: Start Backend and isolated Workers
+        run: |
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 > outputs/ci/d2-worker/backend.log 2>&1 &
+          nohup celery -A app.worker.celery_app.celery_app worker --loglevel=INFO --pool=solo --queues=celery --hostname=d2-legacy@%h > outputs/ci/d2-worker/legacy-worker.log 2>&1 &
+          nohup celery -A app.worker.celery_app.celery_app worker --loglevel=INFO --pool=solo --queues=hydraulic-v4-d1 --hostname=d2-v4@%h > outputs/ci/d2-worker/v4-worker.log 2>&1 &
+      - name: Verify Backend and PostGIS health
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8001/api/v1/gis/health; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Run real broker/Worker/PostGIS integration
+        run: >-
+          python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
+          tests/model_engine/test_v4_postgis_worker_integration.py
+          --junitxml=outputs/ci/d2-worker/junit.xml
+      - name: Upload Worker evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: d2-worker-integration
+          path: outputs/ci/d2-worker/
+          if-no-files-found: error
+
+  d2-fault-recovery:
+    name: D2 fault recovery
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: timescale/timescaledb-ha:pg16.14-ts2.28.3-all
+        env:
+          POSTGRES_DB: dayu_tiangong
+          POSTGRES_USER: dayu
+          POSTGRES_PASSWORD: dayu_dev
+          TIMESCALEDB_TELEMETRY: "off"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dayu -d dayu_tiangong"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://dayu:dayu_dev@localhost:5432/dayu_tiangong
+      TEST_DATABASE_URL: postgresql+psycopg://dayu:dayu_dev@localhost:5432/dayu_tiangong
+      CELERY_BROKER_URL: redis://localhost:6379/0
+      CELERY_RESULT_BACKEND: redis://localhost:6379/1
+      DAYU_STORAGE_ROOT: outputs/ci/d2-fault/storage
+      D2_FAULT_EVIDENCE_DIR: outputs/ci/d2-fault
+      RUN_D2_FAULT_INTEGRATION: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install -r backend/requirements.txt
+      - name: Prepare fault-recovery evidence
+        run: mkdir -p outputs/ci/d2-fault/storage
+      - name: Migrate PostGIS
+        run: alembic -c database/alembic.ini upgrade head 2>&1 | tee outputs/ci/d2-fault/migration.log
+      - name: Run D2 fault-recovery suite
+        run: |
+          python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q \
+            tests/model_engine/test_v4_execution_attempt.py \
+            tests/model_engine/test_v4_task_state_machine.py \
+            tests/model_engine/test_v4_reconciliation.py \
+            tests/model_engine/test_v4_finalization_races.py \
+            tests/model_engine/test_v4_dataset_integrity.py \
+            tests/model_engine/test_v4_freeze_integrity.py \
+            tests/model_engine/test_v4_worker_fault_e2e.py \
+            tests/model_engine/test_v4_worker_capability.py \
+            tests/model_engine/test_v4_sync_run_guard.py \
+            tests/model_engine/test_solver_registry.py \
+            tests/model_engine/test_v4_schema_metadata.py \
+            tests/model_engine/test_v4_rc1_schema_metadata.py \
+            tests/model_engine/test_v4_rc2_schema_metadata.py \
+            tests/model_engine/test_runtime_build_identity.py \
+            tests/model_engine/test_v4_worker_build_identity.py \
+            tests/model_engine/test_v4_task_contract.py \
+            tests/model_engine/test_v4_shadow.py \
+            tests/model_engine/test_v4_manual_retry.py \
+            --junitxml=outputs/ci/d2-fault/junit.xml \
+            2>&1 | tee outputs/ci/d2-fault/pytest.log
+      - name: Collect reconciliation and quarantine evidence
+        if: always()
+        run: |
+          mkdir -p "$D2_FAULT_EVIDENCE_DIR"
+          if [ -d "$DAYU_STORAGE_ROOT/hydraulic-evidence/quarantine" ]; then
+            find "$DAYU_STORAGE_ROOT/hydraulic-evidence/quarantine" -type f -printf '%P\n' | sort > "$D2_FAULT_EVIDENCE_DIR/quarantine-manifest.txt"
+          else
+            : > "$D2_FAULT_EVIDENCE_DIR/quarantine-manifest.txt"
+          fi
+          python -c "import json, os; from pathlib import Path; root=Path(os.environ['D2_FAULT_EVIDENCE_DIR']); reports=sorted(path.relative_to(root).as_posix() for path in root.rglob('*.json') if path.name != 'reconciliation-index.json'); (root / 'reconciliation-index.json').write_text(json.dumps({'reports': reports}, indent=2, sort_keys=True) + '\n', encoding='utf-8')"
+          find "$D2_FAULT_EVIDENCE_DIR" -type f -printf '%P %s bytes\n' | sort > "$D2_FAULT_EVIDENCE_DIR/evidence-files.log"
+      - name: Upload D2 fault-recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: d2-fault-recovery
+          path: outputs/ci/d2-fault/
+          if-no-files-found: error
+
+  frontend-openapi:
+    name: Frontend OpenAPI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: python -m pip install -r backend/requirements.txt
+      - run: npm ci
+        working-directory: frontend
+      - name: Start OpenAPI source
+        run: nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8001 > /tmp/dayu-openapi.log 2>&1 &
+      - name: Regenerate client
+        working-directory: frontend
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8001/openapi.json > /dev/null; then break; fi
+            sleep 1
+          done
+          npm run openapi:update
+      - name: Enforce generated-client drift gate
+        run: git diff --exit-code -- frontend/src/api/generated/client.ts
+      - run: npm run typecheck
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+
+  d1-regression:
+    name: D1 regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install -r backend/requirements.txt
+      - name: Run frozen D1 Gate/Pump regressions
+        run: >-
+          python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
+          tests/model02
+          tests/test_gate_pump_simulation.py
+          tests/test_phase4_hydraulic_gate.py
+
+  d2-shipping-runtime:
+    name: D2 shipping runtime
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: timescale/timescaledb-ha:pg16.14-ts2.28.3-all
+        env:
+          POSTGRES_DB: dayu_tiangong
+          POSTGRES_USER: dayu
+          POSTGRES_PASSWORD: dayu_dev
+          TIMESCALEDB_TELEMETRY: "off"
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dayu -d dayu_tiangong"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://dayu:dayu_dev@localhost:5432/dayu_tiangong
+      TEST_DATABASE_URL: postgresql+psycopg://dayu:dayu_dev@localhost:5432/dayu_tiangong
+      CELERY_BROKER_URL: redis://localhost:6379/0
+      CELERY_RESULT_BACKEND: redis://localhost:6379/1
+      DAYU_STORAGE_ROOT: /workspace/outputs/ci/d2-shipping/storage
+      RUN_D2_INTEGRATION: "1"
+      D2_BACKEND_URL: http://127.0.0.1:8001
+    steps:
+      - uses: actions/checkout@v7
+      - name: Prepare shipping evidence
+        run: mkdir -p outputs/ci/d2-shipping/storage
+      - name: Build immutable Python 3.12 runtime image
+        run: |
+          docker build \
+            --build-arg ENGINE_VERSION="$DAYU_ENGINE_VERSION" \
+            --build-arg ENGINE_COMMIT="$ENGINE_COMMIT" \
+            --build-arg BUILD_MODE="$DAYU_BUILD_MODE" \
+            --tag "dayu-backend:$ENGINE_COMMIT" \
+            --file docker/backend.Dockerfile .
+          docker image inspect "dayu-backend:$ENGINE_COMMIT" > outputs/ci/d2-shipping/oci-image-inspect.json
+          test "$(docker image inspect --format='{{ index .Config.Labels "org.opencontainers.image.revision" }}' "dayu-backend:$ENGINE_COMMIT")" = "$ENGINE_COMMIT"
+          test "$(docker run --rm "dayu-backend:$ENGINE_COMMIT" python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" = "3.12"
+          docker run --rm "dayu-backend:$ENGINE_COMMIT" python -m model.build_identity > outputs/ci/d2-shipping/runtime-build-identity.json
+      - name: Migrate PostGIS with shipping image
+        run: >-
+          docker run --rm --network host
+          --env DATABASE_URL
+          "dayu-backend:$ENGINE_COMMIT"
+          python -m alembic -c ../database/alembic.ini upgrade head
+      - name: Run Backend contract and D2 fault recovery inside shipping image
+        run: |
+          docker run --rm --network host \
+            --env DATABASE_URL --env TEST_DATABASE_URL \
+            --env CELERY_BROKER_URL --env CELERY_RESULT_BACKEND \
+            --env DAYU_STORAGE_ROOT \
+            --env RUN_D2_FAULT_INTEGRATION=1 \
+            --env D2_FAULT_EVIDENCE_DIR=/workspace/outputs/ci/d2-shipping/fault-evidence \
+            --volume "$PWD:/workspace:ro" \
+            --volume "$PWD/outputs:/workspace/outputs" \
+            --workdir /workspace \
+            "dayu-backend:$ENGINE_COMMIT" \
+            python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q \
+            tests/model_engine \
+            --ignore=tests/model_engine/test_v4_postgis_worker_integration.py \
+            --junitxml=outputs/ci/d2-shipping/contract-fault-junit.xml
+      - name: Start Backend and both Workers from the same image
+        run: |
+          docker run -d --name d2-shipping-backend --network host \
+            --env DATABASE_URL --env CELERY_BROKER_URL --env CELERY_RESULT_BACKEND \
+            --env DAYU_STORAGE_ROOT \
+            --volume "$PWD/outputs:/workspace/outputs" \
+            "dayu-backend:$ENGINE_COMMIT" \
+            python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+          docker run -d --name d2-shipping-legacy --network host \
+            --env DATABASE_URL --env CELERY_BROKER_URL --env CELERY_RESULT_BACKEND \
+            --env DAYU_STORAGE_ROOT \
+            --volume "$PWD/outputs:/workspace/outputs" \
+            "dayu-backend:$ENGINE_COMMIT" \
+            python -m celery -A app.worker.celery_app.celery_app worker \
+            --loglevel=INFO --pool=solo --queues=celery --hostname=d2-shipping-legacy@%h
+          docker run -d --name d2-shipping-v4 --network host \
+            --env DATABASE_URL --env CELERY_BROKER_URL --env CELERY_RESULT_BACKEND \
+            --env DAYU_STORAGE_ROOT \
+            --volume "$PWD/outputs:/workspace/outputs" \
+            "dayu-backend:$ENGINE_COMMIT" \
+            python -m celery -A app.worker.celery_app.celery_app worker \
+            --loglevel=INFO --pool=solo --queues=hydraulic-v4-d1 --hostname=d2-shipping-v4@%h
+      - name: Wait for shipping Backend
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent "$D2_BACKEND_URL/api/v1/gis/health"; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+      - name: Verify identical Backend and Worker build identities
+        run: |
+          docker exec d2-shipping-backend python -m model.build_identity > outputs/ci/d2-shipping/backend-build-identity.json
+          docker exec d2-shipping-legacy python -m model.build_identity > outputs/ci/d2-shipping/legacy-worker-build-identity.json
+          docker exec d2-shipping-v4 python -m model.build_identity > outputs/ci/d2-shipping/v4-worker-build-identity.json
+          cmp outputs/ci/d2-shipping/runtime-build-identity.json outputs/ci/d2-shipping/backend-build-identity.json
+          cmp outputs/ci/d2-shipping/runtime-build-identity.json outputs/ci/d2-shipping/legacy-worker-build-identity.json
+          cmp outputs/ci/d2-shipping/runtime-build-identity.json outputs/ci/d2-shipping/v4-worker-build-identity.json
+      - name: Run native-v4 PostGIS and frozen D1 checks inside shipping image
+        run: |
+          docker run --rm --network host \
+            --env DATABASE_URL --env CELERY_BROKER_URL --env CELERY_RESULT_BACKEND \
+            --env DAYU_STORAGE_ROOT --env RUN_D2_INTEGRATION --env D2_BACKEND_URL \
+            --volume "$PWD:/workspace:ro" \
+            --volume "$PWD/outputs:/workspace/outputs" \
+            --workdir /workspace \
+            "dayu-backend:$ENGINE_COMMIT" \
+            python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q \
+            tests/model_engine/test_v4_postgis_worker_integration.py \
+            --junitxml=outputs/ci/d2-shipping/v4-junit.xml
+          docker run --rm \
+            --volume "$PWD:/workspace:ro" \
+            --volume "$PWD/outputs:/workspace/outputs" \
+            --workdir /workspace \
+            "dayu-backend:$ENGINE_COMMIT" \
+            python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q \
+            tests/model02/test_pump_strong_coupling_benchmarks.py \
+            tests/model02/test_v4_lite_pump_strong_coupling.py \
+            --junitxml=outputs/ci/d2-shipping/d1-junit.xml
+      - name: Collect shipping service logs
+        if: always()
+        run: |
+          docker logs d2-shipping-backend > outputs/ci/d2-shipping/backend.log 2>&1 || true
+          docker logs d2-shipping-legacy > outputs/ci/d2-shipping/legacy-worker.log 2>&1 || true
+          docker logs d2-shipping-v4 > outputs/ci/d2-shipping/v4-worker.log 2>&1 || true
+      - name: Upload immutable runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: d2-runtime-build-identity
+          path: outputs/ci/d2-shipping/
+          if-no-files-found: error

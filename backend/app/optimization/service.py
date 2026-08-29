@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from os import getenv
 from typing import Any
 
 from sqlalchemy import func, select
@@ -25,6 +24,7 @@ from app.optimization.schemas import (
     RecommendationResponse,
 )
 from optimization.provenance import build_optimization_snapshot
+from model.build_identity import current_runtime_build_identity
 
 
 ALGORITHM_VERSION = "dayu-pso-1.0.0"
@@ -96,12 +96,13 @@ def create_task(session: Session, payload: OptimizationTaskCreate) -> Optimizati
         "section_geometry": "rectangular",
         "allow_fallback_boundary": False,
     }
+    build_identity = current_runtime_build_identity()
     hydraulic_snapshot, _ = freeze_task_input(
         session,
         payload.simulation_case_id,
         hydraulic_config,
         schema_version="dayu.model-input.v2",
-        engine_commit=getenv("ENGINE_COMMIT", "uncommitted"),
+        build_identity=build_identity,
     )
     objective_config = payload.objective_config.model_dump(mode="json")
     input_snapshot, input_digest = build_optimization_snapshot(

@@ -224,7 +224,7 @@ def test_routes_and_container_share_the_file_boundary_contract() -> None:
     assert "DAYU_STORAGE_ROOT: /app/backend/storage" in compose
     assert compose.count(
         "${DAYU_STORAGE_HOST_PATH:-../backend/storage}:/app/backend/storage"
-    ) == 2
+    ) == 3  # Backend plus the legacy and dedicated native-v4 Workers.
     assert '"127.0.0.1:${BACKEND_PORT:-8001}:8000"' in compose
     assert "DAYU_STORAGE_ROOT=backend/storage" in env_example
     assert "DAYU_STORAGE_HOST_PATH=../backend/storage" in env_example
