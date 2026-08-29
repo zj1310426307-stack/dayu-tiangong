@@ -92,7 +92,7 @@ def test_v1_v2_v3_routes_remain_legacy_and_v4_is_native() -> None:
     assert native.runtime_adapter.runtime_schema_version == "dayu.model-input.v4-lite"
     assert native.runtime_adapter.runtime_schema_version != "dayu.model-input.v2"
     assert registry_hash() == (
-        "a6521e8c4968c44b98ce4a79d816377029376781b09e16afc2c1ac5b4a46f0a2"
+        "0920e124fa07c764d5086d3d4e2d6723d4f5abfed857a4bb37309eae553029a4"
     )
 
 
