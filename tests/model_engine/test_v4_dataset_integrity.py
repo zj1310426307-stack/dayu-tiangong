@@ -33,7 +33,7 @@ from app.hydraulic.models import (
 )
 from app.model_engine import service as task_service
 from app.model_engine.schemas import SimulationTaskCreate
-from model.solver.registry import D1_SOLVER_ID
+from model.solver.registry import D1_CAPABILITY_ID, D1_SOLVER_ID
 from tests.model_engine.rc1_fault_helpers import delete_task, ensure_authoritative_case
 from tests.model_engine.test_v4_postgis_worker_integration import (
     BRANCH_ID,
@@ -379,6 +379,7 @@ def pg_dataset_integrity_context() -> Iterator[DatasetIntegrityContext]:
                     case_id=CASE_ID,
                     input_schema_version="dayu.model-input.v4",
                     solver_id=D1_SOLVER_ID,
+                    capability_id=D1_CAPABILITY_ID,
                     dispatch_plan_id=plan_id,
                     execution_mode="validation",
                     storage_level="full",

@@ -17,7 +17,7 @@ from app.model_engine.service import create_task
 from app.worker.lifecycle import claim_v4_task, heartbeat
 from app.worker.tasks import validate_v4_worker_task
 from model import HydraulicEngine
-from model.solver.registry import D1_SOLVER_ID
+from model.solver.registry import D1_CAPABILITY_ID, D1_SOLVER_ID
 from tests.model_engine.test_v4_postgis_worker_integration import (
     CASE_ID,
     DATASET_ID,
@@ -45,6 +45,7 @@ def create_claimed_v4_task(worker_id: str) -> tuple[int, str, Any]:
                 case_id=CASE_ID,
                 input_schema_version="dayu.model-input.v4",
                 solver_id=D1_SOLVER_ID,
+                capability_id=D1_CAPABILITY_ID,
                 dispatch_plan_id=PLAN_ID,
                 execution_mode="validation",
                 storage_level="full",

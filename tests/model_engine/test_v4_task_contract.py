@@ -32,6 +32,13 @@ def test_v4_task_accepts_optional_solver_assertion_and_requires_frozen_plan() ->
     )
     assert server_selected.solver_id is None
 
+    with pytest.raises(ValidationError, match="explicit capability_id"):
+        SimulationTaskCreate(
+            case_id=71,
+            input_schema_version="dayu.model-input.v4",
+            dispatch_plan_id=91,
+        )
+
     with pytest.raises(ValidationError, match="runtime physical overrides"):
         SimulationTaskCreate(
             case_id=71,
