@@ -45,3 +45,12 @@
 - `tests/model_engine/test_v4_d3a_2_execution.py`：显式能力、适配器、Gate/Pump 及失败关闭；
 - `tests/model_engine/test_d3a_2_schema_metadata.py`：ORM、迁移 lineage、禁止 Profile 回填；
 - `.github/workflows/model02.yml` 的 `D3A scientific validation` job 在 Ubuntu/Python 3.11 运行上述门禁；完整 MODEL-02 矩阵继续覆盖 Ubuntu/Windows。
+
+## Hosted 证据
+
+2026-08-29 在提交 `47d420b7889ea2ef97d75969c39c794c4341a17b` 上完成：
+
+- `model02` run `33252260357`：Frontend contract、Legacy hydraulic、D3A scientific validation、MODEL02 Ubuntu Python 3.11、MODEL02 Windows Python 3.11 全部成功；
+- `hydraulic-platform` run `33252260201`：Backend v4 contract、PostGIS migration、D1 regression、D2 fault recovery、Frontend OpenAPI、D2 shipping runtime、Worker integration 全部成功。
+
+因此 D3A-2 的 S1/S2/S3、Gate/Pump 斜床案例、网格/CFL 加密、D1/D2 回归与 Hosted 门均为 PASS；D3A-3 才从该门之后解锁。
