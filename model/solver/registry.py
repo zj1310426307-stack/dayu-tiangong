@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Final
+from typing import Final, Literal
 
 from model.core.errors import HydraulicInputError
 from model.provenance import snapshot_hash
@@ -18,9 +18,13 @@ LEGACY_SINGLE_RIVER_SOLVER: Final = "legacy-single-river-rusanov-v1"
 LEGACY_NETWORK_SOLVER: Final = "legacy-network-continuity-manning-v1"
 D1_SOLVER_ID: Final = "saint-venant-fv-hll-ssp-rk2-d1-v1"
 D1_CAPABILITY_ID: Final = "single-branch-gate-external-pump-d1-v1"
+D3A_1_CAPABILITY_ID: Final = "single-branch-gate-pump-manning-v1"
+D3A_2_CAPABILITY_ID: Final = "single-branch-gate-pump-manning-slope-v1"
+D3A_3_CAPABILITY_ID: Final = "single-branch-gate-pump-engineering-profile-v1"
 V3_RUNTIME_ADAPTER_ID: Final = "v3-to-v2-v1"
 D1_RUNTIME_ADAPTER_ID: Final = "v4-to-v4-lite-7-d1-v1"
 REGISTRY_SCHEMA_VERSION: Final = "dayu.solver-registry.v1"
+CAPABILITY_CATALOG_SCHEMA_VERSION: Final = "dayu.solver-capability-catalog.v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +34,25 @@ class SolverCapabilityManifest:
     capability_id: str
     scope: tuple[str, ...]
     exclusions: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CapabilityCatalogEntry:
+    """Describe one explicitly named science envelope and its unlock state.
+
+    Blocked entries are visible to readiness/UI consumers but are deliberately
+    absent from executable solver registrations until their independent
+    scientific gate has passed.
+    """
+
+    capability_id: str
+    display_name: str
+    status: Literal["supported", "blocked"]
+    validation_policy_version: str
+    runtime_adapter_id: str
+    scope: tuple[str, ...]
+    exclusions: tuple[str, ...]
+    warnings: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +112,112 @@ D1_KNOWN_LIMITATIONS: Final = (
 )
 
 
+_CAPABILITY_CATALOG: tuple[CapabilityCatalogEntry, ...] = (
+    CapabilityCatalogEntry(
+        capability_id=D1_CAPABILITY_ID,
+        display_name="D1 validation",
+        status="supported",
+        validation_policy_version="v4-lite-7",
+        runtime_adapter_id=D1_RUNTIME_ADAPTER_ID,
+        scope=D1_CAPABILITY.scope,
+        exclusions=D1_CAPABILITY.exclusions,
+        warnings=D1_KNOWN_LIMITATIONS,
+    ),
+    CapabilityCatalogEntry(
+        capability_id=D3A_1_CAPABILITY_ID,
+        display_name="D3A-1 Manning",
+        status="blocked",
+        validation_policy_version="d3a-1-v1",
+        runtime_adapter_id="v4-to-d3a-1-v1",
+        scope=(
+            "single-branch",
+            "fully-wet",
+            "forward-strictly-subcritical",
+            "flat-bed",
+            "identical-profile",
+            "positive-section-effective-manning",
+            "one-completed-interface-gate",
+            "one-external-qh-qeta-pump",
+            "validation-only",
+        ),
+        exclusions=(
+            "nonzero-bed-slope",
+            "nonidentical-profile",
+            "lateral-compound-roughness",
+            "multi-branch-or-junction",
+            "wetting-drying",
+            "reverse-or-supercritical-flow",
+            "calibration-or-production-decision",
+        ),
+        warnings=(
+            "blocked until M1/M2, refinement, Gate/Pump, regression, and Hosted gates pass",
+            "Manning is one effective scalar per Section/cell, not lateral zoning",
+        ),
+    ),
+    CapabilityCatalogEntry(
+        capability_id=D3A_2_CAPABILITY_ID,
+        display_name="D3A-2 Manning + Slope",
+        status="blocked",
+        validation_policy_version="d3a-2-v1",
+        runtime_adapter_id="v4-to-d3a-2-v1",
+        scope=(
+            "single-branch",
+            "fully-wet",
+            "forward-strictly-subcritical",
+            "positive-section-effective-manning",
+            "explicit-nonzero-bed-slope",
+            "identical-profile-shape",
+            "one-completed-interface-gate",
+            "one-external-qh-qeta-pump",
+            "validation-only",
+        ),
+        exclusions=(
+            "unconfirmed-or-inferred-bed-elevation",
+            "nonidentical-profile-shape",
+            "lateral-compound-roughness",
+            "multi-branch-or-junction",
+            "wetting-drying",
+            "reverse-or-supercritical-flow",
+            "calibration-or-production-decision",
+        ),
+        warnings=(
+            "blocked until D3A-1 and S1/S2/S3 independent gates pass",
+            "bed elevation requires an explicit authority and vertical datum",
+        ),
+    ),
+    CapabilityCatalogEntry(
+        capability_id=D3A_3_CAPABILITY_ID,
+        display_name="D3A-3 Engineering Profiles",
+        status="blocked",
+        validation_policy_version="d3a-3-v1",
+        runtime_adapter_id="v4-to-d3a-3-v1",
+        scope=(
+            "single-branch",
+            "fully-wet",
+            "forward-strictly-subcritical",
+            "positive-section-effective-manning",
+            "explicit-nonzero-bed-slope",
+            "continuous-nonidentical-tabulated-profiles",
+            "one-completed-interface-gate",
+            "one-external-qh-qeta-pump",
+            "validation-only",
+        ),
+        exclusions=(
+            "abrupt-or-disconnected-section-topology",
+            "lateral-compound-roughness",
+            "multi-branch-or-junction",
+            "wetting-drying",
+            "reverse-or-supercritical-flow",
+            "calibration-or-production-decision",
+        ),
+        warnings=(
+            "blocked until D3A-1/2 and P1/P2/P3 independent gates pass",
+            "not a general one-dimensional river-network capability",
+        ),
+    ),
+)
+
+
 _REGISTRATIONS: tuple[SolverRegistration, ...] = (
     SolverRegistration(
         input_schema_version=MODEL_INPUT_V1,
@@ -135,9 +264,37 @@ def registry_manifest() -> dict[str, object]:
 
     return {
         "schema_version": REGISTRY_SCHEMA_VERSION,
+        "capability_catalog_schema_version": CAPABILITY_CATALOG_SCHEMA_VERSION,
+        "capability_catalog": [asdict(item) for item in _CAPABILITY_CATALOG],
         "known_limitations": list(D1_KNOWN_LIMITATIONS),
         "registrations": [asdict(item) for item in _REGISTRATIONS],
     }
+
+
+def capability_catalog() -> tuple[CapabilityCatalogEntry, ...]:
+    """Return the immutable ordered science catalog for readiness consumers."""
+
+    return _CAPABILITY_CATALOG
+
+
+def resolve_capability(
+    capability_id: str,
+    *,
+    include_blocked: bool = False,
+) -> CapabilityCatalogEntry:
+    """Resolve an explicit capability without inferring it from case data."""
+
+    entry = next(
+        (item for item in _CAPABILITY_CATALOG if item.capability_id == capability_id),
+        None,
+    )
+    if entry is None:
+        raise HydraulicInputError(f"unregistered capability: {capability_id!r}")
+    if entry.status == "blocked" and not include_blocked:
+        raise HydraulicInputError(
+            f"capability {capability_id!r} is registered but scientifically blocked"
+        )
+    return entry
 
 
 def registry_hash() -> str:

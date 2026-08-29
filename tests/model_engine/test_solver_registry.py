@@ -15,11 +15,16 @@ from model.solver.registry import (
     D1_CAPABILITY_ID,
     D1_RUNTIME_ADAPTER_ID,
     D1_SOLVER_ID,
+    D3A_1_CAPABILITY_ID,
+    D3A_2_CAPABILITY_ID,
+    D3A_3_CAPABILITY_ID,
     LEGACY_NETWORK_SOLVER,
     LEGACY_SINGLE_RIVER_SOLVER,
     MODEL_INPUT_V2,
     MODEL_INPUT_V3,
     V3_RUNTIME_ADAPTER_ID,
+    capability_catalog,
+    resolve_capability,
     resolve_solver,
     registry_hash,
     task_solver_provenance,
@@ -84,7 +89,28 @@ def test_v1_v2_v3_routes_remain_legacy_and_v4_is_native() -> None:
     assert native.runtime_adapter.runtime_schema_version == "dayu.model-input.v4-lite"
     assert native.runtime_adapter.runtime_schema_version != "dayu.model-input.v2"
     assert registry_hash() == (
-        "918869de10a9a7fecf2d281514c5c7fe5a7fd178097de13f96466f6e8dbbf5c6"
+        "90ee85da3970765cbeaa8f46e845c3776efc5a4a6c56c41d8372eefb3ac70fb2"
+    )
+
+
+def test_d3a_catalog_is_explicit_and_science_gates_start_blocked() -> None:
+    """Expose future envelopes without making any case data auto-upgradeable."""
+
+    catalog = capability_catalog()
+    assert tuple(item.capability_id for item in catalog) == (
+        D1_CAPABILITY_ID,
+        D3A_1_CAPABILITY_ID,
+        D3A_2_CAPABILITY_ID,
+        D3A_3_CAPABILITY_ID,
+    )
+    assert catalog[0].status == "supported"
+    assert all(item.status == "blocked" for item in catalog[1:])
+    assert resolve_capability(D1_CAPABILITY_ID).status == "supported"
+    with pytest.raises(HydraulicInputError, match="scientifically blocked"):
+        resolve_capability(D3A_1_CAPABILITY_ID)
+    assert (
+        resolve_capability(D3A_1_CAPABILITY_ID, include_blocked=True).status
+        == "blocked"
     )
 
 
