@@ -95,6 +95,8 @@ class ManningReachMetrics:
     mass_error: float
     maximum_friction_number: float
     friction_retry_count: int
+    friction_predictor_reduction_count: int
+    step_count: int
     production_energy_loss_m: float
     reference: tuple[StandardStepPoint, ...]
 
@@ -103,6 +105,7 @@ class ManningReachMetrics:
 def _run_flat_bed_manning_reach(
     cell_count: int,
     cfl_target: float,
+    friction_predictor_safety_factor: float | None = None,
 ) -> ManningReachMetrics:
     length_m = 1200.0
     width_m = 10.0
@@ -166,6 +169,7 @@ def _run_flat_bed_manning_reach(
         cfl_number=cfl_target,
         water_balance_tolerance=1.0e-8,
         maximum_friction_number=0.1,
+        friction_predictor_safety_factor=friction_predictor_safety_factor,
     )
     result = solve_single_branch(
         mesh=mesh,
@@ -198,6 +202,10 @@ def _run_flat_bed_manning_reach(
         mass_error=result.diagnostics.relative_water_balance_error,
         maximum_friction_number=result.diagnostics.maximum_friction_number,
         friction_retry_count=result.diagnostics.friction_retry_count,
+        friction_predictor_reduction_count=(
+            result.diagnostics.friction_predictor_reduction_count
+        ),
+        step_count=result.diagnostics.step_count,
         production_energy_loss_m=energy_grade[0] - energy_grade[-1],
         reference=profile,
     )
@@ -290,3 +298,26 @@ def test_manning_friction_number_gate_retries_and_reports_only_accepted_steps() 
     assert result.diagnostics.maximum_friction_number <= 0.01 + 1.0e-12
     assert result.diagnostics.retry_count >= result.diagnostics.friction_retry_count
     assert all(step.maximum_friction_number <= 0.01 + 1.0e-12 for step in result.steps)
+
+
+def test_manning_dt_predictor_preserves_solution_and_avoids_reactive_retries() -> None:
+    """Predictor ON stays within science tolerance while reducing retry work."""
+
+    without = _run_flat_bed_manning_reach(48, 0.6, None)
+    with_predictor = _run_flat_bed_manning_reach(48, 0.6, 0.8)
+    assert with_predictor.friction_predictor_reduction_count > 0
+    assert with_predictor.friction_retry_count <= without.friction_retry_count
+    assert (
+        with_predictor.friction_retry_count / with_predictor.step_count < 0.25
+    )
+    assert with_predictor.l1_stage_error_m == pytest.approx(
+        without.l1_stage_error_m,
+        rel=0.01,
+        abs=1.0e-6,
+    )
+    assert with_predictor.l1_discharge_error_m3_s == pytest.approx(
+        without.l1_discharge_error_m3_s,
+        rel=0.01,
+        abs=1.0e-6,
+    )
+    assert with_predictor.mass_error <= 1.0e-8
