@@ -1,6 +1,6 @@
 # HYDRO-MODEL-02-D3A-RC1-FIX1 Release Readiness
 
-- 当前：`FIX1 LOCAL PASS / HOSTED PENDING / PR #12 NO-GO`
+- 当前：`FIX1 GATES PASS / MERGE READY FOR INDEPENDENT REVIEW`
 - PR：[#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12)，NOT MERGED
 - D3A tag：未创建
 - D3B：未创建、未启动
@@ -22,11 +22,15 @@
 - [x] fine CFL/2 四层完整 artifact PASS；
 - [x] 本地 D1/D2/MODEL02/Frontend/OpenAPI 回归；
 - [x] 实际 SHA 的 Python 3.12 shipping image 完整科学门；
-- [ ] push 后 Python 3.11 `D3A scientific validation` SUCCESS；
-- [ ] push 后 Python 3.12 `D3A shipping science` SUCCESS；
-- [ ] MODEL02 Ubuntu/Windows、Frontend contract、hydraulic-platform 与 D2 required checks SUCCESS；
-- [ ] 最终 PR head 所有检查 SUCCESS，artifact 已核对；
-- [ ] PR 仍 OPEN、未合并；无 D3A tag、无 D3B 分支。
+- [x] push/PR Python 3.11 `D3A scientific validation` SUCCESS；
+- [x] push/PR Python 3.12 `D3A shipping science` SUCCESS；
+- [x] MODEL02 Ubuntu/Windows、Frontend contract、hydraulic-platform 与 D2 required checks SUCCESS；
+- [x] evidence head 所有检查 SUCCESS，push/PR shipping artifacts 已核对；
+- [x] PR 仍 OPEN、未合并；无 D3A tag、无 D3B 分支。
+
+Evidence head `d0aa74860471acfeb92a6cccaae5385059702cd9` 的四个 Hosted runs
+`33272555233 / 33272555234 / 33272557735 / 33272557769` 全部成功。本文仍不是
+merge 或 tag 授权；最终文档 head 也必须重新通过同一组保护门。
 
 任何位置、空间趋势、事件分离、时间细化、包络/水量/残差/摩阻或 shipping 门失败，
 均应保持 `FIX1 FAIL/BLOCKED / PR NO-GO / D3B NO-GO`，不得改选有利网格。

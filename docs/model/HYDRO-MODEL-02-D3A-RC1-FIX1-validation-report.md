@@ -5,7 +5,7 @@
 - 本地结构对齐空间证据：PASS
 - Python 3.12 shipping identity：PASS（CPython 3.12.13，CI build）
 - 完整四层 shipping test：PASS
-- Hosted Python 3.11 / Python 3.12：待实现 head 推送后验证
+- Hosted Python 3.11 / Python 3.12：PASS（evidence head `d0aa74860471acfeb92a6cccaae5385059702cd9`）
 
 ## 已闭合门
 
@@ -34,11 +34,26 @@
 一次以错误完整 SHA 参数构建的本地镜像在运行科学门前即被核对发现并作废；所有后续
 发布验证只使用上表实际 SHA 镜像。这是 build identity fail-closed 的预期应用。
 
-## 尚待闭合
+## Hosted 证据
 
-- GitHub `D3A scientific validation`（Python 3.11）、`D3A shipping science`
-  （Python 3.12）及所有 PR required checks；
-- 最终 artifact 下载/哈希与 PR head 对齐。
+| event | model02 | hydraulic-platform |
+| --- | --- | --- |
+| push | `33272555233` SUCCESS | `33272555234` SUCCESS |
+| pull_request | `33272557735` SUCCESS | `33272557769` SUCCESS |
+
+Python 3.11 `D3A scientific validation` 与 Python 3.12 `D3A shipping science` 在 push
+和 PR 两种事件均成功；Ubuntu/Windows MODEL02、Legacy、Frontend contract、D1、
+D2 fault/shipping、PostGIS/Worker 与 Frontend OpenAPI 同时成功。
+
+push shipping artifact：id `9721109268`，digest
+`sha256:e1dabeca444cbda77fd9f0303c3ba46fa019d049cc8e1fe016817dfe43927791`，
+CPython `3.12.14`，`ENGINE_COMMIT=d0aa74860471acfeb92a6cccaae5385059702cd9`，
+49/49 tests。下载后 v2 artifact 除 `runtime_seconds` 外与 checked artifact 逐字段完全
+一致，三个 grid hashes 与七个 completion gates 全部一致。
+
+PR shipping artifact：id `9721041489`，digest
+`sha256:00ce795fbd99584a781121a39dde3da5b8c0203397f5bc56aff5402260ec5610`，
+使用 GitHub pull-request merge ref `92a81f5894551622d0a605828f7654f6f0a93c63`，49/49 tests。
 
 ## 本地完整结果
 
@@ -59,5 +74,6 @@ Fr `0.058066903`、maximum friction number `0.099703930`；最大水量相对误
 正式 v2 artifact SHA-256：
 `90fb93102d46604b37751b4f3d3b1fdeb99d9333512d80748739355e10c13f0a`。
 
-在 Hosted 门闭合前，当前状态为
-`FIX1 LOCAL PASS / HOSTED PENDING / PR #12 NO-GO / D3B NO-GO`。
+FIX1 的实现/证据 head 已满足全部机器门。当前状态为
+`FIX1 GATES PASS / MERGE READY FOR INDEPENDENT REVIEW`。PR #12 仍 OPEN / NOT
+MERGED；本任务不创建 D3A tag，不创建或启动 D3B。

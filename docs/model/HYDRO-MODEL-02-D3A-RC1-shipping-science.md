@@ -4,6 +4,11 @@
 > 已切换到 `final-convergence-fix1.json` 和 v2 collector；新的 Hosted 证据必须在
 > FIX1 head 推送后重新产生，不能复用旧 run。
 
+FIX1 evidence head `d0aa74860471acfeb92a6cccaae5385059702cd9` 已重新产生 Hosted
+证据：model02 push `33272555233`、PR `33272557735` 均 SUCCESS。push/PR shipping
+jobs 均为 49/49 tests；push artifact id `9721109268` 精确记录 evidence head，PR
+artifact id `9721041489` 记录 GitHub merge ref。两者 v2 completion gates 全部为 true。
+
 新增 hosted check 的精确名称为 `D3A shipping science`。它使用 `docker/backend.Dockerfile` 构建真实 Python 3.12 发布镜像，并注入 `ENGINE_COMMIT=${{ github.sha }}`、`DAYU_BUILD_MODE=ci`；不使用 setup-python 伪装发布运行时。
 
 Job 运行 D3A Manning、Slope、non-prismatic、runtime envelope、FINAL convergence 和 native-v4 Backend 测试。artifact `d3a-shipping-science` 包含：

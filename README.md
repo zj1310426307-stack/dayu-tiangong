@@ -213,7 +213,9 @@ event-locator tolerance。
 
 FIX1 本地 Python 3.12 发布镜像为 7/7；MODEL02 375/375、D2/native-v4
 152 passed + 33 external-service skipped、legacy/D1 26/26，OpenAPI 0 drift，前端
-typecheck/build 通过。当前为 `FIX1 LOCAL PASS / HOSTED PENDING / PR NO-GO`。
+typecheck/build 通过。Evidence head `d0aa748` 的 push/PR 四个 Hosted workflows
+全部成功，Python 3.11/3.12 长科学门均通过。当前为
+`FIX1 GATES PASS / MERGE READY FOR INDEPENDENT REVIEW`。
 PR [#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12) 保持 OPEN，本文
 不授权合并、创建 D3A tag 或启动 D3B。完整 FIX1 证据见：
 

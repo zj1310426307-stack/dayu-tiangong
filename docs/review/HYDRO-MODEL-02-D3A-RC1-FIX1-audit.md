@@ -82,3 +82,18 @@ v2 artifact SHA-256 为
 
 旧 v1 artifact 已作为负例输入新 collector，按预期以
 `FIX1 FINAL convergence artifact is not a four-level v2 PASS` 拒绝。
+
+## Hosted 审计
+
+Evidence head `d0aa74860471acfeb92a6cccaae5385059702cd9` 的 push/PR model02
+`33272555233 / 33272557735` 和 hydraulic-platform
+`33272555234 / 33272557769` 全部 SUCCESS。精确 required context
+`D3A shipping science` 未改名，main 保护保持 `strict=true` 且原 11 项全部保留。
+
+push shipping artifact 使用精确 evidence head、CPython 3.12.14，49/49 tests；PR
+artifact 使用 GitHub merge ref，两者 schema/status/gates/grid hashes 与科学值一致。
+下载结果证明 checked artifact 与 push artifact 除机器相关 `runtime_seconds` 外逐字段
+一致。
+
+结论：`FIX1 GATES PASS / MERGE READY FOR INDEPENDENT REVIEW`。该结论不授权合并
+PR #12、不授权 D3A tag、不授权创建或启动 D3B。
