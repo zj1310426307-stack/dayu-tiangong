@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from re import fullmatch
 from typing import Any, Mapping
 
@@ -40,6 +41,7 @@ from model.solver.registry import (
     D1_RUNTIME_ADAPTER_ID,
     D1_SOLVER_ID,
     D3A_1_CAPABILITY_ID,
+    D3A_2_CAPABILITY_ID,
     MODEL_INPUT_V4,
     registry_hash,
     resolve_capability,
@@ -184,38 +186,116 @@ def _native_preflight(payload: Mapping[str, Any]) -> list[V4ReadinessIssue]:
                     field_path="cross_sections.default_manning_n",
                 )
             )
-        if capability_id == D3A_1_CAPABILITY_ID and (
+        if capability_id in {D3A_1_CAPABILITY_ID, D3A_2_CAPABILITY_ID} and (
             isinstance(manning_n, bool)
             or not isinstance(manning_n, (int, float))
             or not 0.0 < float(manning_n) <= 0.10
         ):
             issues.append(
                 _issue(
-                    "D3A_1_MANNING_OUT_OF_RANGE",
-                    "D3A-1 requires explicit effective Manning n in (0, 0.10]",
+                    "D3A_MANNING_OUT_OF_RANGE",
+                    "D3A requires explicit effective Manning n in (0, 0.10]",
                     entity_type="cross_section",
                     entity_id=section.get("section_id"),
                     field_path="cross_sections.default_manning_n",
                 )
             )
-    profile_signatures = {
-        tuple(
-            (point.get("offset_m"), point.get("elevation_m"))
-            for point in section.get("points", [])
-            if isinstance(point, Mapping)
-        )
-        for section in sections
-        if isinstance(section, Mapping)
-    }
+        if capability_id == D3A_2_CAPABILITY_ID:
+            authority = (
+                section.get("bed_elevation_m"),
+                section.get("bed_elevation_source"),
+                section.get("bed_elevation_confirmed_by"),
+                section.get("bed_elevation_confirmed_at"),
+            )
+            if (
+                isinstance(authority[0], bool)
+                or not isinstance(authority[0], (int, float))
+                or authority[1] not in {"surveyed", "design", "synthetic"}
+                or not isinstance(authority[2], str)
+                or not authority[2].strip()
+                or authority[3] is None
+            ):
+                issues.append(
+                    _issue(
+                        "D3A_2_BED_AUTHORITY_UNCONFIRMED",
+                        "D3A-2 requires explicit bed elevation with source, actor, and time",
+                        entity_type="cross_section",
+                        entity_id=section.get("section_id"),
+                        field_path="cross_sections.bed_elevation_m",
+                    )
+                )
+    if capability_id == D3A_2_CAPABILITY_ID:
+        profile_signatures = {
+            tuple(
+                (
+                    point.get("offset_m"),
+                    round(
+                        float(point.get("elevation_m"))
+                        - float(section.get("bed_elevation_m")),
+                        12,
+                    ),
+                )
+                for point in section.get("points", [])
+                if isinstance(point, Mapping)
+                and isinstance(point.get("elevation_m"), (int, float))
+                and not isinstance(point.get("elevation_m"), bool)
+            )
+            for section in sections
+            if isinstance(section, Mapping)
+            and isinstance(section.get("bed_elevation_m"), (int, float))
+            and not isinstance(section.get("bed_elevation_m"), bool)
+        }
+    else:
+        profile_signatures = {
+            tuple(
+                (point.get("offset_m"), point.get("elevation_m"))
+                for point in section.get("points", [])
+                if isinstance(point, Mapping)
+            )
+            for section in sections
+            if isinstance(section, Mapping)
+        }
     if sections and len(profile_signatures) != 1:
         issues.append(
             _issue(
                 "D2_PROFILE_MISMATCH",
-                "D1 platform capability requires identical Profile geometry",
+                "selected platform capability requires identical absolute or local Profile geometry",
                 entity_type="cross_section_profile",
                 field_path="cross_sections.points",
             )
         )
+    if capability_id == D3A_2_CAPABILITY_ID and all(
+        isinstance(section, Mapping)
+        and isinstance(section.get("bed_elevation_m"), (int, float))
+        and not isinstance(section.get("bed_elevation_m"), bool)
+        and isinstance(section.get("chainage_m"), (int, float))
+        and not isinstance(section.get("chainage_m"), bool)
+        for section in sections
+    ):
+        beds = tuple(float(section["bed_elevation_m"]) for section in sections)
+        chainages = tuple(float(section["chainage_m"]) for section in sections)
+        slopes = (
+            tuple(
+                (left_bed - right_bed) / (right_x - left_x)
+                for left_bed, right_bed, left_x, right_x in zip(
+                    beds, beds[1:], chainages, chainages[1:]
+                )
+            )
+            if all(right > left for left, right in zip(chainages, chainages[1:]))
+            else ()
+        )
+        if not slopes or any(value <= 0.0 for value in slopes) or any(
+            not math.isclose(value, slopes[0], rel_tol=1.0e-10, abs_tol=1.0e-12)
+            for value in slopes[1:]
+        ):
+            issues.append(
+                _issue(
+                    "D3A_2_BED_SLOPE_INVALID",
+                    "D3A-2 requires one explicit strictly descending linear bed",
+                    entity_type="cross_section",
+                    field_path="cross_sections.bed_elevation_m",
+                )
+            )
     if len(gates) != 1:
         issues.append(
             _issue(
@@ -628,11 +708,23 @@ def _database_candidate(
     section_rows: list[dict[str, Any]] = []
     profile_rows: list[dict[str, Any]] = []
     configured_manning = case_config.get("default_manning_n")
-    if configured_manning != 0.0:
+    if capability_id == D1_CAPABILITY_ID and configured_manning != 0.0:
         issues.append(
             _issue(
                 "D2_MANNING_NONZERO",
                 "SimulationCase native-v4 configuration must explicitly set Manning n=0",
+                field_path="simulation_case.v4_configuration.default_manning_n",
+            )
+        )
+    if capability_id in {D3A_1_CAPABILITY_ID, D3A_2_CAPABILITY_ID} and (
+        isinstance(configured_manning, bool)
+        or not isinstance(configured_manning, (int, float))
+        or not 0.0 < float(configured_manning) <= 0.10
+    ):
+        issues.append(
+            _issue(
+                "D3A_MANNING_OUT_OF_RANGE",
+                "D3A native-v4 configuration requires Manning n in (0, 0.10]",
                 field_path="simulation_case.v4_configuration.default_manning_n",
             )
         )
@@ -688,8 +780,7 @@ def _database_candidate(
                 .order_by(HydraulicCrossSectionPoint.sequence)
             ).all()
         )
-        section_rows.append(
-            {
+        section_row = {
                 "section_id": section.id,
                 "section_code": section.section_code,
                 "branch_id": branch.id,
@@ -702,7 +793,37 @@ def _database_candidate(
                     for point in points
                 ],
             }
-        )
+        if capability_id == D3A_2_CAPABILITY_ID:
+            if (
+                section.bed_elevation_m is None
+                or section.bed_elevation_source
+                not in {"surveyed", "design", "synthetic"}
+                or not section.bed_elevation_confirmed_by
+                or section.bed_elevation_confirmed_at is None
+            ):
+                issues.append(
+                    _issue(
+                        "D3A_2_BED_AUTHORITY_UNCONFIRMED",
+                        "historical Cross Section has no confirmed authoritative bed elevation",
+                        entity_type="cross_section",
+                        entity_id=section.id,
+                        field_path="cross_sections.bed_elevation_m",
+                    )
+                )
+            else:
+                section_row.update(
+                    {
+                        "bed_elevation_m": section.bed_elevation_m,
+                        "bed_elevation_source": section.bed_elevation_source,
+                        "bed_elevation_confirmed_by": (
+                            section.bed_elevation_confirmed_by
+                        ),
+                        "bed_elevation_confirmed_at": (
+                            section.bed_elevation_confirmed_at
+                        ),
+                    }
+                )
+        section_rows.append(section_row)
         profile_rows.append(
             {
                 "id": profile.id,
@@ -1020,11 +1141,11 @@ def _database_candidate(
         "control_plan": {
             "id": plan.id,
             "frozen_snapshot_hash": plan.frozen_snapshot_hash,
-            "policy_id": (
-                "d3a-1-gate-pump-control-v1"
-                if capability_id == D3A_1_CAPABILITY_ID
-                else "d1-gate-pump-control-v1"
-            ),
+            "policy_id": {
+                D1_CAPABILITY_ID: "d1-gate-pump-control-v1",
+                D3A_1_CAPABILITY_ID: "d3a-1-gate-pump-control-v1",
+                D3A_2_CAPABILITY_ID: "d3a-2-gate-pump-control-v1",
+            }[capability_id],
         },
         "numerical_policy": numerical,
         "validation": {

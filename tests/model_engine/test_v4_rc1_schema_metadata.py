@@ -145,7 +145,7 @@ def test_0021_remains_immutable_below_the_rc2_migration_head() -> None:
 
     config = Config(str(REPOSITORY_ROOT / "database" / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["20260828_0022"]
+    assert script.get_heads() == ["20260829_0023"]
 
     source = MIGRATION.read_text(encoding="utf-8")
     assert 'down_revision: str | None = "20260828_0020"' in source

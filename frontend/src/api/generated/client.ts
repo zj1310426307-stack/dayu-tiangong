@@ -1060,6 +1060,10 @@ export interface HydraulicCrossSectionInput {
   "topography_id"?: string;
   "survey_date"?: string | null;
   "survey_method"?: string | null;
+  "bed_elevation_m"?: number | null;
+  "bed_elevation_source"?: "unconfirmed" | "surveyed" | "design" | "synthetic";
+  "bed_elevation_confirmed_by"?: string | null;
+  "bed_elevation_confirmed_at"?: string | null;
   "default_manning_n"?: number;
   "location_x"?: number | null;
   "location_y"?: number | null;
@@ -1238,6 +1242,10 @@ export interface HydraulicSectionDetail {
   "chainage_source": string;
   "snap_distance_m": number | null;
   "orientation_status": string;
+  "bed_elevation_m": number | null;
+  "bed_elevation_source": string;
+  "bed_elevation_confirmed_by": string | null;
+  "bed_elevation_confirmed_at": string | null;
   "location_geometry": Record<string, unknown>;
   "axis_geometry": Record<string, unknown> | null;
   "profiles": Array<HydraulicProfileRecord>;
@@ -1273,6 +1281,8 @@ export interface HydraulicSectionSummary {
   "profile_count": number;
   "point_count": number;
   "orientation_status": string;
+  "bed_elevation_m": number | null;
+  "bed_elevation_source": string;
 }
 
 export interface HydraulicTopologyBuildRequest {
@@ -1884,7 +1894,7 @@ export interface SimulationTaskCreate {
   "minimum_depth"?: number | null;
   "input_schema_version"?: "dayu.model-input.v1" | "dayu.model-input.v2" | "dayu.model-input.v3" | "dayu.model-input.v4";
   "solver_id"?: string | null;
-  "capability_id"?: "single-branch-gate-external-pump-d1-v1" | "single-branch-gate-pump-manning-v1" | null;
+  "capability_id"?: "single-branch-gate-external-pump-d1-v1" | "single-branch-gate-pump-manning-v1" | "single-branch-gate-pump-manning-slope-v1" | null;
   "dispatch_plan_id"?: number | null;
   "execution_mode"?: "validation" | "shadow";
   "allow_fallback_boundary"?: boolean;

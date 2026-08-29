@@ -9,6 +9,7 @@ from model.solver.registry import (
     D1_CAPABILITY_ID,
     D1_SOLVER_ID,
     D3A_1_CAPABILITY_ID,
+    D3A_2_CAPABILITY_ID,
 )
 
 
@@ -39,7 +40,11 @@ class SimulationTaskCreate(BaseModel):
         "dayu.model-input.v1"
     )
     solver_id: str | None = Field(default=None, min_length=1, max_length=96)
-    capability_id: Literal[D1_CAPABILITY_ID, D3A_1_CAPABILITY_ID] | None = None
+    capability_id: Literal[
+        D1_CAPABILITY_ID,
+        D3A_1_CAPABILITY_ID,
+        D3A_2_CAPABILITY_ID,
+    ] | None = None
     dispatch_plan_id: int | None = Field(default=None, gt=0)
     execution_mode: Literal["validation", "shadow"] = "validation"
     allow_fallback_boundary: bool = False

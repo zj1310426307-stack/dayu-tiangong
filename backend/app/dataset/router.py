@@ -27,7 +27,11 @@ from app.dataset.schemas import (
     SimulationCaseUpdate,
 )
 from app.gis.models import BoundaryCondition, DatasetVersion, ModelParameter, SimulationCase
-from model.solver.registry import D1_CAPABILITY_ID, D3A_1_CAPABILITY_ID
+from model.solver.registry import (
+    D1_CAPABILITY_ID,
+    D3A_1_CAPABILITY_ID,
+    D3A_2_CAPABILITY_ID,
+)
 
 
 router = APIRouter(prefix="/api/v1/model-data", tags=["model-data"])
@@ -220,7 +224,11 @@ def read_model_input_v4_readiness(
     case_id: int,
     session: SessionDependency,
     dispatch_plan_id: int = Query(gt=0),
-    capability_id: Literal[D1_CAPABILITY_ID, D3A_1_CAPABILITY_ID] = Query(
+    capability_id: Literal[
+        D1_CAPABILITY_ID,
+        D3A_1_CAPABILITY_ID,
+        D3A_2_CAPABILITY_ID,
+    ] = Query(
         default=D1_CAPABILITY_ID
     ),
 ) -> V4ReadinessResponse:
@@ -243,7 +251,11 @@ def read_model_input_v4_preview(
     case_id: int,
     session: SessionDependency,
     dispatch_plan_id: int = Query(gt=0),
-    capability_id: Literal[D1_CAPABILITY_ID, D3A_1_CAPABILITY_ID] = Query(
+    capability_id: Literal[
+        D1_CAPABILITY_ID,
+        D3A_1_CAPABILITY_ID,
+        D3A_2_CAPABILITY_ID,
+    ] = Query(
         default=D1_CAPABILITY_ID
     ),
 ) -> V4PreviewResponse:

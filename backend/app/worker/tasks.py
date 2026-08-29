@@ -44,6 +44,7 @@ from model.solver.registry import (
     D1_CAPABILITY_ID,
     D1_SOLVER_ID,
     D3A_1_CAPABILITY_ID,
+    D3A_2_CAPABILITY_ID,
     registry_hash,
     task_solver_provenance,
 )
@@ -52,7 +53,11 @@ from model.solver.registry import (
 V4_QUEUE = "hydraulic-v4-d1"
 V4_WORKER_CAPABILITIES = {
     "supported_solver_ids": (D1_SOLVER_ID,),
-    "supported_capability_ids": (D1_CAPABILITY_ID, D3A_1_CAPABILITY_ID),
+    "supported_capability_ids": (
+        D1_CAPABILITY_ID,
+        D3A_1_CAPABILITY_ID,
+        D3A_2_CAPABILITY_ID,
+    ),
 }
 INFRASTRUCTURE_ERRORS = (ConnectionError, TimeoutError, OSError, OperationalError)
 

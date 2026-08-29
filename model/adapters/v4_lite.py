@@ -71,6 +71,7 @@ SOLVER_POLICY_HASH_SCHEMA_V3 = "dayu.solver-policy.v3"
 SOLVER_POLICY_HASH_SCHEMA_V4 = "dayu.solver-policy.v4"
 SOLVER_POLICY_HASH_SCHEMA_V5 = "dayu.solver-policy.v5"
 SOLVER_POLICY_HASH_SCHEMA_V6 = "dayu.solver-policy.v6"
+SOLVER_POLICY_HASH_SCHEMA_V7 = "dayu.solver-policy.v7"
 RUNTIME_PROJECTION_HASH_SCHEMA = "dayu.v4-lite.runtime-projection.v1"
 VALIDATION_POLICY_HASH_SCHEMA = "dayu.v4-lite.validation-policy.v1"
 
@@ -104,15 +105,31 @@ def build_v4_lite_mesh(model_input: V4LiteInput) -> FiniteVolumeMesh:
 
     cells: list[FiniteVolumeCell] = []
     for section, length in zip(model_input.sections, lengths):
+        bed_elevation = section.hydraulic_bed_elevation_m
+        points = tuple(
+            (point.offset_m, point.elevation_m) for point in section.points
+        )
+        if model_input.provenance.validation_policy_version == "d3a-2-v1":
+            # The declared bed is authoritative.  Convert absolute surveyed
+            # ordinates to local z and translate them back into the kernel's
+            # absolute-stage geometry without deriving the datum from min(z).
+            local_points = tuple(
+                (offset, elevation - bed_elevation)
+                for offset, elevation in points
+            )
+            points = tuple(
+                (offset, bed_elevation + local_z)
+                for offset, local_z in local_points
+            )
         geometry = TabulatedSectionGeometry.from_points(
-            tuple((point.offset_m, point.elevation_m) for point in section.points)
+            points
         )
         cells.append(
             FiniteVolumeCell(
                 cell_id=f"branch-{model_input.river.branch_id}-section-{section.section_id}",
                 dx=length,
                 section_id=section.section_id,
-                bed_elevation=geometry.minimum_stage,
+                bed_elevation=bed_elevation,
                 geometry=geometry,
                 manning_n=section.default_manning_n,
             )
@@ -223,21 +240,25 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
     solver = model_input.solver
     manifest = {
         "schema_version": (
-            SOLVER_POLICY_HASH_SCHEMA_V6
-            if model_input.provenance.validation_policy_version == "d3a-1-v1"
+            SOLVER_POLICY_HASH_SCHEMA_V7
+            if model_input.provenance.validation_policy_version == "d3a-2-v1"
             else (
-                SOLVER_POLICY_HASH_SCHEMA_V5
-                if model_input.provenance.validation_policy_version == "v4-lite-7"
+                SOLVER_POLICY_HASH_SCHEMA_V6
+                if model_input.provenance.validation_policy_version == "d3a-1-v1"
                 else (
-                    SOLVER_POLICY_HASH_SCHEMA_V4
-                    if model_input.provenance.validation_policy_version == "v4-lite-6"
+                    SOLVER_POLICY_HASH_SCHEMA_V5
+                    if model_input.provenance.validation_policy_version == "v4-lite-7"
                     else (
-                        SOLVER_POLICY_HASH_SCHEMA_V3
-                        if model_input.provenance.validation_policy_version == "v4-lite-5"
+                        SOLVER_POLICY_HASH_SCHEMA_V4
+                        if model_input.provenance.validation_policy_version == "v4-lite-6"
                         else (
-                            SOLVER_POLICY_HASH_SCHEMA_V2
-                            if model_input.provenance.validation_policy_version == "v4-lite-4"
-                            else SOLVER_POLICY_HASH_SCHEMA
+                            SOLVER_POLICY_HASH_SCHEMA_V3
+                            if model_input.provenance.validation_policy_version == "v4-lite-5"
+                            else (
+                                SOLVER_POLICY_HASH_SCHEMA_V2
+                                if model_input.provenance.validation_policy_version == "v4-lite-4"
+                                else SOLVER_POLICY_HASH_SCHEMA
+                            )
                         )
                     )
                 )
@@ -290,6 +311,7 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
         "v4-lite-6",
         "v4-lite-7",
         "d3a-1-v1",
+        "d3a-2-v1",
     }:
         manifest["solver"]["structure_event"] = {
             "policy": solver.structure_event_policy,
@@ -303,6 +325,7 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
         "v4-lite-6",
         "v4-lite-7",
         "d3a-1-v1",
+        "d3a-2-v1",
     }:
         manifest["solver"]["gate_coupling"] = {
             "policy": solver.gate_coupling_policy,
@@ -317,6 +340,7 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
         "v4-lite-6",
         "v4-lite-7",
         "d3a-1-v1",
+        "d3a-2-v1",
     }:
         manifest["solver"]["combined_gate_control"] = {
             "policy": "bracketed-event-then-completed-interface-v1",
@@ -327,6 +351,7 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
     if model_input.provenance.validation_policy_version in {
         "v4-lite-7",
         "d3a-1-v1",
+        "d3a-2-v1",
     }:
         manifest["solver"]["pump_coupling"] = {
             "policy": solver.pump_coupling_policy,
@@ -479,7 +504,7 @@ def _structures(
                 HydraulicExternalPump(
                     pump_id=str(pump.identity.id),
                     cell_index=section_index,
-                    source_bed_elevation_m=section.minimum_stage_m,
+                    source_bed_elevation_m=section.hydraulic_bed_elevation_m,
                     minimum_source_depth_m=model_input.solver.dry_depth_m,
                     head_curve=PumpHeadCurve(
                         tuple(
@@ -716,6 +741,7 @@ def _controlled_gate_coupling_evidence(
         "v4-lite-6",
         "v4-lite-7",
         "d3a-1-v1",
+        "d3a-2-v1",
     }:
         return ()
     if len(gates) != 1:
@@ -910,6 +936,7 @@ def _pump_coupling_evidence(
     if model_input.provenance.validation_policy_version not in {
         "v4-lite-7",
         "d3a-1-v1",
+        "d3a-2-v1",
     }:
         return ()
     if len(pumps) != 1 or not isinstance(pumps[0], HydraulicExternalPump):
@@ -1015,7 +1042,7 @@ def _result(
                     for state in runtime.states
                 )
                 if model_input.provenance.validation_policy_version
-                in {"v4-lite-7", "d3a-1-v1"}
+                in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1"}
                 else None
             ),
         )
@@ -1107,7 +1134,8 @@ def _result(
                     "maximum_friction_number": evidence.maximum_friction_number,
                     "friction_retry_count": evidence.friction_retry_count,
                 }
-                if model_input.provenance.validation_policy_version == "d3a-1-v1"
+                if model_input.provenance.validation_policy_version
+                in {"d3a-1-v1", "d3a-2-v1"}
                 else {}
             ),
         ),
@@ -1159,7 +1187,8 @@ def run_v4_lite(
             water_balance_tolerance=model_input.solver.water_balance_tolerance,
             maximum_friction_number=(
                 0.1
-                if model_input.provenance.validation_policy_version == "d3a-1-v1"
+                if model_input.provenance.validation_policy_version
+                in {"d3a-1-v1", "d3a-2-v1"}
                 else None
             ),
             scheme="hll",
@@ -1174,12 +1203,16 @@ def run_v4_lite(
                 model_input.solver.maximum_event_refinements
             ),
             structure_capability=(
-                "d3a-1-single-branch-gate-pump-manning-v1"
-                if model_input.provenance.validation_policy_version == "d3a-1-v1"
+                "d3a-2-single-branch-gate-pump-manning-slope-v1"
+                if model_input.provenance.validation_policy_version == "d3a-2-v1"
                 else (
-                    "d1-single-branch-gate-pump-v1"
-                    if model_input.provenance.validation_policy_version == "v4-lite-7"
-                    else "legacy-v1"
+                    "d3a-1-single-branch-gate-pump-manning-v1"
+                    if model_input.provenance.validation_policy_version == "d3a-1-v1"
+                    else (
+                        "d1-single-branch-gate-pump-v1"
+                        if model_input.provenance.validation_policy_version == "v4-lite-7"
+                        else "legacy-v1"
+                    )
                 )
             ),
         ),

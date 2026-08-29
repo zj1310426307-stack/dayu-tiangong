@@ -51,10 +51,10 @@ def test_rc2_task_build_and_delivery_fields_are_durable() -> None:
     }
 
 
-def test_0022_is_the_single_reversible_migration_head() -> None:
+def test_0022_remains_immutable_below_the_d3a_2_migration_head() -> None:
     config = Config(str(REPOSITORY_ROOT / "database" / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["20260828_0022"]
+    assert script.get_heads() == ["20260829_0023"]
     source = MIGRATION.read_text(encoding="utf-8")
     assert 'down_revision: str | None = "20260828_0021"' in source
     assert "def upgrade()" in source

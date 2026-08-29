@@ -76,6 +76,7 @@ class SingleBranchConfig:
         "legacy-v1",
         "d1-single-branch-gate-pump-v1",
         "d3a-1-single-branch-gate-pump-manning-v1",
+        "d3a-2-single-branch-gate-pump-manning-slope-v1",
     ] = "legacy-v1"
 
     def __post_init__(self) -> None:
@@ -135,12 +136,16 @@ class SingleBranchConfig:
             "legacy-v1",
             "d1-single-branch-gate-pump-v1",
             "d3a-1-single-branch-gate-pump-manning-v1",
+            "d3a-2-single-branch-gate-pump-manning-slope-v1",
         }:
             raise ValueError("unsupported finite-volume structure_capability")
-        if self.structure_capability == (
-            "d3a-1-single-branch-gate-pump-manning-v1"
-        ) and self.maximum_friction_number != 0.1:
-            raise ValueError("D3A-1 capability requires maximum_friction_number=0.1")
+        if self.structure_capability in {
+            "d3a-1-single-branch-gate-pump-manning-v1",
+            "d3a-2-single-branch-gate-pump-manning-slope-v1",
+        } and self.maximum_friction_number != 0.1:
+            raise ValueError(
+                "D3A Manning capabilities require maximum_friction_number=0.1"
+            )
 
 
 @dataclass(frozen=True)
@@ -913,7 +918,10 @@ def _validate_completed_gate_scope(
     d3a_1_scope = config.structure_capability == (
         "d3a-1-single-branch-gate-pump-manning-v1"
     )
-    gate_pump_scope = d1_scope or d3a_1_scope
+    d3a_2_scope = config.structure_capability == (
+        "d3a-2-single-branch-gate-pump-manning-slope-v1"
+    )
+    gate_pump_scope = d1_scope or d3a_1_scope or d3a_2_scope
     completed = tuple(gate for gate in gates if gate.uses_completed_interface)
     if not completed:
         if gate_pump_scope:
@@ -948,21 +956,51 @@ def _validate_completed_gate_scope(
     if boundaries.boundary_closure != "subcritical-characteristic-v1":
         raise ValueError("completed-interface scope requires characteristic boundaries")
     reference = mesh.cells[0]
-    if any(cell.geometry != reference.geometry for cell in mesh.cells[1:]):
-        raise ValueError("completed-interface scope requires one prismatic section")
-    if any(
-        not math.isclose(
-            cell.bed_elevation,
-            reference.bed_elevation,
-            rel_tol=0.0,
-            abs_tol=1.0e-12,
+    if d3a_2_scope:
+        reference_points = getattr(reference.geometry, "points", None)
+        if not isinstance(reference_points, tuple):
+            raise ValueError("D3A-2 requires tabulated Profile geometry")
+        reference_shape = tuple(
+            (float(offset), float(elevation) - reference.bed_elevation)
+            for offset, elevation in reference_points
         )
-        for cell in mesh.cells[1:]
-    ):
-        raise ValueError("completed-interface scope requires a flat bed")
-    if d3a_1_scope:
+        for cell in mesh.cells[1:]:
+            points = getattr(cell.geometry, "points", None)
+            shape = (
+                tuple(
+                    (float(offset), float(elevation) - cell.bed_elevation)
+                    for offset, elevation in points
+                )
+                if isinstance(points, tuple)
+                else ()
+            )
+            if len(shape) != len(reference_shape) or any(
+                not math.isclose(left_x, right_x, rel_tol=1.0e-10, abs_tol=1.0e-12)
+                or not math.isclose(left_z, right_z, rel_tol=1.0e-10, abs_tol=1.0e-12)
+                for (left_x, left_z), (right_x, right_z) in zip(
+                    reference_shape, shape
+                )
+            ):
+                raise ValueError("D3A-2 requires one identical local Profile shape")
+        beds = tuple(cell.bed_elevation for cell in mesh.cells)
+        if any(right >= left for left, right in zip(beds, beds[1:])):
+            raise ValueError("D3A-2 requires a strictly descending bed")
+    else:
+        if any(cell.geometry != reference.geometry for cell in mesh.cells[1:]):
+            raise ValueError("completed-interface scope requires one prismatic section")
+        if any(
+            not math.isclose(
+                cell.bed_elevation,
+                reference.bed_elevation,
+                rel_tol=0.0,
+                abs_tol=1.0e-12,
+            )
+            for cell in mesh.cells[1:]
+        ):
+            raise ValueError("completed-interface scope requires a flat bed")
+    if d3a_1_scope or d3a_2_scope:
         if any(cell.manning_n <= 0.0 for cell in mesh.cells):
-            raise ValueError("D3A-1 completed-interface scope requires positive Manning n")
+            raise ValueError("D3A completed-interface scope requires positive Manning n")
     elif any(cell.manning_n != 0.0 for cell in mesh.cells):
         raise ValueError("completed-interface scope requires zero Manning friction")
     if any(
@@ -996,7 +1034,11 @@ def _validate_completed_gate_scope(
         right = mesh.cells[gate.face_index + 1].geometry.stage_from_area(
             initial_state.area[gate.face_index + 1]
         )
-        if not math.isclose(left, right, rel_tol=0.0, abs_tol=1.0e-12):
+        if d3a_2_scope and left <= right:
+            raise ValueError("D3A-2 controlled Gate requires positive initial head")
+        if not d3a_2_scope and not math.isclose(
+            left, right, rel_tol=0.0, abs_tol=1.0e-12
+        ):
             raise ValueError(
                 "controlled completed-interface Gate requires an initially level face"
             )

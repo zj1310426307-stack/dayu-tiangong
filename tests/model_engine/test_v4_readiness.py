@@ -8,7 +8,11 @@ from app.model_engine.v4_service import (
     assess_native_v4_snapshot,
     preview_from_assessment,
 )
-from tests.model_engine.helpers import native_v4_d3a_1_payload, native_v4_payload
+from tests.model_engine.helpers import (
+    native_v4_d3a_1_payload,
+    native_v4_d3a_2_payload,
+    native_v4_payload,
+)
 
 
 def _codes(payload: dict) -> set[str]:
@@ -51,6 +55,24 @@ def test_valid_d3a_1_candidate_is_explicitly_ready() -> None:
     preview = preview_from_assessment(assessment)
     assert preview.capability_id == assessment.readiness.capability_id
     assert "positive-section-effective-manning" in preview.capability_scope
+
+
+def test_valid_d3a_2_candidate_requires_explicit_bed_authority() -> None:
+    """The slope route is ready only with declared bed/datum/local Profile shape."""
+
+    payload = native_v4_d3a_2_payload()
+    assessment = assess_native_v4_snapshot(payload)
+    assert assessment.readiness.ready is True
+    assert not assessment.readiness.errors
+    assert assessment.projection is not None
+    assert assessment.projection.runtime.provenance.validation_policy_version == (
+        "d3a-2-v1"
+    )
+    preview = preview_from_assessment(assessment)
+    assert "explicit-nonzero-linear-bed-slope" in preview.capability_scope
+
+    payload["cross_sections"][0]["bed_elevation_source"] = None
+    assert "D3A_2_BED_AUTHORITY_UNCONFIRMED" in _codes(payload)
 
 
 @pytest.mark.parametrize(

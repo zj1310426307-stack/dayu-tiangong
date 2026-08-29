@@ -18,6 +18,7 @@ from model.solver.registry import (
     D3A_1_CAPABILITY_ID,
     D3A_1_RUNTIME_ADAPTER_ID,
     D3A_2_CAPABILITY_ID,
+    D3A_2_RUNTIME_ADAPTER_ID,
     D3A_3_CAPABILITY_ID,
     LEGACY_NETWORK_SOLVER,
     LEGACY_SINGLE_RIVER_SOLVER,
@@ -90,12 +91,12 @@ def test_v1_v2_v3_routes_remain_legacy_and_v4_is_native() -> None:
     assert native.runtime_adapter.runtime_schema_version == "dayu.model-input.v4-lite"
     assert native.runtime_adapter.runtime_schema_version != "dayu.model-input.v2"
     assert registry_hash() == (
-        "da6bae78f460b96ba766e4ed4774d6476ab39d7389714c4bca7781b6d9d05f56"
+        "5fa439e8e084aead690403a6c537a725446df64790b4226b953e159d3f0fbb2a"
     )
 
 
-def test_d3a_catalog_unlocks_only_the_completed_manning_gate() -> None:
-    """Expose D3A-1 explicitly while keeping later science envelopes blocked."""
+def test_d3a_catalog_unlocks_manning_and_explicit_slope_only() -> None:
+    """Expose D3A-1/2 explicitly while keeping engineering Profiles blocked."""
 
     catalog = capability_catalog()
     assert tuple(item.capability_id for item in catalog) == (
@@ -107,19 +108,26 @@ def test_d3a_catalog_unlocks_only_the_completed_manning_gate() -> None:
     assert tuple(item.status for item in catalog) == (
         "supported",
         "supported",
-        "blocked",
+        "supported",
         "blocked",
     )
     assert resolve_capability(D1_CAPABILITY_ID).status == "supported"
     assert resolve_capability(D3A_1_CAPABILITY_ID).status == "supported"
+    assert resolve_capability(D3A_2_CAPABILITY_ID).status == "supported"
     d3a = resolve_solver(
         "dayu.model-input.v4",
         capability_id=D3A_1_CAPABILITY_ID,
         runtime_adapter_id=D3A_1_RUNTIME_ADAPTER_ID,
     )
     assert d3a.engine_route == "finite-volume-d3a-1-v4"
+    d3a_2 = resolve_solver(
+        "dayu.model-input.v4",
+        capability_id=D3A_2_CAPABILITY_ID,
+        runtime_adapter_id=D3A_2_RUNTIME_ADAPTER_ID,
+    )
+    assert d3a_2.engine_route == "finite-volume-d3a-2-v4"
     with pytest.raises(HydraulicInputError, match="scientifically blocked"):
-        resolve_capability(D3A_2_CAPABILITY_ID)
+        resolve_capability(D3A_3_CAPABILITY_ID)
 
 
 @pytest.mark.parametrize(

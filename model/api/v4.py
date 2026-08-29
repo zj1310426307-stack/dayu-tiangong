@@ -34,6 +34,8 @@ from model.solver.registry import (
     D1_SOLVER_ID,
     D3A_1_CAPABILITY_ID,
     D3A_1_RUNTIME_ADAPTER_ID,
+    D3A_2_CAPABILITY_ID,
+    D3A_2_RUNTIME_ADAPTER_ID,
     MODEL_INPUT_V4,
     registry_hash,
     resolve_capability,
@@ -60,8 +62,16 @@ class SolverSelection(StrictPlatformModel):
     """Select one explicit native-v4 capability/adapter tuple."""
 
     solver_id: Literal[D1_SOLVER_ID]
-    capability_id: Literal[D1_CAPABILITY_ID, D3A_1_CAPABILITY_ID]
-    runtime_adapter_id: Literal[D1_RUNTIME_ADAPTER_ID, D3A_1_RUNTIME_ADAPTER_ID]
+    capability_id: Literal[
+        D1_CAPABILITY_ID,
+        D3A_1_CAPABILITY_ID,
+        D3A_2_CAPABILITY_ID,
+    ]
+    runtime_adapter_id: Literal[
+        D1_RUNTIME_ADAPTER_ID,
+        D3A_1_RUNTIME_ADAPTER_ID,
+        D3A_2_RUNTIME_ADAPTER_ID,
+    ]
 
 
 class SimulationCaseIdentity(StrictPlatformModel):
@@ -112,14 +122,22 @@ class ControlPlanIdentity(StrictPlatformModel):
 
     id: PositiveId
     frozen_snapshot_hash: Sha256
-    policy_id: Literal["d1-gate-pump-control-v1", "d3a-1-gate-pump-control-v1"]
+    policy_id: Literal[
+        "d1-gate-pump-control-v1",
+        "d3a-1-gate-pump-control-v1",
+        "d3a-2-gate-pump-control-v1",
+    ]
 
 
 class ValidationPolicy(StrictPlatformModel):
     """Freeze the selected validation policy separately from numerical settings."""
 
-    validation_policy_version: Literal["v4-lite-7", "d3a-1-v1"]
-    capability_id: Literal[D1_CAPABILITY_ID, D3A_1_CAPABILITY_ID]
+    validation_policy_version: Literal["v4-lite-7", "d3a-1-v1", "d3a-2-v1"]
+    capability_id: Literal[
+        D1_CAPABILITY_ID,
+        D3A_1_CAPABILITY_ID,
+        D3A_2_CAPABILITY_ID,
+    ]
     water_balance_tolerance: Annotated[float, Field(strict=True, gt=0.0, le=1.0e-10)]
 
 
@@ -223,11 +241,11 @@ class ModelInputV4(StrictPlatformModel):
             raise ValueError("capability exclusions do not match the solver registry")
         if self.known_limitations != entry.warnings:
             raise ValueError("known limitations do not match the solver registry")
-        expected_control_policy = (
-            "d3a-1-gate-pump-control-v1"
-            if self.solver_selection.capability_id == D3A_1_CAPABILITY_ID
-            else "d1-gate-pump-control-v1"
-        )
+        expected_control_policy = {
+            D1_CAPABILITY_ID: "d1-gate-pump-control-v1",
+            D3A_1_CAPABILITY_ID: "d3a-1-gate-pump-control-v1",
+            D3A_2_CAPABILITY_ID: "d3a-2-gate-pump-control-v1",
+        }[self.solver_selection.capability_id]
         if self.control_plan.policy_id != expected_control_policy:
             raise ValueError("control-plan policy does not match solver capability")
         branch = self.branches[0]

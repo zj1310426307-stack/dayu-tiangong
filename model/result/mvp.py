@@ -1074,6 +1074,7 @@ class MvpResultProvenance(StrictResultModel):
         "v4-lite-6",
         "v4-lite-7",
         "d3a-1-v1",
+        "d3a-2-v1",
     ]
     solver_policy_hash: Sha256 | None = None
 
@@ -1153,14 +1154,14 @@ class MvpHydraulicResult(StrictResultModel):
             version == "v4-lite-5"
         )
         expects_controlled_gate_coupling = (
-            version in {"v4-lite-6", "v4-lite-7", "d3a-1-v1"}
+            version in {"v4-lite-6", "v4-lite-7", "d3a-1-v1", "d3a-2-v1"}
         )
-        expects_pump_coupling = version in {"v4-lite-7", "d3a-1-v1"}
-        if version in {"v4-lite-7", "d3a-1-v1"} and any(
+        expects_pump_coupling = version in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1"}
+        if version in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1"} and any(
             section.volume_m3 is None for section in self.sections
         ):
             raise ValueError(f"{version} requires section control-volume series")
-        if version not in {"v4-lite-7", "d3a-1-v1"} and any(
+        if version not in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1"} and any(
             section.volume_m3 is not None for section in self.sections
         ):
             raise ValueError("pre-v7 section results must not add volume series")
@@ -1253,7 +1254,7 @@ class MvpHydraulicResult(StrictResultModel):
                 raise ValueError("v4-lite-4 control events require bracket evidence")
             if not expects_bracket_evidence and event.has_bracket_evidence:
                 if not (
-                    version in {"v4-lite-7", "d3a-1-v1"}
+                    version in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1"}
                     and event.structure_type == "gate"
                     and event.action == "open"
                 ):
@@ -1261,13 +1262,13 @@ class MvpHydraulicResult(StrictResultModel):
                         "pre-v4 control events must not add bracket evidence"
                     )
             if (
-                version in {"v4-lite-7", "d3a-1-v1"}
+                version in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1"}
                 and event.structure_type == "gate"
                 and not event.has_bracket_evidence
             ):
                 raise ValueError(f"{version} Gate event requires bracket evidence")
             if (
-                version in {"v4-lite-7", "d3a-1-v1"}
+                version in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1"}
                 and event.structure_type == "pump"
                 and event.has_bracket_evidence
             ):
@@ -1275,7 +1276,7 @@ class MvpHydraulicResult(StrictResultModel):
         event_keys = tuple(
             (item.structure_type, item.structure_id) for item in self.control_events
         )
-        if version in {"v4-lite-7", "d3a-1-v1"}:
+        if version in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1"}:
             _require_unique(
                 (
                     (item.time, item.structure_type, item.structure_id, item.action)
@@ -1289,14 +1290,14 @@ class MvpHydraulicResult(StrictResultModel):
             _require_unique(gate_event_keys, "D1 one-shot Gate event identity")
         else:
             _require_unique(event_keys, "one-shot control event structure identity")
-        if version == "d3a-1-v1":
+        if version in {"d3a-1-v1", "d3a-2-v1"}:
             if (
                 self.diagnostics.maximum_friction_number is None
                 or self.diagnostics.friction_retry_count is None
                 or self.diagnostics.maximum_friction_number <= 0.0
                 or self.diagnostics.maximum_friction_number > 0.1 + 1.0e-12
             ):
-                raise ValueError("d3a-1-v1 requires bounded Manning diagnostics")
+                raise ValueError(f"{version} requires bounded Manning diagnostics")
         elif (
             self.diagnostics.maximum_friction_number is not None
             or self.diagnostics.friction_retry_count is not None
