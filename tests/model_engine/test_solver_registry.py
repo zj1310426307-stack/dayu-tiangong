@@ -16,6 +16,7 @@ from model.solver.registry import (
     D1_RUNTIME_ADAPTER_ID,
     D1_SOLVER_ID,
     D3A_1_CAPABILITY_ID,
+    D3A_1_RUNTIME_ADAPTER_ID,
     D3A_2_CAPABILITY_ID,
     D3A_3_CAPABILITY_ID,
     LEGACY_NETWORK_SOLVER,
@@ -89,12 +90,12 @@ def test_v1_v2_v3_routes_remain_legacy_and_v4_is_native() -> None:
     assert native.runtime_adapter.runtime_schema_version == "dayu.model-input.v4-lite"
     assert native.runtime_adapter.runtime_schema_version != "dayu.model-input.v2"
     assert registry_hash() == (
-        "90ee85da3970765cbeaa8f46e845c3776efc5a4a6c56c41d8372eefb3ac70fb2"
+        "da6bae78f460b96ba766e4ed4774d6476ab39d7389714c4bca7781b6d9d05f56"
     )
 
 
-def test_d3a_catalog_is_explicit_and_science_gates_start_blocked() -> None:
-    """Expose future envelopes without making any case data auto-upgradeable."""
+def test_d3a_catalog_unlocks_only_the_completed_manning_gate() -> None:
+    """Expose D3A-1 explicitly while keeping later science envelopes blocked."""
 
     catalog = capability_catalog()
     assert tuple(item.capability_id for item in catalog) == (
@@ -103,15 +104,22 @@ def test_d3a_catalog_is_explicit_and_science_gates_start_blocked() -> None:
         D3A_2_CAPABILITY_ID,
         D3A_3_CAPABILITY_ID,
     )
-    assert catalog[0].status == "supported"
-    assert all(item.status == "blocked" for item in catalog[1:])
-    assert resolve_capability(D1_CAPABILITY_ID).status == "supported"
-    with pytest.raises(HydraulicInputError, match="scientifically blocked"):
-        resolve_capability(D3A_1_CAPABILITY_ID)
-    assert (
-        resolve_capability(D3A_1_CAPABILITY_ID, include_blocked=True).status
-        == "blocked"
+    assert tuple(item.status for item in catalog) == (
+        "supported",
+        "supported",
+        "blocked",
+        "blocked",
     )
+    assert resolve_capability(D1_CAPABILITY_ID).status == "supported"
+    assert resolve_capability(D3A_1_CAPABILITY_ID).status == "supported"
+    d3a = resolve_solver(
+        "dayu.model-input.v4",
+        capability_id=D3A_1_CAPABILITY_ID,
+        runtime_adapter_id=D3A_1_RUNTIME_ADAPTER_ID,
+    )
+    assert d3a.engine_route == "finite-volume-d3a-1-v4"
+    with pytest.raises(HydraulicInputError, match="scientifically blocked"):
+        resolve_capability(D3A_2_CAPABILITY_ID)
 
 
 @pytest.mark.parametrize(
@@ -158,11 +166,19 @@ def test_task_builder_persists_only_registry_resolved_provenance(
         input_schema_version=schema_version,
         solver_id=requested_solver,
         dispatch_plan_id=dispatch_plan_id,
+        capability_id=(
+            D1_CAPABILITY_ID if schema_version == "dayu.model-input.v4" else None
+        ),
         storage_level="full",
     )
 
     task = service.build_task_entity(session, payload)  # type: ignore[arg-type]
-    registration = resolve_solver(schema_version)
+    registration = resolve_solver(
+        schema_version,
+        capability_id=(
+            D1_CAPABILITY_ID if schema_version == "dayu.model-input.v4" else None
+        ),
+    )
 
     assert task.solver_id == registration.solver_id
     assert task.capability_id == (

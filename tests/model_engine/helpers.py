@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import runpy
 from pathlib import Path
 
@@ -13,6 +14,10 @@ from model.solver.registry import (
     D1_KNOWN_LIMITATIONS,
     D1_RUNTIME_ADAPTER_ID,
     D1_SOLVER_ID,
+    D3A_1_CAPABILITY,
+    D3A_1_CAPABILITY_ID,
+    D3A_1_KNOWN_LIMITATIONS,
+    D3A_1_RUNTIME_ADAPTER_ID,
     registry_hash,
 )
 
@@ -95,3 +100,28 @@ def native_v4_payload() -> dict:
         "case_notes": ["fixture-owned operational note"],
         "known_limitations": list(D1_KNOWN_LIMITATIONS),
     }
+
+
+def native_v4_d3a_1_payload() -> dict:
+    """Select D3A-1 explicitly and change only effective section roughness."""
+
+    payload = copy.deepcopy(native_v4_payload())
+    payload["solver_selection"] = {
+        "solver_id": D1_SOLVER_ID,
+        "capability_id": D3A_1_CAPABILITY_ID,
+        "runtime_adapter_id": D3A_1_RUNTIME_ADAPTER_ID,
+    }
+    for section in payload["cross_sections"]:
+        section["default_manning_n"] = 0.025
+    payload["control_plan"]["policy_id"] = "d3a-1-gate-pump-control-v1"
+    payload["validation"] = {
+        "validation_policy_version": "d3a-1-v1",
+        "capability_id": D3A_1_CAPABILITY_ID,
+        "water_balance_tolerance": payload["numerical_policy"][
+            "water_balance_tolerance"
+        ],
+    }
+    payload["capability_scope"] = list(D3A_1_CAPABILITY.scope)
+    payload["capability_exclusions"] = list(D3A_1_CAPABILITY.exclusions)
+    payload["known_limitations"] = list(D3A_1_KNOWN_LIMITATIONS)
+    return payload

@@ -1884,6 +1884,7 @@ export interface SimulationTaskCreate {
   "minimum_depth"?: number | null;
   "input_schema_version"?: "dayu.model-input.v1" | "dayu.model-input.v2" | "dayu.model-input.v3" | "dayu.model-input.v4";
   "solver_id"?: string | null;
+  "capability_id"?: "single-branch-gate-external-pump-d1-v1" | "single-branch-gate-pump-manning-v1" | null;
   "dispatch_plan_id"?: number | null;
   "execution_mode"?: "validation" | "shadow";
   "allow_fallback_boundary"?: boolean;
@@ -2519,8 +2520,8 @@ export const updateSimulationCase = (caseId: number, body: SimulationCaseUpdate,
 export const deleteSimulationCase = (caseId: number, baseUrl = '') => requestJson<void>(`/api/v1/model-data/simulation-cases/${caseId}`, { method: 'DELETE' }, baseUrl);
 export const getModelInput = (caseId: number, baseUrl = '') => requestJson<ModelInputSnapshot>(`/api/v1/model-data/simulation-cases/${caseId}/input`, {}, baseUrl);
 export const getModelInputV3 = (caseId: number, baseUrl = '') => requestJson<Record<string, unknown>>(`/api/v1/model-data/simulation-cases/${caseId}/input-v3`, {}, baseUrl);
-export const getModelInputV4Readiness = (caseId: number, dispatchPlanId: number, baseUrl = '') => requestJson<V4ReadinessResponse>(`/api/v1/model-data/simulation-cases/${caseId}/input-v4/readiness${toQuery({ dispatch_plan_id: dispatchPlanId })}`, {}, baseUrl);
-export const getModelInputV4Preview = (caseId: number, dispatchPlanId: number, baseUrl = '') => requestJson<V4PreviewResponse>(`/api/v1/model-data/simulation-cases/${caseId}/input-v4/preview${toQuery({ dispatch_plan_id: dispatchPlanId })}`, {}, baseUrl);
+export const getModelInputV4Readiness = (caseId: number, dispatchPlanId: number, capabilityId: string, baseUrl = '') => requestJson<V4ReadinessResponse>(`/api/v1/model-data/simulation-cases/${caseId}/input-v4/readiness${toQuery({ dispatch_plan_id: dispatchPlanId, capability_id: capabilityId })}`, {}, baseUrl);
+export const getModelInputV4Preview = (caseId: number, dispatchPlanId: number, capabilityId: string, baseUrl = '') => requestJson<V4PreviewResponse>(`/api/v1/model-data/simulation-cases/${caseId}/input-v4/preview${toQuery({ dispatch_plan_id: dispatchPlanId, capability_id: capabilityId })}`, {}, baseUrl);
 export const runValidation = (datasetVersionId: number, baseUrl = '') => requestJson<ValidationReport>('/api/v1/validation/run', jsonOptions('POST', { dataset_version_id: datasetVersionId }), baseUrl);
 
 export const getHydraulicCapabilities = (baseUrl = '') => requestJson<HydraulicCapabilityResponse>('/api/v1/hydraulic/capabilities', {}, baseUrl);

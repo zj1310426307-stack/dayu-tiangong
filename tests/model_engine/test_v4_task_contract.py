@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from app.main import create_app
 from app.model_engine.provenance import snapshot_summary
 from app.model_engine.schemas import SimulationTaskCreate
-from model.solver.registry import D1_SOLVER_ID
+from model.solver.registry import D1_CAPABILITY_ID, D1_SOLVER_ID
 from tests.model_engine.helpers import native_v4_payload
 
 
@@ -17,6 +17,7 @@ def test_v4_task_accepts_optional_solver_assertion_and_requires_frozen_plan() ->
         case_id=71,
         input_schema_version="dayu.model-input.v4",
         solver_id=D1_SOLVER_ID,
+        capability_id=D1_CAPABILITY_ID,
         dispatch_plan_id=91,
         execution_mode="validation",
         storage_level="full",
@@ -26,6 +27,7 @@ def test_v4_task_accepts_optional_solver_assertion_and_requires_frozen_plan() ->
     server_selected = SimulationTaskCreate(
         case_id=71,
         input_schema_version="dayu.model-input.v4",
+        capability_id=D1_CAPABILITY_ID,
         dispatch_plan_id=91,
     )
     assert server_selected.solver_id is None
@@ -35,6 +37,7 @@ def test_v4_task_accepts_optional_solver_assertion_and_requires_frozen_plan() ->
             case_id=71,
             input_schema_version="dayu.model-input.v4",
             solver_id=D1_SOLVER_ID,
+            capability_id=D1_CAPABILITY_ID,
             dispatch_plan_id=91,
             duration_seconds=21600.0,
         )
@@ -43,12 +46,14 @@ def test_v4_task_accepts_optional_solver_assertion_and_requires_frozen_plan() ->
             case_id=71,
             input_schema_version="dayu.model-input.v4",
             solver_id="legacy-network-continuity-manning-v1",
+            capability_id=D1_CAPABILITY_ID,
             dispatch_plan_id=91,
         )
     with pytest.raises(ValidationError, match="storage_level=full"):
         SimulationTaskCreate(
             case_id=71,
             input_schema_version="dayu.model-input.v4",
+            capability_id=D1_CAPABILITY_ID,
             dispatch_plan_id=91,
             storage_level="key_sections",
         )

@@ -55,6 +55,7 @@ class SingleBranchConfig:
     maximum_retries: int = 8
     maximum_steps: int = 1_000_000
     water_balance_tolerance: float = 0.01
+    maximum_friction_number: float | None = None
     scheme: Literal["hll", "rusanov"] = "hll"
     equilibrium_mode: Literal["standard", "uniform-manning-reference"] = "standard"
     geometry_source_mode: Literal[
@@ -74,6 +75,7 @@ class SingleBranchConfig:
     structure_capability: Literal[
         "legacy-v1",
         "d1-single-branch-gate-pump-v1",
+        "d3a-1-single-branch-gate-pump-manning-v1",
     ] = "legacy-v1"
 
     def __post_init__(self) -> None:
@@ -90,6 +92,11 @@ class SingleBranchConfig:
             raise ValueError("retry count must be non-negative and maximum_steps positive")
         if not 0.0 < self.water_balance_tolerance < 1.0:
             raise ValueError("water_balance_tolerance must lie in (0, 1)")
+        if self.maximum_friction_number is not None and (
+            not math.isfinite(self.maximum_friction_number)
+            or self.maximum_friction_number <= 0.0
+        ):
+            raise ValueError("maximum_friction_number must be finite and positive")
         if self.equilibrium_mode not in ("standard", "uniform-manning-reference"):
             raise ValueError("unsupported finite-volume equilibrium_mode")
         if self.geometry_source_mode not in (
@@ -127,8 +134,13 @@ class SingleBranchConfig:
         if self.structure_capability not in {
             "legacy-v1",
             "d1-single-branch-gate-pump-v1",
+            "d3a-1-single-branch-gate-pump-manning-v1",
         }:
             raise ValueError("unsupported finite-volume structure_capability")
+        if self.structure_capability == (
+            "d3a-1-single-branch-gate-pump-manning-v1"
+        ) and self.maximum_friction_number != 0.1:
+            raise ValueError("D3A-1 capability requires maximum_friction_number=0.1")
 
 
 @dataclass(frozen=True)
@@ -153,6 +165,8 @@ class SingleBranchDiagnostics:
     event_refinement_count: int
     gate_solver_retry_count: int
     pump_solver_retry_count: int
+    maximum_friction_number: float
+    friction_retry_count: int
     minimum_dt_failure_count: int
     diagnostic_flags: tuple[str, ...]
 
@@ -896,16 +910,22 @@ def _validate_completed_gate_scope(
     """Keep the completed-interface Gate inside its verified C2b subset."""
 
     d1_scope = config.structure_capability == "d1-single-branch-gate-pump-v1"
+    d3a_1_scope = config.structure_capability == (
+        "d3a-1-single-branch-gate-pump-manning-v1"
+    )
+    gate_pump_scope = d1_scope or d3a_1_scope
     completed = tuple(gate for gate in gates if gate.uses_completed_interface)
     if not completed:
-        if d1_scope:
-            raise ValueError("D1 scope requires one completed-interface Gate")
+        if gate_pump_scope:
+            raise ValueError("Gate/Pump capability requires one completed-interface Gate")
         return
     if len(gates) != 1 or len(completed) != 1:
         raise ValueError("completed-interface scope requires exactly one Gate")
-    if d1_scope:
+    if gate_pump_scope:
         if len(pumps) != 1 or not isinstance(pumps[0], HydraulicExternalPump):
-            raise ValueError("D1 scope requires exactly one hydraulic external Pump")
+            raise ValueError(
+                "Gate/Pump capability requires exactly one hydraulic external Pump"
+            )
     elif pumps:
         raise ValueError("completed-interface scope requires exactly one Gate and no Pump")
     gate = completed[0]
@@ -940,7 +960,10 @@ def _validate_completed_gate_scope(
         for cell in mesh.cells[1:]
     ):
         raise ValueError("completed-interface scope requires a flat bed")
-    if any(cell.manning_n != 0.0 for cell in mesh.cells):
+    if d3a_1_scope:
+        if any(cell.manning_n <= 0.0 for cell in mesh.cells):
+            raise ValueError("D3A-1 completed-interface scope requires positive Manning n")
+    elif any(cell.manning_n != 0.0 for cell in mesh.cells):
         raise ValueError("completed-interface scope requires zero Manning friction")
     if any(
         cell.geometry.stage_from_area(area) - cell.bed_elevation
@@ -950,13 +973,13 @@ def _validate_completed_gate_scope(
         raise ValueError("completed-interface scope requires a fully wet initial state")
     if gate.face_index >= len(mesh.cells) - 1:
         raise ValueError("completed-interface Gate must bind an internal face")
-    if d1_scope:
+    if gate_pump_scope:
         pump = pumps[0]
         assert isinstance(pump, HydraulicExternalPump)
         if pump.cell_index in {gate.face_index, gate.face_index + 1}:
-            raise ValueError("D1 Gate and Pump placements must not overlap")
+            raise ValueError("Gate/Pump placements must not overlap")
         if pump.initial_status != "off":
-            raise ValueError("D1 hydraulic Pump must start OFF")
+            raise ValueError("hydraulic Pump must start OFF")
         pump.outlet_stage.validate_coverage(initial_state.time, config.end_time)
         source_stage = mesh.cells[pump.cell_index].geometry.stage_from_area(
             initial_state.area[pump.cell_index]
@@ -965,7 +988,7 @@ def _validate_completed_gate_scope(
             source_stage - pump.source_bed_elevation_m
             <= pump.minimum_source_depth_m
         ):
-            raise ValueError("D1 hydraulic Pump source cell must start fully wet")
+            raise ValueError("hydraulic Pump source cell must start fully wet")
     if gate.control is not None:
         left = mesh.cells[gate.face_index].geometry.stage_from_area(
             initial_state.area[gate.face_index]
@@ -982,10 +1005,10 @@ def _validate_completed_gate_scope(
                 "controlled completed-interface Gate requires zero initial discharge"
             )
         upstream_values = boundaries.upstream.series.values
-        if d1_scope:
+        if gate_pump_scope:
             if any(value <= 0.0 for value in upstream_values):
                 raise ValueError(
-                    "D1 completed-interface Gate requires a positive inflow hydrograph"
+                    "Gate/Pump capability requires a positive inflow hydrograph"
                 )
         else:
             upstream_reference = upstream_values[0]
@@ -1008,14 +1031,14 @@ def _validate_completed_gate_scope(
         final_stage = mesh.cells[-1].geometry.stage_from_area(
             initial_state.area[-1]
         )
-        if d1_scope:
+        if gate_pump_scope:
             if any(
                 value > final_stage
                 or value - mesh.cells[-1].bed_elevation <= config.dry_depth
                 for value in boundaries.downstream.series.values
             ):
                 raise ValueError(
-                    "D1 downstream stage process must stay wet and not exceed initial"
+                    "Gate/Pump downstream stage process must stay wet and not exceed initial"
                 )
         elif any(
             not math.isclose(
@@ -1134,6 +1157,8 @@ def solve_single_branch(
         boundary_flag,
         "friction_semi_implicit_per_ssp_stage_not_full_imex",
     }
+    if config.maximum_friction_number is not None:
+        flags.add("friction_number_retry_gate_v1")
     if config.nonprismatic_scope == NONPRISMATIC_MOVING_ENERGY_SCOPE:
         flags.add(NONPRISMATIC_MOVING_ENERGY_SCOPE)
     if any(isinstance(gate.control, OneShotStageThreshold) for gate in gates) or any(
@@ -1188,6 +1213,7 @@ def solve_single_branch(
                 scheme=config.scheme,
                 equilibrium_reference=equilibrium_reference,
                 geometry_source_mode=config.geometry_source_mode,
+                maximum_friction_number=config.maximum_friction_number,
                 cancel_check=cancel_check,
             )
             crossing_candidates = detect_bracketed_crossings(
@@ -1273,10 +1299,20 @@ def solve_single_branch(
                     "cfl_reduction_count": (
                         current.diagnostics.time_step_reduction_count
                     ),
-                    "positivity_retry_count": current.diagnostics.retry_count,
+                    "positivity_retry_count": (
+                        current.diagnostics.retry_count
+                        - sum(item.friction_retry_count for item in steps)
+                    ),
                     "event_refinement_count": total_event_refinements,
                     "gate_solver_retry_count": gate_solver_retries,
                     "pump_solver_retry_count": pump_solver_retries,
+                    "maximum_friction_number": max(
+                        (item.maximum_friction_number for item in steps),
+                        default=0.0,
+                    ),
+                    "friction_retry_count": sum(
+                        item.friction_retry_count for item in steps
+                    ),
                     "minimum_dt_failure_count": 0,
                     "last_event": last_event,
                 },
@@ -1314,6 +1350,11 @@ def solve_single_branch(
     minimum_used = current.diagnostics.minimum_dt
     if minimum_used is None:
         raise NumericalStateError("completed run has no accepted time-step diagnostic")
+    maximum_accepted_friction_number = max(
+        (step.maximum_friction_number for step in steps),
+        default=0.0,
+    )
+    friction_retry_count = sum(step.friction_retry_count for step in steps)
     return SingleBranchResult(
         states=tuple(output_states),
         steps=tuple(steps),
@@ -1333,10 +1374,14 @@ def solve_single_branch(
             retry_count=current.diagnostics.retry_count,
             step_count=current.diagnostics.step_count,
             cfl_reduction_count=current.diagnostics.time_step_reduction_count,
-            positivity_retry_count=current.diagnostics.retry_count,
+            positivity_retry_count=(
+                current.diagnostics.retry_count - friction_retry_count
+            ),
             event_refinement_count=total_event_refinements,
             gate_solver_retry_count=gate_solver_retries,
             pump_solver_retry_count=pump_solver_retries,
+            maximum_friction_number=maximum_accepted_friction_number,
+            friction_retry_count=friction_retry_count,
             minimum_dt_failure_count=0,
             diagnostic_flags=tuple(sorted(flags)),
         ),

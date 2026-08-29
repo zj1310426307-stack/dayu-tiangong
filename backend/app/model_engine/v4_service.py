@@ -36,12 +36,14 @@ from model.build_identity import RuntimeBuildIdentity, current_runtime_build_ide
 from model.core.errors import HydraulicInputError
 from model.provenance import CANONICALIZATION_ID, snapshot_hash
 from model.solver.registry import (
-    D1_CAPABILITY,
     D1_CAPABILITY_ID,
-    D1_KNOWN_LIMITATIONS,
     D1_RUNTIME_ADAPTER_ID,
     D1_SOLVER_ID,
+    D3A_1_CAPABILITY_ID,
+    MODEL_INPUT_V4,
     registry_hash,
+    resolve_capability,
+    resolve_solver,
 )
 
 
@@ -112,6 +114,31 @@ def _native_preflight(payload: Mapping[str, Any]) -> list[V4ReadinessIssue]:
     """Check D2 scientific scope before invoking the strict platform/runtime parsers."""
 
     issues: list[V4ReadinessIssue] = []
+    selection = payload.get("solver_selection")
+    capability_id = (
+        selection.get("capability_id") if isinstance(selection, Mapping) else None
+    )
+    try:
+        registration = resolve_solver(
+            MODEL_INPUT_V4,
+            solver_id=selection.get("solver_id") if isinstance(selection, Mapping) else None,
+            capability_id=str(capability_id) if capability_id is not None else None,
+            runtime_adapter_id=(
+                selection.get("runtime_adapter_id")
+                if isinstance(selection, Mapping)
+                else None
+            ),
+        )
+    except HydraulicInputError as exc:
+        issues.append(
+            _issue(
+                "D3A_CAPABILITY_SELECTION_INVALID",
+                str(exc),
+                entity_type="solver_selection",
+                field_path="solver_selection.capability_id",
+            )
+        )
+        registration = None
     branches = _collection(payload, "branches")
     sections = _collection(payload, "cross_sections")
     structures = payload.get("structures")
@@ -146,11 +173,26 @@ def _native_preflight(payload: Mapping[str, Any]) -> list[V4ReadinessIssue]:
     for section in sections:
         if not isinstance(section, Mapping):
             continue
-        if section.get("default_manning_n") != 0.0:
+        manning_n = section.get("default_manning_n")
+        if capability_id == D1_CAPABILITY_ID and manning_n != 0.0:
             issues.append(
                 _issue(
                     "D2_MANNING_NONZERO",
                     "D1 platform capability requires Manning n=0",
+                    entity_type="cross_section",
+                    entity_id=section.get("section_id"),
+                    field_path="cross_sections.default_manning_n",
+                )
+            )
+        if capability_id == D3A_1_CAPABILITY_ID and (
+            isinstance(manning_n, bool)
+            or not isinstance(manning_n, (int, float))
+            or not 0.0 < float(manning_n) <= 0.10
+        ):
+            issues.append(
+                _issue(
+                    "D3A_1_MANNING_OUT_OF_RANGE",
+                    "D3A-1 requires explicit effective Manning n in (0, 0.10]",
                     entity_type="cross_section",
                     entity_id=section.get("section_id"),
                     field_path="cross_sections.default_manning_n",
@@ -249,13 +291,20 @@ def _native_preflight(payload: Mapping[str, Any]) -> list[V4ReadinessIssue]:
                 field_path="numerical_policy.pump_curve_policy",
             )
         )
-    if not isinstance(validation, Mapping) or validation.get(
-        "validation_policy_version"
-    ) != "v4-lite-7":
+    expected_validation_policy = (
+        registration.runtime_adapter.validation_policy_version
+        if registration is not None and registration.runtime_adapter is not None
+        else None
+    )
+    if (
+        not isinstance(validation, Mapping)
+        or validation.get("validation_policy_version") != expected_validation_policy
+        or validation.get("capability_id") != capability_id
+    ):
         issues.append(
             _issue(
                 "D2_VALIDATION_POLICY_UNREGISTERED",
-                "native D1 v4 requires validation policy v4-lite-7",
+                "native v4 validation policy must match the explicit capability",
                 entity_type="validation_policy",
                 field_path="validation.validation_policy_version",
             )
@@ -325,11 +374,28 @@ def assess_native_v4_snapshot(payload: Mapping[str, Any]) -> NativeV4Assessment:
         if isinstance(structures, Mapping) and isinstance(structures.get("pumps"), list)
         else 0,
     }
+    selection = payload.get("solver_selection")
+    solver_id = (
+        str(selection.get("solver_id"))
+        if isinstance(selection, Mapping) and selection.get("solver_id") is not None
+        else D1_SOLVER_ID
+    )
+    capability_id = (
+        str(selection.get("capability_id"))
+        if isinstance(selection, Mapping) and selection.get("capability_id") is not None
+        else D1_CAPABILITY_ID
+    )
+    runtime_adapter_id = (
+        str(selection.get("runtime_adapter_id"))
+        if isinstance(selection, Mapping)
+        and selection.get("runtime_adapter_id") is not None
+        else D1_RUNTIME_ADAPTER_ID
+    )
     readiness = V4ReadinessResponse(
         ready=not errors and projection is not None,
-        solver_id=D1_SOLVER_ID,
-        capability_id=D1_CAPABILITY_ID,
-        runtime_adapter_id=D1_RUNTIME_ADAPTER_ID,
+        solver_id=solver_id,
+        capability_id=capability_id,
+        runtime_adapter_id=runtime_adapter_id,
         errors=errors,
         warnings=warnings,
         snapshot_summary=summary,
@@ -418,10 +484,15 @@ def _database_candidate(
     dispatch_plan_id: int,
     *,
     build_identity: RuntimeBuildIdentity,
+    capability_id: str,
 ) -> tuple[dict[str, Any] | None, list[V4ReadinessIssue]]:
     """Read only authoritative database rows and assemble one candidate snapshot."""
 
     issues: list[V4ReadinessIssue] = []
+    capability = resolve_capability(capability_id)
+    registration = resolve_solver(MODEL_INPUT_V4, capability_id=capability_id)
+    if registration.runtime_adapter is None:
+        raise ValueError("native-v4 capability has no registered runtime adapter")
     case = session.get(SimulationCase, case_id)
     if case is None:
         return None, [
@@ -840,9 +911,9 @@ def _database_candidate(
     candidate = {
         "schema_version": "dayu.model-input.v4",
         "solver_selection": {
-            "solver_id": D1_SOLVER_ID,
-            "capability_id": D1_CAPABILITY_ID,
-            "runtime_adapter_id": D1_RUNTIME_ADAPTER_ID,
+            "solver_id": registration.solver_id,
+            "capability_id": capability.capability_id,
+            "runtime_adapter_id": registration.runtime_adapter.runtime_adapter_id,
         },
         "dataset_version": {"id": dataset.id, "content_hash": dataset.content_hash},
         "simulation_case": {"id": case.id, "name": case.name},
@@ -949,12 +1020,18 @@ def _database_candidate(
         "control_plan": {
             "id": plan.id,
             "frozen_snapshot_hash": plan.frozen_snapshot_hash,
-            "policy_id": "d1-gate-pump-control-v1",
+            "policy_id": (
+                "d3a-1-gate-pump-control-v1"
+                if capability_id == D3A_1_CAPABILITY_ID
+                else "d1-gate-pump-control-v1"
+            ),
         },
         "numerical_policy": numerical,
         "validation": {
-            "validation_policy_version": "v4-lite-7",
-            "capability_id": D1_CAPABILITY_ID,
+            "validation_policy_version": (
+                registration.runtime_adapter.validation_policy_version
+            ),
+            "capability_id": capability.capability_id,
             "water_balance_tolerance": numerical.get("water_balance_tolerance")
             if isinstance(numerical, Mapping)
             else None,
@@ -964,12 +1041,12 @@ def _database_candidate(
             "canonicalization_id": CANONICALIZATION_ID,
             "registry_hash": registry_hash(),
         },
-        "capability_scope": list(D1_CAPABILITY.scope),
-        "capability_exclusions": list(D1_CAPABILITY.exclusions),
+        "capability_scope": list(capability.scope),
+        "capability_exclusions": list(capability.exclusions),
         "case_notes": list(case_config.get("case_notes", []))
         if isinstance(case_config.get("case_notes", []), list)
         else case_config.get("case_notes"),
-        "known_limitations": list(D1_KNOWN_LIMITATIONS),
+        "known_limitations": list(capability.warnings),
     }
     return candidate, issues
 
@@ -980,6 +1057,7 @@ def assess_database_case(
     dispatch_plan_id: int,
     *,
     build_identity: RuntimeBuildIdentity | None = None,
+    capability_id: str = D1_CAPABILITY_ID,
 ) -> NativeV4Assessment:
     """Build and preflight one database-backed candidate without persisting a task."""
 
@@ -989,15 +1067,27 @@ def assess_database_case(
         case_id,
         dispatch_plan_id,
         build_identity=runtime_identity,
+        capability_id=capability_id,
     )
     if candidate is None:
         errors = [item for item in database_issues if item.severity == "error"]
         warnings = [item for item in database_issues if item.severity == "warning"]
+        try:
+            registration = resolve_solver(MODEL_INPUT_V4, capability_id=capability_id)
+            adapter_id = (
+                registration.runtime_adapter.runtime_adapter_id
+                if registration.runtime_adapter is not None
+                else "unregistered"
+            )
+            solver_id = registration.solver_id
+        except HydraulicInputError:
+            solver_id = D1_SOLVER_ID
+            adapter_id = "unregistered"
         readiness = V4ReadinessResponse(
             ready=False,
-            solver_id=D1_SOLVER_ID,
-            capability_id=D1_CAPABILITY_ID,
-            runtime_adapter_id=D1_RUNTIME_ADAPTER_ID,
+            solver_id=solver_id,
+            capability_id=capability_id,
+            runtime_adapter_id=adapter_id,
             errors=errors,
             warnings=warnings,
             snapshot_summary={"simulation_case_id": case_id},
@@ -1032,6 +1122,7 @@ def freeze_v4_task_input(
     dispatch_plan_id: int,
     *,
     build_identity: RuntimeBuildIdentity,
+    capability_id: str,
 ) -> tuple[dict[str, Any], str, dict[str, Any]]:
     """Freeze one ready v4 source plus its independently recomputable projection manifest."""
 
@@ -1040,6 +1131,7 @@ def freeze_v4_task_input(
         case_id,
         dispatch_plan_id,
         build_identity=build_identity,
+        capability_id=capability_id,
     )
     if not assessment.readiness.ready or assessment.projection is None:
         details = "; ".join(
@@ -1067,8 +1159,8 @@ def preview_from_assessment(assessment: NativeV4Assessment) -> V4PreviewResponse
     numerical = snapshot.get("numerical_policy")
     return V4PreviewResponse(
         schema_version=str(snapshot.get("schema_version", "dayu.model-input.v4")),
-        solver_id=D1_SOLVER_ID,
-        capability_id=D1_CAPABILITY_ID,
+        solver_id=assessment.readiness.solver_id,
+        capability_id=assessment.readiness.capability_id,
         dataset_version_id=assessment.readiness.snapshot_summary.get("dataset_version_id"),
         simulation_case_id=assessment.readiness.snapshot_summary.get("simulation_case_id"),
         branch=dict(branches[0]) if branches and isinstance(branches[0], Mapping) else None,
@@ -1100,16 +1192,16 @@ def preview_from_assessment(assessment: NativeV4Assessment) -> V4PreviewResponse
         readiness=assessment.readiness,
         capability_scope=[str(item) for item in snapshot.get("capability_scope", [])]
         if isinstance(snapshot.get("capability_scope"), list)
-        else list(D1_CAPABILITY.scope),
+        else list(resolve_capability(assessment.readiness.capability_id).scope),
         capability_exclusions=[
             str(item) for item in snapshot.get("capability_exclusions", [])
         ]
         if isinstance(snapshot.get("capability_exclusions"), list)
-        else list(D1_CAPABILITY.exclusions),
+        else list(resolve_capability(assessment.readiness.capability_id).exclusions),
         case_notes=[str(item) for item in snapshot.get("case_notes", [])]
         if isinstance(snapshot.get("case_notes"), list)
         else [],
         known_limitations=[str(item) for item in snapshot.get("known_limitations", [])]
         if isinstance(snapshot.get("known_limitations"), list)
-        else list(D1_KNOWN_LIMITATIONS),
+        else list(resolve_capability(assessment.readiness.capability_id).warnings),
     )

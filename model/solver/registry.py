@@ -23,6 +23,7 @@ D3A_2_CAPABILITY_ID: Final = "single-branch-gate-pump-manning-slope-v1"
 D3A_3_CAPABILITY_ID: Final = "single-branch-gate-pump-engineering-profile-v1"
 V3_RUNTIME_ADAPTER_ID: Final = "v3-to-v2-v1"
 D1_RUNTIME_ADAPTER_ID: Final = "v4-to-v4-lite-7-d1-v1"
+D3A_1_RUNTIME_ADAPTER_ID: Final = "v4-to-d3a-1-v1"
 REGISTRY_SCHEMA_VERSION: Final = "dayu.solver-registry.v1"
 CAPABILITY_CATALOG_SCHEMA_VERSION: Final = "dayu.solver-capability-catalog.v1"
 
@@ -111,6 +112,38 @@ D1_KNOWN_LIMITATIONS: Final = (
     "not calibrated and not approved for production water decisions",
 )
 
+D3A_1_CAPABILITY = SolverCapabilityManifest(
+    capability_id=D3A_1_CAPABILITY_ID,
+    scope=(
+        "single-branch",
+        "fully-wet",
+        "forward-strictly-subcritical",
+        "flat-bed",
+        "identical-profile",
+        "positive-section-effective-manning",
+        "one-completed-interface-gate",
+        "one-external-qh-qeta-pump",
+        "validation-only",
+    ),
+    exclusions=(
+        "nonzero-bed-slope",
+        "nonidentical-profile",
+        "lateral-compound-roughness",
+        "multi-branch-or-junction",
+        "wetting-drying",
+        "reverse-or-supercritical-flow",
+        "calibration-or-production-decision",
+    ),
+)
+
+D3A_1_KNOWN_LIMITATIONS: Final = (
+    "single Branch, fully wet, forward strictly subcritical validation only",
+    "flat bed and identical Profile geometry",
+    "one effective Manning scalar per Section/cell in (0, 0.10]",
+    "one completed-interface Gate and one external Q-H/Q-efficiency Pump",
+    "not calibrated and not approved for production water decisions",
+)
+
 
 _CAPABILITY_CATALOG: tuple[CapabilityCatalogEntry, ...] = (
     CapabilityCatalogEntry(
@@ -126,33 +159,12 @@ _CAPABILITY_CATALOG: tuple[CapabilityCatalogEntry, ...] = (
     CapabilityCatalogEntry(
         capability_id=D3A_1_CAPABILITY_ID,
         display_name="D3A-1 Manning",
-        status="blocked",
+        status="supported",
         validation_policy_version="d3a-1-v1",
-        runtime_adapter_id="v4-to-d3a-1-v1",
-        scope=(
-            "single-branch",
-            "fully-wet",
-            "forward-strictly-subcritical",
-            "flat-bed",
-            "identical-profile",
-            "positive-section-effective-manning",
-            "one-completed-interface-gate",
-            "one-external-qh-qeta-pump",
-            "validation-only",
-        ),
-        exclusions=(
-            "nonzero-bed-slope",
-            "nonidentical-profile",
-            "lateral-compound-roughness",
-            "multi-branch-or-junction",
-            "wetting-drying",
-            "reverse-or-supercritical-flow",
-            "calibration-or-production-decision",
-        ),
-        warnings=(
-            "blocked until M1/M2, refinement, Gate/Pump, regression, and Hosted gates pass",
-            "Manning is one effective scalar per Section/cell, not lateral zoning",
-        ),
+        runtime_adapter_id=D3A_1_RUNTIME_ADAPTER_ID,
+        scope=D3A_1_CAPABILITY.scope,
+        exclusions=D3A_1_CAPABILITY.exclusions,
+        warnings=D3A_1_KNOWN_LIMITATIONS,
     ),
     CapabilityCatalogEntry(
         capability_id=D3A_2_CAPABILITY_ID,
@@ -256,6 +268,19 @@ _REGISTRATIONS: tuple[SolverRegistration, ...] = (
             validation_policy_version="v4-lite-7",
         ),
     ),
+    SolverRegistration(
+        input_schema_version=MODEL_INPUT_V4,
+        solver_id=D1_SOLVER_ID,
+        result_schema_version="dayu.hydraulic-result.v3",
+        engine_route="finite-volume-d3a-1-v4",
+        capability=D3A_1_CAPABILITY,
+        runtime_adapter=RuntimeAdapterRegistration(
+            runtime_adapter_id=D3A_1_RUNTIME_ADAPTER_ID,
+            source_schema_version=MODEL_INPUT_V4,
+            runtime_schema_version="dayu.model-input.v4-lite",
+            validation_policy_version="d3a-1-v1",
+        ),
+    ),
 )
 
 
@@ -307,6 +332,7 @@ def task_solver_provenance(
     input_schema_version: str,
     *,
     solver_id: str | None = None,
+    capability_id: str | None = None,
 ) -> dict[str, str | None]:
     """Return the complete Registry-owned identity persisted on a task row.
 
@@ -315,7 +341,11 @@ def task_solver_provenance(
     Registry hash while preserving its independently frozen input snapshot.
     """
 
-    registration = resolve_solver(input_schema_version, solver_id=solver_id)
+    registration = resolve_solver(
+        input_schema_version,
+        solver_id=solver_id,
+        capability_id=capability_id,
+    )
     return {
         "solver_id": registration.solver_id,
         "capability_id": (
@@ -342,22 +372,47 @@ def resolve_solver(
 ) -> SolverRegistration:
     """Resolve and verify one route, rejecting every unknown or mismatched identity."""
 
-    registration = next(
-        (
-            item
-            for item in _REGISTRATIONS
-            if item.input_schema_version == input_schema_version
-        ),
-        None,
+    candidates = tuple(
+        item
+        for item in _REGISTRATIONS
+        if item.input_schema_version == input_schema_version
     )
-    if registration is None:
+    if not candidates:
         raise HydraulicInputError(
             f"unregistered model input schema: {input_schema_version!r}"
         )
-    if solver_id is not None and solver_id != registration.solver_id:
-        raise HydraulicInputError(
-            f"solver {solver_id!r} is not registered for {input_schema_version}"
+    if solver_id is not None:
+        candidates = tuple(item for item in candidates if item.solver_id == solver_id)
+    if capability_id is not None:
+        candidates = tuple(
+            item
+            for item in candidates
+            if item.capability is not None
+            and item.capability.capability_id == capability_id
         )
+    if runtime_adapter_id is not None:
+        candidates = tuple(
+            item
+            for item in candidates
+            if item.runtime_adapter is not None
+            and item.runtime_adapter.runtime_adapter_id == runtime_adapter_id
+        )
+    if not candidates:
+        label = (
+            "runtime adapter"
+            if runtime_adapter_id is not None
+            else "capability"
+            if capability_id is not None
+            else "solver"
+        )
+        raise HydraulicInputError(
+            f"{label} selection is not registered for {input_schema_version}"
+        )
+    if len(candidates) != 1:
+        raise HydraulicInputError(
+            f"{input_schema_version} requires an explicit unambiguous capability_id"
+        )
+    registration = candidates[0]
     expected_capability = (
         registration.capability.capability_id
         if registration.capability is not None

@@ -23,7 +23,7 @@ from app.model_engine.v4_schemas import (
     V4ShadowSectionDelta,
 )
 from app.model_engine.v4_service import assess_database_case
-from model.solver.registry import D1_SOLVER_ID, LEGACY_NETWORK_SOLVER
+from model.solver.registry import D1_CAPABILITY_ID, D1_SOLVER_ID, LEGACY_NETWORK_SOLVER
 
 
 _DISCLAIMER = (
@@ -73,6 +73,7 @@ def create_shadow_pair(session: Session, payload: V4ShadowCreate) -> V4ShadowPai
                 case_id=payload.case_id,
                 input_schema_version="dayu.model-input.v4",
                 solver_id=D1_SOLVER_ID,
+                capability_id=D1_CAPABILITY_ID,
                 dispatch_plan_id=payload.dispatch_plan_id,
                 execution_mode="shadow",
                 storage_level="full",

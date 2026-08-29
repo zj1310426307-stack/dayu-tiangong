@@ -32,8 +32,11 @@ from model.solver.registry import (
     D1_KNOWN_LIMITATIONS,
     D1_RUNTIME_ADAPTER_ID,
     D1_SOLVER_ID,
+    D3A_1_CAPABILITY_ID,
+    D3A_1_RUNTIME_ADAPTER_ID,
     MODEL_INPUT_V4,
     registry_hash,
+    resolve_capability,
     resolve_solver,
 )
 
@@ -54,11 +57,11 @@ class StrictPlatformModel(BaseModel):
 
 
 class SolverSelection(StrictPlatformModel):
-    """Select the only D2 native v4 solver/capability/adapter tuple."""
+    """Select one explicit native-v4 capability/adapter tuple."""
 
     solver_id: Literal[D1_SOLVER_ID]
-    capability_id: Literal[D1_CAPABILITY_ID]
-    runtime_adapter_id: Literal[D1_RUNTIME_ADAPTER_ID]
+    capability_id: Literal[D1_CAPABILITY_ID, D3A_1_CAPABILITY_ID]
+    runtime_adapter_id: Literal[D1_RUNTIME_ADAPTER_ID, D3A_1_RUNTIME_ADAPTER_ID]
 
 
 class SimulationCaseIdentity(StrictPlatformModel):
@@ -109,14 +112,14 @@ class ControlPlanIdentity(StrictPlatformModel):
 
     id: PositiveId
     frozen_snapshot_hash: Sha256
-    policy_id: Literal["d1-gate-pump-control-v1"]
+    policy_id: Literal["d1-gate-pump-control-v1", "d3a-1-gate-pump-control-v1"]
 
 
 class ValidationPolicy(StrictPlatformModel):
-    """Freeze the D1 validation policy separately from numerical settings."""
+    """Freeze the selected validation policy separately from numerical settings."""
 
-    validation_policy_version: Literal["v4-lite-7"]
-    capability_id: Literal[D1_CAPABILITY_ID]
+    validation_policy_version: Literal["v4-lite-7", "d3a-1-v1"]
+    capability_id: Literal[D1_CAPABILITY_ID, D3A_1_CAPABILITY_ID]
     water_balance_tolerance: Annotated[float, Field(strict=True, gt=0.0, le=1.0e-10)]
 
 
@@ -158,7 +161,7 @@ class PlatformProvenance(StrictPlatformModel):
 
 
 class ModelInputV4(StrictPlatformModel):
-    """Authoritative D2 platform input projected only through the registered D1 adapter."""
+    """Authoritative platform input projected through one explicit registered adapter."""
 
     schema_version: Literal[MODEL_INPUT_V4]
     solver_selection: SolverSelection
@@ -192,10 +195,10 @@ class ModelInputV4(StrictPlatformModel):
     )
 
     @model_validator(mode="after")
-    def validate_native_d1_scope(self) -> Self:
+    def validate_native_capability_scope(self) -> Self:
         """Close cross-object identities before a runtime projection can be produced."""
 
-        resolve_solver(
+        registration = resolve_solver(
             self.schema_version,
             solver_id=self.solver_selection.solver_id,
             capability_id=self.solver_selection.capability_id,
@@ -205,21 +208,35 @@ class ModelInputV4(StrictPlatformModel):
             raise ValueError("platform solver registry hash does not match this runtime")
         if self.validation.capability_id != self.solver_selection.capability_id:
             raise ValueError("validation capability does not match solver selection")
+        assert registration.runtime_adapter is not None
+        if (
+            self.validation.validation_policy_version
+            != registration.runtime_adapter.validation_policy_version
+        ):
+            raise ValueError("validation policy does not match solver selection")
         if self.validation.water_balance_tolerance != self.numerical_policy.water_balance_tolerance:
             raise ValueError("validation and numerical water-balance tolerances disagree")
-        if self.capability_scope != D1_CAPABILITY.scope:
+        entry = resolve_capability(self.solver_selection.capability_id)
+        if self.capability_scope != entry.scope:
             raise ValueError("capability scope does not match the solver registry")
-        if self.capability_exclusions != D1_CAPABILITY.exclusions:
+        if self.capability_exclusions != entry.exclusions:
             raise ValueError("capability exclusions do not match the solver registry")
-        if self.known_limitations != D1_KNOWN_LIMITATIONS:
+        if self.known_limitations != entry.warnings:
             raise ValueError("known limitations do not match the solver registry")
+        expected_control_policy = (
+            "d3a-1-gate-pump-control-v1"
+            if self.solver_selection.capability_id == D3A_1_CAPABILITY_ID
+            else "d1-gate-pump-control-v1"
+        )
+        if self.control_plan.policy_id != expected_control_policy:
+            raise ValueError("control-plan policy does not match solver capability")
         branch = self.branches[0]
         if branch.network_id != self.network.id:
             raise ValueError("Branch does not belong to the selected hydraulic Network")
         if any(item.branch_id != branch.branch_id for item in self.reaches):
-            raise ValueError("all reaches must belong to the single D1 Branch")
+            raise ValueError("all reaches must belong to the single native-v4 Branch")
         if any(item.branch_id != branch.branch_id for item in self.cross_sections):
-            raise ValueError("all cross sections must belong to the single D1 Branch")
+            raise ValueError("all cross sections must belong to the single native-v4 Branch")
         section_ids = {item.section_id for item in self.cross_sections}
         if len(section_ids) != len(self.cross_sections):
             raise ValueError("cross-section identities must be unique")
@@ -234,11 +251,11 @@ class ModelInputV4(StrictPlatformModel):
         if profile_pairs != section_pairs:
             raise ValueError("Profile identities do not match cross-section geometry")
         if not isinstance(self.initial_state, BySectionInitialState):
-            raise ValueError("native D1 v4 requires an explicit by-section initial state")
+            raise ValueError("native v4 requires an explicit by-section initial state")
         if len(self.structures.gates) != 1 or len(self.structures.pumps) != 1:
-            raise ValueError("native D1 v4 requires exactly one Gate and one Pump")
+            raise ValueError("native v4 requires exactly one Gate and one Pump")
         if not isinstance(self.structures.pumps[0], HydraulicExternalPumpInput):
-            raise ValueError("native D1 v4 requires one hydraulic external Q-H Pump")
+            raise ValueError("native v4 requires one hydraulic external Q-H Pump")
         return self
 
 

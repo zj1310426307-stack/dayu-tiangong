@@ -1028,6 +1028,8 @@ class MvpDiagnostics(StrictResultModel):
     retry_count: NonNegativeInt
     step_count: PositiveInt
     diagnostic_flags: tuple[NonBlankText, ...]
+    maximum_friction_number: NonNegativeFinite | None = None
+    friction_retry_count: NonNegativeInt | None = None
 
     @model_validator(mode="after")
     def validate_flags(self) -> Self:
@@ -1035,7 +1037,21 @@ class MvpDiagnostics(StrictResultModel):
 
         if len(self.diagnostic_flags) != len(set(self.diagnostic_flags)):
             raise ValueError("diagnostic_flags must be unique")
+        if (self.maximum_friction_number is None) != (
+            self.friction_retry_count is None
+        ):
+            raise ValueError("Manning diagnostics must be exposed as one complete pair")
         return self
+
+    @model_serializer(mode="wrap")
+    def serialize_optional_manning_diagnostics(self, handler: Any) -> dict[str, Any]:
+        """Preserve frozen pre-D3A result shapes when Manning evidence is absent."""
+
+        payload = handler(self)
+        if self.maximum_friction_number is None:
+            payload.pop("maximum_friction_number", None)
+            payload.pop("friction_retry_count", None)
+        return payload
 
 
 class MvpResultProvenance(StrictResultModel):
@@ -1057,6 +1073,7 @@ class MvpResultProvenance(StrictResultModel):
         "v4-lite-5",
         "v4-lite-6",
         "v4-lite-7",
+        "d3a-1-v1",
     ]
     solver_policy_hash: Sha256 | None = None
 
@@ -1136,14 +1153,14 @@ class MvpHydraulicResult(StrictResultModel):
             version == "v4-lite-5"
         )
         expects_controlled_gate_coupling = (
-            version in {"v4-lite-6", "v4-lite-7"}
+            version in {"v4-lite-6", "v4-lite-7", "d3a-1-v1"}
         )
-        expects_pump_coupling = version == "v4-lite-7"
-        if version == "v4-lite-7" and any(
+        expects_pump_coupling = version in {"v4-lite-7", "d3a-1-v1"}
+        if version in {"v4-lite-7", "d3a-1-v1"} and any(
             section.volume_m3 is None for section in self.sections
         ):
-            raise ValueError("v4-lite-7 requires section control-volume series")
-        if version != "v4-lite-7" and any(
+            raise ValueError(f"{version} requires section control-volume series")
+        if version not in {"v4-lite-7", "d3a-1-v1"} and any(
             section.volume_m3 is not None for section in self.sections
         ):
             raise ValueError("pre-v7 section results must not add volume series")
@@ -1186,9 +1203,9 @@ class MvpHydraulicResult(StrictResultModel):
             if len(self.pumps) != 1 or not isinstance(
                 self.pumps[0], MvpHydraulicPumpSeries
             ):
-                raise ValueError("v4-lite-7 requires one hydraulic Pump result")
+                raise ValueError(f"{version} requires one hydraulic Pump result")
             if len(self.pump_coupling_evidence) != 1:
-                raise ValueError("v4-lite-7 requires one Pump coupling evidence object")
+                raise ValueError(f"{version} requires one Pump coupling evidence object")
             pump_evidence = self.pump_coupling_evidence[0]
             pump_series = self.pumps[0]
             if pump_evidence.pump_id != pump_series.pump_id:
@@ -1236,7 +1253,7 @@ class MvpHydraulicResult(StrictResultModel):
                 raise ValueError("v4-lite-4 control events require bracket evidence")
             if not expects_bracket_evidence and event.has_bracket_evidence:
                 if not (
-                    version == "v4-lite-7"
+                    version in {"v4-lite-7", "d3a-1-v1"}
                     and event.structure_type == "gate"
                     and event.action == "open"
                 ):
@@ -1244,21 +1261,21 @@ class MvpHydraulicResult(StrictResultModel):
                         "pre-v4 control events must not add bracket evidence"
                     )
             if (
-                version == "v4-lite-7"
+                version in {"v4-lite-7", "d3a-1-v1"}
                 and event.structure_type == "gate"
                 and not event.has_bracket_evidence
             ):
-                raise ValueError("v4-lite-7 Gate event requires bracket evidence")
+                raise ValueError(f"{version} Gate event requires bracket evidence")
             if (
-                version == "v4-lite-7"
+                version in {"v4-lite-7", "d3a-1-v1"}
                 and event.structure_type == "pump"
                 and event.has_bracket_evidence
             ):
-                raise ValueError("v4-lite-7 Pump hysteresis event cannot use a bracket")
+                raise ValueError(f"{version} Pump hysteresis event cannot use a bracket")
         event_keys = tuple(
             (item.structure_type, item.structure_id) for item in self.control_events
         )
-        if version == "v4-lite-7":
+        if version in {"v4-lite-7", "d3a-1-v1"}:
             _require_unique(
                 (
                     (item.time, item.structure_type, item.structure_id, item.action)
@@ -1272,6 +1289,19 @@ class MvpHydraulicResult(StrictResultModel):
             _require_unique(gate_event_keys, "D1 one-shot Gate event identity")
         else:
             _require_unique(event_keys, "one-shot control event structure identity")
+        if version == "d3a-1-v1":
+            if (
+                self.diagnostics.maximum_friction_number is None
+                or self.diagnostics.friction_retry_count is None
+                or self.diagnostics.maximum_friction_number <= 0.0
+                or self.diagnostics.maximum_friction_number > 0.1 + 1.0e-12
+            ):
+                raise ValueError("d3a-1-v1 requires bounded Manning diagnostics")
+        elif (
+            self.diagnostics.maximum_friction_number is not None
+            or self.diagnostics.friction_retry_count is not None
+        ):
+            raise ValueError("pre-D3A result must not expose Manning diagnostics")
         event_key_set = set(event_keys)
         gate_ids = {item.gate_id for item in self.gates}
         pump_ids = {item.pump_id for item in self.pumps}

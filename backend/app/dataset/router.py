@@ -1,6 +1,6 @@
 """数据版本、模型参数、边界条件和计算方案 HTTP 路由。"""
 
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
@@ -27,6 +27,7 @@ from app.dataset.schemas import (
     SimulationCaseUpdate,
 )
 from app.gis.models import BoundaryCondition, DatasetVersion, ModelParameter, SimulationCase
+from model.solver.registry import D1_CAPABILITY_ID, D3A_1_CAPABILITY_ID
 
 
 router = APIRouter(prefix="/api/v1/model-data", tags=["model-data"])
@@ -219,10 +220,18 @@ def read_model_input_v4_readiness(
     case_id: int,
     session: SessionDependency,
     dispatch_plan_id: int = Query(gt=0),
+    capability_id: Literal[D1_CAPABILITY_ID, D3A_1_CAPABILITY_ID] = Query(
+        default=D1_CAPABILITY_ID
+    ),
 ) -> V4ReadinessResponse:
     """Return structured fail-closed findings without creating or freezing a task."""
 
-    return assess_database_case(session, case_id, dispatch_plan_id).readiness
+    return assess_database_case(
+        session,
+        case_id,
+        dispatch_plan_id,
+        capability_id=capability_id,
+    ).readiness
 
 
 @router.get(
@@ -234,9 +243,17 @@ def read_model_input_v4_preview(
     case_id: int,
     session: SessionDependency,
     dispatch_plan_id: int = Query(gt=0),
+    capability_id: Literal[D1_CAPABILITY_ID, D3A_1_CAPABILITY_ID] = Query(
+        default=D1_CAPABILITY_ID
+    ),
 ) -> V4PreviewResponse:
     """Return a bounded summary; the complete snapshot remains on the task audit route."""
 
     return preview_from_assessment(
-        assess_database_case(session, case_id, dispatch_plan_id)
+        assess_database_case(
+            session,
+            case_id,
+            dispatch_plan_id,
+            capability_id=capability_id,
+        )
     )

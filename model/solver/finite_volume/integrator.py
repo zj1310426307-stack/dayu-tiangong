@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Mapping, Sequence
 
 from model.core.callbacks import check_cancellation
@@ -36,6 +36,10 @@ from model.solver.finite_volume.structures import (
 )
 
 _EPSILON = 1.0e-12
+
+
+class FrictionStabilityError(StabilityError):
+    """Request a smaller step when the capability-owned friction gate fails."""
 
 
 def _committed_structure_state(
@@ -108,6 +112,8 @@ class StepResult:
     maximum_cfl: float
     budget: StepBudget
     diagnostic_flags: tuple[str, ...] = ()
+    maximum_friction_number: float = 0.0
+    friction_retry_count: int = 0
 
 
 def estimate_cfl_time_step(
@@ -608,6 +614,7 @@ def ssp_rk2_step(
         "hydrostatic-reconstruction-v1",
         "hydraulic-function-linear-face-v1",
     ] = "hydrostatic-reconstruction-v1",
+    maximum_friction_number: float | None = None,
     cancel_check: object | None = None,
 ) -> StepResult:
     """Advance one SSP-RK2 step, recomputing all stage-dependent inputs."""
@@ -626,8 +633,20 @@ def ssp_rk2_step(
         scheme=scheme,
         equilibrium_reference=equilibrium_reference,
         geometry_source_mode=geometry_source_mode,
+        capture_friction_evidence=maximum_friction_number is not None,
         cancel_check=cancel_check,
     )
+    first_friction_number = max(
+        (item.friction_number for item in first.friction_evidence),
+        default=0.0,
+    )
+    if (
+        maximum_friction_number is not None
+        and first_friction_number > maximum_friction_number + 1.0e-12
+    ):
+        raise FrictionStabilityError(
+            "Manning stage exceeds maximum_friction_number"
+        )
     stage_cfl = cfl_number_for_step(mesh=mesh, state=first.state, dt=dt)
     maximum_cfl = max(initial_cfl, stage_cfl)
     if maximum_cfl > cfl_limit + 1.0e-12:
@@ -643,8 +662,24 @@ def ssp_rk2_step(
         scheme=scheme,
         equilibrium_reference=equilibrium_reference,
         geometry_source_mode=geometry_source_mode,
+        capture_friction_evidence=maximum_friction_number is not None,
         cancel_check=cancel_check,
     )
+    second_friction_number = max(
+        (item.friction_number for item in second.friction_evidence),
+        default=0.0,
+    )
+    accepted_friction_number = max(
+        first_friction_number,
+        second_friction_number,
+    )
+    if (
+        maximum_friction_number is not None
+        and accepted_friction_number > maximum_friction_number + 1.0e-12
+    ):
+        raise FrictionStabilityError(
+            "Manning stage exceeds maximum_friction_number"
+        )
     final_area = tuple(
         0.5 * (original + evolved)
         for original, evolved in zip(state.area, second.state.area)
@@ -740,6 +775,7 @@ def ssp_rk2_step(
             pump_stage_flows=first.budget.pump_flows + second.budget.pump_flows,
         ),
         diagnostic_flags=flags,
+        maximum_friction_number=accepted_friction_number,
     )
 
 
@@ -761,6 +797,7 @@ def advance_with_retries(
         "hydrostatic-reconstruction-v1",
         "hydraulic-function-linear-face-v1",
     ] = "hydrostatic-reconstruction-v1",
+    maximum_friction_number: float | None = None,
     cancel_check: object | None = None,
 ) -> StepResult:
     """Reduce to the CFL step and retry rejected positivity/stability attempts."""
@@ -776,12 +813,13 @@ def advance_with_retries(
     if dt < requested_dt - 1.0e-12:
         working = working.with_diagnostics(working.diagnostics.reduced_time_step())
     retries = 0
+    friction_retries = 0
     while True:
         check_cancellation(cancel_check, "finite_volume_trial")
         if dt < minimum_dt - 1.0e-15:
             raise StabilityError("required retry time step is below minimum_dt")
         try:
-            return ssp_rk2_step(
+            result = ssp_rk2_step(
                 mesh=mesh,
                 state=working,
                 dt=dt,
@@ -793,8 +831,17 @@ def advance_with_retries(
                 scheme=scheme,
                 equilibrium_reference=equilibrium_reference,
                 geometry_source_mode=geometry_source_mode,
+                maximum_friction_number=maximum_friction_number,
                 cancel_check=cancel_check,
             )
+            return replace(result, friction_retry_count=friction_retries)
+        except FrictionStabilityError:
+            friction_retries += 1
+            if retries >= maximum_retries:
+                raise StabilityError("finite-volume step exhausted retry budget")
+            retries += 1
+            working = working.with_diagnostics(working.diagnostics.rejected_step())
+            dt *= 0.5
         except (NumericalStateError, StabilityError):
             if retries >= maximum_retries:
                 raise StabilityError("finite-volume step exhausted retry budget")

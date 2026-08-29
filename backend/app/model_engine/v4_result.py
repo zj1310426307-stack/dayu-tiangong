@@ -39,7 +39,7 @@ from model.adapters.v4 import V4RuntimeProjection
 from model.build_identity import RuntimeBuildIdentity, current_runtime_build_identity
 from model.core.callbacks import check_cancellation
 from model.provenance import CANONICALIZATION_ID, canonical_json
-from model.solver.registry import D1_CAPABILITY_ID, D1_RUNTIME_ADAPTER_ID, D1_SOLVER_ID
+from model.solver.registry import D3A_1_CAPABILITY_ID
 
 
 RESULT_SCHEMA_VERSION = "dayu.hydraulic-result.v3"
@@ -159,6 +159,23 @@ def validate_v4_result(
         raise ValueError("native v4 event times must be monotonic")
     diagnostics = result.get("diagnostics")
     step_count = int(diagnostics.get("step_count", -1)) if isinstance(diagnostics, Mapping) else -1
+    if projection.source.solver_selection.capability_id == D3A_1_CAPABILITY_ID:
+        maximum_friction = (
+            float(diagnostics.get("maximum_friction_number", math.inf))
+            if isinstance(diagnostics, Mapping)
+            else math.inf
+        )
+        friction_retries = (
+            diagnostics.get("friction_retry_count")
+            if isinstance(diagnostics, Mapping)
+            else None
+        )
+        if (
+            not 0.0 < maximum_friction <= 0.1 + 1.0e-12
+            or not isinstance(friction_retries, int)
+            or friction_retries < 0
+        ):
+            raise ValueError("D3A-1 Manning diagnostics failed their frozen gate")
     gate_evidence = result.get("controlled_gate_coupling_evidence")
     pump_evidence = result.get("pump_coupling_evidence")
     if not isinstance(gate_evidence, list) or len(gate_evidence) != 1:
@@ -261,9 +278,9 @@ def _task_diagnostics(
     return {
         "input_schema_version": "dayu.model-input.v4",
         "result_schema_version": RESULT_SCHEMA_VERSION,
-        "solver_id": D1_SOLVER_ID,
-        "capability_id": D1_CAPABILITY_ID,
-        "runtime_adapter_id": D1_RUNTIME_ADAPTER_ID,
+        "solver_id": task.solver_id,
+        "capability_id": task.capability_id,
+        "runtime_adapter_id": task.runtime_adapter_id,
         "input_snapshot_hash": task.input_snapshot_hash,
         "runtime_projection_hash": task.runtime_projection_hash,
         "mesh_hash": task.mesh_hash,

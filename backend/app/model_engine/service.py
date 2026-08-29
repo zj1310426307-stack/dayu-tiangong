@@ -304,6 +304,7 @@ def build_task_entity(session: Session, payload: SimulationTaskCreate) -> Simula
             "case_id",
             "input_schema_version",
             "solver_id",
+            "capability_id",
             "dispatch_plan_id",
             "execution_mode",
         },
@@ -318,14 +319,17 @@ def build_task_entity(session: Session, payload: SimulationTaskCreate) -> Simula
         task_provenance = task_solver_provenance(
             payload.input_schema_version,
             solver_id=payload.solver_id,
+            capability_id=payload.capability_id,
         )
         if payload.input_schema_version == "dayu.model-input.v4":
             assert payload.dispatch_plan_id is not None
+            assert payload.capability_id is not None
             snapshot, digest, projection = freeze_v4_task_input(
                 session,
                 payload.case_id,
                 payload.dispatch_plan_id,
                 build_identity=build_identity,
+                capability_id=payload.capability_id,
             )
         else:
             snapshot, digest = freeze_task_input(

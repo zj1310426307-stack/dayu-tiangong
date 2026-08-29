@@ -58,6 +58,8 @@ import { useDatasetVersion } from '../../context/DatasetVersionContext';
 
 const { Paragraph, Text, Title } = Typography;
 const D1_SOLVER_ID = 'saint-venant-fv-hll-ssp-rk2-d1-v1';
+const D1_CAPABILITY_ID = 'single-branch-gate-external-pump-d1-v1';
+const D3A_1_CAPABILITY_ID = 'single-branch-gate-pump-manning-v1';
 const RETRY_BLOCKED_ARTIFACT_STATUSES = new Set([
   'prepared',
   'publishing',
@@ -106,6 +108,7 @@ export function HydraulicConfigPage() {
   const schemaVersion = Form.useWatch('input_schema_version', form) ?? 'dayu.model-input.v3';
   const selectedCaseId = Form.useWatch('case_id', form);
   const selectedPlanId = Form.useWatch('dispatch_plan_id', form);
+  const selectedCapabilityId = Form.useWatch('capability_id', form) ?? D1_CAPABILITY_ID;
   const [cases, setCases] = useState<Array<{ id: number; name: string }>>([]);
   const [plans, setPlans] = useState<DispatchPlanRecord[]>([]);
   const [readiness, setReadiness] = useState<V4ReadinessResponse>();
@@ -141,14 +144,14 @@ export function HydraulicConfigPage() {
     if (schemaVersion !== 'dayu.model-input.v4' || !selectedCaseId || !selectedPlanId) return;
     let cancelled = false;
     setReadinessLoading(true);
-    void getModelInputV4Readiness(selectedCaseId, selectedPlanId)
+    void getModelInputV4Readiness(selectedCaseId, selectedPlanId, selectedCapabilityId)
       .then((value) => { if (!cancelled) setReadiness(value); })
       .catch((reason: unknown) => {
         if (!cancelled) setError(reason instanceof Error ? reason.message : 'v4 readiness 检查失败');
       })
       .finally(() => { if (!cancelled) setReadinessLoading(false); });
     return () => { cancelled = true; };
-  }, [schemaVersion, selectedCaseId, selectedPlanId]);
+  }, [schemaVersion, selectedCaseId, selectedPlanId, selectedCapabilityId]);
 
   const submit = async (values: SimulationTaskCreate) => {
     setSubmitting(true);
@@ -159,11 +162,12 @@ export function HydraulicConfigPage() {
             case_id: values.case_id,
             input_schema_version: 'dayu.model-input.v4',
             solver_id: D1_SOLVER_ID,
+            capability_id: selectedCapabilityId,
             dispatch_plan_id: values.dispatch_plan_id,
             execution_mode: 'validation',
             storage_level: values.storage_level ?? 'full',
           }
-        : { ...values, input_schema_version: 'dayu.model-input.v3', dispatch_plan_id: undefined };
+        : { ...values, input_schema_version: 'dayu.model-input.v3', dispatch_plan_id: undefined, capability_id: undefined };
       const created = await createHydraulicTask(body);
       await enqueueHydraulicTask(created.id);
       message.success(`任务 #${created.id} 已进入 Celery/Redis 队列`);
@@ -200,6 +204,7 @@ export function HydraulicConfigPage() {
           initialValues={{
             input_schema_version: 'dayu.model-input.v3',
             storage_level: 'full',
+            capability_id: D1_CAPABILITY_ID,
             duration_seconds: 3600,
             time_step_seconds: 60,
             output_interval_seconds: 300,
@@ -215,7 +220,7 @@ export function HydraulicConfigPage() {
               <Form.Item name="input_schema_version" label="求解器路线" rules={[{ required: true }]}>
                 <Select options={[
                   { value: 'dayu.model-input.v3', label: 'Legacy v3 · 河网连续性/Manning' },
-                  { value: 'dayu.model-input.v4', label: 'Saint-Venant D1 v4（受限验证）' },
+                  { value: 'dayu.model-input.v4', label: 'Saint-Venant native v4（显式能力）' },
                 ]} />
               </Form.Item>
             </Col>
@@ -227,6 +232,18 @@ export function HydraulicConfigPage() {
                 />
               </Form.Item>
             </Col>
+            {schemaVersion === 'dayu.model-input.v4' && (
+              <Col xs={24} md={12}>
+                <Form.Item name="capability_id" label="科学能力" rules={[{ required: true, message: '请选择显式能力' }]}>
+                  <Select options={[
+                    { value: D1_CAPABILITY_ID, label: 'D1 validation · n=0' },
+                    { value: D3A_1_CAPABILITY_ID, label: 'D3A-1 Manning · 0<n≤0.10' },
+                    { value: 'single-branch-gate-pump-manning-slope-v1', label: 'D3A-2 Manning + Slope · 未解锁', disabled: true },
+                    { value: 'single-branch-gate-pump-engineering-profile-v1', label: 'D3A-3 Engineering Profiles · 未解锁', disabled: true },
+                  ]} />
+                </Form.Item>
+              </Col>
+            )}
             {schemaVersion === 'dayu.model-input.v4' && (
               <Col xs={24} md={12}>
                 <Form.Item name="dispatch_plan_id" label="冻结调度方案" rules={[{ required: true, message: 'v4 必须选择冻结调度方案' }]}>
@@ -281,13 +298,13 @@ export function HydraulicConfigPage() {
               className="data-alert"
               showIcon
               type={readiness?.ready ? 'success' : readiness ? 'error' : 'info'}
-              message={readiness?.ready ? 'D1 v4 readiness 通过' : readinessLoading ? '正在检查 v4 readiness' : '请选择工况与冻结调度方案'}
+              message={readiness?.ready ? `${selectedCapabilityId === D3A_1_CAPABILITY_ID ? 'D3A-1 Manning' : 'D1'} v4 readiness 通过` : readinessLoading ? '正在检查 v4 readiness' : '请选择科学能力、工况与冻结调度方案'}
               description={readiness ? (
                 <Space direction="vertical" size={2}>
                   <Text>solver: {readiness.solver_id}</Text>
                   <Text>capability: {readiness.capability_id}</Text>
                   {readiness.errors.map((item) => <Text type="danger" key={`${item.code}-${item.field_path}`}>{item.code} · {item.message}</Text>)}
-                  <Text type="secondary">单 Branch · 全湿 · 正向严格亚临界 · 1 Gate · 1 external Pump · 仅验证用途 · 非生产率定</Text>
+                  <Text type="secondary">单 Branch · 全湿 · 正向严格亚临界 · {selectedCapabilityId === D3A_1_CAPABILITY_ID ? '正有效 Manning、平床、相同断面' : 'n=0、平床、相同断面'} · 1 Gate · 1 external Pump · 仅验证用途 · 非生产率定</Text>
                 </Space>
               ) : undefined}
             />
