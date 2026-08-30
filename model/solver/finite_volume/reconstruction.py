@@ -52,7 +52,14 @@ def _area_above_interface(
     state: ConservedVector,
     interface_bed: float,
 ) -> float:
-    """Remove the hydrostatic area below the higher adjacent bed elevation."""
+    """Rebuild local wetted area above the higher adjacent bed elevation.
+
+    For a non-rectangular section, ``A(H) - A(z*)`` is not the area of the
+    same local Profile at depth ``H-z*``.  Hydrostatic reconstruction must
+    retain that remaining depth and evaluate the cell's local area law at
+    ``z_b + max(H-z*, 0)``.  The two expressions coincide only for a
+    rectangular section, which is why the earlier shortcut missed S1.
+    """
 
     if state.area <= _EPSILON:
         return 0.0
@@ -69,9 +76,9 @@ def _area_above_interface(
     stage = cell.geometry.stage_from_area(state.area)
     if stage <= interface_bed + _EPSILON:
         return 0.0
-    clipped_bed = max(interface_bed, cell.geometry.minimum_stage)
-    base_area = float(cell.geometry.area(clipped_bed))
-    result = max(state.area - base_area, 0.0)
+    remaining_depth = stage - interface_bed
+    local_stage = cell.bed_elevation + remaining_depth
+    result = max(float(cell.geometry.area(local_stage)), 0.0)
     if not math.isfinite(result):
         raise NumericalStateError("reconstructed area is non-finite")
     return result

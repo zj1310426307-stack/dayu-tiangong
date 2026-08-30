@@ -43,7 +43,7 @@ from app.worker.lifecycle import claim_task
 from app.worker.tasks import V4_QUEUE
 from model.build_identity import current_runtime_build_identity
 from model.provenance import snapshot_hash
-from model.solver.registry import D1_SOLVER_ID
+from model.solver.registry import D1_CAPABILITY_ID, D1_SOLVER_ID
 from tests.model_engine.helpers import native_v4_payload
 
 
@@ -480,6 +480,7 @@ def test_v4_task_runs_through_api_broker_worker_postgis_and_artifact(
                 "case_id": CASE_ID,
                 "input_schema_version": "dayu.model-input.v4",
                 "solver_id": D1_SOLVER_ID,
+                "capability_id": D1_CAPABILITY_ID,
                 "dispatch_plan_id": plan_id,
                 "execution_mode": "validation",
                 "storage_level": "full",

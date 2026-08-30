@@ -43,6 +43,9 @@ from model.provenance import snapshot_hash
 from model.solver.registry import (
     D1_CAPABILITY_ID,
     D1_SOLVER_ID,
+    D3A_1_CAPABILITY_ID,
+    D3A_2_CAPABILITY_ID,
+    D3A_3_CAPABILITY_ID,
     registry_hash,
     task_solver_provenance,
 )
@@ -51,7 +54,12 @@ from model.solver.registry import (
 V4_QUEUE = "hydraulic-v4-d1"
 V4_WORKER_CAPABILITIES = {
     "supported_solver_ids": (D1_SOLVER_ID,),
-    "supported_capability_ids": (D1_CAPABILITY_ID,),
+    "supported_capability_ids": (
+        D1_CAPABILITY_ID,
+        D3A_1_CAPABILITY_ID,
+        D3A_2_CAPABILITY_ID,
+        D3A_3_CAPABILITY_ID,
+    ),
 }
 INFRASTRUCTURE_ERRORS = (ConnectionError, TimeoutError, OSError, OperationalError)
 
@@ -85,7 +93,17 @@ def validate_v4_worker_task(
     validate_worker_build_identity(task, runtime_identity)
     if task.input_snapshot is None or task.input_snapshot_hash is None:
         raise HydraulicInputError("native-v4 task has no frozen input snapshot")
-    registered = task_solver_provenance(str(task.input_schema_version))
+    if not isinstance(task.capability_id, str) or not task.capability_id:
+        raise HydraulicInputError("native-v4 task capability_id is missing")
+    try:
+        registered = task_solver_provenance(
+            str(task.input_schema_version),
+            capability_id=task.capability_id,
+        )
+    except HydraulicInputError as exc:
+        raise HydraulicInputError(
+            f"native-v4 task capability_id is not registered: {task.capability_id!r}"
+        ) from exc
     route_mismatches = [
         f"{field}: task={getattr(task, field)!r}, registered={registered[field]!r}"
         for field in (

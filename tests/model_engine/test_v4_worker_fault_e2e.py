@@ -31,7 +31,7 @@ from app.worker.recovery import (
     recover_stale_running_tasks,
     redeliver_stale_queued_tasks,
 )
-from model.solver.registry import D1_SOLVER_ID
+from model.solver.registry import D1_CAPABILITY_ID, D1_SOLVER_ID
 from tests.model_engine.rc1_fault_helpers import (
     delete_task,
     ensure_authoritative_case,
@@ -57,6 +57,7 @@ def _create_queued_task() -> int:
                 case_id=CASE_ID,
                 input_schema_version="dayu.model-input.v4",
                 solver_id=D1_SOLVER_ID,
+                capability_id=D1_CAPABILITY_ID,
                 dispatch_plan_id=PLAN_ID,
                 execution_mode="validation",
                 storage_level="full",

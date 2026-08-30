@@ -201,6 +201,12 @@ class HydraulicCrossSectionInput(BaseModel):
     topography_id: str = Field(default="DEFAULT", min_length=1, max_length=64)
     survey_date: date | None = None
     survey_method: str | None = Field(default=None, max_length=64)
+    bed_elevation_m: float | None = None
+    bed_elevation_source: Literal[
+        "unconfirmed", "surveyed", "design", "synthetic"
+    ] = "unconfirmed"
+    bed_elevation_confirmed_by: str | None = Field(default=None, max_length=128)
+    bed_elevation_confirmed_at: datetime | None = None
     default_manning_n: float = Field(default=0.03, gt=0)
     location_x: float | None = None
     location_y: float | None = None
@@ -237,6 +243,20 @@ class HydraulicCrossSectionInput(BaseModel):
 
         if (self.location_x is None) != (self.location_y is None):
             raise ValueError("section location_x and location_y must be provided together")
+        bed_authority = (
+            self.bed_elevation_m,
+            self.bed_elevation_confirmed_by,
+            self.bed_elevation_confirmed_at,
+        )
+        if self.bed_elevation_source == "unconfirmed":
+            if any(value is not None for value in bed_authority):
+                raise ValueError(
+                    "unconfirmed bed elevation must remain null; no Profile minimum is inferred"
+                )
+        elif any(value is None for value in bed_authority):
+            raise ValueError(
+                "authoritative bed elevation requires elevation, source, actor, and time"
+            )
         ordered = sorted(self.roughness_zones, key=lambda item: item.zone_order)
         if [item.zone_order for item in ordered] != list(range(len(ordered))):
             raise ValueError("roughness zone_order must start at zero and remain contiguous")
@@ -322,6 +342,8 @@ class HydraulicSectionSummary(BaseModel):
     profile_count: int = Field(ge=0)
     point_count: int = Field(ge=0)
     orientation_status: str
+    bed_elevation_m: float | None
+    bed_elevation_source: str
 
 
 class HydraulicBranchRecord(BaseModel):
@@ -445,6 +467,10 @@ class HydraulicSectionDetail(BaseModel):
     chainage_source: str
     snap_distance_m: float | None
     orientation_status: str
+    bed_elevation_m: float | None
+    bed_elevation_source: str
+    bed_elevation_confirmed_by: str | None
+    bed_elevation_confirmed_at: datetime | None
     location_geometry: dict[str, object]
     axis_geometry: dict[str, object] | None
     profiles: list[HydraulicProfileRecord]

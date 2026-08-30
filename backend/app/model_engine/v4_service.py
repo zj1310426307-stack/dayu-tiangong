@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from re import fullmatch
 from typing import Any, Mapping
 
@@ -34,14 +35,23 @@ from app.model_engine.v4_schemas import (
 from model.adapters import V4RuntimeProjection, project_v4_to_v4_lite
 from model.build_identity import RuntimeBuildIdentity, current_runtime_build_identity
 from model.core.errors import HydraulicInputError
+from model.geometry.sections import TabulatedSectionGeometry
 from model.provenance import CANONICALIZATION_ID, snapshot_hash
+from model.solver.finite_volume.geometry_source import (
+    MAX_ADJACENT_HYDRAULIC_RELATIVE_CHANGE,
+    adjacent_hydraulic_relative_change,
+)
 from model.solver.registry import (
-    D1_CAPABILITY,
     D1_CAPABILITY_ID,
-    D1_KNOWN_LIMITATIONS,
     D1_RUNTIME_ADAPTER_ID,
     D1_SOLVER_ID,
+    D3A_1_CAPABILITY_ID,
+    D3A_2_CAPABILITY_ID,
+    D3A_3_CAPABILITY_ID,
+    MODEL_INPUT_V4,
     registry_hash,
+    resolve_capability,
+    resolve_solver,
 )
 
 
@@ -112,6 +122,31 @@ def _native_preflight(payload: Mapping[str, Any]) -> list[V4ReadinessIssue]:
     """Check D2 scientific scope before invoking the strict platform/runtime parsers."""
 
     issues: list[V4ReadinessIssue] = []
+    selection = payload.get("solver_selection")
+    capability_id = (
+        selection.get("capability_id") if isinstance(selection, Mapping) else None
+    )
+    try:
+        registration = resolve_solver(
+            MODEL_INPUT_V4,
+            solver_id=selection.get("solver_id") if isinstance(selection, Mapping) else None,
+            capability_id=str(capability_id) if capability_id is not None else None,
+            runtime_adapter_id=(
+                selection.get("runtime_adapter_id")
+                if isinstance(selection, Mapping)
+                else None
+            ),
+        )
+    except HydraulicInputError as exc:
+        issues.append(
+            _issue(
+                "D3A_CAPABILITY_SELECTION_INVALID",
+                str(exc),
+                entity_type="solver_selection",
+                field_path="solver_selection.capability_id",
+            )
+        )
+        registration = None
     branches = _collection(payload, "branches")
     sections = _collection(payload, "cross_sections")
     structures = payload.get("structures")
@@ -146,7 +181,8 @@ def _native_preflight(payload: Mapping[str, Any]) -> list[V4ReadinessIssue]:
     for section in sections:
         if not isinstance(section, Mapping):
             continue
-        if section.get("default_manning_n") != 0.0:
+        manning_n = section.get("default_manning_n")
+        if capability_id == D1_CAPABILITY_ID and manning_n != 0.0:
             issues.append(
                 _issue(
                     "D2_MANNING_NONZERO",
@@ -156,24 +192,190 @@ def _native_preflight(payload: Mapping[str, Any]) -> list[V4ReadinessIssue]:
                     field_path="cross_sections.default_manning_n",
                 )
             )
-    profile_signatures = {
-        tuple(
-            (point.get("offset_m"), point.get("elevation_m"))
-            for point in section.get("points", [])
-            if isinstance(point, Mapping)
-        )
-        for section in sections
-        if isinstance(section, Mapping)
-    }
-    if sections and len(profile_signatures) != 1:
+        if capability_id in {
+            D3A_1_CAPABILITY_ID,
+            D3A_2_CAPABILITY_ID,
+            D3A_3_CAPABILITY_ID,
+        } and (
+            isinstance(manning_n, bool)
+            or not isinstance(manning_n, (int, float))
+            or not 0.0 < float(manning_n) <= 0.10
+        ):
+            issues.append(
+                _issue(
+                    "D3A_MANNING_OUT_OF_RANGE",
+                    "D3A requires explicit effective Manning n in (0, 0.10]",
+                    entity_type="cross_section",
+                    entity_id=section.get("section_id"),
+                    field_path="cross_sections.default_manning_n",
+                )
+            )
+        if capability_id in {D3A_2_CAPABILITY_ID, D3A_3_CAPABILITY_ID}:
+            authority = (
+                section.get("bed_elevation_m"),
+                section.get("bed_elevation_source"),
+                section.get("bed_elevation_confirmed_by"),
+                section.get("bed_elevation_confirmed_at"),
+            )
+            if (
+                isinstance(authority[0], bool)
+                or not isinstance(authority[0], (int, float))
+                or authority[1] not in {"surveyed", "design", "synthetic"}
+                or not isinstance(authority[2], str)
+                or not authority[2].strip()
+                or authority[3] is None
+            ):
+                issues.append(
+                    _issue(
+                        (
+                            "D3A_2_BED_AUTHORITY_UNCONFIRMED"
+                            if capability_id == D3A_2_CAPABILITY_ID
+                            else "D3A_3_BED_AUTHORITY_UNCONFIRMED"
+                        ),
+                        f"{'D3A-2' if capability_id == D3A_2_CAPABILITY_ID else 'D3A-3'} "
+                        "requires explicit bed elevation with source, actor, and time",
+                        entity_type="cross_section",
+                        entity_id=section.get("section_id"),
+                        field_path="cross_sections.bed_elevation_m",
+                    )
+                )
+    if capability_id in {D3A_2_CAPABILITY_ID, D3A_3_CAPABILITY_ID}:
+        profile_signatures = {
+            tuple(
+                (
+                    point.get("offset_m"),
+                    round(
+                        float(point.get("elevation_m"))
+                        - float(section.get("bed_elevation_m")),
+                        12,
+                    ),
+                )
+                for point in section.get("points", [])
+                if isinstance(point, Mapping)
+                and isinstance(point.get("elevation_m"), (int, float))
+                and not isinstance(point.get("elevation_m"), bool)
+            )
+            for section in sections
+            if isinstance(section, Mapping)
+            and isinstance(section.get("bed_elevation_m"), (int, float))
+            and not isinstance(section.get("bed_elevation_m"), bool)
+        }
+    else:
+        profile_signatures = {
+            tuple(
+                (point.get("offset_m"), point.get("elevation_m"))
+                for point in section.get("points", [])
+                if isinstance(point, Mapping)
+            )
+            for section in sections
+            if isinstance(section, Mapping)
+        }
+    if (
+        sections
+        and capability_id != D3A_3_CAPABILITY_ID
+        and len(profile_signatures) != 1
+    ):
         issues.append(
             _issue(
                 "D2_PROFILE_MISMATCH",
-                "D1 platform capability requires identical Profile geometry",
+                "selected platform capability requires identical absolute or local Profile geometry",
                 entity_type="cross_section_profile",
                 field_path="cross_sections.points",
             )
         )
+    if sections and capability_id == D3A_3_CAPABILITY_ID:
+        if len(profile_signatures) < 2:
+            issues.append(
+                _issue(
+                    "D3A_3_PROFILE_VARIATION_REQUIRED",
+                    "D3A-3 requires at least two non-identical local Profile shapes",
+                    entity_type="cross_section_profile",
+                    field_path="cross_sections.points",
+                )
+            )
+        try:
+            geometries = tuple(
+                TabulatedSectionGeometry.from_points(
+                    tuple(
+                        (float(point["offset_m"]), float(point["elevation_m"]))
+                        for point in section["points"]
+                    )
+                )
+                for section in sections
+            )
+            changes = tuple(
+                adjacent_hydraulic_relative_change(left, right)
+                for left, right in zip(geometries, geometries[1:])
+            )
+            if any(
+                change > MAX_ADJACENT_HYDRAULIC_RELATIVE_CHANGE
+                for change in changes
+            ):
+                issues.append(
+                    _issue(
+                        "D3A_3_PROFILE_CHANGE_ABRUPT",
+                        "D3A-3 adjacent A/T/P/I1 relative change exceeds 0.25",
+                        entity_type="cross_section_profile",
+                        field_path="cross_sections.points",
+                    )
+                )
+        except (KeyError, TypeError, ValueError) as exc:
+            issues.append(
+                _issue(
+                    "D3A_3_PROFILE_SMOOTHNESS_INVALID",
+                    f"D3A-3 Profile smoothness cannot be established: {exc}",
+                    entity_type="cross_section_profile",
+                    field_path="cross_sections.points",
+                )
+            )
+    if capability_id == D3A_2_CAPABILITY_ID and all(
+        isinstance(section, Mapping)
+        and isinstance(section.get("bed_elevation_m"), (int, float))
+        and not isinstance(section.get("bed_elevation_m"), bool)
+        and isinstance(section.get("chainage_m"), (int, float))
+        and not isinstance(section.get("chainage_m"), bool)
+        for section in sections
+    ):
+        beds = tuple(float(section["bed_elevation_m"]) for section in sections)
+        chainages = tuple(float(section["chainage_m"]) for section in sections)
+        slopes = (
+            tuple(
+                (left_bed - right_bed) / (right_x - left_x)
+                for left_bed, right_bed, left_x, right_x in zip(
+                    beds, beds[1:], chainages, chainages[1:]
+                )
+            )
+            if all(right > left for left, right in zip(chainages, chainages[1:]))
+            else ()
+        )
+        if not slopes or any(value <= 0.0 for value in slopes) or any(
+            not math.isclose(value, slopes[0], rel_tol=1.0e-10, abs_tol=1.0e-12)
+            for value in slopes[1:]
+        ):
+            issues.append(
+                _issue(
+                    "D3A_2_BED_SLOPE_INVALID",
+                    "D3A-2 requires one explicit strictly descending linear bed",
+                    entity_type="cross_section",
+                    field_path="cross_sections.bed_elevation_m",
+                )
+            )
+    if capability_id == D3A_3_CAPABILITY_ID and all(
+        isinstance(section, Mapping)
+        and isinstance(section.get("bed_elevation_m"), (int, float))
+        and not isinstance(section.get("bed_elevation_m"), bool)
+        for section in sections
+    ):
+        beds = tuple(float(section["bed_elevation_m"]) for section in sections)
+        if not beds or any(right >= left for left, right in zip(beds, beds[1:])):
+            issues.append(
+                _issue(
+                    "D3A_3_BED_SLOPE_INVALID",
+                    "D3A-3 requires an explicit strictly descending bed",
+                    entity_type="cross_section",
+                    field_path="cross_sections.bed_elevation_m",
+                )
+            )
     if len(gates) != 1:
         issues.append(
             _issue(
@@ -249,13 +451,20 @@ def _native_preflight(payload: Mapping[str, Any]) -> list[V4ReadinessIssue]:
                 field_path="numerical_policy.pump_curve_policy",
             )
         )
-    if not isinstance(validation, Mapping) or validation.get(
-        "validation_policy_version"
-    ) != "v4-lite-7":
+    expected_validation_policy = (
+        registration.runtime_adapter.validation_policy_version
+        if registration is not None and registration.runtime_adapter is not None
+        else None
+    )
+    if (
+        not isinstance(validation, Mapping)
+        or validation.get("validation_policy_version") != expected_validation_policy
+        or validation.get("capability_id") != capability_id
+    ):
         issues.append(
             _issue(
                 "D2_VALIDATION_POLICY_UNREGISTERED",
-                "native D1 v4 requires validation policy v4-lite-7",
+                "native v4 validation policy must match the explicit capability",
                 entity_type="validation_policy",
                 field_path="validation.validation_policy_version",
             )
@@ -325,11 +534,28 @@ def assess_native_v4_snapshot(payload: Mapping[str, Any]) -> NativeV4Assessment:
         if isinstance(structures, Mapping) and isinstance(structures.get("pumps"), list)
         else 0,
     }
+    selection = payload.get("solver_selection")
+    solver_id = (
+        str(selection.get("solver_id"))
+        if isinstance(selection, Mapping) and selection.get("solver_id") is not None
+        else D1_SOLVER_ID
+    )
+    capability_id = (
+        str(selection.get("capability_id"))
+        if isinstance(selection, Mapping) and selection.get("capability_id") is not None
+        else D1_CAPABILITY_ID
+    )
+    runtime_adapter_id = (
+        str(selection.get("runtime_adapter_id"))
+        if isinstance(selection, Mapping)
+        and selection.get("runtime_adapter_id") is not None
+        else D1_RUNTIME_ADAPTER_ID
+    )
     readiness = V4ReadinessResponse(
         ready=not errors and projection is not None,
-        solver_id=D1_SOLVER_ID,
-        capability_id=D1_CAPABILITY_ID,
-        runtime_adapter_id=D1_RUNTIME_ADAPTER_ID,
+        solver_id=solver_id,
+        capability_id=capability_id,
+        runtime_adapter_id=runtime_adapter_id,
         errors=errors,
         warnings=warnings,
         snapshot_summary=summary,
@@ -418,10 +644,15 @@ def _database_candidate(
     dispatch_plan_id: int,
     *,
     build_identity: RuntimeBuildIdentity,
+    capability_id: str,
 ) -> tuple[dict[str, Any] | None, list[V4ReadinessIssue]]:
     """Read only authoritative database rows and assemble one candidate snapshot."""
 
     issues: list[V4ReadinessIssue] = []
+    capability = resolve_capability(capability_id)
+    registration = resolve_solver(MODEL_INPUT_V4, capability_id=capability_id)
+    if registration.runtime_adapter is None:
+        raise ValueError("native-v4 capability has no registered runtime adapter")
     case = session.get(SimulationCase, case_id)
     if case is None:
         return None, [
@@ -557,11 +788,27 @@ def _database_candidate(
     section_rows: list[dict[str, Any]] = []
     profile_rows: list[dict[str, Any]] = []
     configured_manning = case_config.get("default_manning_n")
-    if configured_manning != 0.0:
+    if capability_id == D1_CAPABILITY_ID and configured_manning != 0.0:
         issues.append(
             _issue(
                 "D2_MANNING_NONZERO",
                 "SimulationCase native-v4 configuration must explicitly set Manning n=0",
+                field_path="simulation_case.v4_configuration.default_manning_n",
+            )
+        )
+    if capability_id in {
+        D3A_1_CAPABILITY_ID,
+        D3A_2_CAPABILITY_ID,
+        D3A_3_CAPABILITY_ID,
+    } and (
+        isinstance(configured_manning, bool)
+        or not isinstance(configured_manning, (int, float))
+        or not 0.0 < float(configured_manning) <= 0.10
+    ):
+        issues.append(
+            _issue(
+                "D3A_MANNING_OUT_OF_RANGE",
+                "D3A native-v4 configuration requires Manning n in (0, 0.10]",
                 field_path="simulation_case.v4_configuration.default_manning_n",
             )
         )
@@ -617,8 +864,7 @@ def _database_candidate(
                 .order_by(HydraulicCrossSectionPoint.sequence)
             ).all()
         )
-        section_rows.append(
-            {
+        section_row = {
                 "section_id": section.id,
                 "section_code": section.section_code,
                 "branch_id": branch.id,
@@ -631,7 +877,37 @@ def _database_candidate(
                     for point in points
                 ],
             }
-        )
+        if capability_id in {D3A_2_CAPABILITY_ID, D3A_3_CAPABILITY_ID}:
+            if (
+                section.bed_elevation_m is None
+                or section.bed_elevation_source
+                not in {"surveyed", "design", "synthetic"}
+                or not section.bed_elevation_confirmed_by
+                or section.bed_elevation_confirmed_at is None
+            ):
+                issues.append(
+                    _issue(
+                        "D3A_2_BED_AUTHORITY_UNCONFIRMED",
+                        "historical Cross Section has no confirmed authoritative bed elevation",
+                        entity_type="cross_section",
+                        entity_id=section.id,
+                        field_path="cross_sections.bed_elevation_m",
+                    )
+                )
+            else:
+                section_row.update(
+                    {
+                        "bed_elevation_m": section.bed_elevation_m,
+                        "bed_elevation_source": section.bed_elevation_source,
+                        "bed_elevation_confirmed_by": (
+                            section.bed_elevation_confirmed_by
+                        ),
+                        "bed_elevation_confirmed_at": (
+                            section.bed_elevation_confirmed_at
+                        ),
+                    }
+                )
+        section_rows.append(section_row)
         profile_rows.append(
             {
                 "id": profile.id,
@@ -840,9 +1116,9 @@ def _database_candidate(
     candidate = {
         "schema_version": "dayu.model-input.v4",
         "solver_selection": {
-            "solver_id": D1_SOLVER_ID,
-            "capability_id": D1_CAPABILITY_ID,
-            "runtime_adapter_id": D1_RUNTIME_ADAPTER_ID,
+            "solver_id": registration.solver_id,
+            "capability_id": capability.capability_id,
+            "runtime_adapter_id": registration.runtime_adapter.runtime_adapter_id,
         },
         "dataset_version": {"id": dataset.id, "content_hash": dataset.content_hash},
         "simulation_case": {"id": case.id, "name": case.name},
@@ -949,12 +1225,19 @@ def _database_candidate(
         "control_plan": {
             "id": plan.id,
             "frozen_snapshot_hash": plan.frozen_snapshot_hash,
-            "policy_id": "d1-gate-pump-control-v1",
+            "policy_id": {
+                D1_CAPABILITY_ID: "d1-gate-pump-control-v1",
+                D3A_1_CAPABILITY_ID: "d3a-1-gate-pump-control-v1",
+                D3A_2_CAPABILITY_ID: "d3a-2-gate-pump-control-v1",
+                D3A_3_CAPABILITY_ID: "d3a-3-gate-pump-control-v1",
+            }[capability_id],
         },
         "numerical_policy": numerical,
         "validation": {
-            "validation_policy_version": "v4-lite-7",
-            "capability_id": D1_CAPABILITY_ID,
+            "validation_policy_version": (
+                registration.runtime_adapter.validation_policy_version
+            ),
+            "capability_id": capability.capability_id,
             "water_balance_tolerance": numerical.get("water_balance_tolerance")
             if isinstance(numerical, Mapping)
             else None,
@@ -964,12 +1247,12 @@ def _database_candidate(
             "canonicalization_id": CANONICALIZATION_ID,
             "registry_hash": registry_hash(),
         },
-        "capability_scope": list(D1_CAPABILITY.scope),
-        "capability_exclusions": list(D1_CAPABILITY.exclusions),
+        "capability_scope": list(capability.scope),
+        "capability_exclusions": list(capability.exclusions),
         "case_notes": list(case_config.get("case_notes", []))
         if isinstance(case_config.get("case_notes", []), list)
         else case_config.get("case_notes"),
-        "known_limitations": list(D1_KNOWN_LIMITATIONS),
+        "known_limitations": list(capability.warnings),
     }
     return candidate, issues
 
@@ -980,6 +1263,7 @@ def assess_database_case(
     dispatch_plan_id: int,
     *,
     build_identity: RuntimeBuildIdentity | None = None,
+    capability_id: str = D1_CAPABILITY_ID,
 ) -> NativeV4Assessment:
     """Build and preflight one database-backed candidate without persisting a task."""
 
@@ -989,15 +1273,27 @@ def assess_database_case(
         case_id,
         dispatch_plan_id,
         build_identity=runtime_identity,
+        capability_id=capability_id,
     )
     if candidate is None:
         errors = [item for item in database_issues if item.severity == "error"]
         warnings = [item for item in database_issues if item.severity == "warning"]
+        try:
+            registration = resolve_solver(MODEL_INPUT_V4, capability_id=capability_id)
+            adapter_id = (
+                registration.runtime_adapter.runtime_adapter_id
+                if registration.runtime_adapter is not None
+                else "unregistered"
+            )
+            solver_id = registration.solver_id
+        except HydraulicInputError:
+            solver_id = D1_SOLVER_ID
+            adapter_id = "unregistered"
         readiness = V4ReadinessResponse(
             ready=False,
-            solver_id=D1_SOLVER_ID,
-            capability_id=D1_CAPABILITY_ID,
-            runtime_adapter_id=D1_RUNTIME_ADAPTER_ID,
+            solver_id=solver_id,
+            capability_id=capability_id,
+            runtime_adapter_id=adapter_id,
             errors=errors,
             warnings=warnings,
             snapshot_summary={"simulation_case_id": case_id},
@@ -1032,6 +1328,7 @@ def freeze_v4_task_input(
     dispatch_plan_id: int,
     *,
     build_identity: RuntimeBuildIdentity,
+    capability_id: str,
 ) -> tuple[dict[str, Any], str, dict[str, Any]]:
     """Freeze one ready v4 source plus its independently recomputable projection manifest."""
 
@@ -1040,6 +1337,7 @@ def freeze_v4_task_input(
         case_id,
         dispatch_plan_id,
         build_identity=build_identity,
+        capability_id=capability_id,
     )
     if not assessment.readiness.ready or assessment.projection is None:
         details = "; ".join(
@@ -1067,8 +1365,8 @@ def preview_from_assessment(assessment: NativeV4Assessment) -> V4PreviewResponse
     numerical = snapshot.get("numerical_policy")
     return V4PreviewResponse(
         schema_version=str(snapshot.get("schema_version", "dayu.model-input.v4")),
-        solver_id=D1_SOLVER_ID,
-        capability_id=D1_CAPABILITY_ID,
+        solver_id=assessment.readiness.solver_id,
+        capability_id=assessment.readiness.capability_id,
         dataset_version_id=assessment.readiness.snapshot_summary.get("dataset_version_id"),
         simulation_case_id=assessment.readiness.snapshot_summary.get("simulation_case_id"),
         branch=dict(branches[0]) if branches and isinstance(branches[0], Mapping) else None,
@@ -1100,16 +1398,16 @@ def preview_from_assessment(assessment: NativeV4Assessment) -> V4PreviewResponse
         readiness=assessment.readiness,
         capability_scope=[str(item) for item in snapshot.get("capability_scope", [])]
         if isinstance(snapshot.get("capability_scope"), list)
-        else list(D1_CAPABILITY.scope),
+        else list(resolve_capability(assessment.readiness.capability_id).scope),
         capability_exclusions=[
             str(item) for item in snapshot.get("capability_exclusions", [])
         ]
         if isinstance(snapshot.get("capability_exclusions"), list)
-        else list(D1_CAPABILITY.exclusions),
+        else list(resolve_capability(assessment.readiness.capability_id).exclusions),
         case_notes=[str(item) for item in snapshot.get("case_notes", [])]
         if isinstance(snapshot.get("case_notes"), list)
         else [],
         known_limitations=[str(item) for item in snapshot.get("known_limitations", [])]
         if isinstance(snapshot.get("known_limitations"), list)
-        else list(D1_KNOWN_LIMITATIONS),
+        else list(resolve_capability(assessment.readiness.capability_id).warnings),
     )

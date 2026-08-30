@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Mapping, Sequence
 
 from model.core.callbacks import check_cancellation
@@ -19,12 +19,18 @@ from model.solver.finite_volume.friction import (
     apply_manning_friction,
     apply_manning_friction_with_evidence,
 )
+from model.solver.finite_volume.runtime_envelope import (
+    CapabilityRuntimeEnvelope,
+    RuntimeEnvelopeObservation,
+    RuntimeEnvelopeStabilityError,
+    require_runtime_envelope,
+)
 from model.solver.finite_volume.geometry_source import (
     geometry_pressure_source,
     hydraulic_path_interface_flux,
     mesh_face_geometries,
 )
-from model.solver.finite_volume.mesh import FiniteVolumeMesh
+from model.solver.finite_volume.mesh import FiniteVolumeMesh, SectionGeometryLike
 from model.solver.finite_volume.pump import HydraulicExternalPump
 from model.solver.finite_volume.reconstruction import InterfaceFlux, hydrostatic_interface_flux
 from model.solver.finite_volume.state import HydraulicState
@@ -36,6 +42,10 @@ from model.solver.finite_volume.structures import (
 )
 
 _EPSILON = 1.0e-12
+
+
+class FrictionStabilityError(StabilityError):
+    """Request a smaller step when the capability-owned friction gate fails."""
 
 
 def _committed_structure_state(
@@ -108,6 +118,10 @@ class StepResult:
     maximum_cfl: float
     budget: StepBudget
     diagnostic_flags: tuple[str, ...] = ()
+    maximum_friction_number: float = 0.0
+    friction_retry_count: int = 0
+    runtime_envelope_retry_count: int = 0
+    runtime_envelope_observation: RuntimeEnvelopeObservation | None = None
 
 
 def estimate_cfl_time_step(
@@ -163,6 +177,7 @@ def _structure_context(
     left_index: int,
     right_index: int,
     dt: float,
+    interface_geometry: SectionGeometryLike | None = None,
 ) -> StructureStageContext:
     """Build the current-head context required by a Gate stage evaluation."""
 
@@ -172,23 +187,23 @@ def _structure_context(
     downstream_stage = mesh.cells[right_index].geometry.stage_from_area(
         state.area[right_index]
     )
+    upstream_geometry = interface_geometry or mesh.cells[left_index].geometry
+    downstream_geometry = interface_geometry or mesh.cells[right_index].geometry
+    upstream_area = upstream_geometry.area(upstream_stage)
+    downstream_area = downstream_geometry.area(downstream_stage)
     return StructureStageContext(
         time=state.time,
         dt=dt,
         upstream_stage=upstream_stage,
         downstream_stage=downstream_stage,
-        upstream_area=state.area[left_index],
-        downstream_area=state.area[right_index],
+        upstream_area=upstream_area,
+        downstream_area=downstream_area,
         upstream_discharge=state.discharge[left_index],
         downstream_discharge=state.discharge[right_index],
-        upstream_top_width=mesh.cells[left_index].geometry.top_width(upstream_stage),
-        downstream_top_width=mesh.cells[right_index].geometry.top_width(
-            downstream_stage
-        ),
-        upstream_pressure_moment=mesh.cells[left_index].geometry.pressure_moment(
-            upstream_stage
-        ),
-        downstream_pressure_moment=mesh.cells[right_index].geometry.pressure_moment(
+        upstream_top_width=upstream_geometry.top_width(upstream_stage),
+        downstream_top_width=downstream_geometry.top_width(downstream_stage),
+        upstream_pressure_moment=upstream_geometry.pressure_moment(upstream_stage),
+        downstream_pressure_moment=downstream_geometry.pressure_moment(
             downstream_stage
         ),
     )
@@ -354,6 +369,20 @@ def _forward_euler_stage_raw(
         if gate.face_index in used_gate_faces:
             raise ValueError("only one MVP Gate may bind an internal face")
         used_gate_faces.add(gate.face_index)
+        committed_gate_state = _committed_structure_state(
+            state.gate_state,
+            gate.gate_id,
+        )
+        opening = (
+            committed_gate_state.get("opening")
+            if committed_gate_state is not None
+            else None
+        )
+        closed_face_geometry = (
+            face_geometries[gate.face_index + 1]
+            if face_geometries is not None and opening == 0.0
+            else None
+        )
         result = gate.evaluate_stage(
             _structure_context(
                 mesh=mesh,
@@ -361,8 +390,9 @@ def _forward_euler_stage_raw(
                 left_index=gate.face_index,
                 right_index=gate.face_index + 1,
                 dt=dt,
+                interface_geometry=closed_face_geometry,
             ),
-            _committed_structure_state(state.gate_state, gate.gate_id),
+            committed_gate_state,
             cancel_check=cancel_check,
         )
         gate_flows.append(result)
@@ -608,10 +638,22 @@ def ssp_rk2_step(
         "hydrostatic-reconstruction-v1",
         "hydraulic-function-linear-face-v1",
     ] = "hydrostatic-reconstruction-v1",
+    maximum_friction_number: float | None = None,
+    runtime_envelope: CapabilityRuntimeEnvelope | None = None,
     cancel_check: object | None = None,
 ) -> StepResult:
     """Advance one SSP-RK2 step, recomputing all stage-dependent inputs."""
 
+    envelope_observation = (
+        require_runtime_envelope(
+            mesh=mesh,
+            state=state,
+            envelope=runtime_envelope,
+            checkpoint="initial state",
+        )
+        if runtime_envelope is not None
+        else None
+    )
     initial_cfl = cfl_number_for_step(mesh=mesh, state=state, dt=dt)
     if initial_cfl > cfl_limit + 1.0e-12:
         raise StabilityError("requested step exceeds the configured CFL limit")
@@ -626,8 +668,28 @@ def ssp_rk2_step(
         scheme=scheme,
         equilibrium_reference=equilibrium_reference,
         geometry_source_mode=geometry_source_mode,
+        capture_friction_evidence=maximum_friction_number is not None,
         cancel_check=cancel_check,
     )
+    if runtime_envelope is not None:
+        first_observation = require_runtime_envelope(
+            mesh=mesh,
+            state=first.state,
+            envelope=runtime_envelope,
+            checkpoint="SSP-RK2 first Euler stage",
+        )
+        envelope_observation = envelope_observation.merged(first_observation)
+    first_friction_number = max(
+        (item.friction_number for item in first.friction_evidence),
+        default=0.0,
+    )
+    if (
+        maximum_friction_number is not None
+        and first_friction_number > maximum_friction_number + 1.0e-12
+    ):
+        raise FrictionStabilityError(
+            "Manning stage exceeds maximum_friction_number"
+        )
     stage_cfl = cfl_number_for_step(mesh=mesh, state=first.state, dt=dt)
     maximum_cfl = max(initial_cfl, stage_cfl)
     if maximum_cfl > cfl_limit + 1.0e-12:
@@ -643,8 +705,32 @@ def ssp_rk2_step(
         scheme=scheme,
         equilibrium_reference=equilibrium_reference,
         geometry_source_mode=geometry_source_mode,
+        capture_friction_evidence=maximum_friction_number is not None,
         cancel_check=cancel_check,
     )
+    if runtime_envelope is not None:
+        second_observation = require_runtime_envelope(
+            mesh=mesh,
+            state=second.state,
+            envelope=runtime_envelope,
+            checkpoint="SSP-RK2 second Euler stage",
+        )
+        envelope_observation = envelope_observation.merged(second_observation)
+    second_friction_number = max(
+        (item.friction_number for item in second.friction_evidence),
+        default=0.0,
+    )
+    accepted_friction_number = max(
+        first_friction_number,
+        second_friction_number,
+    )
+    if (
+        maximum_friction_number is not None
+        and accepted_friction_number > maximum_friction_number + 1.0e-12
+    ):
+        raise FrictionStabilityError(
+            "Manning stage exceeds maximum_friction_number"
+        )
     final_area = tuple(
         0.5 * (original + evolved)
         for original, evolved in zip(state.area, second.state.area)
@@ -667,6 +753,14 @@ def ssp_rk2_step(
         )
     except ValueError as exc:
         raise NumericalStateError(str(exc)) from exc
+    if runtime_envelope is not None:
+        blended_observation = require_runtime_envelope(
+            mesh=mesh,
+            state=final_state,
+            envelope=runtime_envelope,
+            checkpoint="SSP-RK2 blended candidate",
+        )
+        envelope_observation = envelope_observation.merged(blended_observation)
 
     def average_flows(
         left: tuple[StructureStageFlow, ...], right: tuple[StructureStageFlow, ...]
@@ -740,6 +834,8 @@ def ssp_rk2_step(
             pump_stage_flows=first.budget.pump_flows + second.budget.pump_flows,
         ),
         diagnostic_flags=flags,
+        maximum_friction_number=accepted_friction_number,
+        runtime_envelope_observation=envelope_observation,
     )
 
 
@@ -761,6 +857,8 @@ def advance_with_retries(
         "hydrostatic-reconstruction-v1",
         "hydraulic-function-linear-face-v1",
     ] = "hydrostatic-reconstruction-v1",
+    maximum_friction_number: float | None = None,
+    runtime_envelope: CapabilityRuntimeEnvelope | None = None,
     cancel_check: object | None = None,
 ) -> StepResult:
     """Reduce to the CFL step and retry rejected positivity/stability attempts."""
@@ -776,12 +874,14 @@ def advance_with_retries(
     if dt < requested_dt - 1.0e-12:
         working = working.with_diagnostics(working.diagnostics.reduced_time_step())
     retries = 0
+    friction_retries = 0
+    runtime_envelope_retries = 0
     while True:
         check_cancellation(cancel_check, "finite_volume_trial")
         if dt < minimum_dt - 1.0e-15:
             raise StabilityError("required retry time step is below minimum_dt")
         try:
-            return ssp_rk2_step(
+            result = ssp_rk2_step(
                 mesh=mesh,
                 state=working,
                 dt=dt,
@@ -793,8 +893,35 @@ def advance_with_retries(
                 scheme=scheme,
                 equilibrium_reference=equilibrium_reference,
                 geometry_source_mode=geometry_source_mode,
+                maximum_friction_number=maximum_friction_number,
+                runtime_envelope=runtime_envelope,
                 cancel_check=cancel_check,
             )
+            return replace(
+                result,
+                friction_retry_count=friction_retries,
+                runtime_envelope_retry_count=runtime_envelope_retries,
+            )
+        except FrictionStabilityError:
+            friction_retries += 1
+            if retries >= maximum_retries:
+                raise StabilityError("finite-volume step exhausted retry budget")
+            retries += 1
+            working = working.with_diagnostics(working.diagnostics.rejected_step())
+            dt *= 0.5
+        except RuntimeEnvelopeStabilityError as exc:
+            runtime_envelope_retries += 1
+            if retries >= maximum_retries:
+                raise StabilityError(
+                    "D3A runtime envelope exhausted retry budget"
+                ) from exc
+            if 0.5 * dt < minimum_dt - 1.0e-15:
+                raise StabilityError(
+                    "D3A runtime envelope failed at minimum_dt"
+                ) from exc
+            retries += 1
+            working = working.with_diagnostics(working.diagnostics.rejected_step())
+            dt *= 0.5
         except (NumericalStateError, StabilityError):
             if retries >= maximum_retries:
                 raise StabilityError("finite-volume step exhausted retry budget")

@@ -1028,6 +1028,15 @@ class MvpDiagnostics(StrictResultModel):
     retry_count: NonNegativeInt
     step_count: PositiveInt
     diagnostic_flags: tuple[NonBlankText, ...]
+    maximum_friction_number: NonNegativeFinite | None = None
+    friction_retry_count: NonNegativeInt | None = None
+    friction_predictor_reduction_count: NonNegativeInt | None = None
+    predicted_minimum_friction_dt: PositiveFinite | None = None
+    minimum_water_depth_m: PositiveFinite | None = None
+    minimum_discharge_m3s: FiniteNumber | None = None
+    maximum_froude_number: NonNegativeFinite | None = None
+    runtime_envelope_retry_count: NonNegativeInt | None = None
+    runtime_envelope_status: Literal["pass"] | None = None
 
     @model_validator(mode="after")
     def validate_flags(self) -> Self:
@@ -1035,7 +1044,49 @@ class MvpDiagnostics(StrictResultModel):
 
         if len(self.diagnostic_flags) != len(set(self.diagnostic_flags)):
             raise ValueError("diagnostic_flags must be unique")
+        if (self.maximum_friction_number is None) != (
+            self.friction_retry_count is None
+        ):
+            raise ValueError("Manning diagnostics must be exposed as one complete pair")
+        predictor = (
+            self.friction_predictor_reduction_count,
+            self.predicted_minimum_friction_dt,
+        )
+        if any(value is None for value in predictor) != all(
+            value is None for value in predictor
+        ):
+            raise ValueError("friction predictor diagnostics must be a complete pair")
+        envelope = (
+            self.minimum_water_depth_m,
+            self.minimum_discharge_m3s,
+            self.maximum_froude_number,
+            self.runtime_envelope_retry_count,
+            self.runtime_envelope_status,
+        )
+        if any(value is None for value in envelope) != all(
+            value is None for value in envelope
+        ):
+            raise ValueError("runtime-envelope diagnostics must be complete")
         return self
+
+    @model_serializer(mode="wrap")
+    def serialize_optional_manning_diagnostics(self, handler: Any) -> dict[str, Any]:
+        """Preserve frozen pre-D3A result shapes when Manning evidence is absent."""
+
+        payload = handler(self)
+        if self.maximum_friction_number is None:
+            payload.pop("maximum_friction_number", None)
+            payload.pop("friction_retry_count", None)
+        if self.friction_predictor_reduction_count is None:
+            payload.pop("friction_predictor_reduction_count", None)
+            payload.pop("predicted_minimum_friction_dt", None)
+        if self.runtime_envelope_status is None:
+            payload.pop("minimum_water_depth_m", None)
+            payload.pop("minimum_discharge_m3s", None)
+            payload.pop("maximum_froude_number", None)
+            payload.pop("runtime_envelope_retry_count", None)
+            payload.pop("runtime_envelope_status", None)
+        return payload
 
 
 class MvpResultProvenance(StrictResultModel):
@@ -1057,8 +1108,15 @@ class MvpResultProvenance(StrictResultModel):
         "v4-lite-5",
         "v4-lite-6",
         "v4-lite-7",
+        "d3a-1-v1",
+        "d3a-2-v1",
+        "d3a-3-v1",
     ]
     solver_policy_hash: Sha256 | None = None
+    validation_policy_hash: Sha256 | None = None
+    registry_hash: Sha256 | None = None
+    runtime_envelope_id: NonBlankText | None = None
+    runtime_envelope_hash: Sha256 | None = None
 
     @model_validator(mode="after")
     def validate_versioned_solver_policy(self) -> Self:
@@ -1071,6 +1129,21 @@ class MvpResultProvenance(StrictResultModel):
             raise ValueError(
                 f"{self.validation_policy_version} result requires solver_policy_hash"
             )
+        d3a = self.validation_policy_version in {
+            "d3a-1-v1",
+            "d3a-2-v1",
+            "d3a-3-v1",
+        }
+        envelope_provenance = (
+            self.validation_policy_hash,
+            self.registry_hash,
+            self.runtime_envelope_id,
+            self.runtime_envelope_hash,
+        )
+        if d3a and any(value is None for value in envelope_provenance):
+            raise ValueError("D3A result requires complete runtime-envelope provenance")
+        if not d3a and any(value is not None for value in envelope_provenance):
+            raise ValueError("pre-D3A result must not add runtime-envelope provenance")
         return self
 
     @model_serializer(mode="wrap")
@@ -1080,6 +1153,11 @@ class MvpResultProvenance(StrictResultModel):
         payload = handler(self)
         if self.validation_policy_version == "v4-lite-1":
             payload.pop("solver_policy_hash", None)
+        if self.runtime_envelope_id is None:
+            payload.pop("validation_policy_hash", None)
+            payload.pop("registry_hash", None)
+            payload.pop("runtime_envelope_id", None)
+            payload.pop("runtime_envelope_hash", None)
         return payload
 
 
@@ -1136,14 +1214,25 @@ class MvpHydraulicResult(StrictResultModel):
             version == "v4-lite-5"
         )
         expects_controlled_gate_coupling = (
-            version in {"v4-lite-6", "v4-lite-7"}
+            version
+            in {"v4-lite-6", "v4-lite-7", "d3a-1-v1", "d3a-2-v1", "d3a-3-v1"}
         )
-        expects_pump_coupling = version == "v4-lite-7"
-        if version == "v4-lite-7" and any(
+        expects_pump_coupling = version in {
+            "v4-lite-7",
+            "d3a-1-v1",
+            "d3a-2-v1",
+            "d3a-3-v1",
+        }
+        if version in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1", "d3a-3-v1"} and any(
             section.volume_m3 is None for section in self.sections
         ):
-            raise ValueError("v4-lite-7 requires section control-volume series")
-        if version != "v4-lite-7" and any(
+            raise ValueError(f"{version} requires section control-volume series")
+        if version not in {
+            "v4-lite-7",
+            "d3a-1-v1",
+            "d3a-2-v1",
+            "d3a-3-v1",
+        } and any(
             section.volume_m3 is not None for section in self.sections
         ):
             raise ValueError("pre-v7 section results must not add volume series")
@@ -1186,9 +1275,9 @@ class MvpHydraulicResult(StrictResultModel):
             if len(self.pumps) != 1 or not isinstance(
                 self.pumps[0], MvpHydraulicPumpSeries
             ):
-                raise ValueError("v4-lite-7 requires one hydraulic Pump result")
+                raise ValueError(f"{version} requires one hydraulic Pump result")
             if len(self.pump_coupling_evidence) != 1:
-                raise ValueError("v4-lite-7 requires one Pump coupling evidence object")
+                raise ValueError(f"{version} requires one Pump coupling evidence object")
             pump_evidence = self.pump_coupling_evidence[0]
             pump_series = self.pumps[0]
             if pump_evidence.pump_id != pump_series.pump_id:
@@ -1236,7 +1325,7 @@ class MvpHydraulicResult(StrictResultModel):
                 raise ValueError("v4-lite-4 control events require bracket evidence")
             if not expects_bracket_evidence and event.has_bracket_evidence:
                 if not (
-                    version == "v4-lite-7"
+                    version in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1", "d3a-3-v1"}
                     and event.structure_type == "gate"
                     and event.action == "open"
                 ):
@@ -1244,21 +1333,21 @@ class MvpHydraulicResult(StrictResultModel):
                         "pre-v4 control events must not add bracket evidence"
                     )
             if (
-                version == "v4-lite-7"
+                version in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1", "d3a-3-v1"}
                 and event.structure_type == "gate"
                 and not event.has_bracket_evidence
             ):
-                raise ValueError("v4-lite-7 Gate event requires bracket evidence")
+                raise ValueError(f"{version} Gate event requires bracket evidence")
             if (
-                version == "v4-lite-7"
+                version in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1", "d3a-3-v1"}
                 and event.structure_type == "pump"
                 and event.has_bracket_evidence
             ):
-                raise ValueError("v4-lite-7 Pump hysteresis event cannot use a bracket")
+                raise ValueError(f"{version} Pump hysteresis event cannot use a bracket")
         event_keys = tuple(
             (item.structure_type, item.structure_id) for item in self.control_events
         )
-        if version == "v4-lite-7":
+        if version in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1", "d3a-3-v1"}:
             _require_unique(
                 (
                     (item.time, item.structure_type, item.structure_id, item.action)
@@ -1272,6 +1361,34 @@ class MvpHydraulicResult(StrictResultModel):
             _require_unique(gate_event_keys, "D1 one-shot Gate event identity")
         else:
             _require_unique(event_keys, "one-shot control event structure identity")
+        if version in {"d3a-1-v1", "d3a-2-v1", "d3a-3-v1"}:
+            if (
+                self.diagnostics.maximum_friction_number is None
+                or self.diagnostics.friction_retry_count is None
+                or self.diagnostics.maximum_friction_number <= 0.0
+                or self.diagnostics.maximum_friction_number > 0.1 + 1.0e-12
+                or self.diagnostics.friction_predictor_reduction_count is None
+                or self.diagnostics.predicted_minimum_friction_dt is None
+                or self.diagnostics.minimum_water_depth_m is None
+                or self.diagnostics.minimum_discharge_m3s is None
+                or self.diagnostics.maximum_froude_number is None
+                or self.diagnostics.runtime_envelope_retry_count is None
+                or self.diagnostics.runtime_envelope_status != "pass"
+                or self.diagnostics.maximum_froude_number > 0.8 + 1.0e-12
+            ):
+                raise ValueError(
+                    f"{version} requires bounded Manning and runtime-envelope diagnostics"
+                )
+        elif (
+            self.diagnostics.maximum_friction_number is not None
+            or self.diagnostics.friction_retry_count is not None
+            or self.diagnostics.friction_predictor_reduction_count is not None
+            or self.diagnostics.predicted_minimum_friction_dt is not None
+            or self.diagnostics.runtime_envelope_status is not None
+        ):
+            raise ValueError(
+                "pre-D3A result must not expose Manning/runtime-envelope diagnostics"
+            )
         event_key_set = set(event_keys)
         gate_ids = {item.gate_id for item in self.gates}
         pump_ids = {item.pump_id for item in self.pumps}

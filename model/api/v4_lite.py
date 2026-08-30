@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
@@ -20,12 +21,17 @@ from pydantic import (
     StringConstraints,
     ValidationError,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
 from model.core.errors import HydraulicInputError
 from model.geometry.sections import TabulatedSectionGeometry
 from model.solver.finite_volume.capabilities import require_solver_capability
+from model.solver.finite_volume.geometry_source import (
+    MAX_ADJACENT_HYDRAULIC_RELATIVE_CHANGE,
+    adjacent_hydraulic_relative_change,
+)
 
 
 MODEL_INPUT_V4_LITE = "dayu.model-input.v4-lite"
@@ -86,6 +92,22 @@ C2_BRACKETED_EVENT_POLICY = (
 )
 C2_GATE_COMPLETED_INTERFACE_POLICY = C2_BRACKETED_EVENT_POLICY
 C2_CONTROLLED_GATE_COMPLETED_INTERFACE_POLICY = C2_BRACKETED_EVENT_POLICY
+D3A_2_CONTROLLED_GATE_COMPLETED_INTERFACE_POLICY = (
+    "relative-prismatic-linear-bed-v1",
+    "hydrostatic-reconstruction-v1",
+    "explicit-section-bed-elevation-v1",
+    "standard-v1",
+    "subcritical-characteristic-v1",
+    "nearest-section-cell-face-v1",
+)
+D3A_3_ENGINEERING_PROFILE_POLICY = (
+    "nonprismatic-engineering-linear-path-v1",
+    "hydraulic-function-linear-face-v1",
+    "explicit-section-bed-elevation-v1",
+    "standard-v1",
+    "subcritical-characteristic-v1",
+    "nearest-section-cell-face-v1",
+)
 _VERSIONED_POLICY_FIELDS = frozenset(
     {
         "geometry_policy",
@@ -295,13 +317,15 @@ class V4LiteSolver(StrictContractModel):
         "relative-prismatic-linear-bed-v1",
         "nonprismatic-section-linear-path-v1",
         "nonprismatic-frictionless-energy-reference-v1",
+        "nonprismatic-engineering-linear-path-v1",
     ] = "absolute-prismatic-v1"
     geometry_source: Literal[
         "hydrostatic-reconstruction-v1",
         "hydraulic-function-linear-face-v1",
     ] = "hydrostatic-reconstruction-v1"
     bed_elevation_source: Literal[
-        "profile-minimum-elevation-v1"
+        "profile-minimum-elevation-v1",
+        "explicit-section-bed-elevation-v1",
     ] = "profile-minimum-elevation-v1"
     equilibrium_policy: Literal[
         "standard-v1",
@@ -422,6 +446,12 @@ class V4LiteSection(StrictContractModel):
     profile_id: PositiveId
     profile_hash: Sha256
     default_manning_n: Annotated[FiniteNumber, Field(ge=0.0, le=1.0)]
+    bed_elevation_m: FiniteNumber | None = None
+    bed_elevation_source: Literal[
+        "surveyed", "design", "synthetic"
+    ] | None = None
+    bed_elevation_confirmed_by: NonBlankText | None = None
+    bed_elevation_confirmed_at: datetime | None = None
     points: tuple[ProfilePoint, ...] = Field(min_length=3)
 
     @model_validator(mode="after")
@@ -451,13 +481,57 @@ class V4LiteSection(StrictContractModel):
             raise ValueError(
                 "v4-lite Profile must have one contiguous minimum-bed interval"
             )
+        authority = (
+            self.bed_elevation_m,
+            self.bed_elevation_source,
+            self.bed_elevation_confirmed_by,
+            self.bed_elevation_confirmed_at,
+        )
+        if any(value is not None for value in authority):
+            if any(value is None for value in authority):
+                raise ValueError(
+                    "explicit bed elevation requires value, source, actor, and time"
+                )
+            assert self.bed_elevation_m is not None
+            if not math.isclose(
+                self.bed_elevation_m,
+                minimum,
+                rel_tol=0.0,
+                abs_tol=max(
+                    _POLICY_ABSOLUTE_TOLERANCE,
+                    8.0 * math.ulp(abs(self.bed_elevation_m)),
+                ),
+            ):
+                raise ValueError(
+                    "explicit bed elevation must coincide with the Profile channel minimum"
+                )
         return self
+
+    @model_serializer(mode="wrap")
+    def serialize_optional_bed_authority(self, handler: Any) -> dict[str, Any]:
+        """Keep frozen pre-D3A-2 snapshots byte-stable when no bed is declared."""
+
+        payload = handler(self)
+        if self.bed_elevation_m is None:
+            payload.pop("bed_elevation_m", None)
+            payload.pop("bed_elevation_source", None)
+            payload.pop("bed_elevation_confirmed_by", None)
+            payload.pop("bed_elevation_confirmed_at", None)
+        return payload
 
     @property
     def minimum_stage_m(self) -> float:
         """Return the lowest Profile elevation used as the dry-bed stage."""
 
         return min(point.elevation_m for point in self.points)
+
+    @property
+    def hydraulic_bed_elevation_m(self) -> float:
+        """Return declared bed authority when present, with legacy fallback only."""
+
+        if self.bed_elevation_m is not None:
+            return self.bed_elevation_m
+        return self.minimum_stage_m
 
     @property
     def maximum_stage_m(self) -> float:
@@ -852,6 +926,9 @@ class V4LiteProvenance(StrictContractModel):
         "v4-lite-5",
         "v4-lite-6",
         "v4-lite-7",
+        "d3a-1-v1",
+        "d3a-2-v1",
+        "d3a-3-v1",
     ]
 
 
@@ -891,9 +968,43 @@ class V4LiteInput(StrictContractModel):
         section_by_id = {item.section_id: item for item in self.sections}
         section_ids = tuple(section_by_id)
         self._validate_versioned_policy()
+        if self.provenance.validation_policy_version in {
+            "d3a-1-v1",
+            "d3a-2-v1",
+            "d3a-3-v1",
+        } and any(
+            not 0.0 < section.default_manning_n <= 0.10
+            for section in self.sections
+        ):
+            raise ValueError(
+                f"{self.provenance.validation_policy_version} requires "
+                "0 < default_manning_n <= 0.10 in every section"
+            )
+        if self.provenance.validation_policy_version in {
+            "d3a-2-v1",
+            "d3a-3-v1",
+        } and any(
+            section.bed_elevation_m is None
+            or section.bed_elevation_source is None
+            or section.bed_elevation_confirmed_by is None
+            or section.bed_elevation_confirmed_at is None
+            for section in self.sections
+        ):
+            raise ValueError(
+                f"{self.provenance.validation_policy_version} requires explicit "
+                "confirmed bed elevation in every section"
+            )
         if (
             self.provenance.validation_policy_version
-            not in {"v4-lite-3", "v4-lite-5", "v4-lite-6", "v4-lite-7"}
+            not in {
+                "v4-lite-3",
+                "v4-lite-5",
+                "v4-lite-6",
+                "v4-lite-7",
+                "d3a-1-v1",
+                "d3a-2-v1",
+                "d3a-3-v1",
+            }
             and any(section.default_manning_n <= 0.0 for section in self.sections)
         ):
             raise ValueError(
@@ -926,6 +1037,7 @@ class V4LiteInput(StrictContractModel):
         self._validate_equilibrium_policy()
         self._validate_nonprismatic_lake_scope()
         self._validate_nonprismatic_moving_scope()
+        self._validate_nonprismatic_engineering_scope()
         return self
 
     def _validate_versioned_policy(self) -> None:
@@ -988,7 +1100,7 @@ class V4LiteInput(StrictContractModel):
             ):
                 raise ValueError("v4-lite-4 requires the bracketed event policy")
             return
-        if version == "v4-lite-7":
+        if version in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1", "d3a-3-v1"}:
             capability = require_solver_capability(version)
             missing_event_fields = _EVENT_POLICY_FIELDS - self.solver.model_fields_set
             missing_gate_fields = _GATE_COUPLING_FIELDS - self.solver.model_fields_set
@@ -998,12 +1110,21 @@ class V4LiteInput(StrictContractModel):
             )
             if missing_fields:
                 raise ValueError(
-                    "v4-lite-7 requires every Gate/Pump policy field explicitly; "
+                    f"{version} requires every Gate/Pump policy field explicitly; "
                     f"missing={sorted(missing_fields)}"
                 )
             manifest = capability.manifest
-            if policy != C2_CONTROLLED_GATE_COMPLETED_INTERFACE_POLICY:
-                raise ValueError("v4-lite-7 policy tuple is not implemented")
+            expected_policy = (
+                D3A_3_ENGINEERING_PROFILE_POLICY
+                if version == "d3a-3-v1"
+                else (
+                    D3A_2_CONTROLLED_GATE_COMPLETED_INTERFACE_POLICY
+                    if version == "d3a-2-v1"
+                    else C2_CONTROLLED_GATE_COMPLETED_INTERFACE_POLICY
+                )
+            )
+            if policy != expected_policy:
+                raise ValueError(f"{version} policy tuple is not implemented")
             expected = {
                 "geometry_policy": manifest.geometry_policy,
                 "boundary_closure": manifest.boundary_policy,
@@ -1014,21 +1135,21 @@ class V4LiteInput(StrictContractModel):
                 "pump_control_policy": manifest.pump_control_policy,
             }
             if any(getattr(self.solver, key) != value for key, value in expected.items()):
-                raise ValueError("v4-lite-7 solver policies do not match its capability")
+                raise ValueError(f"{version} solver policies do not match its capability")
             if self.solver.pump_system_loss_policy != "quadratic-q-v1":
-                raise ValueError("v4-lite-7 requires quadratic Pump system loss")
+                raise ValueError(f"{version} requires quadratic Pump system loss")
             if self.solver.pump_momentum_policy != (
                 "local-advective-external-sink-v1"
             ):
-                raise ValueError("v4-lite-7 requires the local Pump momentum sink")
+                raise ValueError(f"{version} requires the local Pump momentum sink")
             if self.solver.water_balance_tolerance > 1.0e-10:
                 raise ValueError(
-                    "v4-lite-7 water_balance_tolerance must be at most 1e-10"
+                    f"{version} water_balance_tolerance must be at most 1e-10"
                 )
             if self.solver.structure_event_policy != (
                 "bracketed-conservative-replay-right-end-v1"
             ):
-                raise ValueError("v4-lite-7 requires bracketed Gate replay")
+                raise ValueError(f"{version} requires bracketed Gate replay")
             return
         if explicit_pump_fields:
             raise ValueError(f"{version} does not accept hydraulic Pump policy fields")
@@ -1087,6 +1208,50 @@ class V4LiteInput(StrictContractModel):
         }:
             return
 
+        if self.solver.geometry_policy == "nonprismatic-engineering-linear-path-v1":
+            beds = tuple(
+                section.hydraulic_bed_elevation_m for section in self.sections
+            )
+            if any(right >= left for left, right in zip(beds, beds[1:])):
+                raise ValueError(
+                    "nonprismatic-engineering-linear-path-v1 requires a strictly "
+                    "descending explicit bed"
+                )
+            shapes = tuple(
+                self._relative_profile_shape(section) for section in self.sections
+            )
+            if all(
+                self._relative_profile_shapes_match(shapes[0], shape)
+                for shape in shapes[1:]
+            ):
+                raise ValueError(
+                    "nonprismatic-engineering-linear-path-v1 requires non-identical "
+                    "local Profile shapes"
+                )
+            geometries = tuple(
+                TabulatedSectionGeometry.from_points(
+                    tuple(
+                        (point.offset_m, point.elevation_m)
+                        for point in section.points
+                    )
+                )
+                for section in self.sections
+            )
+            changes = tuple(
+                adjacent_hydraulic_relative_change(left, right)
+                for left, right in zip(geometries, geometries[1:])
+            )
+            if any(
+                change > MAX_ADJACENT_HYDRAULIC_RELATIVE_CHANGE
+                for change in changes
+            ):
+                raise ValueError(
+                    "nonprismatic-engineering-linear-path-v1 adjacent Profile "
+                    f"change {max(changes):.6g} exceeds "
+                    f"{MAX_ADJACENT_HYDRAULIC_RELATIVE_CHANGE:.6g}"
+                )
+            return
+
         reference_shape = self._relative_profile_shape(reference)
         for section in self.sections[1:]:
             shape = self._relative_profile_shape(section)
@@ -1096,7 +1261,7 @@ class V4LiteInput(StrictContractModel):
                     "Profile shapes"
                 )
 
-        beds = tuple(section.minimum_stage_m for section in self.sections)
+        beds = tuple(section.hydraulic_bed_elevation_m for section in self.sections)
         if any(right >= left for left, right in zip(beds, beds[1:])):
             raise ValueError(
                 "relative-prismatic-linear-bed-v1 requires a strictly descending bed"
@@ -1137,7 +1302,7 @@ class V4LiteInput(StrictContractModel):
     ) -> tuple[tuple[float, float], ...]:
         """Normalize absolute Profile points against their declared minimum bed."""
 
-        bed = section.minimum_stage_m
+        bed = section.hydraulic_bed_elevation_m
         return tuple(
             (point.offset_m, point.elevation_m - bed) for point in section.points
         )
@@ -1231,7 +1396,7 @@ class V4LiteInput(StrictContractModel):
                 "uniform-manning-reference-v1 requires positive initial discharge"
             )
         depths = tuple(
-            value.water_level_m - section.minimum_stage_m
+            value.water_level_m - section.hydraulic_bed_elevation_m
             for value, section in zip(ordered_values, self.sections)
         )
         depth = _require_policy_constant(depths, "initial water depth")
@@ -1300,7 +1465,8 @@ class V4LiteInput(StrictContractModel):
                 "nonprismatic-section-linear-path-v1 requires zero initial discharge"
             )
         if any(
-            reference_stage - section.minimum_stage_m <= self.solver.dry_depth_m
+            reference_stage - section.hydraulic_bed_elevation_m
+            <= self.solver.dry_depth_m
             for section in self.sections
         ):
             raise ValueError(
@@ -1370,7 +1536,7 @@ class V4LiteInput(StrictContractModel):
                     f"{policy} requires a uniform cell-centre section grid"
                 )
 
-        beds = tuple(section.minimum_stage_m for section in self.sections)
+        beds = tuple(section.hydraulic_bed_elevation_m for section in self.sections)
         bed_tolerance = max(
             _POLICY_ABSOLUTE_TOLERANCE,
             8.0 * max(math.ulp(abs(bed)) for bed in beds),
@@ -1423,7 +1589,7 @@ class V4LiteInput(StrictContractModel):
             geometries,
             stages,
         ):
-            depth = stage - section.minimum_stage_m
+            depth = stage - section.hydraulic_bed_elevation_m
             if depth <= minimum_wet_depth:
                 raise ValueError(
                     f"{policy} requires depth greater than the frozen wet margin"
@@ -1490,6 +1656,37 @@ class V4LiteInput(StrictContractModel):
                 f"{policy} downstream stage must match the final initial stage"
             )
 
+    def _validate_nonprismatic_engineering_scope(self) -> None:
+        """Preflight the fully wet gradually varying D3A-3 validation class."""
+
+        policy = "nonprismatic-engineering-linear-path-v1"
+        if self.solver.geometry_policy != policy:
+            return
+        if not isinstance(self.initial_state, BySectionInitialState):
+            raise ValueError(f"{policy} requires by-section initial_state")
+        if len(self.structures.gates) != 1 or len(self.structures.pumps) != 1:
+            raise ValueError(f"{policy} requires exactly one Gate and one Pump")
+        values_by_id = {
+            value.section_id: value for value in self.initial_state.values
+        }
+        for section in self.sections:
+            value = values_by_id[section.section_id]
+            depth = value.water_level_m - section.hydraulic_bed_elevation_m
+            if depth <= self.solver.dry_depth_m:
+                raise ValueError(f"{policy} requires every initial section fully wet")
+            geometry = TabulatedSectionGeometry.from_points(
+                tuple(
+                    (point.offset_m, point.elevation_m)
+                    for point in section.points
+                )
+            )
+            area = geometry.area(value.water_level_m)
+            top_width = geometry.top_width(value.water_level_m)
+            celerity = math.sqrt(_GRAVITY_M_S2 * area / top_width)
+            froude = abs(value.discharge_m3_s / area) / celerity
+            if not math.isfinite(froude) or froude > _MOVING_REFERENCE_MAXIMUM_FROUDE:
+                raise ValueError(f"{policy} requires initial Froude number <= 0.8")
+
     @staticmethod
     def _hydraulic_signature(
         section: V4LiteSection,
@@ -1536,11 +1733,11 @@ class V4LiteInput(StrictContractModel):
     ) -> None:
         """Keep initial stage inside the Profile table and dry-cell discharge at zero."""
 
-        if not section.minimum_stage_m <= water_level <= section.maximum_stage_m:
+        if not section.hydraulic_bed_elevation_m <= water_level <= section.maximum_stage_m:
             raise ValueError(
                 f"initial water level for section {section.section_id} is outside its Profile range"
             )
-        depth = water_level - section.minimum_stage_m
+        depth = water_level - section.hydraulic_bed_elevation_m
         if depth <= self.solver.dry_depth_m and discharge != 0.0:
             raise ValueError(
                 f"dry section {section.section_id} must have zero initial discharge"
@@ -1550,7 +1747,7 @@ class V4LiteInput(StrictContractModel):
         """Keep every downstream H(t) value inside the endpoint Profile range."""
 
         for level in self.boundary.downstream.water_level_m:
-            if not section.minimum_stage_m <= level <= section.maximum_stage_m:
+            if not section.hydraulic_bed_elevation_m <= level <= section.maximum_stage_m:
                 raise ValueError("downstream stage is outside the endpoint Profile range")
 
     def _validate_structures(self, section_ids: tuple[int, ...]) -> None:
@@ -1610,25 +1807,33 @@ class V4LiteInput(StrictContractModel):
             for structure in (*self.structures.gates, *self.structures.pumps)
         )
         version = self.provenance.validation_policy_version
-        if version not in {"v4-lite-4", "v4-lite-6", "v4-lite-7"}:
+        if version not in {
+            "v4-lite-4",
+            "v4-lite-6",
+            "v4-lite-7",
+            "d3a-1-v1",
+            "d3a-2-v1",
+            "d3a-3-v1",
+        }:
             if any(
                 isinstance(control, BracketedOneShotStageAboveControlInput)
                 for control in controls
             ):
                 raise ValueError(
                     "bracketed threshold control requires validation_policy_version "
-                    "v4-lite-4, v4-lite-6, or v4-lite-7"
+                    "v4-lite-4, v4-lite-6, v4-lite-7, d3a-1-v1, d3a-2-v1, "
+                    "or d3a-3-v1"
                 )
             return
-        if version == "v4-lite-7":
+        if version in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1", "d3a-3-v1"}:
             if len(self.structures.gates) != 1 or len(self.structures.pumps) != 1:
-                raise ValueError("v4-lite-7 requires one Gate and one Pump")
+                raise ValueError(f"{version} requires one Gate and one Pump")
             gate_control = self.structures.gates[0].control
             pump = self.structures.pumps[0]
             if not isinstance(gate_control, BracketedOneShotStageAboveControlInput):
-                raise ValueError("v4-lite-7 Gate control must be bracketed")
+                raise ValueError(f"{version} Gate control must be bracketed")
             if not isinstance(pump, HydraulicExternalPumpInput):
-                raise ValueError("v4-lite-7 requires a hydraulic Q-H Pump")
+                raise ValueError(f"{version} requires a hydraulic Q-H Pump")
             if self.solver.event_time_tolerance_seconds < (
                 self.solver.minimum_time_step_seconds
             ):
@@ -1654,7 +1859,7 @@ class V4LiteInput(StrictContractModel):
                 raise ValueError("bracketed Gate initial stage must be below threshold")
             source_section = section_by_id[pump.section_id]
             if not (
-                source_section.minimum_stage_m
+                source_section.hydraulic_bed_elevation_m
                 <= pump.control.stop_level_m
                 < pump.control.start_level_m
                 < source_section.maximum_stage_m
@@ -1714,17 +1919,24 @@ class V4LiteInput(StrictContractModel):
             "sill_elevation_m" in gate.model_fields_set
             for gate in self.structures.gates
         )
-        if version not in {"v4-lite-5", "v4-lite-6", "v4-lite-7"}:
+        if version not in {
+            "v4-lite-5",
+            "v4-lite-6",
+            "v4-lite-7",
+            "d3a-1-v1",
+            "d3a-2-v1",
+            "d3a-3-v1",
+        }:
             if any(declared_sills):
                 raise ValueError("pre-v5 Gate must not declare sill_elevation_m")
             return
         if len(self.structures.gates) != 1:
             raise ValueError(f"{version} requires exactly one Gate")
-        if version == "v4-lite-7":
+        if version in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1", "d3a-3-v1"}:
             if len(self.structures.pumps) != 1 or not isinstance(
                 self.structures.pumps[0], HydraulicExternalPumpInput
             ):
-                raise ValueError("v4-lite-7 requires exactly one hydraulic Pump")
+                raise ValueError(f"{version} requires exactly one hydraulic Pump")
         elif self.structures.pumps:
             raise ValueError(f"{version} requires exactly one Gate and no Pump")
         gate = self.structures.gates[0]
@@ -1732,21 +1944,51 @@ class V4LiteInput(StrictContractModel):
             gate.control, FixedStructureControlInput
         ):
             raise ValueError("v4-lite-5 requires fixed Gate control")
-        if version in {"v4-lite-6", "v4-lite-7"} and not isinstance(
+        if version in {
+            "v4-lite-6",
+            "v4-lite-7",
+            "d3a-1-v1",
+            "d3a-2-v1",
+            "d3a-3-v1",
+        } and not isinstance(
             gate.control, BracketedOneShotStageAboveControlInput
         ):
             raise ValueError(f"{version} requires bracketed Gate control")
         if not declared_sills[0] or gate.sill_elevation_m is None:
             raise ValueError(f"{version} requires explicit sill_elevation_m")
-        if self.solver.geometry_policy != "absolute-prismatic-v1":
-            raise ValueError(f"{version} requires absolute-prismatic geometry")
-        if self.solver.geometry_source != "hydrostatic-reconstruction-v1":
-            raise ValueError(f"{version} requires hydrostatic reconstruction")
+        expected_geometry_policy = (
+            "nonprismatic-engineering-linear-path-v1"
+            if version == "d3a-3-v1"
+            else (
+                "relative-prismatic-linear-bed-v1"
+                if version == "d3a-2-v1"
+                else "absolute-prismatic-v1"
+            )
+        )
+        if self.solver.geometry_policy != expected_geometry_policy:
+            raise ValueError(
+                f"{version} requires {expected_geometry_policy} geometry"
+            )
+        expected_geometry_source = (
+            "hydraulic-function-linear-face-v1"
+            if version == "d3a-3-v1"
+            else "hydrostatic-reconstruction-v1"
+        )
+        if self.solver.geometry_source != expected_geometry_source:
+            raise ValueError(f"{version} requires {expected_geometry_source}")
         if self.solver.equilibrium_policy != "standard-v1":
             raise ValueError(f"{version} requires standard equilibrium")
         if self.solver.boundary_closure != "subcritical-characteristic-v1":
             raise ValueError(f"{version} requires characteristic boundaries")
-        if any(section.default_manning_n != 0.0 for section in self.sections):
+        if version in {"d3a-1-v1", "d3a-2-v1", "d3a-3-v1"}:
+            if any(
+                not 0.0 < section.default_manning_n <= 0.10
+                for section in self.sections
+            ):
+                raise ValueError(
+                    f"{version} requires effective Manning n in (0, 0.10]"
+                )
+        elif any(section.default_manning_n != 0.0 for section in self.sections):
             raise ValueError(f"{version} requires zero Manning friction")
         if not isinstance(self.initial_state, BySectionInitialState):
             raise ValueError(f"{version} requires by-section initial_state")
@@ -1766,19 +2008,27 @@ class V4LiteInput(StrictContractModel):
             )
             if inflow <= 0.0:
                 raise ValueError(f"{version} requires positive constant upstream inflow")
-        if version == "v4-lite-7" and any(value <= 0.0 for value in upstream_flows):
-            raise ValueError("v4-lite-7 requires a strictly positive upstream hydrograph")
+        if version in {
+            "v4-lite-7",
+            "d3a-1-v1",
+            "d3a-2-v1",
+            "d3a-3-v1",
+        } and any(
+            value <= 0.0 for value in upstream_flows
+        ):
+            raise ValueError(f"{version} requires a strictly positive upstream hydrograph")
         final_stage = value_by_id[self.sections[-1].section_id].water_level_m
         downstream_stages = tuple(self.boundary.downstream.water_level_m)
-        if version == "v4-lite-7":
+        if version in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1", "d3a-3-v1"}:
             final_section = self.sections[-1]
             if any(
                 value > final_stage
-                or value - final_section.minimum_stage_m <= self.solver.dry_depth_m
+                or value - final_section.hydraulic_bed_elevation_m
+                <= self.solver.dry_depth_m
                 for value in downstream_stages
             ):
                 raise ValueError(
-                    "v4-lite-7 downstream stage process must stay wet and no higher "
+                    f"{version} downstream stage process must stay wet and no higher "
                     "than the final initial stage"
                 )
         elif any(
@@ -1795,15 +2045,27 @@ class V4LiteInput(StrictContractModel):
             and upstream_value.water_level_m <= downstream_value.water_level_m
         ):
             raise ValueError("v4-lite-5 Gate requires positive forward head")
-        if version in {"v4-lite-6", "v4-lite-7"} and not _absolute_stage_close(
+        if version in {
+            "v4-lite-6",
+            "v4-lite-7",
+            "d3a-1-v1",
+        } and not _absolute_stage_close(
             upstream_value.water_level_m,
             downstream_value.water_level_m,
         ):
             raise ValueError(f"{version} Gate requires an initially level closed interface")
+        if (
+            version in {"d3a-2-v1", "d3a-3-v1"}
+            and upstream_value.water_level_m <= downstream_value.water_level_m
+        ):
+            raise ValueError(f"{version} Gate requires positive initial forward head")
         upstream_section = section_by_id[gate.interface.upstream_section_id]
         downstream_section = section_by_id[gate.interface.downstream_section_id]
         sill = float(gate.sill_elevation_m)
-        if sill < upstream_section.minimum_stage_m or sill < downstream_section.minimum_stage_m:
+        if (
+            sill < upstream_section.hydraulic_bed_elevation_m
+            or sill < downstream_section.hydraulic_bed_elevation_m
+        ):
             raise ValueError(f"{version} Gate sill lies below the Profile minimum stage")
         gate_top = sill + gate.opening_m
         submergence_levels = [downstream_value.water_level_m]
@@ -1830,19 +2092,24 @@ class V4LiteInput(StrictContractModel):
             for pump in self.structures.pumps
             if isinstance(pump, HydraulicExternalPumpInput)
         )
-        if version != "v4-lite-7":
+        if version not in {
+            "v4-lite-7",
+            "d3a-1-v1",
+            "d3a-2-v1",
+            "d3a-3-v1",
+        }:
             if hydraulic:
-                raise ValueError("hydraulic Q-H Pump requires v4-lite-7")
+                raise ValueError("hydraulic Q-H Pump requires a Gate/Pump capability")
             return
         if len(hydraulic) != 1 or len(self.structures.pumps) != 1:
-            raise ValueError("v4-lite-7 requires exactly one hydraulic Pump")
+            raise ValueError(f"{version} requires exactly one hydraulic Pump")
         pump = hydraulic[0]
         gate = self.structures.gates[0]
         section_ids = tuple(section.section_id for section in self.sections)
         pump_index = section_ids.index(pump.section_id)
         gate_index = section_ids.index(gate.interface.upstream_section_id)
         if pump_index in {gate_index, gate_index + 1}:
-            raise ValueError("v4-lite-7 Gate and Pump placements must not overlap")
+            raise ValueError(f"{version} Gate and Pump placements must not overlap")
         if (
             pump.outlet_stage.time_seconds[0] > 0.0
             or pump.outlet_stage.time_seconds[-1]
@@ -1850,17 +2117,18 @@ class V4LiteInput(StrictContractModel):
         ):
             raise ValueError("Pump outlet stage does not cover the simulation interval")
         if not isinstance(self.initial_state, BySectionInitialState):
-            raise ValueError("v4-lite-7 requires by-section initial_state")
+            raise ValueError(f"{version} requires by-section initial_state")
         initial_by_id = {
             value.section_id: value for value in self.initial_state.values
         }
         source_section = section_by_id[pump.section_id]
         initial_source = initial_by_id[pump.section_id]
         if (
-            initial_source.water_level_m - source_section.minimum_stage_m
+            initial_source.water_level_m
+            - source_section.hydraulic_bed_elevation_m
             <= self.solver.dry_depth_m
         ):
-            raise ValueError("v4-lite-7 Pump source cell must start fully wet")
+            raise ValueError(f"{version} Pump source cell must start fully wet")
 
     @staticmethod
     def _validate_control_threshold(
@@ -1872,7 +2140,7 @@ class V4LiteInput(StrictContractModel):
         """Keep a strict-above threshold inside its monitored Profile range."""
 
         threshold = control.threshold_water_level_m
-        if not section.minimum_stage_m <= threshold < section.maximum_stage_m:
+        if not section.hydraulic_bed_elevation_m <= threshold < section.maximum_stage_m:
             raise ValueError(
                 f"{label} control threshold must satisfy minimum_stage_m <= "
                 "threshold_water_level_m < maximum_stage_m"

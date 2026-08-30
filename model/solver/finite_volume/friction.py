@@ -189,6 +189,59 @@ class ManningCellStageEvidence:
         return numerator / max(abs(self.discharge_before), 1.0)
 
 
+@dataclass(frozen=True, slots=True)
+class ManningTimeStepEstimate:
+    """Expose the accepted-state predictor limit and its controlling cell."""
+
+    time_step: float
+    limiting_cell: int | None
+
+
+def estimate_manning_time_step(
+    *,
+    mesh: FiniteVolumeMesh,
+    area: tuple[float, ...],
+    discharge: tuple[float, ...],
+    maximum_friction_number: float,
+) -> ManningTimeStepEstimate:
+    """Predict ``max_mu/(k*abs(Q))`` from the current accepted state."""
+
+    if (
+        not math.isfinite(maximum_friction_number)
+        or maximum_friction_number <= 0.0
+    ):
+        raise ValueError("maximum_friction_number must be finite and positive")
+    if len(area) != len(mesh.cells) or len(discharge) != len(mesh.cells):
+        raise ValueError("Manning predictor state must match the mesh")
+    candidates: list[tuple[float, int]] = []
+    for index, (cell, cell_area, cell_discharge) in enumerate(
+        zip(mesh.cells, area, discharge)
+    ):
+        if cell.manning_n == 0.0 or cell_discharge == 0.0:
+            continue
+        stage = cell.geometry.stage_from_area(cell_area)
+        radius = float(cell.geometry.hydraulic_radius(stage))
+        if not math.isfinite(radius) or radius <= 0.0 or cell_area <= _EPSILON:
+            raise NumericalStateError(
+                "wet Manning predictor cell requires positive area and radius"
+            )
+        coefficient = (
+            GRAVITY
+            * cell.manning_n
+            * cell.manning_n
+            / (cell_area * radius ** (4.0 / 3.0))
+        )
+        denominator = coefficient * abs(cell_discharge)
+        if denominator > 0.0:
+            candidates.append((maximum_friction_number / denominator, index))
+    if not candidates:
+        return ManningTimeStepEstimate(math.inf, None)
+    time_step, limiting_cell = min(candidates, key=lambda item: item[0])
+    if not math.isfinite(time_step) or time_step <= 0.0:
+        raise NumericalStateError("Manning predictor produced an invalid time step")
+    return ManningTimeStepEstimate(time_step, limiting_cell)
+
+
 def _semi_implicit_manning_values(
     *,
     area: float,

@@ -32,6 +32,8 @@ from model.solver.finite_volume.reconstruction import InterfaceFlux
 
 _AREA_TOLERANCE = 1.0e-12
 _STAGE_TOLERANCE = 1.0e-12
+MAX_ADJACENT_HYDRAULIC_RELATIVE_CHANGE = 0.25
+_SMOOTHNESS_DEPTH_FRACTIONS = (0.25, 0.50, 0.75)
 
 
 def _maximum_stage(geometry: SectionGeometryLike) -> float | None:
@@ -217,6 +219,58 @@ def mesh_face_geometries(
     return tuple(geometries)
 
 
+def adjacent_hydraulic_relative_change(
+    left: SectionGeometryLike,
+    right: SectionGeometryLike,
+) -> float:
+    """Return a conservative dimensionless adjacent-Profile smoothness metric.
+
+    A/T/P/I1 are compared at the same fractions of the common local-depth
+    domain.  Using local depth keeps an independently confirmed bed slope from
+    being misclassified as an abrupt cross-section change, while the finite-
+    volume operator itself continues to evaluate both sides on one absolute
+    stage.  The public D3A-3 gate accepts only values at or below 0.25; that
+    threshold is validation-only and is not a claim about abrupt transitions.
+    """
+
+    left_maximum = _maximum_stage(left)
+    right_maximum = _maximum_stage(right)
+    if left_maximum is None or right_maximum is None:
+        raise ValueError("engineering Profile smoothness requires finite bank stages")
+    common_depth = min(
+        left_maximum - float(left.minimum_stage),
+        right_maximum - float(right.minimum_stage),
+    )
+    if not math.isfinite(common_depth) or common_depth <= _STAGE_TOLERANCE:
+        raise ValueError("engineering Profiles require a shared positive depth domain")
+
+    maximum_change = 0.0
+    for fraction in _SMOOTHNESS_DEPTH_FRACTIONS:
+        left_stage = float(left.minimum_stage) + fraction * common_depth
+        right_stage = float(right.minimum_stage) + fraction * common_depth
+        left_values = (
+            _bounded_value(left, "area", left_stage),
+            _bounded_value(left, "top_width", left_stage),
+            _bounded_value(left, "wetted_perimeter", left_stage),
+            _bounded_value(left, "pressure_moment", left_stage),
+        )
+        right_values = (
+            _bounded_value(right, "area", right_stage),
+            _bounded_value(right, "top_width", right_stage),
+            _bounded_value(right, "wetted_perimeter", right_stage),
+            _bounded_value(right, "pressure_moment", right_stage),
+        )
+        for left_value, right_value in zip(left_values, right_values):
+            scale = max(abs(left_value), abs(right_value), _AREA_TOLERANCE)
+            maximum_change = max(
+                maximum_change,
+                abs(left_value - right_value) / scale,
+            )
+    if not math.isfinite(maximum_change):
+        raise NumericalStateError("engineering Profile smoothness is non-finite")
+    return maximum_change
+
+
 def hydraulic_path_interface_flux(
     left_state: ConservedVector,
     right_state: ConservedVector,
@@ -282,7 +336,9 @@ def geometry_pressure_source(
 
 
 __all__ = [
+    "MAX_ADJACENT_HYDRAULIC_RELATIVE_CHANGE",
     "LinearHydraulicFaceGeometry",
+    "adjacent_hydraulic_relative_change",
     "geometry_pressure_source",
     "hydraulic_path_interface_flux",
     "internal_face_geometry",

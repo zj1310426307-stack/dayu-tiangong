@@ -1,11 +1,13 @@
 // 从运行中的 FastAPI OpenAPI 文档生成前端类型与唯一 API 客户端入口。
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const outputDirectory = resolve(scriptDirectory, '../src/api/generated');
-const outputFile = resolve(outputDirectory, 'client.ts');
+const outputFile = process.env.OPENAPI_OUTPUT_FILE
+  ? resolve(process.env.OPENAPI_OUTPUT_FILE)
+  : resolve(outputDirectory, 'client.ts');
 const schemaUrl = process.env.OPENAPI_URL ?? 'http://127.0.0.1:8001/openapi.json';
 
 function toType(schema = {}) {
@@ -398,8 +400,8 @@ export const updateSimulationCase = (caseId: number, body: SimulationCaseUpdate,
 export const deleteSimulationCase = (caseId: number, baseUrl = '') => requestJson<void>(\`/api/v1/model-data/simulation-cases/\${caseId}\`, { method: 'DELETE' }, baseUrl);
 export const getModelInput = (caseId: number, baseUrl = '') => requestJson<ModelInputSnapshot>(\`/api/v1/model-data/simulation-cases/\${caseId}/input\`, {}, baseUrl);
 export const getModelInputV3 = (caseId: number, baseUrl = '') => requestJson<Record<string, unknown>>(\`/api/v1/model-data/simulation-cases/\${caseId}/input-v3\`, {}, baseUrl);
-export const getModelInputV4Readiness = (caseId: number, dispatchPlanId: number, baseUrl = '') => requestJson<V4ReadinessResponse>(\`/api/v1/model-data/simulation-cases/\${caseId}/input-v4/readiness\${toQuery({ dispatch_plan_id: dispatchPlanId })}\`, {}, baseUrl);
-export const getModelInputV4Preview = (caseId: number, dispatchPlanId: number, baseUrl = '') => requestJson<V4PreviewResponse>(\`/api/v1/model-data/simulation-cases/\${caseId}/input-v4/preview\${toQuery({ dispatch_plan_id: dispatchPlanId })}\`, {}, baseUrl);
+export const getModelInputV4Readiness = (caseId: number, dispatchPlanId: number, capabilityId: string, baseUrl = '') => requestJson<V4ReadinessResponse>(\`/api/v1/model-data/simulation-cases/\${caseId}/input-v4/readiness\${toQuery({ dispatch_plan_id: dispatchPlanId, capability_id: capabilityId })}\`, {}, baseUrl);
+export const getModelInputV4Preview = (caseId: number, dispatchPlanId: number, capabilityId: string, baseUrl = '') => requestJson<V4PreviewResponse>(\`/api/v1/model-data/simulation-cases/\${caseId}/input-v4/preview\${toQuery({ dispatch_plan_id: dispatchPlanId, capability_id: capabilityId })}\`, {}, baseUrl);
 export const runValidation = (datasetVersionId: number, baseUrl = '') => requestJson<ValidationReport>('/api/v1/validation/run', jsonOptions('POST', { dataset_version_id: datasetVersionId }), baseUrl);
 
 export const getHydraulicCapabilities = (baseUrl = '') => requestJson<HydraulicCapabilityResponse>('/api/v1/hydraulic/capabilities', {}, baseUrl);
@@ -514,6 +516,17 @@ export async function uploadDataFile(kind: 'excel' | 'csv' | 'geojson', resource
 }
 `;
 
-await mkdir(outputDirectory, { recursive: true });
-await writeFile(outputFile, generated, 'utf8');
-console.log(`已生成 OpenAPI 客户端：${outputFile}`);
+if (process.env.OPENAPI_CHECK === '1') {
+  const current = await readFile(outputFile, 'utf8');
+  const normalizedCurrent = current.replace(/\r\n/g, '\n');
+  if (normalizedCurrent !== generated) {
+    console.error(`OpenAPI 客户端存在漂移：${outputFile}`);
+    process.exitCode = 1;
+  } else {
+    console.log(`OpenAPI 客户端已同步：${outputFile}`);
+  }
+} else {
+  await mkdir(dirname(outputFile), { recursive: true });
+  await writeFile(outputFile, generated, 'utf8');
+  console.log(`已生成 OpenAPI 客户端：${outputFile}`);
+}

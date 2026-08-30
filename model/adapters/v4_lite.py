@@ -46,6 +46,7 @@ from model.solver.finite_volume import (
     FixedGate,
     HydraulicState,
     HydraulicExternalPump,
+    NONPRISMATIC_ENGINEERING_SCOPE,
     NONPRISMATIC_LAKE_SCOPE,
     NONPRISMATIC_MOVING_ENERGY_SCOPE,
     OneShotStageThreshold,
@@ -60,8 +61,11 @@ from model.solver.finite_volume import (
     StageHysteresisMinimumRuntime,
     UpstreamDischargeBoundary,
     solve_single_branch,
+    resolve_runtime_envelope,
 )
 from model.solver.finite_volume.boundary import boundary_algorithm_id
+from model.solver.finite_volume.capabilities import require_solver_capability
+from model.solver.registry import registry_hash
 
 MESH_HASH_SCHEMA = "dayu.finite-volume-mesh.v1"
 MESH_HASH_SCHEMA_V2 = "dayu.finite-volume-mesh.v2"
@@ -70,8 +74,15 @@ SOLVER_POLICY_HASH_SCHEMA_V2 = "dayu.solver-policy.v2"
 SOLVER_POLICY_HASH_SCHEMA_V3 = "dayu.solver-policy.v3"
 SOLVER_POLICY_HASH_SCHEMA_V4 = "dayu.solver-policy.v4"
 SOLVER_POLICY_HASH_SCHEMA_V5 = "dayu.solver-policy.v5"
+SOLVER_POLICY_HASH_SCHEMA_V6 = "dayu.solver-policy.v6"
+SOLVER_POLICY_HASH_SCHEMA_V7 = "dayu.solver-policy.v7"
+SOLVER_POLICY_HASH_SCHEMA_V8 = "dayu.solver-policy.v8"
+SOLVER_POLICY_HASH_SCHEMA_V9 = "dayu.solver-policy.v9"
 RUNTIME_PROJECTION_HASH_SCHEMA = "dayu.v4-lite.runtime-projection.v1"
 VALIDATION_POLICY_HASH_SCHEMA = "dayu.v4-lite.validation-policy.v1"
+VALIDATION_POLICY_HASH_SCHEMA_V2 = "dayu.v4-lite.validation-policy.v2"
+
+_D3A_VALIDATION_VERSIONS = frozenset({"d3a-1-v1", "d3a-2-v1", "d3a-3-v1"})
 
 
 def build_v4_lite_mesh(model_input: V4LiteInput) -> FiniteVolumeMesh:
@@ -103,15 +114,34 @@ def build_v4_lite_mesh(model_input: V4LiteInput) -> FiniteVolumeMesh:
 
     cells: list[FiniteVolumeCell] = []
     for section, length in zip(model_input.sections, lengths):
+        bed_elevation = section.hydraulic_bed_elevation_m
+        points = tuple(
+            (point.offset_m, point.elevation_m) for point in section.points
+        )
+        if model_input.provenance.validation_policy_version in {
+            "d3a-2-v1",
+            "d3a-3-v1",
+        }:
+            # The declared bed is authoritative.  Convert absolute surveyed
+            # ordinates to local z and translate them back into the kernel's
+            # absolute-stage geometry without deriving the datum from min(z).
+            local_points = tuple(
+                (offset, elevation - bed_elevation)
+                for offset, elevation in points
+            )
+            points = tuple(
+                (offset, bed_elevation + local_z)
+                for offset, local_z in local_points
+            )
         geometry = TabulatedSectionGeometry.from_points(
-            tuple((point.offset_m, point.elevation_m) for point in section.points)
+            points
         )
         cells.append(
             FiniteVolumeCell(
                 cell_id=f"branch-{model_input.river.branch_id}-section-{section.section_id}",
                 dx=length,
                 section_id=section.section_id,
-                bed_elevation=geometry.minimum_stage,
+                bed_elevation=bed_elevation,
                 geometry=geometry,
                 manning_n=section.default_manning_n,
             )
@@ -145,14 +175,26 @@ def v4_lite_runtime_projection_hash(model_input: V4LiteInput) -> str:
 def v4_lite_validation_policy_hash(model_input: V4LiteInput) -> str:
     """Hash the immutable public validation-policy identity independently."""
 
+    version = model_input.provenance.validation_policy_version
     manifest = {
-        "schema_version": VALIDATION_POLICY_HASH_SCHEMA,
+        "schema_version": (
+            VALIDATION_POLICY_HASH_SCHEMA_V2
+            if version in _D3A_VALIDATION_VERSIONS
+            else VALIDATION_POLICY_HASH_SCHEMA
+        ),
         "canonicalization_id": CANONICALIZATION_ID,
         "input_schema_version": model_input.schema_version,
-        "validation_policy_version": (
-            model_input.provenance.validation_policy_version
-        ),
+        "validation_policy_version": version,
     }
+    if version in _D3A_VALIDATION_VERSIONS:
+        capability = require_solver_capability(version)
+        envelope = resolve_runtime_envelope(
+            capability.manifest.runtime_envelope_id
+        )
+        manifest["runtime_envelope"] = {
+            **envelope.manifest(),
+            "manifest_hash": envelope.manifest_hash,
+        }
     return snapshot_hash(manifest)
 
 
@@ -222,18 +264,31 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
     solver = model_input.solver
     manifest = {
         "schema_version": (
-            SOLVER_POLICY_HASH_SCHEMA_V5
-            if model_input.provenance.validation_policy_version == "v4-lite-7"
+            SOLVER_POLICY_HASH_SCHEMA_V9
+            if model_input.provenance.validation_policy_version
+            in _D3A_VALIDATION_VERSIONS
             else (
-                SOLVER_POLICY_HASH_SCHEMA_V4
-                if model_input.provenance.validation_policy_version == "v4-lite-6"
+                SOLVER_POLICY_HASH_SCHEMA_V7
+                if model_input.provenance.validation_policy_version == "d3a-2-v1"
                 else (
-                    SOLVER_POLICY_HASH_SCHEMA_V3
-                    if model_input.provenance.validation_policy_version == "v4-lite-5"
+                    SOLVER_POLICY_HASH_SCHEMA_V6
+                    if model_input.provenance.validation_policy_version == "d3a-1-v1"
                     else (
-                        SOLVER_POLICY_HASH_SCHEMA_V2
-                        if model_input.provenance.validation_policy_version == "v4-lite-4"
-                        else SOLVER_POLICY_HASH_SCHEMA
+                        SOLVER_POLICY_HASH_SCHEMA_V5
+                        if model_input.provenance.validation_policy_version == "v4-lite-7"
+                        else (
+                            SOLVER_POLICY_HASH_SCHEMA_V4
+                            if model_input.provenance.validation_policy_version == "v4-lite-6"
+                            else (
+                                SOLVER_POLICY_HASH_SCHEMA_V3
+                                if model_input.provenance.validation_policy_version == "v4-lite-5"
+                                else (
+                                    SOLVER_POLICY_HASH_SCHEMA_V2
+                                    if model_input.provenance.validation_policy_version == "v4-lite-4"
+                                    else SOLVER_POLICY_HASH_SCHEMA
+                                )
+                            )
+                        )
                     )
                 )
             )
@@ -280,10 +335,47 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
             "maximum_discharge_l1_relative": 1.0e-4,
             "maximum_energy_linf_m": 1.0e-4,
         }
+    if model_input.provenance.validation_policy_version == "d3a-3-v1":
+        manifest["solver"]["execution_scope"] = NONPRISMATIC_ENGINEERING_SCOPE
+        manifest["solver"]["profile_smoothness"] = {
+            "policy": "adjacent-local-depth-a-t-p-i1-relative-change-v1",
+            "sample_depth_fractions": [0.25, 0.5, 0.75],
+            "maximum_relative_change": 0.25,
+            "classification": "validation-only-gradually-varying",
+            "abrupt_transition_claim": False,
+        }
+    if model_input.provenance.validation_policy_version in _D3A_VALIDATION_VERSIONS:
+        capability = require_solver_capability(
+            model_input.provenance.validation_policy_version
+        )
+        envelope = resolve_runtime_envelope(
+            capability.manifest.runtime_envelope_id
+        )
+        manifest["solver"]["runtime_envelope"] = {
+            **envelope.manifest(),
+            "manifest_hash": envelope.manifest_hash,
+            "checkpoints": [
+                "initial-state",
+                "first-euler-stage",
+                "second-euler-stage",
+                "blended-candidate",
+                "accepted-state",
+                "final-result",
+            ],
+        }
+        manifest["solver"]["friction_time_step_predictor"] = {
+            "policy": capability.manifest.friction_time_step_predictor_id,
+            "safety_factor": capability.manifest.friction_predictor_safety_factor,
+            "equation": "maximum-mu-over-current-k-abs-q-v1",
+            "stage_retry_gate_preserved": True,
+        }
     if model_input.provenance.validation_policy_version in {
         "v4-lite-4",
         "v4-lite-6",
         "v4-lite-7",
+        "d3a-1-v1",
+        "d3a-2-v1",
+        "d3a-3-v1",
     }:
         manifest["solver"]["structure_event"] = {
             "policy": solver.structure_event_policy,
@@ -296,6 +388,9 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
         "v4-lite-5",
         "v4-lite-6",
         "v4-lite-7",
+        "d3a-1-v1",
+        "d3a-2-v1",
+        "d3a-3-v1",
     }:
         manifest["solver"]["gate_coupling"] = {
             "policy": solver.gate_coupling_policy,
@@ -306,14 +401,25 @@ def v4_lite_solver_policy_hash(model_input: V4LiteInput) -> str:
             "momentum_flux": "side-specific-q2-over-a-plus-g-i1-v1",
             "reaction_sign": "downstream-minus-upstream-v1",
         }
-    if model_input.provenance.validation_policy_version in {"v4-lite-6", "v4-lite-7"}:
+    if model_input.provenance.validation_policy_version in {
+        "v4-lite-6",
+        "v4-lite-7",
+        "d3a-1-v1",
+        "d3a-2-v1",
+        "d3a-3-v1",
+    }:
         manifest["solver"]["combined_gate_control"] = {
             "policy": "bracketed-event-then-completed-interface-v1",
             "closed_interface": "impermeable-side-specific-g-i1-v1",
             "event_step_command": "closed",
             "open_command_effect": "next-accepted-subinterval-v1",
         }
-    if model_input.provenance.validation_policy_version == "v4-lite-7":
+    if model_input.provenance.validation_policy_version in {
+        "v4-lite-7",
+        "d3a-1-v1",
+        "d3a-2-v1",
+        "d3a-3-v1",
+    }:
         manifest["solver"]["pump_coupling"] = {
             "policy": solver.pump_coupling_policy,
             "curve_policy": solver.pump_curve_policy,
@@ -412,6 +518,8 @@ def _runtime_nonprismatic_scope(model_input: V4LiteInput) -> str:
         == "nonprismatic-frictionless-energy-reference-v1"
     ):
         return NONPRISMATIC_MOVING_ENERGY_SCOPE
+    if model_input.solver.geometry_policy == "nonprismatic-engineering-linear-path-v1":
+        return NONPRISMATIC_ENGINEERING_SCOPE
     return NONPRISMATIC_LAKE_SCOPE
 
 
@@ -465,7 +573,7 @@ def _structures(
                 HydraulicExternalPump(
                     pump_id=str(pump.identity.id),
                     cell_index=section_index,
-                    source_bed_elevation_m=section.minimum_stage_m,
+                    source_bed_elevation_m=section.hydraulic_bed_elevation_m,
                     minimum_source_depth_m=model_input.solver.dry_depth_m,
                     head_curve=PumpHeadCurve(
                         tuple(
@@ -701,6 +809,9 @@ def _controlled_gate_coupling_evidence(
     if model_input.provenance.validation_policy_version not in {
         "v4-lite-6",
         "v4-lite-7",
+        "d3a-1-v1",
+        "d3a-2-v1",
+        "d3a-3-v1",
     }:
         return ()
     if len(gates) != 1:
@@ -892,7 +1003,12 @@ def _pump_coupling_evidence(
 ) -> tuple[MvpPumpCouplingEvidence, ...]:
     """Project only accepted D1 RK-stage Pump points into a self-checking budget."""
 
-    if model_input.provenance.validation_policy_version != "v4-lite-7":
+    if model_input.provenance.validation_policy_version not in {
+        "v4-lite-7",
+        "d3a-1-v1",
+        "d3a-2-v1",
+        "d3a-3-v1",
+    }:
         return ()
     if len(pumps) != 1 or not isinstance(pumps[0], HydraulicExternalPump):
         raise HydraulicInputError("v4-lite-7 requires one runtime hydraulic Pump")
@@ -996,7 +1112,8 @@ def _result(
                     state.area[index] * mesh.cells[index].dx
                     for state in runtime.states
                 )
-                if model_input.provenance.validation_policy_version == "v4-lite-7"
+                if model_input.provenance.validation_policy_version
+                in {"v4-lite-7", "d3a-1-v1", "d3a-2-v1", "d3a-3-v1"}
                 else None
             ),
         )
@@ -1083,6 +1200,28 @@ def _result(
                 if model_input.provenance.validation_policy_version != "v4-lite-1"
                 else evidence.diagnostic_flags
             ),
+            **(
+                {
+                    "maximum_friction_number": evidence.maximum_friction_number,
+                    "friction_retry_count": evidence.friction_retry_count,
+                    "friction_predictor_reduction_count": (
+                        evidence.friction_predictor_reduction_count
+                    ),
+                    "predicted_minimum_friction_dt": (
+                        evidence.predicted_minimum_friction_dt
+                    ),
+                    "minimum_water_depth_m": evidence.minimum_water_depth_m,
+                    "minimum_discharge_m3s": evidence.minimum_discharge_m3s,
+                    "maximum_froude_number": evidence.maximum_froude_number,
+                    "runtime_envelope_retry_count": (
+                        evidence.runtime_envelope_retry_count
+                    ),
+                    "runtime_envelope_status": evidence.runtime_envelope_status,
+                }
+                if model_input.provenance.validation_policy_version
+                in {"d3a-1-v1", "d3a-2-v1", "d3a-3-v1"}
+                else {}
+            ),
         ),
         provenance=MvpResultProvenance(
             input_schema_version=model_input.schema_version,
@@ -1097,6 +1236,27 @@ def _result(
             **(
                 {"solver_policy_hash": v4_lite_solver_policy_hash(model_input)}
                 if model_input.provenance.validation_policy_version != "v4-lite-1"
+                else {}
+            ),
+            **(
+                {
+                    "validation_policy_hash": (
+                        v4_lite_validation_policy_hash(model_input)
+                    ),
+                    "registry_hash": registry_hash(),
+                    "runtime_envelope_id": (
+                        require_solver_capability(
+                            model_input.provenance.validation_policy_version
+                        ).manifest.runtime_envelope_id
+                    ),
+                    "runtime_envelope_hash": resolve_runtime_envelope(
+                        require_solver_capability(
+                            model_input.provenance.validation_policy_version
+                        ).manifest.runtime_envelope_id
+                    ).manifest_hash,
+                }
+                if model_input.provenance.validation_policy_version
+                in _D3A_VALIDATION_VERSIONS
                 else {}
             ),
         ),
@@ -1114,6 +1274,18 @@ def run_v4_lite(
     frozen_snapshot = json.loads(canonical_json(snapshot))
     input_snapshot_hash = snapshot_hash(frozen_snapshot)
     model_input = parse_v4_lite_input(frozen_snapshot)
+    capability = (
+        require_solver_capability(model_input.provenance.validation_policy_version)
+        if model_input.provenance.validation_policy_version
+        in {"v4-lite-7", *_D3A_VALIDATION_VERSIONS}
+        else None
+    )
+    runtime_envelope = (
+        resolve_runtime_envelope(capability.manifest.runtime_envelope_id)
+        if capability is not None
+        and capability.manifest.runtime_envelope_id is not None
+        else None
+    )
     mesh = build_v4_lite_mesh(model_input)
     gates, pumps = _structures(model_input)
     runtime = solve_single_branch(
@@ -1130,6 +1302,18 @@ def run_v4_lite(
             maximum_retries=model_input.solver.maximum_retries,
             maximum_steps=model_input.solver.maximum_steps,
             water_balance_tolerance=model_input.solver.water_balance_tolerance,
+            maximum_friction_number=(
+                0.1
+                if model_input.provenance.validation_policy_version
+                in {"d3a-1-v1", "d3a-2-v1", "d3a-3-v1"}
+                else None
+            ),
+            friction_predictor_safety_factor=(
+                capability.manifest.friction_predictor_safety_factor
+                if capability is not None
+                else None
+            ),
+            runtime_envelope=runtime_envelope,
             scheme="hll",
             equilibrium_mode=_runtime_equilibrium_mode(model_input),
             geometry_source_mode=model_input.solver.geometry_source,
@@ -1142,9 +1326,21 @@ def run_v4_lite(
                 model_input.solver.maximum_event_refinements
             ),
             structure_capability=(
-                "d1-single-branch-gate-pump-v1"
-                if model_input.provenance.validation_policy_version == "v4-lite-7"
-                else "legacy-v1"
+                "d3a-3-single-branch-gate-pump-engineering-profile-v1"
+                if model_input.provenance.validation_policy_version == "d3a-3-v1"
+                else (
+                    "d3a-2-single-branch-gate-pump-manning-slope-v1"
+                    if model_input.provenance.validation_policy_version == "d3a-2-v1"
+                    else (
+                        "d3a-1-single-branch-gate-pump-manning-v1"
+                        if model_input.provenance.validation_policy_version == "d3a-1-v1"
+                        else (
+                            "d1-single-branch-gate-pump-v1"
+                            if model_input.provenance.validation_policy_version == "v4-lite-7"
+                            else "legacy-v1"
+                        )
+                    )
+                )
             ),
         ),
         gates=gates,
@@ -1167,6 +1363,8 @@ __all__ = [
     "MESH_HASH_SCHEMA_V2",
     "RUNTIME_PROJECTION_HASH_SCHEMA",
     "SOLVER_POLICY_HASH_SCHEMA",
+    "SOLVER_POLICY_HASH_SCHEMA_V8",
+    "SOLVER_POLICY_HASH_SCHEMA_V9",
     "VALIDATION_POLICY_HASH_SCHEMA",
     "build_v4_lite_mesh",
     "run_v4_lite",

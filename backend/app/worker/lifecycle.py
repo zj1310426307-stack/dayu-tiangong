@@ -121,14 +121,17 @@ def claim_task(session: Session, task_id: int, worker_id: str) -> SimulationTask
 
 
 def claim_v4_task(session: Session, task_id: int, worker_id: str) -> SimulationTask:
-    """原子认领精确 D1 native-v4 capability 并生成 execution token。"""
+    """原子认领精确、显式的 native-v4 capability 并生成 execution token。"""
 
     from model.solver.registry import (
         MODEL_INPUT_V4,
         task_solver_provenance,
     )
+    from model.core.errors import HydraulicInputError
 
-    expected = task_solver_provenance(MODEL_INPUT_V4)
+    observed = session.get(SimulationTask, task_id)
+    if observed is None:
+        raise DuplicateClaimError("task is not a supported queued native-v4 task")
     route_fields = (
         "solver_id",
         "capability_id",
@@ -136,6 +139,42 @@ def claim_v4_task(session: Session, task_id: int, worker_id: str) -> SimulationT
         "result_schema_version",
         "registry_hash",
     )
+    try:
+        expected = task_solver_provenance(
+            MODEL_INPUT_V4,
+            capability_id=observed.capability_id,
+        )
+    except HydraulicInputError as exc:
+        message = f"queued native-v4 task route is not registered: {exc}"[:4000]
+        rejected = session.execute(
+            update(SimulationTask)
+            .where(
+                SimulationTask.id == task_id,
+                SimulationTask.status == "queued",
+                SimulationTask.active_execution_token.is_(None),
+                SimulationTask.input_schema_version == MODEL_INPUT_V4,
+                *(
+                    getattr(SimulationTask, field) == getattr(observed, field)
+                    for field in route_fields
+                ),
+            )
+            .values(
+                status="failed",
+                progress=100,
+                queue_job_id=None,
+                execution_phase="validating_snapshot",
+                error_message=message,
+                end_time=datetime.now(UTC),
+                heartbeat_time=datetime.now(UTC),
+            )
+        )
+        if rejected.rowcount == 1:
+            session.commit()
+            raise InvalidTaskRouteError(message) from exc
+        session.rollback()
+        raise DuplicateClaimError(
+            "task is not a supported queued native-v4 task"
+        ) from exc
     result = session.execute(
         update(SimulationTask)
         .where(

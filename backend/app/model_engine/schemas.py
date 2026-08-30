@@ -5,7 +5,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
 
-from model.solver.registry import D1_SOLVER_ID
+from model.solver.registry import (
+    D1_CAPABILITY_ID,
+    D1_SOLVER_ID,
+    D3A_1_CAPABILITY_ID,
+    D3A_2_CAPABILITY_ID,
+    D3A_3_CAPABILITY_ID,
+)
 
 
 TaskStatus = Literal[
@@ -35,6 +41,12 @@ class SimulationTaskCreate(BaseModel):
         "dayu.model-input.v1"
     )
     solver_id: str | None = Field(default=None, min_length=1, max_length=96)
+    capability_id: Literal[
+        D1_CAPABILITY_ID,
+        D3A_1_CAPABILITY_ID,
+        D3A_2_CAPABILITY_ID,
+        D3A_3_CAPABILITY_ID,
+    ] | None = None
     dispatch_plan_id: int | None = Field(default=None, gt=0)
     execution_mode: Literal["validation", "shadow"] = "validation"
     allow_fallback_boundary: bool = False
@@ -66,12 +78,16 @@ class SimulationTaskCreate(BaseModel):
                 raise ValueError(
                     f"native v4 solver assertion must equal {D1_SOLVER_ID}"
                 )
+            if self.capability_id is None:
+                raise ValueError("native v4 requires an explicit capability_id")
             if self.dispatch_plan_id is None:
                 raise ValueError("native v4 requires one frozen dispatch_plan_id")
             if self.storage_level != "full":
                 raise ValueError("native v4 supports storage_level=full only")
-        elif self.dispatch_plan_id is not None:
-            raise ValueError("dispatch_plan_id on the generic task endpoint is reserved for v4")
+        elif self.dispatch_plan_id is not None or self.capability_id is not None:
+            raise ValueError(
+                "dispatch_plan_id/capability_id on the generic task endpoint are reserved for v4"
+            )
         return self
 
 

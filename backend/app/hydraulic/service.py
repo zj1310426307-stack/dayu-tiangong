@@ -365,6 +365,10 @@ def _upsert_section(
             left_bank=func.ST_StartPoint(axis) if axis is not None else None,
             right_bank=func.ST_EndPoint(axis) if axis is not None else None,
             orientation_status="pending" if axis is None else "confirmed",
+            bed_elevation_m=source.bed_elevation_m,
+            bed_elevation_source=source.bed_elevation_source,
+            bed_elevation_confirmed_by=source.bed_elevation_confirmed_by,
+            bed_elevation_confirmed_at=source.bed_elevation_confirmed_at,
         )
         session.add(section)
         session.flush()
@@ -378,6 +382,17 @@ def _upsert_section(
     section.left_bank = func.ST_StartPoint(axis) if axis is not None else None
     section.right_bank = func.ST_EndPoint(axis) if axis is not None else None
     section.orientation_status = "pending" if axis is None else "confirmed"
+    bed_fields = {
+        "bed_elevation_m",
+        "bed_elevation_source",
+        "bed_elevation_confirmed_by",
+        "bed_elevation_confirmed_at",
+    }
+    if bed_fields.intersection(source.model_fields_set):
+        section.bed_elevation_m = source.bed_elevation_m
+        section.bed_elevation_source = source.bed_elevation_source
+        section.bed_elevation_confirmed_by = source.bed_elevation_confirmed_by
+        section.bed_elevation_confirmed_at = source.bed_elevation_confirmed_at
     profile = session.scalar(select(HydraulicCrossSectionProfile).where(
         HydraulicCrossSectionProfile.cross_section_id == section.id,
         HydraulicCrossSectionProfile.topography_id == source.topography_id,
@@ -581,6 +596,8 @@ def list_networks(session: Session, dataset_version_id: int) -> list[HydraulicNe
                         HydraulicCrossSectionPoint.profile_id == profile.id
                     )) or 0) if profile else 0,
                     orientation_status=section.orientation_status,
+                    bed_elevation_m=section.bed_elevation_m,
+                    bed_elevation_source=section.bed_elevation_source,
                 ))
             reach_records = [HydraulicReachRecord(
                 id=r.id, reach_code=r.reach_code, reach_type=r.reach_type,
@@ -634,6 +651,10 @@ def get_section_detail(session: Session, section_id: int) -> HydraulicSectionDet
         chainage=section.chainage, computed_chainage_m=section.computed_chainage_m,
         chainage_source=section.chainage_source, snap_distance_m=section.snap_distance_m,
         orientation_status=section.orientation_status,
+        bed_elevation_m=section.bed_elevation_m,
+        bed_elevation_source=section.bed_elevation_source,
+        bed_elevation_confirmed_by=section.bed_elevation_confirmed_by,
+        bed_elevation_confirmed_at=section.bed_elevation_confirmed_at,
         location_geometry=geometry_json(session, section.location_geometry),
         axis_geometry=geometry_json(session, section.axis_geometry) if section.axis_geometry is not None else None,
         profiles=[_profile_record(session, v) for v in profiles],
@@ -693,6 +714,10 @@ def build_exchange_payload(
                     branch_code=branch.branch_code, chainage=section.chainage,
                     topography_id=profile.topography_id, survey_date=profile.survey_date,
                     survey_method=profile.survey_method, default_manning_n=profile.default_manning_n,
+                    bed_elevation_m=section.bed_elevation_m,
+                    bed_elevation_source=section.bed_elevation_source,
+                    bed_elevation_confirmed_by=section.bed_elevation_confirmed_by,
+                    bed_elevation_confirmed_at=section.bed_elevation_confirmed_at,
                     location_x=location[0], location_y=location[1], axis_points=axis,
                     roughness_zones=[HydraulicRoughnessZoneInput.model_validate(z.model_dump()) for z in detail.roughness_zones],
                     points=[HydraulicSectionPointInput.model_validate(p.model_dump()) for p in detail.points],

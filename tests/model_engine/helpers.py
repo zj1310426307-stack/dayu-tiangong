@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import math
 import runpy
 from pathlib import Path
 
@@ -13,6 +15,18 @@ from model.solver.registry import (
     D1_KNOWN_LIMITATIONS,
     D1_RUNTIME_ADAPTER_ID,
     D1_SOLVER_ID,
+    D3A_1_CAPABILITY,
+    D3A_1_CAPABILITY_ID,
+    D3A_1_KNOWN_LIMITATIONS,
+    D3A_1_RUNTIME_ADAPTER_ID,
+    D3A_2_CAPABILITY,
+    D3A_2_CAPABILITY_ID,
+    D3A_2_KNOWN_LIMITATIONS,
+    D3A_2_RUNTIME_ADAPTER_ID,
+    D3A_3_CAPABILITY,
+    D3A_3_CAPABILITY_ID,
+    D3A_3_KNOWN_LIMITATIONS,
+    D3A_3_RUNTIME_ADAPTER_ID,
     registry_hash,
 )
 
@@ -95,3 +109,133 @@ def native_v4_payload() -> dict:
         "case_notes": ["fixture-owned operational note"],
         "known_limitations": list(D1_KNOWN_LIMITATIONS),
     }
+
+
+def native_v4_d3a_1_payload() -> dict:
+    """Select D3A-1 explicitly and change only effective section roughness."""
+
+    payload = copy.deepcopy(native_v4_payload())
+    payload["solver_selection"] = {
+        "solver_id": D1_SOLVER_ID,
+        "capability_id": D3A_1_CAPABILITY_ID,
+        "runtime_adapter_id": D3A_1_RUNTIME_ADAPTER_ID,
+    }
+    for section in payload["cross_sections"]:
+        section["default_manning_n"] = 0.025
+    payload["control_plan"]["policy_id"] = "d3a-1-gate-pump-control-v1"
+    payload["validation"] = {
+        "validation_policy_version": "d3a-1-v1",
+        "capability_id": D3A_1_CAPABILITY_ID,
+        "water_balance_tolerance": payload["numerical_policy"][
+            "water_balance_tolerance"
+        ],
+    }
+    payload["capability_scope"] = list(D3A_1_CAPABILITY.scope)
+    payload["capability_exclusions"] = list(D3A_1_CAPABILITY.exclusions)
+    payload["known_limitations"] = list(D3A_1_KNOWN_LIMITATIONS)
+    return payload
+
+
+def native_v4_d3a_2_payload() -> dict:
+    """Select D3A-2 and add only explicit linear-bed authority and translation."""
+
+    payload = copy.deepcopy(native_v4_d3a_1_payload())
+    payload["solver_selection"] = {
+        "solver_id": D1_SOLVER_ID,
+        "capability_id": D3A_2_CAPABILITY_ID,
+        "runtime_adapter_id": D3A_2_RUNTIME_ADAPTER_ID,
+    }
+    for section in payload["cross_sections"]:
+        bed = 9.0 - 1.0e-7 * section["chainage_m"]
+        vertical_shift = bed - 9.0
+        for point in section["points"]:
+            point["elevation_m"] += vertical_shift
+        section["profile_hash"] = f"{200 + section['section_id']:064x}"
+        section["bed_elevation_m"] = bed
+        section["bed_elevation_source"] = "synthetic"
+        section["bed_elevation_confirmed_by"] = "HYDRO-MODEL-02-D3A-2"
+        section["bed_elevation_confirmed_at"] = "2026-08-29T00:00:00Z"
+    payload["cross_section_profiles"] = [
+        {
+            "id": item["profile_id"],
+            "cross_section_id": item["section_id"],
+            "profile_hash": item["profile_hash"],
+        }
+        for item in payload["cross_sections"]
+    ]
+    payload["numerical_policy"]["geometry_policy"] = (
+        "relative-prismatic-linear-bed-v1"
+    )
+    payload["numerical_policy"]["bed_elevation_source"] = (
+        "explicit-section-bed-elevation-v1"
+    )
+    payload["boundaries"]["downstream"]["water_level_m"] = [9.8, 9.8, 9.8]
+    for value in payload["initial_state"]["values"]:
+        if value["section_id"] >= 9:
+            value["water_level_m"] = 9.8
+    pump_control = payload["structures"]["pumps"][0]["control"]
+    pump_control["start_level_m"] = 9.782
+    pump_control["stop_level_m"] = 9.778
+    pump_control["minimum_stop_seconds"] = 4000.0
+    payload["control_plan"]["policy_id"] = "d3a-2-gate-pump-control-v1"
+    payload["validation"] = {
+        "validation_policy_version": "d3a-2-v1",
+        "capability_id": D3A_2_CAPABILITY_ID,
+        "water_balance_tolerance": payload["numerical_policy"][
+            "water_balance_tolerance"
+        ],
+    }
+    payload["capability_scope"] = list(D3A_2_CAPABILITY.scope)
+    payload["capability_exclusions"] = list(D3A_2_CAPABILITY.exclusions)
+    payload["known_limitations"] = list(D3A_2_KNOWN_LIMITATIONS)
+    return payload
+
+
+def native_v4_d3a_3_payload() -> dict:
+    """Select D3A-3 and apply one mild contraction/expansion Profile family."""
+
+    payload = copy.deepcopy(native_v4_d3a_2_payload())
+    payload["solver_selection"] = {
+        "solver_id": D1_SOLVER_ID,
+        "capability_id": D3A_3_CAPABILITY_ID,
+        "runtime_adapter_id": D3A_3_RUNTIME_ADAPTER_ID,
+    }
+    section_count = len(payload["cross_sections"])
+    for index, section in enumerate(payload["cross_sections"]):
+        phase = index / (section_count - 1)
+        width = 20.0 * (1.0 - 0.12 * math.sin(math.pi * phase))
+        bed = section["bed_elevation_m"]
+        section["points"] = [
+            {"offset_m": 0.0, "elevation_m": bed + 3.0},
+            {"offset_m": 0.5 * width, "elevation_m": bed},
+            {"offset_m": width, "elevation_m": bed + 3.0},
+        ]
+        section["profile_hash"] = f"{300 + section['section_id']:064x}"
+        section["bed_elevation_confirmed_by"] = "HYDRO-MODEL-02-D3A-3"
+    payload["cross_section_profiles"] = [
+        {
+            "id": item["profile_id"],
+            "cross_section_id": item["section_id"],
+            "profile_hash": item["profile_hash"],
+        }
+        for item in payload["cross_sections"]
+    ]
+    payload["numerical_policy"]["geometry_policy"] = (
+        "nonprismatic-engineering-linear-path-v1"
+    )
+    payload["numerical_policy"]["geometry_source"] = (
+        "hydraulic-function-linear-face-v1"
+    )
+    payload["boundaries"]["downstream"]["water_level_m"] = [9.79, 9.79, 9.79]
+    payload["control_plan"]["policy_id"] = "d3a-3-gate-pump-control-v1"
+    payload["validation"] = {
+        "validation_policy_version": "d3a-3-v1",
+        "capability_id": D3A_3_CAPABILITY_ID,
+        "water_balance_tolerance": payload["numerical_policy"][
+            "water_balance_tolerance"
+        ],
+    }
+    payload["capability_scope"] = list(D3A_3_CAPABILITY.scope)
+    payload["capability_exclusions"] = list(D3A_3_CAPABILITY.exclusions)
+    payload["known_limitations"] = list(D3A_3_KNOWN_LIMITATIONS)
+    return payload

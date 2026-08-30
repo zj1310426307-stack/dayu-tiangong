@@ -15,11 +15,19 @@ from model.solver.registry import (
     D1_CAPABILITY_ID,
     D1_RUNTIME_ADAPTER_ID,
     D1_SOLVER_ID,
+    D3A_1_CAPABILITY_ID,
+    D3A_1_RUNTIME_ADAPTER_ID,
+    D3A_2_CAPABILITY_ID,
+    D3A_2_RUNTIME_ADAPTER_ID,
+    D3A_3_CAPABILITY_ID,
+    D3A_3_RUNTIME_ADAPTER_ID,
     LEGACY_NETWORK_SOLVER,
     LEGACY_SINGLE_RIVER_SOLVER,
     MODEL_INPUT_V2,
     MODEL_INPUT_V3,
     V3_RUNTIME_ADAPTER_ID,
+    capability_catalog,
+    resolve_capability,
     resolve_solver,
     registry_hash,
     task_solver_provenance,
@@ -84,8 +92,48 @@ def test_v1_v2_v3_routes_remain_legacy_and_v4_is_native() -> None:
     assert native.runtime_adapter.runtime_schema_version == "dayu.model-input.v4-lite"
     assert native.runtime_adapter.runtime_schema_version != "dayu.model-input.v2"
     assert registry_hash() == (
-        "918869de10a9a7fecf2d281514c5c7fe5a7fd178097de13f96466f6e8dbbf5c6"
+        "0920e124fa07c764d5086d3d4e2d6723d4f5abfed857a4bb37309eae553029a4"
     )
+
+
+def test_d3a_catalog_unlocks_engineering_profiles_after_science_gates() -> None:
+    """Expose each sequentially validated D3A single-river capability."""
+
+    catalog = capability_catalog()
+    assert tuple(item.capability_id for item in catalog) == (
+        D1_CAPABILITY_ID,
+        D3A_1_CAPABILITY_ID,
+        D3A_2_CAPABILITY_ID,
+        D3A_3_CAPABILITY_ID,
+    )
+    assert tuple(item.status for item in catalog) == (
+        "supported",
+        "supported",
+        "supported",
+        "supported",
+    )
+    assert resolve_capability(D1_CAPABILITY_ID).status == "supported"
+    assert resolve_capability(D3A_1_CAPABILITY_ID).status == "supported"
+    assert resolve_capability(D3A_2_CAPABILITY_ID).status == "supported"
+    assert resolve_capability(D3A_3_CAPABILITY_ID).status == "supported"
+    d3a = resolve_solver(
+        "dayu.model-input.v4",
+        capability_id=D3A_1_CAPABILITY_ID,
+        runtime_adapter_id=D3A_1_RUNTIME_ADAPTER_ID,
+    )
+    assert d3a.engine_route == "finite-volume-d3a-1-v4"
+    d3a_2 = resolve_solver(
+        "dayu.model-input.v4",
+        capability_id=D3A_2_CAPABILITY_ID,
+        runtime_adapter_id=D3A_2_RUNTIME_ADAPTER_ID,
+    )
+    assert d3a_2.engine_route == "finite-volume-d3a-2-v4"
+    d3a_3 = resolve_solver(
+        "dayu.model-input.v4",
+        capability_id=D3A_3_CAPABILITY_ID,
+        runtime_adapter_id=D3A_3_RUNTIME_ADAPTER_ID,
+    )
+    assert d3a_3.engine_route == "finite-volume-d3a-3-v4"
 
 
 @pytest.mark.parametrize(
@@ -132,11 +180,19 @@ def test_task_builder_persists_only_registry_resolved_provenance(
         input_schema_version=schema_version,
         solver_id=requested_solver,
         dispatch_plan_id=dispatch_plan_id,
+        capability_id=(
+            D1_CAPABILITY_ID if schema_version == "dayu.model-input.v4" else None
+        ),
         storage_level="full",
     )
 
     task = service.build_task_entity(session, payload)  # type: ignore[arg-type]
-    registration = resolve_solver(schema_version)
+    registration = resolve_solver(
+        schema_version,
+        capability_id=(
+            D1_CAPABILITY_ID if schema_version == "dayu.model-input.v4" else None
+        ),
+    )
 
     assert task.solver_id == registration.solver_id
     assert task.capability_id == (

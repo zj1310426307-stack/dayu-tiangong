@@ -202,6 +202,37 @@ RC1 run `33102252587`、最终 HEAD run `33102637908` 与 PR #10 run `3310284311
 均全绿，测试 artifacts 已核对；PR [#10](https://github.com/zj1310426307-stack/dayu-tiangong/pull/10)
 保持 OPEN，未合并 `main`。
 
+## HYDRO-MODEL-02-D3A-RC1-FIX1A
+
+D3A-RC1 在 single Branch、fully wet、forward、`Fr<=0.8` 的冻结边界内增加动态
+runtime envelope、SSP-RK2 全阶段 fail-closed 检查和摩阻时间步预测器。FIX1 将
+旧 60/70/80 证据降级为 `superseded-pre-FIX1`，改用运行前冻结的 18/54/162
+structure-aligned odd3 网格。FIX1A 进一步补齐 global peak-Q 的 argmax time/chainage；
+审计发现 argmax 在空间层间漂移，因此将其重分类为 `non-smooth-global-extremum`，
+并以精确 2850 m fixed-monitor peak Q（`p=2.215707`）替代 smooth Q convergence。
+FIX1 的 `13.99%` 只保留为显式 known limitation，不再解释为有效的 smooth
+Richardson 误差界。
+
+FIX1A 本地 Python 3.11 与 Python 3.12 science 均为 9/9；MODEL02 375/375、
+legacy/D1 26/26、D3A model-engine contracts 双版本均 43/43，v2 collector 负控按预期
+拒绝。evidence head `d20275a` 的 Hosted Python 3.11 science push/PR 均为 82/82，
+Python 3.12.14 shipping science push/PR 均为 51/51；四个 workflows 全绿，五份下载
+artifact 在机器相关字段规则下逐字段一致。当前为
+`FIX1A GATES PASS / MERGE READY FOR INDEPENDENT REVIEW / PR NOT MERGED`。
+PR [#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12) 保持 OPEN，本文
+不授权合并、创建 D3A tag 或启动 D3B。完整 FIX1A 证据见：
+
+- `docs/review/HYDRO-MODEL-02-D3A-RC1-FIX1-audit.md`
+- `docs/review/HYDRO-MODEL-02-D3A-RC1-FIX1A-baseline-audit.md`
+- `docs/review/HYDRO-MODEL-02-D3A-RC1-FIX1A-audit.md`
+- `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1-grid-family.md`
+- `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1-event-error.md`
+- `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1A-convergence.md`
+- `docs/model/HYDRO-MODEL-02-D3A-RC1-runtime-envelope.md`
+- `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1A-validation-report.md`
+- `docs/release/HYDRO-MODEL-02-D3A-RC1-FIX1A-release-readiness.md`
+- `outputs/d3a/final-convergence-fix1a.json`
+
 ## 当前边界
 
 这是工程原型和受控本地部署基线，不是生产高可用系统。统一 IAM、真实模型率定、PLC/SCADA 接入、生产 TLS/密钥托管、审计归档、备份恢复演练和集群高可用仍需后续建设。新发布 GIS 版本也不会自动成为已率定的水动力模型版本。

@@ -21,6 +21,9 @@ from model.solver.registry import (
     D1_CAPABILITY_ID,
     D1_RUNTIME_ADAPTER_ID,
     D1_SOLVER_ID,
+    D3A_1_CAPABILITY_ID,
+    D3A_2_CAPABILITY_ID,
+    D3A_3_CAPABILITY_ID,
     task_solver_provenance,
 )
 from tests.model_engine.helpers import TEST_BUILD_IDENTITY, native_v4_payload
@@ -33,7 +36,10 @@ def _task(**changes):
         "input_schema_version": "dayu.model-input.v4",
         "input_snapshot": projection.source_snapshot,
         "input_snapshot_hash": snapshot_hash(projection.source_snapshot),
-        **task_solver_provenance("dayu.model-input.v4"),
+        **task_solver_provenance(
+            "dayu.model-input.v4",
+            capability_id=D1_CAPABILITY_ID,
+        ),
         "runtime_projection_hash": projection.manifest["runtime_projection_hash"],
         "mesh_hash": projection.manifest["mesh_hash"],
         "solver_policy_hash": projection.manifest["solver_policy_hash"],
@@ -49,10 +55,15 @@ def _task(**changes):
     return SimpleNamespace(**values)
 
 
-def test_v4_worker_declares_only_the_d1_capability_and_queue() -> None:
+def test_v4_worker_declares_all_explicit_d1_and_d3a_capabilities() -> None:
     assert V4_WORKER_CAPABILITIES == {
         "supported_solver_ids": (D1_SOLVER_ID,),
-        "supported_capability_ids": (D1_CAPABILITY_ID,),
+        "supported_capability_ids": (
+            D1_CAPABILITY_ID,
+            D3A_1_CAPABILITY_ID,
+            D3A_2_CAPABILITY_ID,
+            D3A_3_CAPABILITY_ID,
+        ),
     }
     assert celery_app.conf.task_routes["dayu.run_hydraulic_v4_task"]["queue"] == V4_QUEUE
 
@@ -93,6 +104,7 @@ def test_v4_claim_predicate_requires_the_exact_registered_route() -> None:
     class RejectedClaimSession:
         statement = None
         rollback_count = 0
+        get_count = 0
 
         def execute(self, statement):
             self.statement = statement
@@ -102,6 +114,9 @@ def test_v4_claim_predicate_requires_the_exact_registered_route() -> None:
             self.rollback_count += 1
 
         def get(self, *_args):
+            self.get_count += 1
+            if self.get_count == 1:
+                return SimpleNamespace(capability_id=D1_CAPABILITY_ID)
             return None
 
     session = RejectedClaimSession()
@@ -115,7 +130,12 @@ def test_v4_claim_predicate_requires_the_exact_registered_route() -> None:
     assert "simulation_task.result_schema_version" in where_clause
     assert "simulation_task.registry_hash" in where_clause
     parameter_values = set(session.statement.compile().params.values())
-    assert set(task_solver_provenance("dayu.model-input.v4").values()) <= parameter_values
+    assert set(
+        task_solver_provenance(
+            "dayu.model-input.v4",
+            capability_id=D1_CAPABILITY_ID,
+        ).values()
+    ) <= parameter_values
     assert session.rollback_count == 1
 
 

@@ -8,7 +8,12 @@ from app.model_engine.v4_service import (
     assess_native_v4_snapshot,
     preview_from_assessment,
 )
-from tests.model_engine.helpers import native_v4_payload
+from tests.model_engine.helpers import (
+    native_v4_d3a_1_payload,
+    native_v4_d3a_2_payload,
+    native_v4_d3a_3_payload,
+    native_v4_payload,
+)
 
 
 def _codes(payload: dict) -> set[str]:
@@ -34,6 +39,63 @@ def test_valid_d1_candidate_is_ready_and_preview_is_bounded() -> None:
     assert preview.boundary_time_range["upstream_end"] == 21600.0
     assert "runtime_projection_hash" in preview.hashes
     assert not hasattr(preview, "snapshot")
+
+
+def test_valid_d3a_1_candidate_is_explicitly_ready() -> None:
+    """Positive roughness is accepted only through the named D3A-1 route."""
+
+    assessment = assess_native_v4_snapshot(native_v4_d3a_1_payload())
+    assert assessment.readiness.ready is True
+    assert assessment.readiness.capability_id == (
+        "single-branch-gate-pump-manning-v1"
+    )
+    assert assessment.projection is not None
+    assert assessment.projection.runtime.provenance.validation_policy_version == (
+        "d3a-1-v1"
+    )
+    preview = preview_from_assessment(assessment)
+    assert preview.capability_id == assessment.readiness.capability_id
+    assert "positive-section-effective-manning" in preview.capability_scope
+
+
+def test_valid_d3a_2_candidate_requires_explicit_bed_authority() -> None:
+    """The slope route is ready only with declared bed/datum/local Profile shape."""
+
+    payload = native_v4_d3a_2_payload()
+    assessment = assess_native_v4_snapshot(payload)
+    assert assessment.readiness.ready is True
+    assert not assessment.readiness.errors
+    assert assessment.projection is not None
+    assert assessment.projection.runtime.provenance.validation_policy_version == (
+        "d3a-2-v1"
+    )
+    preview = preview_from_assessment(assessment)
+    assert "explicit-nonzero-linear-bed-slope" in preview.capability_scope
+
+    payload["cross_sections"][0]["bed_elevation_source"] = None
+    assert "D3A_2_BED_AUTHORITY_UNCONFIRMED" in _codes(payload)
+
+
+def test_valid_d3a_3_candidate_requires_gradual_profile_variation() -> None:
+    """Engineering Profiles are ready only inside the frozen smoothness gate."""
+
+    payload = native_v4_d3a_3_payload()
+    assessment = assess_native_v4_snapshot(payload)
+    assert assessment.readiness.ready is True
+    assert not assessment.readiness.errors
+    preview = preview_from_assessment(assessment)
+    assert "adjacent-hydraulic-relative-change-at-most-0.25" in (
+        preview.capability_scope
+    )
+
+    section = payload["cross_sections"][10]
+    bed = section["bed_elevation_m"]
+    section["points"] = [
+        {"offset_m": 0.0, "elevation_m": bed + 3.0},
+        {"offset_m": 1.5, "elevation_m": bed},
+        {"offset_m": 3.0, "elevation_m": bed + 3.0},
+    ]
+    assert "D3A_3_PROFILE_CHANGE_ABRUPT" in _codes(payload)
 
 
 @pytest.mark.parametrize(

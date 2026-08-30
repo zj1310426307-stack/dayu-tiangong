@@ -1060,6 +1060,10 @@ export interface HydraulicCrossSectionInput {
   "topography_id"?: string;
   "survey_date"?: string | null;
   "survey_method"?: string | null;
+  "bed_elevation_m"?: number | null;
+  "bed_elevation_source"?: "unconfirmed" | "surveyed" | "design" | "synthetic";
+  "bed_elevation_confirmed_by"?: string | null;
+  "bed_elevation_confirmed_at"?: string | null;
   "default_manning_n"?: number;
   "location_x"?: number | null;
   "location_y"?: number | null;
@@ -1238,6 +1242,10 @@ export interface HydraulicSectionDetail {
   "chainage_source": string;
   "snap_distance_m": number | null;
   "orientation_status": string;
+  "bed_elevation_m": number | null;
+  "bed_elevation_source": string;
+  "bed_elevation_confirmed_by": string | null;
+  "bed_elevation_confirmed_at": string | null;
   "location_geometry": Record<string, unknown>;
   "axis_geometry": Record<string, unknown> | null;
   "profiles": Array<HydraulicProfileRecord>;
@@ -1273,6 +1281,8 @@ export interface HydraulicSectionSummary {
   "profile_count": number;
   "point_count": number;
   "orientation_status": string;
+  "bed_elevation_m": number | null;
+  "bed_elevation_source": string;
 }
 
 export interface HydraulicTopologyBuildRequest {
@@ -1884,6 +1894,7 @@ export interface SimulationTaskCreate {
   "minimum_depth"?: number | null;
   "input_schema_version"?: "dayu.model-input.v1" | "dayu.model-input.v2" | "dayu.model-input.v3" | "dayu.model-input.v4";
   "solver_id"?: string | null;
+  "capability_id"?: "single-branch-gate-external-pump-d1-v1" | "single-branch-gate-pump-manning-v1" | "single-branch-gate-pump-manning-slope-v1" | "single-branch-gate-pump-engineering-profile-v1" | null;
   "dispatch_plan_id"?: number | null;
   "execution_mode"?: "validation" | "shadow";
   "allow_fallback_boundary"?: boolean;
@@ -2150,6 +2161,19 @@ export interface V4ResultSummary {
   "pump_row_count": number;
   "event_count": number;
   "artifacts": Array<V4ArtifactManifest>;
+  "runtime_envelope"?: V4RuntimeEnvelopeDiagnostics | null;
+}
+
+export interface V4RuntimeEnvelopeDiagnostics {
+  "runtime_envelope_status": "pass";
+  "minimum_water_depth_m": number;
+  "minimum_discharge_m3s": number;
+  "maximum_froude_number": number;
+  "maximum_friction_number": number;
+  "friction_retry_count": number;
+  "friction_predictor_reduction_count": number;
+  "predicted_minimum_friction_dt": number;
+  "runtime_envelope_retry_count": number;
 }
 
 export interface V4SectionOption {
@@ -2519,8 +2543,8 @@ export const updateSimulationCase = (caseId: number, body: SimulationCaseUpdate,
 export const deleteSimulationCase = (caseId: number, baseUrl = '') => requestJson<void>(`/api/v1/model-data/simulation-cases/${caseId}`, { method: 'DELETE' }, baseUrl);
 export const getModelInput = (caseId: number, baseUrl = '') => requestJson<ModelInputSnapshot>(`/api/v1/model-data/simulation-cases/${caseId}/input`, {}, baseUrl);
 export const getModelInputV3 = (caseId: number, baseUrl = '') => requestJson<Record<string, unknown>>(`/api/v1/model-data/simulation-cases/${caseId}/input-v3`, {}, baseUrl);
-export const getModelInputV4Readiness = (caseId: number, dispatchPlanId: number, baseUrl = '') => requestJson<V4ReadinessResponse>(`/api/v1/model-data/simulation-cases/${caseId}/input-v4/readiness${toQuery({ dispatch_plan_id: dispatchPlanId })}`, {}, baseUrl);
-export const getModelInputV4Preview = (caseId: number, dispatchPlanId: number, baseUrl = '') => requestJson<V4PreviewResponse>(`/api/v1/model-data/simulation-cases/${caseId}/input-v4/preview${toQuery({ dispatch_plan_id: dispatchPlanId })}`, {}, baseUrl);
+export const getModelInputV4Readiness = (caseId: number, dispatchPlanId: number, capabilityId: string, baseUrl = '') => requestJson<V4ReadinessResponse>(`/api/v1/model-data/simulation-cases/${caseId}/input-v4/readiness${toQuery({ dispatch_plan_id: dispatchPlanId, capability_id: capabilityId })}`, {}, baseUrl);
+export const getModelInputV4Preview = (caseId: number, dispatchPlanId: number, capabilityId: string, baseUrl = '') => requestJson<V4PreviewResponse>(`/api/v1/model-data/simulation-cases/${caseId}/input-v4/preview${toQuery({ dispatch_plan_id: dispatchPlanId, capability_id: capabilityId })}`, {}, baseUrl);
 export const runValidation = (datasetVersionId: number, baseUrl = '') => requestJson<ValidationReport>('/api/v1/validation/run', jsonOptions('POST', { dataset_version_id: datasetVersionId }), baseUrl);
 
 export const getHydraulicCapabilities = (baseUrl = '') => requestJson<HydraulicCapabilityResponse>('/api/v1/hydraulic/capabilities', {}, baseUrl);

@@ -321,6 +321,21 @@ class HydraulicCrossSection(Base):
             "orientation_status IN ('confirmed','pending','reversed','invalid')",
             name="ck_hydraulic_cross_section_orientation_status",
         ),
+        CheckConstraint(
+            "bed_elevation_source IN ('unconfirmed','surveyed','design','synthetic')",
+            name="ck_hydraulic_cross_section_bed_source",
+        ),
+        CheckConstraint(
+            "(bed_elevation_source = 'unconfirmed' "
+            "AND bed_elevation_m IS NULL "
+            "AND bed_elevation_confirmed_by IS NULL "
+            "AND bed_elevation_confirmed_at IS NULL) OR "
+            "(bed_elevation_source IN ('surveyed','design','synthetic') "
+            "AND bed_elevation_m IS NOT NULL "
+            "AND bed_elevation_confirmed_by IS NOT NULL "
+            "AND bed_elevation_confirmed_at IS NOT NULL)",
+            name="ck_hydraulic_cross_section_bed_authority",
+        ),
         ForeignKeyConstraint(
             ["branch_id", "dataset_version_id"],
             ["hydraulic.branch.id", "hydraulic.branch.dataset_version_id"],
@@ -359,6 +374,14 @@ class HydraulicCrossSection(Base):
     left_bank: Mapped[Any | None] = mapped_column(Geometry("POINT", srid=4490, spatial_index=False))
     right_bank: Mapped[Any | None] = mapped_column(Geometry("POINT", srid=4490, spatial_index=False))
     orientation_status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="pending")
+    bed_elevation_m: Mapped[float | None] = mapped_column(Float)
+    bed_elevation_source: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="unconfirmed"
+    )
+    bed_elevation_confirmed_by: Mapped[str | None] = mapped_column(String(128))
+    bed_elevation_confirmed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     manual_override_reason: Mapped[str | None] = mapped_column(Text)
     manual_override_actor: Mapped[str | None] = mapped_column(String(128))
     manual_override_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -695,8 +695,9 @@ class FixedGate:
         ) <= 0.0:
             raise ValueError("closed completed Gate requires fully wet neighbours")
         head = context.upstream_stage - context.downstream_stage
-        if head < -1.0e-12:
-            raise ValueError("closed completed Gate does not support reverse head")
+        # A closed barrier transfers no mass for either sign of head.  Reverse
+        # *flow* remains forbidden when the orifice opens, but a transient
+        # reverse stage difference is valid wall loading on a sloping bed.
         head_loss = max(head, 0.0)
         momentum_left = GRAVITY * upstream_moment
         momentum_right = GRAVITY * downstream_moment
