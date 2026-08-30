@@ -4,7 +4,8 @@
 - Baseline: `4ecfd3bead769af38381f4d4b6a9b3523a64feef`
 - Baseline audit commit: `5e48c0a`
 - PR: #12 remains OPEN and NOT MERGED
-- Current local status: `LOCAL FIX1A GATES PASS / HOSTED PENDING / PR NO-GO`
+- Evidence head: `d20275a39c63336c2b24e68a483c52a0d877b351`
+- Current status: `FIX1A GATES PASS / MERGE READY FOR INDEPENDENT REVIEW / PR NOT MERGED`
 
 ## Classification audit
 
@@ -68,6 +69,12 @@ artifact and D3A documentation change. Hydraulic equations, Manning, bed and
 nonprismatic operators, Gate/Pump equations, runtime envelope, friction
 predictor, D2 platform, API/OpenAPI and frontend remain unchanged.
 
-Hosted Python 3.11 and Python 3.12 checks must still pass at the final PR head.
-Until then PR #12 remains NO-GO and must not be merged; no D3A tag or D3B branch
-is created.
+Hosted Python 3.11 science passed 82/82 and Python 3.12.14 shipping science
+passed 51/51 for both push and pull_request. Runs `33304871002`, `33304871124`,
+`33304874227` and `33304874197` all succeeded. Downloaded checked/push/PR v3
+artifacts match after excluding runtime and near-machine-precision balance
+residual fields; push identity records the exact evidence head and PR identity
+records merge ref `bc27f97c2a3b210340b029c83c127a27b3d7f1b0`.
+
+PR #12 remains OPEN and must not be merged by this work; no D3A tag or D3B
+branch is created.

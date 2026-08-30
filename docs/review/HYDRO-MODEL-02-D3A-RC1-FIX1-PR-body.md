@@ -32,9 +32,21 @@ error bound.
 
 ## Hosted Status
 
-Hosted push and pull-request checks for the FIX1A evidence head are pending.
-Until Python 3.11 science, Python 3.12 shipping science and the full cross-platform
-matrix pass, status remains `LOCAL FIX1A GATES PASS / HOSTED PENDING / PR NO-GO`.
+Evidence head `d20275a39c63336c2b24e68a483c52a0d877b351` passed all four
+workflows:
+
+- model02 push `33304871002`: SUCCESS
+- hydraulic-platform push `33304871124`: SUCCESS
+- model02 pull request `33304874227`: SUCCESS
+- hydraulic-platform pull request `33304874197`: SUCCESS
+
+Hosted Python 3.11 science passed 82/82 and Python 3.12.14 shipping science
+passed 51/51 for both event types. Downloaded checked, push and PR v3 artifacts
+match after excluding runtime and near-machine-precision balance residuals. The
+push image records the exact evidence head; the PR image records merge ref
+`bc27f97c2a3b210340b029c83c127a27b3d7f1b0`.
+
+Status: `FIX1A GATES PASS / MERGE READY FOR INDEPENDENT REVIEW / PR NOT MERGED`.
 
 ## Scope
 

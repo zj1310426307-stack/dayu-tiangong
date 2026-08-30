@@ -1,6 +1,6 @@
 # HYDRO-MODEL-02-D3A-RC1-FIX1A Release Readiness
 
-- 当前：`LOCAL FIX1A GATES PASS / HOSTED PENDING / PR NO-GO`
+- 当前：`FIX1A GATES PASS / MERGE READY FOR INDEPENDENT REVIEW / PR NOT MERGED`
 - PR：[#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12)，NOT MERGED
 - D3A tag：未创建
 - D3B：未创建、未启动
@@ -20,13 +20,17 @@
 - [x] MODEL02 375、legacy 26、D3A model-engine 43（双版本）回归 PASS；
 - [x] 核心水力、D2、API/OpenAPI 与前端保持不变。
 
-## 发布前必须完成
+## Hosted 与治理闭合
 
-- [ ] Hosted Python 3.11 science PASS；
-- [ ] 最终 head Python 3.12 shipping science PASS；
-- [ ] push 与 pull_request 两种事件的 model02/hydraulic-platform 全绿；
-- [ ] v3 shipping artifacts 与 checked artifact 一致；
-- [ ] PR #12 仍 OPEN、未合并；无 D3A tag、无 D3B 分支。
+- [x] Hosted Python 3.11 science push/PR 82/82 PASS；
+- [x] Python 3.12.14 shipping science push/PR 51/51 PASS；
+- [x] push 与 pull_request 两种事件的 model02/hydraulic-platform 全绿；
+- [x] 五份 v3 artifacts 在机器相关字段规则下与 checked artifact 一致；
+- [x] push identity 绑定 `d20275a39c63336c2b24e68a483c52a0d877b351`，PR identity 绑定 merge ref `bc27f97c2a3b210340b029c83c127a27b3d7f1b0`；
+- [x] PR #12 仍 OPEN、未合并；无 D3A tag、无 D3B 分支。
+
+运行编号：model02 push `33304871002`、hydraulic push `33304871124`、model02 PR
+`33304874227`、hydraulic PR `33304874197`，全部 SUCCESS。
 
 任何 argmax 字段、fixed-monitor Q 趋势、known limitation、时间细化、包络/平衡/残差/
 摩阻或 shipping identity 失败，均保持 `FIX1A FAIL / PR NO-GO / D3B NO-GO`。

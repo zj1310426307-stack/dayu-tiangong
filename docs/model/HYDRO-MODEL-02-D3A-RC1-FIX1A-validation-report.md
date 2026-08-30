@@ -4,7 +4,8 @@
 - 基线 head：`4ecfd3bead769af38381f4d4b6a9b3523a64feef`
 - 审计提交：`5e48c0a`
 - PR：[#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12)，OPEN / NOT MERGED
-- 当前状态：`LOCAL FIX1A GATES PASS / HOSTED PENDING / PR NO-GO`
+- FIX1A 证据 head：`d20275a39c63336c2b24e68a483c52a0d877b351`
+- 当前状态：`FIX1A GATES PASS / MERGE READY FOR INDEPENDENT REVIEW / PR NOT MERGED`
 
 ## 本地 FIX1A 证据
 
@@ -34,15 +35,23 @@ comparisons、网格与 completion gates 完全一致。只存在三项约机器
 `3.016402185493353e-16`、fine CFL/2 最后一位差异。它们均远低于冻结的 `1e-10`
 门，按既有跨平台规则以科学容差验收，不冻结 libm/求和顺序的最后 bit。
 
-## 尚待 Hosted 闭合
+## Hosted 闭合
 
-- [ ] Hosted Python 3.11 `D3A scientific validation` push/PR SUCCESS；
-- [ ] Python 3.12 `D3A shipping science` push/PR SUCCESS；
-- [ ] shipping artifact 记录最终精确 head / PR merge ref；
-- [ ] 下载后除 `runtime_seconds` 外与 checked v3 artifact 逐字段一致；
-- [ ] PR #12 保持 OPEN / CLEAN / MERGEABLE。
+- [x] Hosted Python 3.11 `D3A scientific validation` push/PR SUCCESS：82/82；
+- [x] Python 3.12.14 `D3A shipping science` push/PR SUCCESS：51/51；
+- [x] push shipping artifact 精确记录 evidence head `d20275a39c63336c2b24e68a483c52a0d877b351`；
+- [x] PR shipping artifact 精确记录 merge ref `bc27f97c2a3b210340b029c83c127a27b3d7f1b0`；
+- [x] checked、push Python 3.11/3.12、PR Python 3.11/3.12 五份 v3 artifact 在排除 `runtime_seconds` 与约机器精度 `relative_water_balance_error` 后逐字段一致；
+- [x] PR #12 保持 OPEN / MERGEABLE / NOT MERGED。
 
-Hosted 全部完成前，不得标记 `MERGE READY`，不得合并 PR、创建 D3A tag 或启动 D3B。
+Hosted runs：
+
+- model02 push `33304871002`：SUCCESS；
+- hydraulic-platform push `33304871124`：SUCCESS；
+- model02 pull_request `33304874227`：SUCCESS；
+- hydraulic-platform pull_request `33304874197`：SUCCESS。
+
+以上结论只把 FIX1A 标记为可供独立审查；不得自动合并 PR、创建 D3A tag 或启动 D3B。
 
 ## 作用域
 

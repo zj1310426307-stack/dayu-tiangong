@@ -215,8 +215,10 @@ Richardson 误差界。
 
 FIX1A 本地 Python 3.11 与 Python 3.12 science 均为 9/9；MODEL02 375/375、
 legacy/D1 26/26、D3A model-engine contracts 双版本均 43/43，v2 collector 负控按预期
-拒绝。当前为 `LOCAL FIX1A GATES PASS / HOSTED PENDING / PR NO-GO`；最终 head 的
-Python 3.11/3.12 Hosted 门尚须复跑。
+拒绝。evidence head `d20275a` 的 Hosted Python 3.11 science push/PR 均为 82/82，
+Python 3.12.14 shipping science push/PR 均为 51/51；四个 workflows 全绿，五份下载
+artifact 在机器相关字段规则下逐字段一致。当前为
+`FIX1A GATES PASS / MERGE READY FOR INDEPENDENT REVIEW / PR NOT MERGED`。
 PR [#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12) 保持 OPEN，本文
 不授权合并、创建 D3A tag 或启动 D3B。完整 FIX1A 证据见：
 
