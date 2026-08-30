@@ -1,4 +1,4 @@
-"""Long-running D3A RC1 FIX1 spatial and temporal convergence gate."""
+"""Long-running D3A RC1 FIX1A spatial and temporal convergence gate."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from tests.reference.d3a_final_convergence_fix1 import (
-    build_final_convergence_fix1_report,
+    build_final_convergence_fix1a_report,
     build_grid_manifest,
 )
 
@@ -22,7 +22,7 @@ pytestmark = pytest.mark.d3a_shipping_science
 def _report() -> dict[str, object]:
     """Run the expensive pre-frozen matrix once for all assertions."""
 
-    return build_final_convergence_fix1_report()
+    return build_final_convergence_fix1a_report()
 
 
 def test_fix1_grid_family_is_prefrozen_nested_and_exactly_aligned() -> None:
@@ -59,7 +59,8 @@ def test_fix1_levels_share_physics_controls_and_structure_locations() -> None:
 
     report = _report()
     spatial = report["levels"][:3]
-    assert report["schema_version"] == "dayu.d3a-final-convergence.v2"
+    assert report["schema_version"] == "dayu.d3a-final-convergence.v3"
+    assert report["scenario_id"] == "d3a-rc1-fix1a-structure-aligned-v1"
     assert [row["manifest"]["cell_count"] for row in spatial] == [18, 54, 162]
     assert report["level_selection"]["refinement_ratios"] == [3.0, 3.0]
     assert len(
@@ -85,6 +86,10 @@ def test_fix1_smooth_metrics_have_positive_order_and_richardson_error() -> None:
     """Require decreasing differences and finite positive empirical orders."""
 
     report = _report()
+    assert "peak_monitor_discharge_m3s" in report["comparisons"][
+        "smooth_metrics"
+    ]
+    assert "peak_discharge_m3s" not in report["comparisons"]["smooth_metrics"]
     for metric, values in report["comparisons"]["smooth_metrics"].items():
         assert values["trend_status"] == "pass", metric
         assert values["medium_fine_absolute"] < values[
@@ -94,6 +99,58 @@ def test_fix1_smooth_metrics_have_positive_order_and_richardson_error() -> None:
         assert values["observed_order"] > 0.0, metric
         assert math.isfinite(values["asymptotic_limit"]), metric
         assert values["fine_grid_estimated_error"] >= 0.0, metric
+
+
+def test_fix1a_global_peak_q_argmax_drift_is_non_smooth() -> None:
+    """Record global peak coordinates and reject smooth-Q interpretation."""
+
+    report = _report()
+    values = report["comparisons"]["non_smooth_metrics"][
+        "global_peak_discharge_m3s"
+    ]
+    assert values["classification"] == "non-smooth-global-extremum"
+    assert values["argmax_drift_detected"] is True
+    assert values["argmax_time_drift_detected"] is True
+    assert values["argmax_chainage_drift_detected"] is True
+    assert values["used_as_smooth_spatial_convergence_evidence"] is False
+    observations = values["argmax_observations"]
+    assert [row["time_s"] for row in observations] == [7200.0, 4500.0, 4500.0]
+    assert [row["section_chainage_m"] for row in observations] == pytest.approx(
+        [250.0, 1250.0, 972.2222222222222],
+        rel=0.0,
+        abs=1.0e-12,
+    )
+    assert [row["absolute_discharge_m3s"] for row in observations] == pytest.approx(
+        [0.22199067209519152, 0.2454131571144132, 0.26221666161760204]
+    )
+    legacy = values["legacy_fix1_richardson_diagnostic"]
+    assert legacy["observed_order"] == pytest.approx(0.30229863314305244)
+    assert legacy["fine_grid_estimated_relative_error"] == pytest.approx(
+        0.1399220503200914
+    )
+    limitation = report["known_limitations"][0]
+    assert limitation[
+        "fix1_legacy_fine_grid_estimated_relative_error_percent"
+    ] == 13.99
+
+
+def test_fix1a_fixed_monitor_q_has_positive_spatial_order() -> None:
+    """Use peak Q at the exact 2850 m monitor as the comparable Q metric."""
+
+    report = _report()
+    spatial = report["levels"][:3]
+    for row in spatial:
+        observation = row["fixed_monitor_peak_discharge"]
+        assert observation["section_chainage_m"] == 2850.0
+        assert observation["control_volume_centroid_m"] == 2850.0
+        assert observation["discharge_m3s"] == row[
+            "peak_monitor_discharge_m3s"
+        ]
+    convergence = report["comparisons"]["smooth_metrics"][
+        "peak_monitor_discharge_m3s"
+    ]
+    assert convergence["trend_status"] == "pass"
+    assert convergence["observed_order"] > 0.7
 
 
 def test_fix1_event_spatial_error_is_separate_from_locator_tolerance() -> None:
@@ -164,6 +221,7 @@ def test_fix1_time_refinement_reduces_actual_dt_without_degradation() -> None:
         "time_gate_transfer_relative"
     ]
     for metric in (
+        "peak_monitor_discharge_m3s",
         "peak_discharge_m3s",
         "pump_external_volume_m3",
         "pump_input_energy_kwh",
@@ -184,7 +242,7 @@ def test_fix1_completion_status_and_artifact_emission() -> None:
     """Emit the report when requested and require every FIX1 completion gate."""
 
     report = _report()
-    target = os.environ.get("D3A_FINAL_CONVERGENCE_FIX1_ARTIFACT")
+    target = os.environ.get("D3A_FINAL_CONVERGENCE_FIX1A_ARTIFACT")
     if target:
         path = Path(target)
         path.parent.mkdir(parents=True, exist_ok=True)

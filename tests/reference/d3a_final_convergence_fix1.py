@@ -58,10 +58,10 @@ _SPATIAL_LEVELS: Final = (
     ("medium", 1),
     ("fine", 2),
 )
-_SMOOTH_METRICS: Final = (
+_FIX1A_SMOOTH_METRICS: Final = (
     "gate_downstream_peak_stage_m",
     "pump_source_peak_stage_m",
-    "peak_discharge_m3s",
+    "peak_monitor_discharge_m3s",
     "gate_transfer_volume_m3",
     "pump_external_volume_m3",
     "pump_input_energy_kwh",
@@ -178,6 +178,82 @@ def _find_exact(values: tuple[Fraction, ...], target: int, label: str) -> int:
     if len(matches) != 1:
         raise AssertionError(f"FIX1 {label} must have exactly one exact binding")
     return matches[0]
+
+
+def _fixed_monitor_peak_discharge_observation(
+    monitor: dict[str, object],
+    manifest: dict[str, object],
+) -> dict[str, object]:
+    """Locate peak signed Q at the exact fixed monitor and record its time."""
+
+    section_id = int(monitor["section_id"])
+    samples = tuple(
+        (sample_index, float(time_s), float(discharge_m3s))
+        for sample_index, (time_s, discharge_m3s) in enumerate(
+            zip(monitor["time"], monitor["flow"], strict=True)
+        )
+    )
+    sample_index, time_s, discharge_m3s = max(
+        samples,
+        key=lambda sample: sample[2],
+    )
+    return {
+        "discharge_m3s": discharge_m3s,
+        "time_s": time_s,
+        "sample_index": sample_index,
+        "section_id": section_id,
+        "section_chainage_m": float(
+            manifest["section_chainages_m"][section_id - 1]
+        ),
+        "control_volume_centroid_m": float(
+            manifest["control_volume_centroids_m"][section_id - 1]
+        ),
+    }
+
+
+def _global_peak_discharge_observation(
+    sections: list[dict[str, object]],
+    manifest: dict[str, object],
+) -> dict[str, object]:
+    """Locate the deterministic global abs(Q) argmax in space and time."""
+
+    samples = tuple(
+        (
+            abs(float(discharge_m3s)),
+            float(discharge_m3s),
+            float(time_s),
+            int(section["section_id"]),
+            sample_index,
+        )
+        for section in sections
+        for sample_index, (time_s, discharge_m3s) in enumerate(
+            zip(section["time"], section["flow"], strict=True)
+        )
+    )
+    absolute_m3s, signed_m3s, time_s, section_id, sample_index = max(
+        samples,
+        key=lambda sample: sample[0],
+    )
+    exact_tie_count = sum(
+        sample[0] == absolute_m3s for sample in samples
+    )
+    return {
+        "absolute_discharge_m3s": absolute_m3s,
+        "signed_discharge_m3s": signed_m3s,
+        "time_s": time_s,
+        "sample_index": sample_index,
+        "section_id": section_id,
+        "section_chainage_m": float(
+            manifest["section_chainages_m"][section_id - 1]
+        ),
+        "control_volume_centroid_m": float(
+            manifest["control_volume_centroids_m"][section_id - 1]
+        ),
+        "exact_tie_count": exact_tie_count,
+        "selection_policy": (
+            "maximum absolute discharge; first section/time sample on exact tie"
+        ),
+    }
 
 
 def build_grid_manifest(refinement_level: int) -> dict[str, object]:
@@ -384,6 +460,14 @@ def run_final_level_fix1(
     }
     gate = document["controlled_gate_coupling_evidence"][0]
     pump = document["pump_coupling_evidence"][0]
+    fixed_monitor_peak = _fixed_monitor_peak_discharge_observation(
+        monitor,
+        manifest,
+    )
+    global_peak = _global_peak_discharge_observation(
+        document["sections"],
+        manifest,
+    )
     accepted_dts = tuple(
         row["dt"] for row in pump["stage_evaluations"] if row["rk_stage"] == 1
     )
@@ -414,12 +498,11 @@ def run_final_level_fix1(
         "maximum_froude_number": diagnostics["maximum_froude_number"],
         "maximum_friction_number": diagnostics["maximum_friction_number"],
         "peak_monitor_stage_m": max(monitor["water_level"]),
-        "peak_monitor_discharge_m3s": max(monitor["flow"]),
-        "peak_discharge_m3s": max(
-            abs(value)
-            for section in document["sections"]
-            for value in section["flow"]
-        ),
+        "peak_monitor_discharge_m3s": fixed_monitor_peak["discharge_m3s"],
+        "peak_monitor_discharge_time_s": fixed_monitor_peak["time_s"],
+        "fixed_monitor_peak_discharge": fixed_monitor_peak,
+        "peak_discharge_m3s": global_peak["absolute_discharge_m3s"],
+        "global_peak_discharge_argmax": global_peak,
         "gate_upstream_peak_stage_m": max(
             row["upstream_stage"] for row in gate["stage_evaluations"]
         ),
@@ -523,8 +606,8 @@ def _level_gate_status(row: dict[str, object], tolerances: dict[str, float]) -> 
     )
 
 
-def build_final_convergence_fix1_report() -> dict[str, object]:
-    """Run the pre-frozen spatial/time matrix and return the v2 artifact."""
+def build_final_convergence_fix1a_report() -> dict[str, object]:
+    """Run the frozen matrix and return the FIX1A version-three artifact."""
 
     levels = tuple(
         run_final_level_fix1(label, refinement)
@@ -546,7 +629,52 @@ def build_final_convergence_fix1_report() -> dict[str, object]:
                 else "kWh"
             ),
         )
-        for metric in _SMOOTH_METRICS
+        for metric in _FIX1A_SMOOTH_METRICS
+    }
+    legacy_global_peak_q = _convergence_entry(
+        float(coarse["peak_discharge_m3s"]),
+        float(medium["peak_discharge_m3s"]),
+        float(fine["peak_discharge_m3s"]),
+        units="m3/s",
+    )
+    argmax_observations = [
+        {
+            "level": row["level"],
+            **deepcopy(row["global_peak_discharge_argmax"]),
+        }
+        for row in levels[:3]
+    ]
+    argmax_time_drift = len(
+        {row["time_s"] for row in argmax_observations}
+    ) > 1
+    argmax_chainage_drift = len(
+        {row["section_chainage_m"] for row in argmax_observations}
+    ) > 1
+    argmax_drift = argmax_time_drift or argmax_chainage_drift
+    legacy_relative_error = legacy_global_peak_q[
+        "fine_grid_estimated_relative_error"
+    ]
+    legacy_relative_error_percent = (
+        round(float(legacy_relative_error) * 100.0, 2)
+        if legacy_relative_error is not None
+        else None
+    )
+    global_peak_q = {
+        "classification": (
+            "non-smooth-global-extremum"
+            if argmax_drift
+            else "smooth-candidate-requires-additional-refinement"
+        ),
+        "argmax_drift_detected": argmax_drift,
+        "argmax_time_drift_detected": argmax_time_drift,
+        "argmax_chainage_drift_detected": argmax_chainage_drift,
+        "argmax_observations": argmax_observations,
+        "used_as_smooth_spatial_convergence_evidence": False,
+        "no_drift_action": (
+            "fail closed and add a pre-frozen finer level before acceptance"
+        ),
+        "legacy_fix1_richardson_diagnostic": legacy_global_peak_q,
+        "legacy_fix1_diagnostic_is_valid_smooth_error_bound": False,
     }
     gate_event = _convergence_entry(
         float(coarse["gate_open_time_s"]),
@@ -562,6 +690,16 @@ def build_final_convergence_fix1_report() -> dict[str, object]:
             "locator_tolerance_is_spatial_error": False,
         }
     )
+    time_metrics = tuple(
+        dict.fromkeys(
+            (
+                *_FIX1A_SMOOTH_METRICS,
+                "peak_discharge_m3s",
+                "gate_open_time_s",
+                "pump_start_time_s",
+            )
+        )
+    )
     time_comparison = {
         "accepted_maximum_dt_ratio": (
             float(refined["accepted_maximum_dt_s"])
@@ -571,7 +709,21 @@ def build_final_convergence_fix1_report() -> dict[str, object]:
             f"{metric}_absolute": abs(
                 float(refined[metric]) - float(fine[metric])
             )
-            for metric in (*_SMOOTH_METRICS, "gate_open_time_s", "pump_start_time_s")
+            for metric in time_metrics
+        },
+        "global_peak_q_argmax": {
+            "fine": deepcopy(fine["global_peak_discharge_argmax"]),
+            "fine_time_refined": deepcopy(
+                refined["global_peak_discharge_argmax"]
+            ),
+            "same_section_chainage": (
+                fine["global_peak_discharge_argmax"]["section_chainage_m"]
+                == refined["global_peak_discharge_argmax"]["section_chainage_m"]
+            ),
+            "time_absolute_difference_s": abs(
+                float(fine["global_peak_discharge_argmax"]["time_s"])
+                - float(refined["global_peak_discharge_argmax"]["time_s"])
+            ),
         },
     }
     tolerances = {
@@ -599,6 +751,7 @@ def build_final_convergence_fix1_report() -> dict[str, object]:
             time_comparison[f"{metric}_absolute"] / abs(float(fine[metric]))
             <= tolerances["time_other_integral_relative"]
             for metric in (
+                "peak_monitor_discharge_m3s",
                 "peak_discharge_m3s",
                 "pump_external_volume_m3",
                 "pump_input_energy_kwh",
@@ -618,6 +771,15 @@ def build_final_convergence_fix1_report() -> dict[str, object]:
         for row in levels
         for binding in ("gate", "pump", "monitor")
     )
+    fixed_monitor_status = all(
+        row["fixed_monitor_peak_discharge"]["section_chainage_m"]
+        == MONITOR_CHAINAGE_M
+        and row["fixed_monitor_peak_discharge"][
+            "control_volume_centroid_m"
+        ]
+        == MONITOR_CHAINAGE_M
+        for row in levels
+    )
     spatial_counts = [row["manifest"]["cell_count"] for row in levels[:3]]
     refinement_status = bool(
         spatial_counts == [18, 54, 162]
@@ -632,11 +794,21 @@ def build_final_convergence_fix1_report() -> dict[str, object]:
     )
     smooth_status = all(row["trend_status"] == "pass" for row in smooth.values())
     event_status = gate_event["trend_status"] == "pass"
+    global_peak_classification_status = bool(
+        argmax_drift
+        and global_peak_q["classification"] == "non-smooth-global-extremum"
+        and global_peak_q["used_as_smooth_spatial_convergence_evidence"] is False
+    )
+    known_limitation_status = legacy_relative_error_percent == 13.99
     envelope_status = all(_level_gate_status(row, tolerances) for row in levels)
     completion_gates = {
         "grid_locations_exact": location_status,
         "refinement_ratio_at_least_1_5": refinement_status,
+        "fixed_monitor_q_spatial_convergence": fixed_monitor_status
+        and smooth["peak_monitor_discharge_m3s"]["trend_status"] == "pass",
         "smooth_spatial_convergence": smooth_status,
+        "global_peak_q_argmax_classified": global_peak_classification_status,
+        "known_limitation_13_99_percent_recorded": known_limitation_status,
         "event_spatial_convergence": event_status,
         "event_locator_error_separated": True,
         "fine_grid_time_refinement": time_status,
@@ -644,18 +816,22 @@ def build_final_convergence_fix1_report() -> dict[str, object]:
     }
     status = "pass" if all(completion_gates.values()) else "fail"
     return {
-        "schema_version": "dayu.d3a-final-convergence.v2",
-        "scenario_id": "d3a-rc1-fix1-structure-aligned-v1",
+        "schema_version": "dayu.d3a-final-convergence.v3",
+        "scenario_id": "d3a-rc1-fix1a-structure-aligned-v1",
         "status": status,
         "pre_fix1_artifact": {
             "path": "outputs/d3a/final-convergence.json",
             "classification": "superseded-pre-FIX1",
         },
+        "pre_fix1a_artifact": {
+            "path": "outputs/d3a/final-convergence-fix1.json",
+            "classification": "superseded-FIX1-peak-Q-interpretation",
+        },
         "level_selection": {
             "grid_family_id": GRID_FAMILY_ID,
             "cell_counts": [18, 54, 162],
             "refinement_ratios": [3.0, 3.0],
-            "selection_timing": "frozen-before-FIX1-simulation",
+            "selection_timing": "frozen-before-FIX1-simulation; unchanged in FIX1A",
             "reason": (
                 "odd factor-three refinement preserves both parent sites and "
                 "parent faces; an even refinement cannot simultaneously preserve "
@@ -667,6 +843,9 @@ def build_final_convergence_fix1_report() -> dict[str, object]:
         "levels": list(levels),
         "comparisons": {
             "smooth_metrics": smooth,
+            "non_smooth_metrics": {
+                "global_peak_discharge_m3s": global_peak_q,
+            },
             "event_metrics": {"gate_open_time_s": gate_event},
             "schedule_locked_events": {
                 "pump_start_time_s": {
@@ -677,8 +856,34 @@ def build_final_convergence_fix1_report() -> dict[str, object]:
             },
             "fine_time_refinement": time_comparison,
         },
+        "known_limitations": [
+            {
+                "id": "global-peak-Q-argmax-drift",
+                "status": "active",
+                "classification": "non-smooth-global-extremum",
+                "fix1_legacy_observed_order": legacy_global_peak_q[
+                    "observed_order"
+                ],
+                "fix1_legacy_fine_grid_estimated_relative_error": (
+                    legacy_relative_error
+                ),
+                "fix1_legacy_fine_grid_estimated_relative_error_percent": (
+                    legacy_relative_error_percent
+                ),
+                "interpretation": (
+                    "13.99% is retained as a known historical diagnostic; "
+                    "argmax drift invalidates it as a smooth Richardson error bound"
+                ),
+            }
+        ],
         "completion_gates": completion_gates,
     }
+
+
+def build_final_convergence_fix1_report() -> dict[str, object]:
+    """Return the current FIX1A report through the legacy helper entry point."""
+
+    return build_final_convergence_fix1a_report()
 
 
 __all__ = [
@@ -691,6 +896,7 @@ __all__ = [
     "PUMP_CHAINAGE_M",
     "bed_elevation_m",
     "build_final_case_fix1",
+    "build_final_convergence_fix1a_report",
     "build_final_convergence_fix1_report",
     "build_grid_manifest",
     "initial_water_level_m",

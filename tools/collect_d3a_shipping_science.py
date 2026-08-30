@@ -51,16 +51,51 @@ def collect(evidence_dir: Path, final_convergence: Path) -> None:
     report = json.loads(final_convergence.read_text(encoding="utf-8"))
     levels = report.get("levels")
     completion_gates = report.get("completion_gates")
+    comparisons = report.get("comparisons")
+    smooth_metrics = (
+        comparisons.get("smooth_metrics")
+        if isinstance(comparisons, dict)
+        else None
+    )
+    non_smooth_metrics = (
+        comparisons.get("non_smooth_metrics")
+        if isinstance(comparisons, dict)
+        else None
+    )
+    global_peak_q = (
+        non_smooth_metrics.get("global_peak_discharge_m3s")
+        if isinstance(non_smooth_metrics, dict)
+        else None
+    )
+    known_limitations = report.get("known_limitations")
     if (
-        report.get("schema_version") != "dayu.d3a-final-convergence.v2"
+        report.get("schema_version") != "dayu.d3a-final-convergence.v3"
         or report.get("status") != "pass"
         or not isinstance(levels, list)
         or len(levels) != 4
         or not isinstance(completion_gates, dict)
         or not completion_gates
         or not all(value is True for value in completion_gates.values())
+        or not isinstance(smooth_metrics, dict)
+        or "peak_monitor_discharge_m3s" not in smooth_metrics
+        or "peak_discharge_m3s" in smooth_metrics
+        or not isinstance(global_peak_q, dict)
+        or global_peak_q.get("classification")
+        != "non-smooth-global-extremum"
+        or global_peak_q.get("argmax_drift_detected") is not True
+        or global_peak_q.get("used_as_smooth_spatial_convergence_evidence")
+        is not False
+        or not isinstance(known_limitations, list)
+        or len(known_limitations) != 1
+        or not isinstance(known_limitations[0], dict)
+        or known_limitations[0].get(
+            "fix1_legacy_fine_grid_estimated_relative_error_percent"
+        )
+        != 13.99
     ):
-        raise ValueError("FIX1 FINAL convergence artifact is not a four-level v2 PASS")
+        raise ValueError(
+            "FIX1A FINAL convergence artifact is not a classified four-level v3 PASS"
+        )
     runtime = runtime_build_diagnostic()
     if runtime["python"]["major_minor"] != "3.12":
         raise ValueError("D3A shipping science must execute on Python 3.12")
