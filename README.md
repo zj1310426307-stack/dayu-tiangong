@@ -202,30 +202,34 @@ RC1 run `33102252587`、最终 HEAD run `33102637908` 与 PR #10 run `3310284311
 均全绿，测试 artifacts 已核对；PR [#10](https://github.com/zj1310426307-stack/dayu-tiangong/pull/10)
 保持 OPEN，未合并 `main`。
 
-## HYDRO-MODEL-02-D3A-RC1-FIX1
+## HYDRO-MODEL-02-D3A-RC1-FIX1A
 
 D3A-RC1 在 single Branch、fully wet、forward、`Fr<=0.8` 的冻结边界内增加动态
 runtime envelope、SSP-RK2 全阶段 fail-closed 检查和摩阻时间步预测器。FIX1 将
 旧 60/70/80 证据降级为 `superseded-pre-FIX1`，改用运行前冻结的 18/54/162
-structure-aligned odd3 网格：Gate/Pump/monitor 三层位置误差均为 0 m，六项 smooth
-metrics 和 Gate event 空间差均下降，并独立报告观测阶、Richardson 估计和 5 s
-event-locator tolerance。
+structure-aligned odd3 网格。FIX1A 进一步补齐 global peak-Q 的 argmax time/chainage；
+审计发现 argmax 在空间层间漂移，因此将其重分类为 `non-smooth-global-extremum`，
+并以精确 2850 m fixed-monitor peak Q（`p=2.215707`）替代 smooth Q convergence。
+FIX1 的 `13.99%` 只保留为显式 known limitation，不再解释为有效的 smooth
+Richardson 误差界。
 
-FIX1 本地 Python 3.12 发布镜像为 7/7；MODEL02 375/375、D2/native-v4
-152 passed + 33 external-service skipped、legacy/D1 26/26，OpenAPI 0 drift，前端
-typecheck/build 通过。Evidence head `d0aa748` 的 push/PR 四个 Hosted workflows
-全部成功，Python 3.11/3.12 长科学门均通过。当前为
-`FIX1 GATES PASS / MERGE READY FOR INDEPENDENT REVIEW`。
+FIX1A 本地 Python 3.11 与 Python 3.12 science 均为 9/9；MODEL02 375/375、
+legacy/D1 26/26、D3A model-engine contracts 双版本均 43/43，v2 collector 负控按预期
+拒绝。当前为 `LOCAL FIX1A GATES PASS / HOSTED PENDING / PR NO-GO`；最终 head 的
+Python 3.11/3.12 Hosted 门尚须复跑。
 PR [#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12) 保持 OPEN，本文
-不授权合并、创建 D3A tag 或启动 D3B。完整 FIX1 证据见：
+不授权合并、创建 D3A tag 或启动 D3B。完整 FIX1A 证据见：
 
 - `docs/review/HYDRO-MODEL-02-D3A-RC1-FIX1-audit.md`
+- `docs/review/HYDRO-MODEL-02-D3A-RC1-FIX1A-baseline-audit.md`
+- `docs/review/HYDRO-MODEL-02-D3A-RC1-FIX1A-audit.md`
 - `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1-grid-family.md`
 - `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1-event-error.md`
-- `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1-convergence.md`
+- `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1A-convergence.md`
 - `docs/model/HYDRO-MODEL-02-D3A-RC1-runtime-envelope.md`
-- `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1-validation-report.md`
-- `docs/release/HYDRO-MODEL-02-D3A-RC1-FIX1-release-readiness.md`
+- `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1A-validation-report.md`
+- `docs/release/HYDRO-MODEL-02-D3A-RC1-FIX1A-release-readiness.md`
+- `outputs/d3a/final-convergence-fix1a.json`
 
 ## 当前边界
 

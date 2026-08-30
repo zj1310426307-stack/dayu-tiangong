@@ -1,5 +1,10 @@
 # HYDRO-MODEL-02-D3A-RC1-FIX1 Validation Report
 
+> **FIX1A 更新（2026-08-30）：** 本报告的 v2 global peak-Q smooth interpretation
+> 已被 argmax 漂移审计替代。Hosted 历史证据仍有效证明当时的执行身份，但不能把
+> `13.99%` 当作同一时空观测量的 Richardson 误差界。现行报告见
+> [FIX1A validation](./HYDRO-MODEL-02-D3A-RC1-FIX1A-validation-report.md)。
+
 - 日期：2026-08-30
 - PR：[#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12)，OPEN / NOT MERGED
 - 本地结构对齐空间证据：PASS

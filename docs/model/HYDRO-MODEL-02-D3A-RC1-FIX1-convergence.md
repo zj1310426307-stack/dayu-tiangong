@@ -1,5 +1,10 @@
 # HYDRO-MODEL-02-D3A-RC1-FIX1 Convergence
 
+> **FIX1A 更新（2026-08-30）：** 本文把跨全部 section/time 的 global peak Q
+> 放在 smooth metrics 中，是已被后续 argmax 审计替代的历史解释。v2 artifact 保留，
+> 但其 `p=0.302299 / 13.99%` 不是有效的 smooth Richardson 误差界。现行结论见
+> [FIX1A convergence](./HYDRO-MODEL-02-D3A-RC1-FIX1A-convergence.md)。
+
 ## 同一物理问题与固定位置
 
 三层使用同一连续 bed/profile/Manning/initial state、边界、Gate/Pump 参数与控制。

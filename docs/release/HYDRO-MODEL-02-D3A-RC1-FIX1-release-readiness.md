@@ -1,5 +1,9 @@
 # HYDRO-MODEL-02-D3A-RC1-FIX1 Release Readiness
 
+> **FIX1A 更新（2026-08-30）：** 本文是 v2 历史发布记录。global peak-Q argmax
+> 漂移后，v2 不再是当前合并依据；现行门禁见
+> [FIX1A release readiness](./HYDRO-MODEL-02-D3A-RC1-FIX1A-release-readiness.md)。
+
 - 当前：`FIX1 GATES PASS / MERGE READY FOR INDEPENDENT REVIEW`
 - PR：[#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12)，NOT MERGED
 - D3A tag：未创建
