@@ -63,13 +63,6 @@ OpenLayers → FastAPI 安全边界 → GeoServer → PostGIS
 docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 ```
 
-默认入口：
-
-- 应用：`http://127.0.0.1:8080/`
-- 后端：`http://127.0.0.1:8001/`
-- OpenAPI：`http://127.0.0.1:8001/docs`
-- GeoServer：`http://127.0.0.1:8081/geoserver/`
-
 核心初始化顺序为 `database → migrate → seed → qgis-bootstrap → app-bootstrap → geoserver-init → gis-catalog-seed → backend/worker → frontend`。后端使用非 owner 的 `dayu_backend` 登录，并继承 NOLOGIN `dayu_publisher` 发布组；数据库 owner 只用于迁移和初始化。
 
 ## GIS API
@@ -199,10 +192,11 @@ RC1 将 v4-lite-3 动态冻结输入迁移为 checked-in canonical JSON，拆分
 input/runtime projection/mesh/solver/validation policy 身份，并将 MODEL-02 改为
 Ubuntu/Windows Python 3.11 matrix。首次 hosted run `33097599382` 的失败历史保留；
 RC1 run `33102252587`、最终 HEAD run `33102637908` 与 PR #10 run `33102843115`
-均全绿，测试 artifacts 已核对；PR [#10](https://github.com/zj1310426307-stack/dayu-tiangong/pull/10)
-保持 OPEN，未合并 `main`。
+均全绿，测试 artifacts 已核对。PR [#10](https://github.com/zj1310426307-stack/dayu-tiangong/pull/10)
+后续以 merge commit `cc6936d` 合入 `main`，annotated tag `hydro-model-02-d1-rc1`
+指向该合并提交；合并后 main run `33105713834` 全绿。
 
-## HYDRO-MODEL-02-D3A-RC1-FIX1A
+## HYDRO-MODEL-02-D3A-RC1 / D3B
 
 D3A-RC1 在 single Branch、fully wet、forward、`Fr<=0.8` 的冻结边界内增加动态
 runtime envelope、SSP-RK2 全阶段 fail-closed 检查和摩阻时间步预测器。FIX1 将
@@ -217,10 +211,23 @@ FIX1A 本地 Python 3.11 与 Python 3.12 science 均为 9/9；MODEL02 375/375、
 legacy/D1 26/26、D3A model-engine contracts 双版本均 43/43，v2 collector 负控按预期
 拒绝。evidence head `d20275a` 的 Hosted Python 3.11 science push/PR 均为 82/82，
 Python 3.12.14 shipping science push/PR 均为 51/51；四个 workflows 全绿，五份下载
-artifact 在机器相关字段规则下逐字段一致。当前为
-`FIX1A GATES PASS / MERGE READY FOR INDEPENDENT REVIEW / PR NOT MERGED`。
-PR [#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12) 保持 OPEN，本文
-不授权合并、创建 D3A tag 或启动 D3B。完整 FIX1A 证据见：
+artifact 在机器相关字段规则下逐字段一致。以上是 PR 合并前的 FIX1A 冻结证据。
+
+PR [#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12) 已于 2026-08-30
+以 merge commit `eb6b1b4` 合入 `main`；main runs `33309205534` / `33309205538`
+全部成功，strict required checks 11/11。annotated tag `hydro-model-02-d3a-rc1`
+已验证指向该受测 merge commit。D3A-RC1 已正式冻结，`13.99%` known limitation
+不因发布而消失。
+
+D3B 分支已从同一提交创建。当前真实输入审计结论为 `INPUT GATE NO-GO`：现有受控
+成果缺权威闸泵参数、上下游边界、控制点和水流方向确认，不能冒充可计算真实案例。
+当前发布事实、输入审计和未来计划分别见：
+
+- `docs/release/HYDRO-MODEL-02-D3A-RC1-release.md`
+- `docs/review/HYDRO-MODEL-02-D3B-input-readiness-audit.md`
+- `docs/workplans/HYDRO-MODEL-02-D3B-real-engineering-validation.md`
+
+完整 FIX1A 历史证据见：
 
 - `docs/review/HYDRO-MODEL-02-D3A-RC1-FIX1-audit.md`
 - `docs/review/HYDRO-MODEL-02-D3A-RC1-FIX1A-baseline-audit.md`
