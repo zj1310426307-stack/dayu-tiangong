@@ -120,8 +120,9 @@ jobs:
         shell: bash
         run: |
           for attempt in $(seq 1 30); do
-            if python -m celery -A app.worker.celery_app:celery_app inspect ping \
-              -d "hydraulic-1d-ci@$(hostname)" --timeout 3 | grep -q pong; then
+            response="$(python -m celery -A app.worker.celery_app:celery_app \
+              inspect ping --timeout 3 2>&1 || true)"
+            if [[ "$response" == *pong* ]]; then
               exit 0
             fi
             sleep 1
