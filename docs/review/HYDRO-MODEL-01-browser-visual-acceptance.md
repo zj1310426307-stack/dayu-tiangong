@@ -1,5 +1,7 @@
 # HYDRO-MODEL-01 浏览器可视化验收记录
 
+> **历史归档 / 自研 Solver 路线已废止（2026-08-31）：** 本文仅记录 2026-08-19 的 UI/任务链验收，其 `HydraulicEngine` 与 `synchronous-network-continuity-manning-v1` 不是当前生产路线。现行架构见 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md)。
+
 日期：2026-08-19
 
 ## 结论

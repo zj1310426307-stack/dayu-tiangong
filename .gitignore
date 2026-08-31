@@ -10,14 +10,28 @@ frontend/vite.config.d.ts
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
+coverage.xml
 htmlcov/
+coverage/
+build/
+dist/
+out/
 tmp/
+temp/
+runtime/
+runs/
+simulation-workspaces/
 99_python_cache/
 
 # 本地验收产物（正式审查结论保存在 docs/review）
 output/
-outputs/
+outputs/*
+# HYDRO-DATA-01 exchange workbooks are formal, reviewed fixtures rather than run output.
+!outputs/HYDRO-DATA-01-20260818/
+!outputs/HYDRO-DATA-01-20260818/**
 qgis/server/generated/*.secret
 qgis/server/generated/*.isolation.json
 
@@ -26,12 +40,20 @@ backend/storage/imports/
 backend/storage/ai-reports/
 backend/storage/conversions/
 backend/storage/hydraulic-evidence/
+backend/storage/hydraulic-workspaces/
 
 # 本地环境与编辑器文件
 .env
+.env.*
+!.env.example
 .idea/
 .vscode/
 *.log
+*.tmp
+*.temp
+*.orig
+*.rej
+*.bak
 
 # 操作系统临时文件
 .DS_Store

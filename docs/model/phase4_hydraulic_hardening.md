@@ -1,5 +1,7 @@
 # Phase 4.0 水动力正确性加固
 
+> **归档 / 已废止（2026-08-31）：** 本文记录已删除的自研 1D Solver，不能作为当前实现或运维依据。现行路线见 [MASCARET 1D Adapter](./MASCARET-1D-ADAPTER.md) 与 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md)。
+
 ## 冻结输入与可复现性
 
 `freeze_task_input()` 在任务创建事务中读取数据版本、方案、显式边界组、河网、断面、闸泵和参数，规范化 JSON 后计算 SHA-256。任务记录输入 schema、hash、引擎版本/commit；之后业务表变化不影响该任务。

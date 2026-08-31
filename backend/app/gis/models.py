@@ -1458,6 +1458,16 @@ class BoundaryCondition(Base):
             name="fk_boundary_d2_hydraulic_node_version",
             ondelete="RESTRICT",
         ),
+        ForeignKeyConstraint(
+            ["branch_id", "dataset_version_id"],
+            ["hydraulic.branch.id", "hydraulic.branch.dataset_version_id"],
+            name="fk_boundary_hydraulic_branch_version",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "chainage_m IS NULL OR chainage_m >= 0",
+            name="ck_boundary_condition_chainage_nonnegative",
+        ),
         Index("ix_boundary_condition_dataset_version_id", "dataset_version_id"),
     )
 
@@ -1471,6 +1481,8 @@ class BoundaryCondition(Base):
         ForeignKey("river_node.id", ondelete="SET NULL")
     )
     hydraulic_node_id: Mapped[int | None] = mapped_column(Integer)
+    branch_id: Mapped[int | None] = mapped_column(Integer)
+    chainage_m: Mapped[float | None] = mapped_column(Float)
     values: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
@@ -1499,7 +1511,9 @@ class SimulationCase(Base):
     boundary_condition_id: Mapped[int] = mapped_column(
         ForeignKey("boundary_condition.id", ondelete="RESTRICT"), nullable=False
     )
+    # Historical audit payload only; no current API or worker reads this column.
     v4_configuration: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    hydraulic_1d_configuration: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_time: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -1540,7 +1554,7 @@ class SimulationCaseBoundary(Base):
 
 
 class SimulationTaskGroup(Base):
-    """Group independent tasks for a diagnostic v3/v4 shadow comparison."""
+    """Retain historical v3/v4 comparison identities for read-only audit."""
 
     __tablename__ = "simulation_task_group"
     __table_args__ = (
@@ -1724,7 +1738,7 @@ class SimulationTask(Base):
 
 
 class HydraulicTaskSectionResult(Base):
-    """Persist authoritative v4 Section output without public compatibility IDs."""
+    """Persist authoritative solver-neutral Section output for the unified API."""
 
     __tablename__ = "hydraulic_task_section_result"
     __table_args__ = (
@@ -1768,11 +1782,17 @@ class HydraulicTaskSectionResult(Base):
     water_level_m: Mapped[float] = mapped_column(Float, nullable=False)
     flow_m3s: Mapped[float] = mapped_column(Float, nullable=False)
     velocity_m_s: Mapped[float] = mapped_column(Float, nullable=False)
-    control_volume_m3: Mapped[float] = mapped_column(Float, nullable=False)
+    depth_m: Mapped[float | None] = mapped_column(Float)
+    flow_area_m2: Mapped[float | None] = mapped_column(Float)
+    wet_area_m2: Mapped[float | None] = mapped_column(Float)
+    hydraulic_radius_m: Mapped[float | None] = mapped_column(Float)
+    top_width_m: Mapped[float | None] = mapped_column(Float)
+    froude_number: Mapped[float | None] = mapped_column(Float)
+    control_volume_m3: Mapped[float | None] = mapped_column(Float)
 
 
 class HydraulicTaskGateResult(Base):
-    """Persist D1 Gate series with authoritative asset and evidence fields."""
+    """Retain historical D1 Gate result rows for audit; no current writer uses it."""
 
     __tablename__ = "hydraulic_task_gate_result"
     __table_args__ = (
@@ -1816,7 +1836,7 @@ class HydraulicTaskGateResult(Base):
 
 
 class HydraulicTaskPumpResult(Base):
-    """Persist D1 hydraulic Pump operating-point and energy series."""
+    """Retain historical D1 Pump result rows for audit; no current writer uses it."""
 
     __tablename__ = "hydraulic_task_pump_result"
     __table_args__ = (
@@ -1865,7 +1885,7 @@ class HydraulicTaskPumpResult(Base):
 
 
 class HydraulicTaskControlEvent(Base):
-    """Persist accepted v4 control events without a legacy DispatchRun dependency."""
+    """Retain historical v4 control-event rows for audit; no current writer uses it."""
 
     __tablename__ = "hydraulic_task_control_event"
     __table_args__ = (
@@ -1927,7 +1947,7 @@ class HydraulicTaskControlEvent(Base):
 
 
 class HydraulicTaskArtifact(Base):
-    """Register deterministic evidence files before controlled publication/download."""
+    """Retain historical custom-solver artifact rows for read-only audit."""
 
     __tablename__ = "hydraulic_task_artifact"
     __table_args__ = (

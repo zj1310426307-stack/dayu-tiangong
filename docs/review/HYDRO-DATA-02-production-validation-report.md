@@ -1,5 +1,7 @@
 # HYDRO-DATA-02 真实工程数据验证与生产验收报告（公开脱敏版）
 
+> **历史基线（2026-08-18）：** 本文的真实数据治理与未验证披露继续有效；其中“现有简化求解路径”仅指当时基线，相关自研 Solver 已由 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md) 废止。本文不构成 MASCARET 工程率定或数值验收。
+
 日期：2026-08-18
 
 案例编码：`HYDRO-DATA-02-PUBLIC-TEMPLATE`

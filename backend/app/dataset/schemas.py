@@ -1,9 +1,16 @@
 """版本化模型数据与 Phase 3 输入快照 HTTP 契约。"""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+BoundaryType = Literal[
+    "upstream_discharge",
+    "downstream_water_level",
+    "lateral_inflow",
+]
 
 
 class DatasetVersionCreate(BaseModel):
@@ -70,16 +77,60 @@ class ModelParameterRecord(ModelParameterCreate):
 
 
 class BoundaryConditionCreate(BaseModel):
-    """新增边界定值或时间序列。"""
+    """Create one Standard 1D endpoint or lateral boundary."""
 
     model_config = ConfigDict(extra="forbid")
     dataset_version_id: int = Field(gt=0)
     name: str = Field(min_length=1, max_length=128)
-    boundary_type: str = Field(min_length=1, max_length=64)
-    target_node_id: int | None = Field(default=None, gt=0)
+    boundary_type: BoundaryType
+    target_node_id: int | None = Field(
+        default=None,
+        gt=0,
+        deprecated=True,
+        description=(
+            "Historical river_node compatibility reference only. Standard 1D never "
+            "uses this field for hydraulic binding."
+        ),
+    )
+    hydraulic_node_id: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Authoritative hydraulic.node endpoint. Required for upstream_discharge "
+            "and downstream_water_level."
+        ),
+    )
+    branch_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="Authoritative hydraulic.branch identity for lateral_inflow.",
+    )
+    chainage_m: float | None = Field(
+        default=None,
+        ge=0,
+        description="Directed metre chainage on branch_id for lateral_inflow.",
+    )
     values: dict[str, Any]
     unit: str = Field(min_length=1, max_length=32)
     description: str | None = None
+
+    @model_validator(mode="after")
+    def validate_hydraulic_binding(self) -> Self:
+        """Require one unambiguous authoritative hydraulic location."""
+
+        if self.boundary_type in {"upstream_discharge", "downstream_water_level"}:
+            if self.hydraulic_node_id is None:
+                raise ValueError(f"{self.boundary_type} requires hydraulic_node_id")
+            if self.branch_id is not None or self.chainage_m is not None:
+                raise ValueError(
+                    "endpoint boundaries use hydraulic_node_id and must not define "
+                    "branch_id or chainage_m"
+                )
+        elif self.branch_id is None or self.chainage_m is None:
+            raise ValueError("lateral_inflow requires branch_id and chainage_m")
+        elif self.hydraulic_node_id is not None:
+            raise ValueError("lateral_inflow must not define hydraulic_node_id")
+        return self
 
 
 class BoundaryConditionUpdate(BaseModel):
@@ -87,16 +138,45 @@ class BoundaryConditionUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=128)
-    boundary_type: str | None = Field(default=None, min_length=1, max_length=64)
-    target_node_id: int | None = Field(default=None, gt=0)
+    boundary_type: BoundaryType | None = None
+    target_node_id: int | None = Field(
+        default=None,
+        gt=0,
+        deprecated=True,
+        description=(
+            "Historical river_node compatibility reference only. Standard 1D never "
+            "uses this field for hydraulic binding."
+        ),
+    )
+    hydraulic_node_id: int | None = Field(default=None, gt=0)
+    branch_id: int | None = Field(default=None, gt=0)
+    chainage_m: float | None = Field(default=None, ge=0)
     values: dict[str, Any] | None = None
     unit: str | None = Field(default=None, min_length=1, max_length=32)
     description: str | None = None
 
 
-class BoundaryConditionRecord(BoundaryConditionCreate):
-    """返回边界条件记录。"""
+class BoundaryConditionRecord(BaseModel):
+    """Return the persisted boundary, including its authoritative location."""
 
+    model_config = ConfigDict(extra="forbid")
+    dataset_version_id: int
+    name: str
+    boundary_type: BoundaryType
+    target_node_id: int | None = Field(
+        default=None,
+        deprecated=True,
+        description=(
+            "Historical river_node compatibility reference only. Standard 1D never "
+            "uses this field for hydraulic binding."
+        ),
+    )
+    hydraulic_node_id: int | None = None
+    branch_id: int | None = None
+    chainage_m: float | None = None
+    values: dict[str, Any]
+    unit: str
+    description: str | None = None
     id: int
 
 
@@ -109,6 +189,7 @@ class SimulationCaseCreate(BaseModel):
     dataset_version_id: int = Field(gt=0)
     boundary_condition_id: int = Field(gt=0)
     boundary_condition_ids: list[int] = Field(default_factory=list)
+    hydraulic_1d_configuration: dict[str, Any] | None = None
 
 
 class SimulationCaseUpdate(BaseModel):
@@ -119,6 +200,7 @@ class SimulationCaseUpdate(BaseModel):
     description: str | None = None
     boundary_condition_id: int | None = Field(default=None, gt=0)
     boundary_condition_ids: list[int] | None = None
+    hydraulic_1d_configuration: dict[str, Any] | None = None
 
 
 class SimulationCaseRecord(SimulationCaseCreate):
@@ -126,21 +208,3 @@ class SimulationCaseRecord(SimulationCaseCreate):
 
     id: int
     created_time: datetime
-
-
-class ModelInputSnapshot(BaseModel):
-    """返回可直接交给 Phase 3 适配器的只读输入快照。"""
-
-    schema_version: str = "dayu.model-input.v1"
-    generated_time: datetime
-    simulation_case: SimulationCaseRecord
-    dataset_version: DatasetVersionRecord
-    rivers: list[dict[str, Any]]
-    nodes: list[dict[str, Any]]
-    segments: list[dict[str, Any]]
-    connections: list[dict[str, Any]]
-    cross_sections: list[dict[str, Any]]
-    gates: list[dict[str, Any]]
-    pumps: list[dict[str, Any]]
-    parameters: list[ModelParameterRecord]
-    boundary_conditions: list[BoundaryConditionRecord]

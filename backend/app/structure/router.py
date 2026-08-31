@@ -1,6 +1,6 @@
 """闸门与泵站 CRUD HTTP 路由。"""
 
-from typing import Annotated, Literal
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.orm import Session

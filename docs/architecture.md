@@ -1,7 +1,7 @@
 # 大禹·天工当前架构
 
-更新日期：2026-08-24
-架构基线：GIS-RESET-01 + CONTINUOUS-OPT-01
+更新日期：2026-08-31
+架构基线：GIS-RESET-01 + CONTINUOUS-OPT-01 + HYDRO-1D-RESET-01
 
 ## 1. 总体结构
 
@@ -10,7 +10,7 @@ flowchart LR
   QGIS["QGIS Desktop 3.44 LTR<br/>专业数据生产"] --> STAGING["staging_qgis<br/>四类强类型暂存表"]
   STAGING --> GOV["FastAPI 治理链<br/>质检 · 审核 · 晋级 · 发布"]
   GOV --> CORE["PostGIS 核心表<br/>Dataset Version"]
-  EXCHANGE["FastAPI 水动力服务<br/>预览 · 拓扑 · 断面处理 · v3"] --> HYDRAULIC["hydraulic schema<br/>network · node · branch · reach · profile"]
+  EXCHANGE["FastAPI 水动力服务<br/>预览 · 拓扑 · 断面处理 · 统一 1D 建模"] --> HYDRAULIC["hydraulic schema<br/>network · node · branch · reach · profile"]
   EXCHANGE --> CORE
   HYDRAULIC --> EXCHANGE
   CORE --> PUBLISH["publish<br/>版本过滤只读视图"]
@@ -20,8 +20,11 @@ flowchart LR
   API --> GEOSERVER
   OPENLAYERS --> IMAGERY["FastAPI 影像代理<br/>Esri 高分辨率 / NASA 后备"]
   GEOSERVER --> PUBLISH
-  CORE --> MODEL["水动力 / 调度 / 优化 / AI"]
-  MODEL --> REDIS["Redis / Worker"]
+  CORE --> MODEL["Dayu Unified Hydraulic Model"]
+  MODEL --> ADAPTER["MASCARET Adapter<br/>官方 v9.1.1 CLI"]
+  ADAPTER --> RESULT["Dayu Unified Hydraulic Result"]
+  MODEL --> REDIS["Redis / hydraulic-1d Worker"]
+  RESULT --> CORE
 ```
 
 PostGIS 是唯一空间事实源。`imports`、`staging_qgis`、`reference_data`、`hydraulic`、`public` 核心表、`publish`、治理表和 TimescaleDB 时序表均在同一数据库内按 schema 和角色隔离，不创建第二套 GIS 数据库。
@@ -36,6 +39,7 @@ PostGIS 是唯一空间事实源。`imports`、`staging_qgis`、`reference_data`
 | GeoServer | `publish` WMS/WMTS/Basic WFS/GetFeatureInfo | WFS-T、读取 staging、核心 DML |
 | FastAPI GIS 网关 | 版本门禁、layer allow-list、BBOX/尺寸/类型限制 | 接收任意 GeoServer 层名、SQL/CQL |
 | FastAPI 水动力交换 | 文件预览、标准化、校核、原子提交、导出与审计 | 无 CRS 入库、跨版本写入、将子集能力冒充为 DHI 原生兼容 |
+| Hydraulic 1D Engine | 统一模型、验证、独立作业目录、MASCARET Adapter、结果解析 | 业务层直接操作 MASCARET 文件、捆绑伪运行时、不支持能力降级伪装 |
 | OpenLayers | EPSG:3857 浏览、图层开关/透明度/顺序、点选 | 数据编辑、业务样式权威、直接访问数据库 |
 
 ## 3. 数据生产与发布
@@ -71,7 +75,7 @@ PostGIS 是唯一空间事实源。`imports`、`staging_qgis`、`reference_data`
 - `qgis-bootstrap` / `app-bootstrap`
 - `geoserver` / `geoserver-init`
 - `gis-catalog-seed`
-- `backend` / `worker`
+- `backend` / `worker` / `hydraulic-worker`
 - `frontend`（Nginx + OpenLayers 构建产物）
 
 QGIS Server、Martin、TiTiler、GeoNode 和 Cesium 已退出核心编排。旧迁移数据行仅以 inactive 形式保留用于可逆回退，不参与当前 Catalog 或浏览器运行路径。
@@ -113,6 +117,9 @@ GIS 晋级只保证空间核心数据的治理与发布，不伪造模型参数�
 
 水动力任务经 Simulation Case、调度运行经 Dispatch Plan、优化任务经自身字段获得 Dataset Version 身份。监控列表可在数据库查询层按版本过滤，前端必须显式传当前版本；不传参数仍保留历史全量合同。该查询边界不是授权，详情、结果和 mutation 仍需未来 Principal/RBAC 门。
 
+Standard 1D 任务在入队前冻结 solver-neutral `Hydraulic1DModel`，再由独立
+`hydraulic-1d` Worker 调用 Adapter。任务、引擎版本、构建身份、输入摘要和结果来源继续可追溯。
+
 ## 9. 文件基础边界
 
 `app.files` 是当前唯一的 HTTP 文件基础原语：四类上传执行 `limit + 1` 有界读取；imports、conversions、ai-reports 派生自同一根；受控路径拒绝逃逸；文件在同目录临时路径完成后原子替换。Compose 将 backend 和 worker 的容器根固定为 `/app/backend/storage`，宿主路径独立配置。
@@ -128,6 +135,8 @@ GIS 晋级只保证空间核心数据的治理与发布，不伪造模型参数�
 - OpenAPI 仍无统一安全 scheme；所有生产 mutation 在真实 IAM/RBAC 接入前保持 `NO-GO`。
 - 任务版本过滤只服务监控查询，不阻止调用者省略参数或按 ID 访问其他对象。
 - 本地文件根与 bind mount 不是 HA/集群文件平台；multipart 解析前的全请求体限制仍待补齐。
+- 默认 Dayu 镜像只包含 MASCARET Adapter，不包含 MASCARET 执行文件；未提供官方 v9.1.1 运行时时任务必须 fail closed。
+- 当前 MASCARET Adapter 不支持 Pump，不得将 Pump 转换为横向入流/出流；实例包含 Pump 时必须返回显式验证错误。
 
 ## 11. HYDRO-DATA-01 语义层
 
@@ -137,12 +146,14 @@ GIS 晋级只保证空间核心数据的治理与发布，不伪造模型参数�
 
 内置 NWK11/XNS11 适配器实现文档化、严格解析的 HYDRO-DATA-01 子集，只保证项目内往返一致性。常驻服务不依赖 DHI/mikeio；原生 NWK11/XNS11 读取、转换和目标版本验收均在授权外部适配环境执行。
 
-## 12. HYDRO-MODEL-02-D1 闸泵强耦合边界
+## 12. Standard 1D / MASCARET 边界
 
-`v4-lite-7` 是显式选择的纯模型能力。它在一个全湿、正向、严格亚临界的单 Branch
-中组合一个已验证的 completed-interface Gate 与一个 external hydraulic Pump。每个
-SSP-RK2 stage 都重新求 Gate 闭合和 Pump Q-H/Q-η 工作点；accepted stage evidence
-独立闭合内部 Gate 转输、Pump 外排、输入能量和总水量。
+`Hydraulic1DEngine` 是业务层唯一一维引擎边界，`MascaretEngine` 是当前唯一生产
+Adapter。Dayu Network/Branch/Cross Section/Roughness/Boundary/Initial Condition 先组装成
+统一模型，再转成 MASCARET case。每个 job 使用唯一工作目录，通过非 shell 子进程
+执行官方 CLI，并把 Opthyca `.opt` 转成统一 Section Result。
 
-该能力不改变 legacy Gate/OnOffPump，也不进入现有 FastAPI/Worker 任务选择。完整限制见
-`docs/model/HYDRO-MODEL-02-D1-known-limitations.md`；v4 原生任务链属于 D2。
+当前静态转换合同覆盖单 Branch、断面、纵向粗糙率、上游 Q(t)、下游 H(t)、
+常数边界、点横向入/出流、初始条件、计算时段与输出间隔。多 Branch、横向粗糙率
+变化、分布横向流、Gate 与 Pump 在完成真实 MASCARET runtime benchmark 前全部
+fail closed。详见 `docs/model/MASCARET-1D-ADAPTER.md`。

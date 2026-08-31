@@ -8,9 +8,15 @@ permissions:
   contents: read
 
 env:
+  PYTHONPATH: backend:.
   ENGINE_COMMIT: ${{ github.sha }}
-  DAYU_ENGINE_VERSION: dayu-hydraulic-4.0.0
+  DAYU_ENGINE_VERSION: dayu-hydraulic-platform-5.0.0
   DAYU_BUILD_MODE: ci
+  # Hosted CI validates the Adapter and parser without pretending that MASCARET is installed.
+  MASCARET_ENABLED: "0"
+  MASCARET_RUNTIME: cli
+  MASCARET_EXECUTABLE: mascaret.py
+  HYDRAULIC_WORKSPACE_ROOT: outputs/ci/hydraulic-workspaces
 
 jobs:
   model02:
@@ -37,36 +43,24 @@ jobs:
           cache-dependency-path: backend/requirements.txt
       - name: Install Python dependencies
         run: python -m pip install -r backend/requirements.txt
-      - name: Compile model and backend
+      - name: Compile platform and Backend
         run: python -m compileall -q model backend/app
-      - name: Record cross-platform diagnostic
+      - name: Prepare evidence directory
+        run: python -c "from pathlib import Path; Path('outputs/ci/model02').mkdir(parents=True, exist_ok=True)"
+      - name: Run MASCARET Adapter and benchmark contracts
         run: >-
-          python tools/diagnose_model02_cross_platform.py
-          --output outputs/ci/model02/cross-platform-diagnostic.json
-      - name: Run MODEL-02 tests
-        id: model02-tests
-        continue-on-error: true
-        run: >-
-          python -m pytest -c backend/pyproject.toml -p no:cacheprovider
-          tests/model02 -q -m "not d3a_shipping_science"
-          --junitxml=outputs/ci/model02/junit.xml
-      - name: Summarize MODEL-02 JUnit
-        if: always() && hashFiles('outputs/ci/model02/junit.xml') != ''
-        run: >-
-          python tools/summarize_junit.py
-          --input outputs/ci/model02/junit.xml
-          --output outputs/ci/model02/summary.json
-      - name: Upload MODEL-02 evidence
+          python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
+          tests/hydraulic_1d tests/benchmark/hydraulic_1d
+          --junitxml=outputs/ci/model02/junit-${{ matrix.artifact-suffix }}.xml
+      - name: Upload MODEL02 evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: model02-${{ matrix.artifact-suffix }}-py311
           path: outputs/ci/model02/
           if-no-files-found: error
-      - name: Enforce MODEL-02 result
-        if: always() && steps.model02-tests.outcome != 'success'
-        run: python -c "raise SystemExit('MODEL-02 tests failed')"
 
+  # This protected display name is intentionally retained while its old Solver semantics are retired.
   legacy-hydraulic:
     name: Legacy hydraulic
     runs-on: ubuntu-latest
@@ -77,41 +71,29 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: backend/requirements.txt
-      - name: Install Python dependencies
-        run: python -m pip install -r backend/requirements.txt
-      - name: Prepare evidence directory
-        run: >-
-          python -c "from pathlib import Path;
-          Path('outputs/ci/legacy').mkdir(parents=True, exist_ok=True)"
-      - name: Run legacy hydraulic regressions
-        id: legacy-tests
-        continue-on-error: true
+      - run: python -m pip install -r backend/requirements.txt
+      - name: Reject retired production Solver paths
+        shell: bash
+        run: |
+          tracked="$(git ls-files 'model/solver/**' 'model/network/solver.py' 'model/adapters/v4*.py' 'model/api/v4*.py')"
+          if [ -n "$tracked" ]; then
+            printf '%s\n' "$tracked"
+            echo "Retired custom 1D Solver files remain tracked."
+            exit 1
+          fi
+          if git grep -n -E '(from|import)[[:space:]]+model\.(solver|network\.solver)' -- backend/app model; then
+            echo "Production imports a retired custom 1D Solver."
+            exit 1
+          fi
+      - name: Reject vendored MASCARET source
+        shell: bash
+        run: test -z "$(git ls-files 'third_party/mascaret/**' 'vendor/mascaret/**')"
+      - name: Run isolation and validation contracts
         run: >-
           python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
-          tests/test_hydraulic_engine.py
-          tests/test_pump_model.py
-          tests/test_gate_model.py
-          tests/test_phase4_hydraulic_gate.py
-          tests/test_gate_pump_simulation.py
-          tests/test_dispatch_engine.py
-          --junitxml=outputs/ci/legacy/junit.xml
-      - name: Summarize legacy JUnit
-        if: always() && hashFiles('outputs/ci/legacy/junit.xml') != ''
-        run: >-
-          python tools/summarize_junit.py
-          --input outputs/ci/legacy/junit.xml
-          --output outputs/ci/legacy/summary.json
-      - name: Upload legacy evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: legacy-hydraulic-ubuntu-py311
-          path: outputs/ci/legacy/
-          if-no-files-found: error
-      - name: Enforce legacy result
-        if: always() && steps.legacy-tests.outcome != 'success'
-        run: python -c "raise SystemExit('legacy hydraulic tests failed')"
+          tests/hydraulic_1d
 
+  # Protected display name retained; this now validates the external-engine benchmark layer.
   d3a-scientific-validation:
     name: D3A scientific validation
     runs-on: ubuntu-latest
@@ -122,121 +104,51 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: backend/requirements.txt
-      - name: Install Python dependencies
-        run: python -m pip install -r backend/requirements.txt
-      - name: Prepare D3A evidence directory
-        run: >-
-          python -c "from pathlib import Path;
-          Path('outputs/ci/model02-d3a').mkdir(parents=True, exist_ok=True)"
-      - name: Run unlocked D3A science gates
-        id: d3a-tests
-        continue-on-error: true
-        env:
-          D3A_FINAL_CONVERGENCE_FIX1A_ARTIFACT: outputs/ci/model02-d3a/final-convergence-fix1a.json
+      - run: python -m pip install -r backend/requirements.txt
+      - name: Run solver-neutral hydraulic benchmarks
         run: >-
           python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
-          tests/model02/test_d3a_manning_science.py
-          tests/model02/test_d3a_manning_gate_pump.py
-          tests/model02/test_d3a_slope_science.py
-          tests/model02/test_nonprismatic_moving_convergence.py
-          tests/model02/test_d3a_nonprismatic_science.py
-          tests/model02/test_d3a_runtime_envelope.py
-          tests/model02/test_d3a_final_convergence_fix1.py
-          tests/model_engine/test_v4_d3a_1_execution.py
-          tests/model_engine/test_v4_d3a_2_execution.py
-          tests/model_engine/test_v4_d3a_3_execution.py
-          tests/model_engine/test_d3a_2_schema_metadata.py
-          tests/model_engine/test_v4_readiness.py
-          tests/model_engine/test_solver_registry.py
-          --junitxml=outputs/ci/model02-d3a/junit.xml
-      - name: Summarize D3A JUnit
-        if: always() && hashFiles('outputs/ci/model02-d3a/junit.xml') != ''
-        run: >-
-          python tools/summarize_junit.py
-          --input outputs/ci/model02-d3a/junit.xml
-          --output outputs/ci/model02-d3a/summary.json
-      - name: Upload D3A evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: model02-d3a-ubuntu-py311
-          path: outputs/ci/model02-d3a/
-          if-no-files-found: error
-      - name: Enforce D3A result
-        if: always() && steps.d3a-tests.outcome != 'success'
-        run: python -c "raise SystemExit('D3A scientific validation failed')"
+          tests/benchmark/hydraulic_1d
 
+  # This required context validates the shipping image, but does not claim a bundled MASCARET runtime.
   d3a-shipping-science:
     name: D3A shipping science
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Prepare D3A shipping-science evidence
-        run: mkdir -p outputs/ci/d3a-shipping-science
-      - name: Build immutable Python 3.12 shipping image
+      - name: Build Python 3.12 platform image
         run: |
           docker build \
             --build-arg ENGINE_VERSION="$DAYU_ENGINE_VERSION" \
             --build-arg ENGINE_COMMIT="$ENGINE_COMMIT" \
             --build-arg BUILD_MODE="$DAYU_BUILD_MODE" \
-            --tag "dayu-d3a-science:$ENGINE_COMMIT" \
+            --tag "dayu-hydraulic-platform:$ENGINE_COMMIT" \
             --file docker/backend.Dockerfile .
-          test "$(docker run --rm "dayu-d3a-science:$ENGINE_COMMIT" python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" = "3.12"
-      - name: Run D3A science inside shipping image
-        id: d3a-shipping-tests
-        continue-on-error: true
-        run: |
-          docker run --rm \
-            --volume "$PWD:/workspace:ro" \
-            --volume "$PWD/outputs:/workspace/outputs" \
-            --workdir /workspace \
-            --env D3A_FINAL_CONVERGENCE_FIX1A_ARTIFACT=outputs/ci/d3a-shipping-science/final-convergence-fix1a.json \
-            "dayu-d3a-science:$ENGINE_COMMIT" \
-            python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q \
-            tests/model02/test_d3a_manning_science.py \
-            tests/model02/test_d3a_manning_gate_pump.py \
-            tests/model02/test_d3a_slope_science.py \
-            tests/model02/test_nonprismatic_moving_convergence.py \
-            tests/model02/test_d3a_nonprismatic_science.py \
-            tests/model02/test_d3a_runtime_envelope.py \
-            tests/model02/test_d3a_final_convergence_fix1.py \
-            tests/model_engine/test_v4_d3a_1_execution.py \
-            tests/model_engine/test_v4_d3a_2_execution.py \
-            tests/model_engine/test_v4_d3a_3_execution.py \
-            tests/model_engine/test_v4_d3a_runtime_envelope.py \
-            --junitxml=outputs/ci/d3a-shipping-science/junit.xml
-      - name: Collect Python, build, Registry and envelope identities
-        if: always() && hashFiles('outputs/ci/d3a-shipping-science/final-convergence-fix1a.json') != ''
-        run: |
-          docker run --rm \
-            --volume "$PWD:/workspace:ro" \
-            --volume "$PWD/outputs:/workspace/outputs" \
-            --workdir /workspace \
-            "dayu-d3a-science:$ENGINE_COMMIT" \
-            python tools/collect_d3a_shipping_science.py \
-            --evidence-dir outputs/ci/d3a-shipping-science \
-            --final-convergence outputs/ci/d3a-shipping-science/final-convergence-fix1a.json
-      - name: Summarize D3A shipping JUnit
-        if: always() && hashFiles('outputs/ci/d3a-shipping-science/junit.xml') != ''
+          test "$(docker run --rm "dayu-hydraulic-platform:$ENGINE_COMMIT" python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" = "3.12"
+      - name: Verify external runtime remains disabled by default
         run: >-
-          docker run --rm
-          --volume "$PWD:/workspace:ro"
-          --volume "$PWD/outputs:/workspace/outputs"
-          --workdir /workspace
-          "dayu-d3a-science:$ENGINE_COMMIT"
-          python tools/summarize_junit.py
-          --input outputs/ci/d3a-shipping-science/junit.xml
-          --output outputs/ci/d3a-shipping-science/summary.json
-      - name: Upload D3A shipping science
+          docker run --rm "dayu-hydraulic-platform:$ENGINE_COMMIT"
+          python -c "import os, shutil; assert os.environ['MASCARET_ENABLED'] == '0'; assert shutil.which('mascaret.py') is None"
+      - name: Run Adapter contracts in shipping image
+        run: |
+          mkdir -p outputs/ci/shipping
+          docker run --rm \
+            --volume "$PWD:/workspace:ro" \
+            --volume "$PWD/outputs:/workspace/outputs" \
+            --workdir /workspace \
+            --env PYTHONPATH=/workspace/backend:/workspace \
+            --env MASCARET_ENABLED=0 \
+            "dayu-hydraulic-platform:$ENGINE_COMMIT" \
+            python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q \
+            tests/hydraulic_1d tests/benchmark/hydraulic_1d \
+            --junitxml=outputs/ci/shipping/junit.xml
+      - name: Upload shipping evidence
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: d3a-shipping-science
-          path: outputs/ci/d3a-shipping-science/
+          name: hydraulic-platform-shipping
+          path: outputs/ci/shipping/
           if-no-files-found: error
-      - name: Enforce D3A shipping-science result
-        if: always() && steps.d3a-shipping-tests.outcome != 'success'
-        run: python -c "raise SystemExit('D3A shipping science failed')"
 
   frontend-contract:
     name: Frontend contract

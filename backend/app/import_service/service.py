@@ -225,7 +225,7 @@ def import_records(session: Session, resource: ResourceName, dataset_version_id:
             else:
                 structure_service.create_pump(session, payload)
         session.commit()
-    except IntegrityError as exc:
+    except IntegrityError:
         session.rollback()
         return ImportResponse(status="failed", resource=resource, imported_count=0, stored_filename=stored_filename, errors=[ImportIssue(row=1, message="批次违反唯一性、外键或数值约束")], warnings=[])
     return ImportResponse(status="success", resource=resource, imported_count=len(payloads), stored_filename=stored_filename, errors=[], warnings=[])

@@ -3,8 +3,8 @@
 - 备份时间：2026-08-17
 - 恢复基线提交：`0eb6027cfdb32905569b9d8e812eda3b70488b85`
 - 工作分支：`agent/gis-reset-01`
-- Git 完整历史包：`D:/CH/project-003-大禹天工/99_临时文件/GIS_RESET-01_pre_reset_0eb6027.bundle`
-- 旧 GIS 源码归档：`D:/CH/project-003-大禹天工/99_临时文件/GIS_RESET-01_legacy_gis_0eb6027.zip`
+- Git 完整历史包：`project-003-大禹天工/99_临时文件/GIS_RESET-01_pre_reset_0eb6027.bundle`
+- 旧 GIS 源码归档：`project-003-大禹天工/99_临时文件/GIS_RESET-01_legacy_gis_0eb6027.zip`
 
 ## 已备份范围
 
@@ -35,7 +35,7 @@
 最小恢复可直接切回基线提交；完整仓库恢复可从 `.bundle` 克隆：
 
 ```powershell
-git clone "D:\CH\project-003-大禹天工\99_临时文件\GIS_RESET-01_pre_reset_0eb6027.bundle" restored-dayu-tiangong
+git clone "..\..\99_临时文件\GIS_RESET-01_pre_reset_0eb6027.bundle" restored-dayu-tiangong
 ```
 
 归档位于项目目录内，不包含密码、令牌或本机 `.env`。

@@ -1,5 +1,7 @@
 # HYDRO-DATA-01 生产级优化计划
 
+> **历史计划 / Solver 部分已废止（2026-08-31）：** HYDRO-DATA-01 数据体系继续有效，但本文关于自研 Saint-Venant、v1/v2/v3 输入适配的求解路线已由 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md) 取代。
+
 日期：2026-08-18
 状态：本地代码、离线门禁与隔离 PostGIS 运行验收完成；浏览器闭环和持久迁移待补
 

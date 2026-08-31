@@ -1,235 +1,210 @@
-"""Persist hydraulic task state while delegating all numerics to ``model/``."""
+"""Persist Standard 1D tasks while delegating numerics to external engines."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import UTC, datetime
-import math
+from hmac import compare_digest
+from math import isclose, isfinite
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from app.gis.models import (
-    DispatchEvent,
-    DispatchRun,
-    JunctionResult,
+    HydraulicTaskSectionResult,
     SimulationCase,
-    SimulationResult,
     SimulationTask,
-    StructureResult,
+)
+from app.hydraulic.models import HydraulicCrossSection
+from app.model_engine.hydraulic_1d_service import (
+    build_hydraulic_1d_model,
+    freeze_hydraulic_1d_input,
 )
 from app.model_engine.schemas import (
+    Hydraulic1DPreviewResponse,
+    Hydraulic1DReadinessResponse,
     ResultSectionOption,
     SimulationResultResponse,
     SimulationTaskCreate,
     SimulationTaskRecord,
 )
-from app.model_engine.provenance import freeze_task_input, snapshot_summary
-from app.model_engine.v4_service import freeze_v4_task_input
-from model import HydraulicEngine
 from model.build_identity import (
     BuildIdentityError,
     RuntimeBuildIdentity,
     assert_runtime_build_matches,
     current_runtime_build_identity,
 )
-from model.core.errors import HydraulicCancelledError
-from model.solver.registry import MODEL_INPUT_V4, task_solver_provenance
+from model.hydraulic_1d.contracts import (
+    HYDRAULIC_1D_INPUT_SCHEMA,
+    Hydraulic1DModel,
+    HydraulicResult,
+)
+from model.hydraulic_1d import (
+    DEFAULT_HYDRAULIC_1D_ENGINE_ID,
+    DEFAULT_HYDRAULIC_1D_ENGINE_VERSION,
+)
+from model.hydraulic_1d.engine import Hydraulic1DExecutionContext
+from model.hydraulic_1d.errors import (
+    Hydraulic1DCancelled,
+    Hydraulic1DError,
+    Hydraulic1DValidationError,
+)
+from model.hydraulic_1d.factory import create_hydraulic_1d_engine
+from model.hydraulic_1d.registry import task_engine_provenance
+from model.provenance import snapshot_hash
 
 
 class TaskNotFoundError(LookupError):
-    """Raised when a task or its referenced simulation case does not exist."""
+    """Raised when a task or referenced Simulation Case does not exist."""
 
 
 class TaskStateError(RuntimeError):
-    """Raised when the requested operation is incompatible with task state."""
+    """Raised when a request conflicts with immutable task lifecycle state."""
 
 
-def _v3_result_identity_maps(
-    task: SimulationTask,
-) -> tuple[dict[int, int] | None, dict[int, int] | None, set[int] | None]:
-    """Return hydraulic-to-public result identities from the frozen v3 evidence.
+def parse_frozen_task_model(task: SimulationTask) -> Hydraulic1DModel:
+    """Verify the persisted snapshot digest before exposing it to any runtime."""
 
-    The solver intentionally uses authoritative hydraulic node and section IDs.
-    Existing result tables still reference the public compatibility projection,
-    so persistence must use the verified bridge frozen with the task instead of
-    assuming that independently allocated integer IDs happen to match.
-    """
-
-    snapshot = task.input_snapshot
-    schema_version = (
-        snapshot.get("schema_version") if isinstance(snapshot, Mapping) else None
-    ) or task.input_schema_version
-    if schema_version != "dayu.model-input.v3":
-        return None, None, None
-    if not isinstance(snapshot, Mapping):
-        raise ValueError("model-input.v3 task has no frozen object snapshot")
-    compatibility = snapshot.get("compatibility_mapping")
-    if not isinstance(compatibility, Mapping):
-        raise ValueError(
-            "model-input.v3 result persistence requires compatibility_mapping"
+    if not isinstance(task.input_snapshot, Mapping) or not isinstance(
+        task.input_snapshot_hash, str
+    ):
+        raise Hydraulic1DValidationError(
+            "DAYU_HYDRAULIC_1D_SNAPSHOT_INTEGRITY_ERROR",
+            "task snapshot or digest is missing",
+            field_path="simulation_task.input_snapshot",
         )
-
-    def reverse_mapping(
-        collection_name: str,
-        legacy_field: str,
-        hydraulic_field: str,
-    ) -> dict[int, int]:
-        rows = compatibility.get(collection_name)
-        if not isinstance(rows, list):
-            raise ValueError(
-                f"model-input.v3 compatibility_mapping.{collection_name} must be an array"
-            )
-        result: dict[int, int] = {}
-        for index, row in enumerate(rows):
-            if not isinstance(row, Mapping):
-                raise ValueError(
-                    f"compatibility_mapping.{collection_name}[{index}] must be an object"
-                )
-            legacy_id = row.get(legacy_field)
-            hydraulic_id = row.get(hydraulic_field)
-            if (
-                isinstance(legacy_id, bool)
-                or not isinstance(legacy_id, int)
-                or legacy_id <= 0
-                or isinstance(hydraulic_id, bool)
-                or not isinstance(hydraulic_id, int)
-                or hydraulic_id <= 0
-            ):
-                raise ValueError(
-                    f"compatibility_mapping.{collection_name}[{index}] has invalid IDs"
-                )
-            previous = result.get(hydraulic_id)
-            if previous is not None and previous != legacy_id:
-                raise ValueError(
-                    f"hydraulic {collection_name} identity {hydraulic_id} maps to "
-                    "multiple public IDs"
-                )
-            result[hydraulic_id] = legacy_id
-        return result
-
-    node_ids = reverse_mapping(
-        "river_nodes", "legacy_river_node_id", "hydraulic_node_id"
-    )
-    section_ids = reverse_mapping(
-        "cross_sections",
-        "legacy_cross_section_id",
-        "hydraulic_cross_section_id",
-    )
-    branches = snapshot.get("branches")
-    if not isinstance(branches, list):
-        raise ValueError("model-input.v3 branches must be an array for result persistence")
-    legacy_river_ids: set[int] = set()
-    for index, branch in enumerate(branches):
-        legacy_id = branch.get("legacy_river_id") if isinstance(branch, Mapping) else None
-        if isinstance(legacy_id, bool) or not isinstance(legacy_id, int) or legacy_id <= 0:
-            raise ValueError(
-                f"model-input.v3 branch {index} has no public river identity for results"
-            )
-        legacy_river_ids.add(legacy_id)
-    return section_ids, node_ids, legacy_river_ids
-
-
-def _public_result_id(
-    hydraulic_id: int,
-    identities: dict[int, int] | None,
-    label: str,
-) -> int:
-    """Resolve one v3 result identity or retain the established v1/v2 ID."""
-
-    if identities is None:
-        return hydraulic_id
-    public_id = identities.get(hydraulic_id)
-    if public_id is None:
-        raise ValueError(
-            f"model-input.v3 result {label} {hydraulic_id} has no verified public mapping"
+    observed = snapshot_hash(task.input_snapshot)
+    if not compare_digest(observed, task.input_snapshot_hash):
+        raise Hydraulic1DValidationError(
+            "DAYU_HYDRAULIC_1D_SNAPSHOT_INTEGRITY_ERROR",
+            "task snapshot digest does not match its frozen input",
+            field_path="simulation_task.input_snapshot_hash",
         )
-    return public_id
+    return Hydraulic1DModel.parse_snapshot(task.input_snapshot)
 
 
-def _validate_engine_result_for_persistence(engine_result: Any) -> None:
-    """Reject non-finite or materially unbalanced results before marking success."""
+def _snapshot_summary(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a compact solver-neutral summary safe for task listings."""
 
-    payload = engine_result.to_dict()
-
-    def require_finite(value: Any, path: str) -> None:
-        if isinstance(value, bool) or value is None or isinstance(value, str):
-            return
-        if isinstance(value, (int, float)):
-            if not math.isfinite(float(value)):
-                raise ValueError(f"engine result contains non-finite value at {path}")
-            return
-        if isinstance(value, Mapping):
-            for key, child in value.items():
-                require_finite(child, f"{path}.{key}")
-            return
-        if isinstance(value, (list, tuple)):
-            for index, child in enumerate(value):
-                require_finite(child, f"{path}[{index}]")
-
-    require_finite(payload, "result")
-    if engine_result.schema_version != "dayu.hydraulic-result.v2":
-        return
-    balance = engine_result.water_balance
-    if not isinstance(balance, Mapping):
-        raise ValueError("hydraulic-result.v2 requires a water_balance object")
-    status = balance.get("status")
-    relative = balance.get("relative_balance_residual")
-    if isinstance(relative, bool) or not isinstance(relative, (int, float)):
-        raise ValueError("water_balance.relative_balance_residual must be numeric")
-    if status not in {"pass", "warning", "fail"}:
-        raise ValueError("water_balance.status is invalid")
-    if status == "fail" or float(relative) >= 0.01:
-        raise ValueError(
-            "engine result failed the water-balance persistence gate: "
-            f"status={status}, relative_residual={float(relative):.6g}"
-        )
-
-
-def _record(task: SimulationTask) -> SimulationTaskRecord:
-    """Convert one ORM entity to the public Pydantic record."""
-
-    record = SimulationTaskRecord.model_validate(task)
-    record.snapshot_summary = (
-        snapshot_summary(task.input_snapshot) if task.input_snapshot is not None else None
-    )
-    record.retry_block_reason = retry_block_reason(task)
-    record.retry_eligible = record.retry_block_reason is None
-    return record
+    metadata = snapshot.get("metadata")
+    return {
+        "schema_version": snapshot.get("schema_version"),
+        "simulation_id": snapshot.get("simulation_id"),
+        "scenario_id": snapshot.get("scenario_id"),
+        "dataset_version_id": (
+            metadata.get("dataset_version_id") if isinstance(metadata, Mapping) else None
+        ),
+        "branch_count": len(snapshot.get("branches", [])),
+        "section_count": len(snapshot.get("cross_sections", [])),
+        "boundary_count": len(snapshot.get("boundaries", [])),
+        "structure_count": len(snapshot.get("structures", [])),
+    }
 
 
 def retry_block_reason(task: SimulationTask) -> str | None:
-    """Explain why one immutable task may or may not enter a manual retry."""
+    """Explain why an immutable task may or may not enter a manual retry."""
 
+    if task.input_schema_version != HYDRAULIC_1D_INPUT_SCHEMA:
+        return "LEGACY_ENGINE_RETIRED: historical custom-solver tasks cannot be retried"
     if task.status == "success":
         return "successful tasks are immutable; create a new task to recompute"
     if task.status not in {"failed", "cancelled"}:
         return "only failed or cancelled tasks can be retried"
     if task.active_execution_token is not None:
         return "an execution lease is still active"
-    if task.input_schema_version == "dayu.model-input.v4" and task.artifact_status not in {
-        None,
-        "none",
-        "failed",
-    }:
-        return (
-            f"artifact state {task.artifact_status!r} must be reconciled before retry"
-        )
     return None
 
 
-def can_retry_task(task: SimulationTask) -> bool:
-    """Return the public retry eligibility derived from lifecycle and Artifact state."""
+def _record(task: SimulationTask) -> SimulationTaskRecord:
+    """Convert one ORM entity to the public task contract."""
 
-    return retry_block_reason(task) is None
+    record = SimulationTaskRecord.model_validate(task)
+    if isinstance(task.input_snapshot, Mapping):
+        record.snapshot_summary = _snapshot_summary(task.input_snapshot)
+    record.retry_block_reason = retry_block_reason(task)
+    record.retry_eligible = record.retry_block_reason is None
+    return record
+
+
+def _task_config(payload: SimulationTaskCreate) -> dict[str, Any]:
+    """Keep only execution-neutral overrides in the immutable model builder input."""
+
+    return payload.model_dump(
+        exclude={"case_id", "engine", "input_schema_version"},
+        exclude_none=True,
+    )
+
+
+def build_task_entity(session: Session, payload: SimulationTaskCreate) -> SimulationTask:
+    """Freeze and stage one Standard 1D task without committing the transaction."""
+
+    simulation_case = session.get(SimulationCase, payload.case_id)
+    if simulation_case is None:
+        raise TaskNotFoundError("simulation case does not exist")
+    config = _task_config(payload)
+    try:
+        build_identity = current_runtime_build_identity()
+        snapshot, digest = freeze_hydraulic_1d_input(session, payload.case_id, config)
+    except LookupError as exc:
+        raise TaskNotFoundError(str(exc)) from exc
+    except (BuildIdentityError, Hydraulic1DError, ValueError) as exc:
+        raise TaskStateError(f"model input is not ready: {exc}") from exc
+    task = SimulationTask(
+        case_id=payload.case_id,
+        dataset_version_id=simulation_case.dataset_version_id,
+        config=config,
+        input_schema_version=HYDRAULIC_1D_INPUT_SCHEMA,
+        input_snapshot=snapshot,
+        input_snapshot_hash=digest,
+        engine_version=build_identity.engine_version,
+        engine_commit=build_identity.engine_commit,
+        solver_build_id=build_identity.solver_build_id,
+        build_mode=build_identity.build_mode,
+        build_verified=build_identity.verified,
+        execution_phase="validating_snapshot",
+        artifact_status="none",
+        **task_engine_provenance(),
+    )
+    session.add(task)
+    session.flush()
+    return task
+
+
+def create_task(session: Session, payload: SimulationTaskCreate) -> SimulationTaskRecord:
+    """Create a pending task whose physical input is already immutable."""
+
+    task = build_task_entity(session, payload)
+    session.commit()
+    session.refresh(task)
+    return _record(task)
+
+
+def list_tasks(
+    session: Session, dataset_version_id: int | None = None
+) -> list[SimulationTaskRecord]:
+    """Return newest task records, optionally scoped to one Dataset Version."""
+
+    statement = select(SimulationTask)
+    if dataset_version_id is not None:
+        statement = statement.where(
+            SimulationTask.dataset_version_id == dataset_version_id
+        )
+    tasks = session.scalars(statement.order_by(SimulationTask.id.desc())).all()
+    return [_record(task) for task in tasks]
+
+
+def get_task(session: Session, task_id: int) -> SimulationTaskRecord | None:
+    """Read a task without mutating lifecycle state."""
+
+    task = session.get(SimulationTask, task_id)
+    return _record(task) if task is not None else None
 
 
 def manual_retry_reset_values(task: SimulationTask) -> dict[str, object]:
-    """Build the complete runtime reset while omitting every frozen identity field."""
+    """Reset mutable runtime state while preserving frozen model/build identity."""
 
-    is_v4 = task.input_schema_version == "dayu.model-input.v4"
-    values: dict[str, object] = {
+    return {
         "status": "queued",
         "progress": 0,
         "cancel_requested": False,
@@ -241,46 +216,34 @@ def manual_retry_reset_values(task: SimulationTask) -> dict[str, object]:
         "start_time": None,
         "end_time": None,
         "heartbeat_time": None,
-        "current_simulation_time": None,
-        "current_cfl": None,
-        "accepted_step_count": 0,
-        "numerical_retry_count": 0,
-        "cfl_reduction_count": 0,
-        "positivity_retry_count": 0,
-        "event_refinement_count": 0,
-        "gate_solver_retry_count": 0,
-        "pump_solver_retry_count": 0,
-        "minimum_dt_failure_count": 0,
-        "last_event": None,
         "execution_phase": None,
         "active_execution_token": None,
-        "artifact_status": "none" if is_v4 else task.artifact_status,
+        "last_execution_token": None,
+        "artifact_status": "none",
         "error_message": None,
         "diagnostics": None,
         "result_path": None,
+        "last_infrastructure_error": None,
         "manual_retry_count": task.manual_retry_count + 1,
         "retry_reason": task.error_message,
     }
-    if not is_v4:
-        values["retry_count"] = task.retry_count + 1
-    return values
 
 
 def reset_task_for_manual_retry(session: Session, task: SimulationTask) -> SimulationTask:
-    """CAS-reset runtime telemetry while retaining every frozen input identity."""
+    """CAS-reset one failed/cancelled Standard 1D task for redelivery."""
 
     reason = retry_block_reason(task)
     if reason is not None:
         raise TaskStateError(reason)
-    values = manual_retry_reset_values(task)
     result = session.execute(
         update(SimulationTask)
         .where(
             SimulationTask.id == task.id,
             SimulationTask.status == task.status,
             SimulationTask.active_execution_token.is_(None),
+            SimulationTask.input_schema_version == HYDRAULIC_1D_INPUT_SCHEMA,
         )
-        .values(**values)
+        .values(**manual_retry_reset_values(task))
     )
     if result.rowcount != 1:
         session.rollback()
@@ -293,140 +256,304 @@ def reset_task_for_manual_retry(session: Session, task: SimulationTask) -> Simul
     return current
 
 
-def build_task_entity(session: Session, payload: SimulationTaskCreate) -> SimulationTask:
-    """Freeze and stage one task without committing the caller's transaction."""
+def _runtime_readiness(case_id: int) -> tuple[bool, str]:
+    """Return the configured external runtime status without doing work."""
 
-    simulation_case = session.get(SimulationCase, payload.case_id)
-    if simulation_case is None:
-        raise TaskNotFoundError("simulation case does not exist")
-    config = payload.model_dump(
-        exclude={
-            "case_id",
-            "input_schema_version",
-            "solver_id",
-            "capability_id",
-            "dispatch_plan_id",
-            "execution_mode",
-        },
-        exclude_none=True,
-    )
-    if payload.input_schema_version == "dayu.model-input.v4":
-        # A native-v4 task may carry execution/storage metadata only.  All physical
-        # and numerical values are frozen from authoritative platform records.
-        config = {"storage_level": payload.storage_level}
+    del case_id
+    return create_hydraulic_1d_engine().availability()
+
+
+def _blocker(exc: Exception) -> dict[str, Any]:
+    """Normalize mapping failures into stable API diagnostics."""
+
+    if isinstance(exc, Hydraulic1DValidationError):
+        return {"code": exc.code, "field_path": exc.field_path, "message": str(exc)}
+    return {
+        "code": "DAYU_HYDRAULIC_1D_NOT_READY",
+        "field_path": "simulation_case",
+        "message": str(exc),
+    }
+
+
+def assess_readiness(
+    session: Session,
+    case_id: int,
+    task_config: Mapping[str, Any] | None = None,
+) -> Hydraulic1DReadinessResponse:
+    """Validate authoritative mapping and report runtime availability independently."""
+
+    runtime_available, runtime_detail = _runtime_readiness(case_id)
+    blockers: list[dict[str, Any]] = []
+    model: Hydraulic1DModel | None = None
     try:
-        build_identity = current_runtime_build_identity()
-        task_provenance = task_solver_provenance(
-            payload.input_schema_version,
-            solver_id=payload.solver_id,
-            capability_id=payload.capability_id,
+        model = build_hydraulic_1d_model(session, case_id, task_config or {})
+    except (LookupError, Hydraulic1DError, ValueError) as exc:
+        blockers.append(_blocker(exc))
+    if not runtime_available:
+        blockers.append(
+            {
+                "code": "MASCARET_RUNTIME_NOT_AVAILABLE",
+                "field_path": "runtime",
+                "message": runtime_detail,
+            }
         )
-        if payload.input_schema_version == "dayu.model-input.v4":
-            assert payload.dispatch_plan_id is not None
-            assert payload.capability_id is not None
-            snapshot, digest, projection = freeze_v4_task_input(
-                session,
-                payload.case_id,
-                payload.dispatch_plan_id,
-                build_identity=build_identity,
-                capability_id=payload.capability_id,
-            )
-        else:
-            snapshot, digest = freeze_task_input(
-                session,
-                payload.case_id,
-                config,
-                schema_version=payload.input_schema_version,
-                build_identity=build_identity,
-            )
-            projection = None
-    except LookupError as exc:
-        raise TaskNotFoundError(str(exc)) from exc
-    except (BuildIdentityError, ValueError) as exc:
-        raise TaskStateError(f"model input is not ready: {exc}") from exc
-    task = SimulationTask(
-        case_id=payload.case_id,
-        dataset_version_id=simulation_case.dataset_version_id,
-        config=config,
-        input_schema_version=payload.input_schema_version,
-        input_snapshot=snapshot,
-        input_snapshot_hash=digest,
-        engine_version=build_identity.engine_version,
-        engine_commit=build_identity.engine_commit,
-        solver_build_id=build_identity.solver_build_id,
-        build_mode=build_identity.build_mode,
-        build_verified=build_identity.verified,
-        execution_mode=payload.execution_mode if projection is not None else None,
-        execution_phase="validating_snapshot" if projection is not None else None,
-        runtime_projection_hash=(
-            str(projection["runtime_projection_hash"]) if projection is not None else None
+    summary = None
+    if model is not None:
+        summary = _snapshot_summary(model.model_dump(mode="json"))
+    return Hydraulic1DReadinessResponse(
+        case_id=case_id,
+        ready=model is not None and runtime_available,
+        runtime_available=runtime_available,
+        runtime_detail=runtime_detail,
+        blockers=blockers,
+        warnings=(
+            [
+                {
+                    "code": "MASCARET_STRUCTURES_UNSUPPORTED",
+                    "message": (
+                        "Gates and pumps are rejected until their business semantics "
+                        "and MASCARET mapping have passed real-runtime benchmarks."
+                    ),
+                }
+            ]
+            if model is not None
+            else []
         ),
-        mesh_hash=str(projection["mesh_hash"]) if projection is not None else None,
-        solver_policy_hash=(
-            str(projection["solver_policy_hash"]) if projection is not None else None
-        ),
-        validation_policy_hash=(
-            str(projection["validation_policy_hash"]) if projection is not None else None
-        ),
-        artifact_status="none" if projection is not None else None,
-        **task_provenance,
+        input_summary=summary,
     )
-    session.add(task)
-    session.flush()
-    return task
 
 
-def create_task(session: Session, payload: SimulationTaskCreate) -> SimulationTaskRecord:
-    """创建任务时立即冻结全部输入，后续业务数据修改不再影响本任务。"""
+def preview_model(
+    session: Session, payload: SimulationTaskCreate
+) -> Hydraulic1DPreviewResponse:
+    """Return the exact unified snapshot without creating a task or workspace."""
 
-    task = build_task_entity(session, payload)
+    config = _task_config(payload)
+    readiness = assess_readiness(session, payload.case_id, config)
+    try:
+        snapshot, digest = freeze_hydraulic_1d_input(session, payload.case_id, config)
+    except (LookupError, Hydraulic1DError, ValueError):
+        return Hydraulic1DPreviewResponse(readiness=readiness)
+    return Hydraulic1DPreviewResponse(
+        readiness=readiness,
+        snapshot_hash=digest,
+        snapshot=snapshot,
+    )
+
+
+def _validate_result(task: SimulationTask, result: HydraulicResult) -> None:
+    """Reject cross-task, wrong-engine, empty, duplicate, or non-finite output."""
+
+    snapshot = parse_frozen_task_model(task)
+    expected = {
+        "simulation_id": snapshot.simulation_id,
+        "scenario_id": snapshot.scenario_id,
+        "engine": DEFAULT_HYDRAULIC_1D_ENGINE_ID,
+        "engine_version": DEFAULT_HYDRAULIC_1D_ENGINE_VERSION,
+    }
+    observed = {
+        "simulation_id": result.simulation_id,
+        "scenario_id": result.scenario_id,
+        "engine": result.engine,
+        "engine_version": result.engine_version,
+    }
+    mismatches = [
+        f"{key}: expected={value!r}, actual={observed[key]!r}"
+        for key, value in expected.items()
+        if observed[key] != value
+    ]
+    if mismatches:
+        raise ValueError("hydraulic result identity mismatch: " + "; ".join(mismatches))
+    if not result.records:
+        raise ValueError("hydraulic result contains no records")
+    section_by_id = {item.id: item for item in snapshot.cross_sections}
+    branch_ids = {item.id for item in snapshot.branches}
+    seen: set[tuple[str, float]] = set()
+    times_by_section: dict[str, set[float]] = {
+        item.id: set() for item in snapshot.cross_sections
+    }
+    for record in result.records:
+        section = section_by_id.get(record.cross_section_id)
+        if section is None or record.branch_id not in branch_ids:
+            raise ValueError("hydraulic result references an unknown section or branch")
+        record_identity = {
+            "simulation_id": record.simulation_id,
+            "scenario_id": record.scenario_id,
+            "engine": record.engine,
+            "engine_version": record.engine_version,
+        }
+        if record_identity != expected:
+            raise ValueError("hydraulic result record identity differs from its result envelope")
+        if record.branch_id != section.branch_id or not isclose(
+            record.chainage_m,
+            section.chainage_m,
+            rel_tol=0.0,
+            abs_tol=max(1e-6, abs(section.chainage_m) * 1e-10),
+        ):
+            raise ValueError("hydraulic result Section branch/chainage identity mismatch")
+        if isinstance(record.timestamp, datetime):
+            raise ValueError("MASCARET result timestamps must be simulation seconds")
+        timestamp = float(record.timestamp)
+        if timestamp < 0.0 or timestamp > snapshot.settings.duration_seconds + 1e-9:
+            raise ValueError("hydraulic result timestamp lies outside the frozen duration")
+        key = (record.cross_section_id, timestamp)
+        if key in seen:
+            raise ValueError("hydraulic result contains a duplicate section/timestamp")
+        seen.add(key)
+        times_by_section[record.cross_section_id].add(timestamp)
+        numeric = (
+            timestamp,
+            record.chainage_m,
+            record.water_level_m,
+            record.depth_m,
+            record.discharge_m3s,
+            record.velocity_m_s,
+            record.flow_area_m2,
+        )
+        if not all(isfinite(float(value)) for value in numeric):
+            raise ValueError("hydraulic result contains a non-finite required value")
+    reference_times = next(iter(times_by_section.values()))
+    if not reference_times or any(
+        times != reference_times for times in times_by_section.values()
+    ):
+        raise ValueError("hydraulic result does not cover every Section on one time axis")
+    observed_times = sorted(reference_times)
+    expected_times = snapshot.settings.expected_output_times()
+    time_tolerance = max(1e-6, snapshot.settings.output_interval_seconds * 1e-9)
+    if len(observed_times) != len(expected_times) or any(
+        not isclose(observed, expected, rel_tol=0.0, abs_tol=time_tolerance)
+        for observed, expected in zip(observed_times, expected_times)
+    ):
+        raise ValueError("hydraulic result has a truncated or irregular output time axis")
+
+
+def persist_hydraulic_1d_result(
+    session: Session,
+    task: SimulationTask,
+    result: HydraulicResult,
+    *,
+    executed_build_identity: RuntimeBuildIdentity | None = None,
+) -> SimulationTaskRecord:
+    """Atomically replace authoritative Section rows and mark one task successful."""
+
+    if task.status not in {"running", "pending"}:
+        raise TaskStateError("only an active task can persist a result")
+    if task.input_schema_version != HYDRAULIC_1D_INPUT_SCHEMA:
+        raise TaskStateError("LEGACY_ENGINE_RETIRED")
+    _validate_result(task, result)
+    build_identity = executed_build_identity or assert_runtime_build_matches(
+        expected_engine_version=task.engine_version,
+        expected_engine_commit=task.engine_commit,
+        expected_solver_build_id=task.solver_build_id,
+        expected_build_mode=task.build_mode,
+        expected_verified=task.build_verified,
+        expected_registry_hash=task.registry_hash,
+    )
+    section_rows = session.scalars(
+        select(HydraulicCrossSection).where(
+            HydraulicCrossSection.dataset_version_id == task.dataset_version_id
+        )
+    ).all()
+    sections = {str(item.id): item for item in section_rows}
+    session.execute(
+        delete(HydraulicTaskSectionResult).where(
+            HydraulicTaskSectionResult.task_id == task.id
+        )
+    )
+    for record in result.records:
+        section = sections.get(record.cross_section_id)
+        if section is None or str(section.branch_id) != record.branch_id:
+            raise ValueError(
+                "result Section identity is absent from the task Dataset Version"
+            )
+        assert not isinstance(record.timestamp, datetime)
+        session.add(
+            HydraulicTaskSectionResult(
+                task_id=task.id,
+                dataset_version_id=task.dataset_version_id,
+                hydraulic_cross_section_id=section.id,
+                section_code=section.section_code,
+                branch_id=section.branch_id,
+                chainage_m=float(record.chainage_m),
+                time_seconds=float(record.timestamp),
+                water_level_m=float(record.water_level_m),
+                depth_m=float(record.depth_m),
+                flow_m3s=float(record.discharge_m3s),
+                velocity_m_s=float(record.velocity_m_s),
+                flow_area_m2=float(record.flow_area_m2),
+                wet_area_m2=(
+                    float(record.wet_area_m2) if record.wet_area_m2 is not None else None
+                ),
+                hydraulic_radius_m=(
+                    float(record.hydraulic_radius_m)
+                    if record.hydraulic_radius_m is not None
+                    else None
+                ),
+                top_width_m=(
+                    float(record.top_width_m) if record.top_width_m is not None else None
+                ),
+                froude_number=(
+                    float(record.froude_number)
+                    if record.froude_number is not None
+                    else None
+                ),
+                control_volume_m3=None,
+            )
+        )
+    task.status = "success"
+    task.progress = 100
+    task.execution_phase = "complete"
+    task.error_message = None
+    task.end_time = datetime.now(UTC)
+    task.heartbeat_time = task.end_time
+    task.result_path = f"database://hydraulic_task_section_result/{task.id}"
+    task.diagnostics = {
+        **result.diagnostics,
+        "engine": result.engine,
+        "engine_version": result.engine_version,
+        "result_schema_version": result.schema_version,
+        "record_count": len(result.records),
+        "build_identity": build_identity.provenance(),
+    }
     session.commit()
     session.refresh(task)
     return _record(task)
 
 
-def list_tasks(
-    session: Session, dataset_version_id: int | None = None
-) -> list[SimulationTaskRecord]:
-    """Return newest tasks, optionally restricted to one Dataset Version."""
+def _fail_sync_task(session: Session, task_id: int, exc: Exception) -> SimulationTaskRecord:
+    """Persist a synchronous terminal error as durable evidence."""
 
-    statement = select(SimulationTask)
-    if dataset_version_id is not None:
-        statement = statement.join(
-            SimulationCase, SimulationTask.case_id == SimulationCase.id
-        ).where(SimulationCase.dataset_version_id == dataset_version_id)
-    tasks = session.scalars(statement.order_by(SimulationTask.id.desc())).all()
-    return [_record(task) for task in tasks]
-
-
-def get_task(session: Session, task_id: int) -> SimulationTaskRecord | None:
-    """Return a task without changing its lifecycle."""
-
+    session.rollback()
     task = session.get(SimulationTask, task_id)
-    return _record(task) if task is not None else None
+    if task is None:
+        raise TaskNotFoundError("simulation task does not exist") from exc
+    task.status = "cancelled" if isinstance(exc, Hydraulic1DCancelled) else "failed"
+    task.progress = 100
+    task.execution_phase = "finalizing"
+    task.error_message = str(exc)[:4000]
+    task.end_time = datetime.now(UTC)
+    session.commit()
+    session.refresh(task)
+    return _record(task)
 
 
 def run_task(session: Session, task_id: int) -> SimulationTaskRecord:
-    """兼容同步执行冻结输入；生产前端必须使用异步入队接口。"""
+    """Run a pending task synchronously only for explicitly enabled diagnostics."""
 
     task = session.get(SimulationTask, task_id)
     if task is None:
         raise TaskNotFoundError("simulation task does not exist")
-    if task.input_schema_version == MODEL_INPUT_V4:
-        raise TaskStateError(
-            "native-v4 tasks must run on the dedicated asynchronous Worker queue"
-        )
     if task.status != "pending":
         raise TaskStateError("only a pending task can be run")
-
+    if task.input_schema_version != HYDRAULIC_1D_INPUT_SCHEMA:
+        raise TaskStateError("LEGACY_ENGINE_RETIRED")
     task.status = "running"
-    task.progress = 10
+    task.progress = 5
     task.start_time = datetime.now(UTC)
-    task.error_message = None
+    task.execution_phase = "validating_snapshot"
     session.commit()
-
     try:
-        executed_build_identity = assert_runtime_build_matches(
+        identity = assert_runtime_build_matches(
             expected_engine_version=task.engine_version,
             expected_engine_commit=task.engine_commit,
             expected_solver_build_id=task.solver_build_id,
@@ -434,261 +561,115 @@ def run_task(session: Session, task_id: int) -> SimulationTaskRecord:
             expected_verified=task.build_verified,
             expected_registry_hash=task.registry_hash,
         )
-        snapshot = task.input_snapshot
-        if snapshot is None:
-            raise TaskStateError("legacy task has no frozen input snapshot")
-        task.progress = 30
-        session.commit()
+        model = parse_frozen_task_model(task)
+        engine = create_hydraulic_1d_engine()
 
-        engine_result = HydraulicEngine().run(snapshot, task.config)
-        task.progress = 80
-        session.flush()
+        def progress(value: float, details: dict[str, Any]) -> None:
+            task.progress = min(99, max(task.progress, int(value)))
+            task.execution_phase = str(details.get("phase", "running"))[:32]
+            task.heartbeat_time = datetime.now(UTC)
+            session.commit()
 
-        return persist_engine_result(
-            session,
-            task,
-            engine_result,
-            executed_build_identity=executed_build_identity,
+        result = engine.run(
+            model,
+            Hydraulic1DExecutionContext(
+                job_id=f"sync-{task.id}",
+                cancel_check=lambda: bool(task.cancel_requested),
+                progress_callback=progress,
+            ),
         )
-    except HydraulicCancelledError as exc:
-        session.rollback()
-        cancelled = session.get(SimulationTask, task_id)
-        if cancelled is None:
-            raise
-        cancelled.status = "cancelled"
-        cancelled.progress = 100
-        cancelled.error_message = str(exc)
-        cancelled.end_time = datetime.now(UTC)
-        session.commit()
-        return _record(cancelled)
+        return persist_hydraulic_1d_result(
+            session, task, result, executed_build_identity=identity
+        )
     except Exception as exc:
-        # The state transition is itself valuable evidence, so keep failures
-        # durable while leaving the numerical engine free to raise rich errors.
-        session.rollback()
-        failed_task = session.get(SimulationTask, task_id)
-        if failed_task is None:
-            raise
-        failed_task.status = "failed"
-        failed_task.progress = 100
-        failed_task.error_message = str(exc)[:4000]
-        failed_task.end_time = datetime.now(UTC)
-        session.commit()
-        session.refresh(failed_task)
-        return _record(failed_task)
-
-
-def persist_engine_result(
-    session: Session,
-    task: SimulationTask,
-    engine_result: Any,
-    *,
-    executed_build_identity: RuntimeBuildIdentity | None = None,
-) -> SimulationTaskRecord:
-    """通过唯一入口持久化 v1/v2/v3 结果并完成 success 状态。"""
-
-    _validate_engine_result_for_persistence(engine_result)
-    section_identities, node_identities, legacy_river_ids = (
-        _v3_result_identity_maps(task)
-    )
-    # Resolve every foreign-key identity before deleting or adding result rows.
-    # This preserves the previous durable result if a frozen v3 bridge is incomplete.
-    resolved_section_ids = {
-        series.section.id: _public_result_id(
-            int(series.section.id), section_identities, "cross-section"
-        )
-        for series in engine_result.series
-    }
-    resolved_node_ids = {
-        int(item["node_id"]): _public_result_id(
-            int(item["node_id"]), node_identities, "river-node"
-        )
-        for item in engine_result.node_series
-    }
-    if legacy_river_ids is not None:
-        unknown_river_ids = {
-            int(series.section.river_id)
-            for series in engine_result.series
-            if int(series.section.river_id) not in legacy_river_ids
-        }
-        if unknown_river_ids:
-            raise ValueError(
-                "model-input.v3 results reference unverified public river IDs: "
-                + ", ".join(str(value) for value in sorted(unknown_river_ids))
-            )
-
-    session.query(SimulationResult).filter(SimulationResult.task_id == task.id).delete()
-    session.query(JunctionResult).filter(JunctionResult.task_id == task.id).delete()
-    session.query(StructureResult).filter(StructureResult.task_id == task.id).delete()
-    dispatch_run = session.scalar(
-        select(DispatchRun).where(DispatchRun.controlled_task_id == task.id)
-    )
-    if dispatch_run is not None:
-        session.query(DispatchEvent).filter(
-            DispatchEvent.run_id == dispatch_run.id
-        ).delete()
-    storage_level = str(task.config.get("storage_level", "full"))
-    selected_ids: set[int] = set()
-    grouped_series: dict[int, list[Any]] = {}
-    for series in engine_result.series:
-        grouped_series.setdefault(series.section.river_id, []).append(series)
-    for river_series in grouped_series.values():
-        ordered = sorted(river_series, key=lambda item: item.section.station)
-        if storage_level == "full":
-            selected_ids.update(item.section.id for item in ordered)
-        elif storage_level == "key_sections":
-            selected_ids.update(
-                item.section.id
-                for item in (ordered[0], ordered[len(ordered) // 2], ordered[-1])
-            )
-        else:
-            selected_ids.add(ordered[0].section.id)
-    for series in engine_result.series:
-        if series.section.id not in selected_ids:
-            continue
-        for index, time_seconds in enumerate(series.time):
-            session.add(
-                SimulationResult(
-                    task_id=task.id,
-                    section_id=resolved_section_ids[series.section.id],
-                    river_id=series.section.river_id, section_code=series.section.code,
-                    station=series.section.station, time_seconds=time_seconds,
-                    water_level=series.water_level[index], flow=series.flow[index],
-                    velocity=series.velocity[index],
-                )
-            )
-    for item in engine_result.node_series:
-        session.add(
-            JunctionResult(
-                task_id=task.id,
-                node_id=resolved_node_ids[int(item["node_id"])],
-                time_seconds=float(item["time_seconds"]), water_level=float(item["water_level"]),
-                inflow=float(item["inflow"]), outflow=float(item["outflow"]),
-                source_sink=float(item["source_sink"]),
-                balance_residual=float(item["balance_residual"]),
-            )
-        )
-    for item in engine_result.structure_series:
-        session.add(
-            StructureResult(
-                task_id=task.id,
-                dispatch_run_id=dispatch_run.id if dispatch_run is not None else None,
-                time_seconds=float(item["time_seconds"]),
-                structure_type=str(item["structure_type"]), structure_id=int(item["structure_id"]),
-                requested_value=item.get("requested_value"), actual_value=item.get("actual_value"),
-                flow=float(item["flow"]), upstream_level=item.get("upstream_level"),
-                downstream_level=item.get("downstream_level"),
-                head_difference=item.get("head_difference"),
-                transfer_type=item.get("transfer_type"), power_kw=item.get("power_kw"),
-                energy_kwh=item.get("energy_kwh"), regime=item.get("regime"),
-                constraint_flags=list(item.get("constraint_flags", [])),
-            )
-        )
-    if dispatch_run is not None:
-        for item in engine_result.dispatch_events:
-            session.add(
-                DispatchEvent(
-                    run_id=dispatch_run.id,
-                    time_seconds=float(item["time_seconds"]),
-                    source_type=str(item["source_type"]),
-                    source_id=item.get("source_id"),
-                    structure_type=str(item["structure_type"]),
-                    structure_id=int(item["structure_id"]),
-                    requested_command=dict(item["requested_command"]),
-                    applied_command=item.get("applied_command"),
-                    outcome=str(item["outcome"]),
-                    reason=item.get("reason"),
-                )
-            )
-    worker_build = executed_build_identity or current_runtime_build_identity()
-    task.status = "success"
-    task.progress = 100
-    task.diagnostics = {
-        **dict(engine_result.diagnostics),
-        "runtime_build_identity": {
-            "task_requested": {
-                "engine_version": task.engine_version,
-                "engine_commit": task.engine_commit,
-                "solver_build_id": task.solver_build_id,
-                "build_mode": task.build_mode,
-                "build_verified": task.build_verified,
-                "unverified_build": not task.build_verified,
-                "registry_hash": task.registry_hash,
-            },
-            "worker_executed": {
-                **worker_build.provenance(),
-                "registry_hash": task.registry_hash,
-            },
-        },
-    }
-    task.result_path = f"database://simulation_result?task_id={task.id}"
-    task.end_time = datetime.now(UTC)
-    task.heartbeat_time = datetime.now(UTC)
-    session.commit()
-    session.refresh(task)
-    return _record(task)
+        return _fail_sync_task(session, task_id, exc)
 
 
 def get_result(
-    session: Session, task_id: int, section_id: int | None = None
+    session: Session,
+    task_id: int,
+    section_id: int | None = None,
 ) -> SimulationResultResponse:
-    """Return one section series plus all available section choices."""
+    """Read aligned unified Section series from the authoritative result table."""
 
     task = session.get(SimulationTask, task_id)
     if task is None:
         raise TaskNotFoundError("simulation task does not exist")
     if task.status != "success":
-        raise TaskStateError("results are available only for successful tasks")
-
-    option_rows = session.execute(
-        select(
-            SimulationResult.section_id,
-            SimulationResult.section_code,
-            SimulationResult.river_id,
-            SimulationResult.station,
+        raise TaskStateError("task result is available only after success")
+    if task.input_schema_version != HYDRAULIC_1D_INPUT_SCHEMA:
+        raise TaskStateError("LEGACY_ENGINE_RETIRED")
+    options_query = (
+        select(HydraulicTaskSectionResult)
+        .where(HydraulicTaskSectionResult.task_id == task_id)
+        .order_by(
+            HydraulicTaskSectionResult.chainage_m,
+            HydraulicTaskSectionResult.hydraulic_cross_section_id,
+            HydraulicTaskSectionResult.time_seconds,
         )
-        .where(SimulationResult.task_id == task_id)
-        .distinct()
-        .order_by(SimulationResult.river_id, SimulationResult.station)
-    ).all()
-    options = [
-        ResultSectionOption(
-            section_id=row.section_id,
-            section_code=row.section_code,
-            river_id=row.river_id,
-            station=row.station,
-        )
-        for row in option_rows
-    ]
-    if not options:
-        raise TaskStateError("the successful task has no persisted section results")
-
-    selected = next(
-        (item for item in options if item.section_id == section_id),
-        options[0] if section_id is None else None,
     )
-    if selected is None:
-        raise TaskNotFoundError("section result does not exist in this task")
-
-    conditions: list[Any] = [
-        SimulationResult.task_id == task_id,
-        SimulationResult.section_code == selected.section_code,
-    ]
-    rows = session.scalars(
-        select(SimulationResult)
-        .where(*conditions)
-        .order_by(SimulationResult.time_seconds)
-    ).all()
+    all_rows = list(session.scalars(options_query).all())
+    if not all_rows:
+        raise TaskStateError("successful task has no authoritative Section result")
+    option_by_id: dict[int, ResultSectionOption] = {}
+    for row in all_rows:
+        option_by_id.setdefault(
+            row.hydraulic_cross_section_id,
+            ResultSectionOption(
+                section_id=row.hydraulic_cross_section_id,
+                section_code=row.section_code,
+                branch_id=row.branch_id,
+                chainage_m=row.chainage_m,
+            ),
+        )
+    selected_id = section_id if section_id is not None else next(iter(option_by_id))
+    if selected_id not in option_by_id:
+        raise TaskNotFoundError("selected Cross Section has no result for this task")
+    rows = [row for row in all_rows if row.hydraulic_cross_section_id == selected_id]
+    rows.sort(key=lambda item: item.time_seconds)
+    snapshot = parse_frozen_task_model(task)
+    option = option_by_id[selected_id]
     return SimulationResultResponse(
         task_id=task.id,
         status=task.status,
-        section_id=selected.section_id,
-        section_code=selected.section_code,
-        river_id=selected.river_id,
-        station=selected.station,
+        simulation_id=snapshot.simulation_id,
+        scenario_id=snapshot.scenario_id,
+        engine=DEFAULT_HYDRAULIC_1D_ENGINE_ID,
+        engine_version=DEFAULT_HYDRAULIC_1D_ENGINE_VERSION,
+        section_id=option.section_id,
+        section_code=option.section_code,
+        branch_id=option.branch_id,
+        chainage_m=option.chainage_m,
         time=[row.time_seconds for row in rows],
-        water_level=[row.water_level for row in rows],
-        flow=[row.flow for row in rows],
-        velocity=[row.velocity for row in rows],
-        available_sections=options,
+        water_level=[row.water_level_m for row in rows],
+        depth=[row.depth_m for row in rows],
+        flow=[row.flow_m3s for row in rows],
+        velocity=[row.velocity_m_s for row in rows],
+        flow_area=[row.flow_area_m2 for row in rows],
+        wet_area=[row.wet_area_m2 for row in rows],
+        hydraulic_radius=[row.hydraulic_radius_m for row in rows],
+        top_width=[row.top_width_m for row in rows],
+        froude_number=[row.froude_number for row in rows],
+        available_sections=list(option_by_id.values()),
         diagnostics=task.diagnostics,
     )
+
+
+__all__ = [
+    "SimulationTask",
+    "TaskNotFoundError",
+    "TaskStateError",
+    "_record",
+    "assess_readiness",
+    "build_task_entity",
+    "create_task",
+    "get_result",
+    "get_task",
+    "list_tasks",
+    "persist_hydraulic_1d_result",
+    "parse_frozen_task_model",
+    "preview_model",
+    "reset_task_for_manual_retry",
+    "retry_block_reason",
+    "run_task",
+]

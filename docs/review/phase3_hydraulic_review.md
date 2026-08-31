@@ -1,5 +1,7 @@
 # Phase 3 一维河道水动力模拟阶段审查
 
+> **历史归档 / 已由 HYDRO-1D-RESET-01 废止（2026-08-31）：** 本文“通过”结论仅适用于 2026-08-12 已删除的自研 Saint-Venant Solver 阶段，不是当前 MASCARET 数值验收。现行路线见 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md)。
+
 - 项目：大禹·天工（Dayu Tiangong）
 - 阶段：Phase 3 一维河道水动力模拟引擎
 - 版本：V3.0

@@ -2,25 +2,22 @@
 
 > Docker Compose requires an explicit `ENGINE_COMMIT`. Local development may use
 > `DAYU_BUILD_MODE=development` with `ENGINE_COMMIT=development-unverified`; CI and
-> release require the actual lowercase 40-character Git SHA. Backend and both
-> hydraulic Workers share the resulting `dayu-backend:<ENGINE_COMMIT>` image.
+> release require the actual lowercase 40-character Git SHA. Backend and Workers
+> share the resulting `dayu-backend:<ENGINE_COMMIT>` image.
 
 面向河网数字孪生的水利数据治理、水动力计算、闸泵调度、多目标优化与 AI 辅助平台。
 
-## 持续优化 01
+## 当前架构状态
 
-本轮在不增加第二技术体系的前提下完成两个限定闭环：四类上传统一接入本地文件基础层；水动力、优化和调度监控列表按当前 Dataset Version 在后端查询。前端继续使用 Ant Design、OpenLayers、DatasetVersionContext 和生成 OpenAPI client；数据库、GIS 与 Celery 主链不变。
+自 2026-08-31 起，生产级 Standard 1D 正式采用“Dayu 统一水力模型 → MASCARET Adapter → 外部 MASCARET v9.1.1 → 统一结果”路线；旧自研 1D Solver 已退出生产代码、API、Worker、前端和 CI。HYDRO-DATA-01 的 Network → Branch → Chainage → Cross Section 权威数据结构保持不变。
 
-能力必须准确理解：文件基础层不等于完整文件生命周期，任务列表过滤不等于权限隔离。统一 OIDC/JWT、RBAC、tenant/project、可信 actor 和生产公网 mutation 仍为 `NO-GO`。
+- [MASCARET 1D Adapter](docs/model/MASCARET-1D-ADAPTER.md)
+- [HYDRO-1D-RESET-01 架构迁移](docs/migration/HYDRO-1D-RESET-01.md)
+- [当前系统架构](docs/architecture.md)
 
-发布状态：功能分支 `feature/continuous-optimization-01@608d4a6` 已上传 GitHub，并通过普通双亲合并提交 `b58207b` 合入 `main`；未强推、未删除功能分支。
+## 历史发布记录
 
-- [现状审查](docs/audit/CURRENT_STATE_AUDIT.md)
-- [优化 Backlog](docs/audit/OPTIMIZATION_BACKLOG.md)
-- [执行计划](docs/plan/OPTIMIZATION_EXECUTION_PLAN.md)
-- [兼容与迁移](docs/migration/COMPATIBILITY_AND_MIGRATION.md)
-- [验证报告](docs/verification/OPTIMIZATION_VERIFICATION_REPORT.md)
-- [发布说明](docs/release/OPTIMIZATION_RELEASE_NOTES.md)
+2026-08-24 的“持续优化 01”已完成文件入口与 Dataset Version 查询边界收敛；其[现状审查](docs/audit/CURRENT_STATE_AUDIT.md)、[执行计划](docs/plan/OPTIMIZATION_EXECUTION_PLAN.md)、[验证报告](docs/verification/OPTIMIZATION_VERIFICATION_REPORT.md)和[发布说明](docs/release/OPTIMIZATION_RELEASE_NOTES.md)是当时基线的归档记录，不代表当前水动力求解路线。
 
 GIS-RESET-01 已将运行架构收敛为一条链路：
 
@@ -50,7 +47,8 @@ OpenLayers → FastAPI 安全边界 → GeoServer → PostGIS
 | FastAPI | Catalog、版本门禁、WMS/FeatureInfo、白名单在线影像瓦片安全代理和业务 API |
 | OpenLayers | EPSG:3857 Web 地图、图层控制和属性点选 |
 | QGIS Desktop | EPSG:4490 暂存编辑、拓扑检查和专业生产 |
-| Redis / Worker | 模型、调度和后台任务 |
+| Redis / Worker | 模型、调度和后台任务；Standard 1D 任务进入独立 `hydraulic-1d` 队列 |
+| MASCARET v9.1.1 | 外部一维水动力运行时；由 Adapter 通过官方 CLI/独立进程调用，不复制到 Dayu 代码库 |
 | Nginx | 前端静态资源、SPA 回退和同源 API 代理 |
 
 ## 本地启动
@@ -63,7 +61,7 @@ OpenLayers → FastAPI 安全边界 → GeoServer → PostGIS
 docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 ```
 
-核心初始化顺序为 `database → migrate → seed → qgis-bootstrap → app-bootstrap → geoserver-init → gis-catalog-seed → backend/worker → frontend`。后端使用非 owner 的 `dayu_backend` 登录，并继承 NOLOGIN `dayu_publisher` 发布组；数据库 owner 只用于迁移和初始化。
+核心初始化顺序为 `database → migrate → seed → qgis-bootstrap → app-bootstrap → geoserver-init → gis-catalog-seed → backend/worker/hydraulic-worker → frontend`。后端使用非 owner 的 `dayu_backend` 登录，并继承 NOLOGIN `dayu_publisher` 发布组；数据库 owner 只用于迁移和初始化。默认镜像只包含 MASCARET Adapter，不捆绑 MASCARET 本体；未配置官方运行时时 `MASCARET_ENABLED=0`。
 
 ## GIS API
 
@@ -93,43 +91,29 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 - `GET /api/v1/hydraulic/validation/{run_code}`
 - `GET /api/v1/hydraulic/exports/network.nwk11|cross-sections.xns11`
 - `GET /api/v1/hydraulic/templates/river-network|cross-section`
-- `GET /api/v1/model-data/simulation-cases/{case_id}/input-v3`
+- Simulation Case 转统一 Hydraulic 1D Model 由服务端 Model Builder 完成，前端不接触 MASCARET 私有文件。
 
 内置 `.nwk11`/`.xns11` 支持是 HYDRO-DATA-01 的确定性交换子集，能力状态固定标识为 `ROUNDTRIP_VALIDATED_ONLY`，不宣称已通过 DHI 商业软件原生验收。常驻后端不加载 DHI/mikeio 运行时；原生 NWK11/XNS11 读取、转换和验收属于授权外部适配环境。
 
 ## 水动力求解器能力边界
 
-HYDRO-MODEL-02-A 审查确认：仓库中的 v1 单河路径包含一阶 Rusanov/Saint-Venant 有限体积原型；正式 `dayu.model-input.v2/v3` 则运行 `synchronous-network-continuity-manning-v1`，不含河网动量方程、动态蓄量、分区 `K(h)` 或逐时间 stage 的闸泵强耦合。当前能力不能作为完整 Saint-Venant 或真实工程率定结果使用。
+当前正式一维技术路线是：
 
-升级方案保留历史求解器和 v3 语义，在现有 `model/solver/` 内增加原生 v4 有限体积路径，并按 shadow、科学 Benchmark、结果级外部对比和真实率定逐门推进：
+```text
+HYDRO-DATA-01 (Network → Branch → Chainage → Cross Section)
+  → Dayu Unified Hydraulic Model
+  → MASCARET Adapter
+  → 官方 MASCARET v9.1.1 CLI / 独立进程
+  → Opthyca Result Parser
+  → Dayu Unified Hydraulic Result
+```
 
-- [当前求解器审查](docs/review/HYDRO-MODEL-02-current-solver-audit.md)
-- [目标架构](docs/model/HYDRO-MODEL-02-design.md)
-- [数学方程](docs/model/HYDRO-MODEL-02-equation.md)
-- [验证门禁](docs/model/HYDRO-MODEL-02-validation.md)
-- [迁移与回退](docs/model/HYDRO-MODEL-02-migration-report.md)
-
-HYDRO-MODEL-02-B/B2 已在独立分支实现首个可运行的 `dayu.model-input.v4-lite` 单河有限体积 MVP，并完成三项显式科学加固：严格线性坡床的 uniform-Manning 参考平衡、亚临界特征边界、以及只限全湿零流共同水位的非棱柱静水路径。旧 `v4-lite-1`、v1/v2/v3 保持原语义；新增能力只由显式 `v4-lite-2` 策略启用，并仍仅提供 Python 引擎直连路由。
-
-- [MODEL-02-B 求解器基线](docs/review/HYDRO-MODEL-02-B-solver-baseline.md)
-- [MODEL-02-B 开发报告](docs/model/HYDRO-MODEL-02-B-development-report.md)
-- [MODEL-02-B 验证报告](docs/model/HYDRO-MODEL-02-B-validation-report.md)
-- [MODEL-02-B Benchmark 报告](docs/model/HYDRO-MODEL-02-B-benchmark-report.md)
-- [MODEL-02-B 当前任务书复核](docs/review/HYDRO-MODEL-02-B-current-verification.md)
-- [MODEL-02-B 可运行示例](examples/hydraulic/saint-venant-mvp/README.md)
-
-Case 002 已通过 `v4-lite-2` 端到端门：Q 与水深误差均为 0，水量相对误差约 `2.67e-17`；该结果只属于同相对 Profile、严格线性坡、常 A/Q/depth/n、无结构且明确选择 residual-equilibrium 的亚临界参考流。非棱柱路径只证明受限 lake-at-rest 与扰动不被冻结，不代表一般移动流、湿干或结构耦合。边界空间支撑明确为 `nearest-section-cell-face-v1`，不是端节点处的连续坡床实测断面。Gate/Pump 强动量/能头、后端任务持久化、外部模型对比和真实工程率定仍未通过。
-
-HYDRO-MODEL-02-C 已完成四个显式切片：`v4-lite-3` 在受限光滑变宽、平床、无摩阻 Bernoulli 参考流上获得一阶网格收敛证据；`v4-lite-4` 以完整守恒步的保守重放将首个上升越阈值定位到有界右括端；`v4-lite-5` 只对单个固定、淹没、平床同断面 Gate 完成总能头方程和左右 `Q²/A+gI1` 动量通量；`v4-lite-6` 在同一限定作用域内组合 C2a 与 C2b，证明触发步仍使用关闭 Gate 的 completed-interface，目标开度只在下一接受子区间生效，随后每个 RK stage 都留下可独立复算的能头、左右动量、反力和内部转输证据。C3a/C3b-J1/J2 又建立多 Branch DAG、1-in/2-out Junction 的共同水位/质量/特征相容 trace，并将 trace 接入三 Branch 同步 SSP-RK2、统一 CFL/retry 和外部水量账。C3c-R1 在该限定网络上可选接入 face-aligned 纵向分区 Manning，每个 RK stage 独立重算半隐式摩阻并保留可复算证据；三个 Junction 相邻控制单元仍为 `n=0`，且 `mu<=0.1` 是统一缩步门。平床正摩阻案例是耗散瞬变，不是 Manning 正常水深稳态，端点完整 cell 的摩阻省略仍具网格依赖。历史 Gate 仍保持 mass-only，Pump 仍是定流量 external sink；Gate/Pump 完整强耦合、湿干、端点含源特征、节点矢量动量、一般拓扑、v4 后端任务链和真实工程率定继续 `NO-GO`。
-
-- [MODEL-02-C 开发报告](docs/model/HYDRO-MODEL-02-C-development-report.md)
-- [MODEL-02-C 验证报告](docs/model/HYDRO-MODEL-02-C-validation-report.md)
-- [MODEL-02-C Benchmark 报告](docs/model/HYDRO-MODEL-02-C-benchmark-report.md)
-- [MODEL-02-C 审查结论](docs/review/HYDRO-MODEL-02-C-transient-hardening.md)
-- [MODEL-02-C3 基础门审查](docs/review/HYDRO-MODEL-02-C3-foundation.md)
-- [MODEL-02-C3b Junction 特征相容审查](docs/review/HYDRO-MODEL-02-C3b-junction.md)
-- [MODEL-02-C3b-J2 Junction 同步阶段推进审查](docs/review/HYDRO-MODEL-02-C3b-junction-stage.md)
-- [MODEL-02-C3c-R1 分区 Manning 网络运行门审查](docs/review/HYDRO-MODEL-02-C3c-zoned-roughness.md)
+- Dayu 保留统一数据、自动建模、任务生命周期、GIS 和结果体系，不再开发或提供自研生产级 1D 数值求解器。
+- MASCARET 源码不复制到本仓库；调用官方 `scripts/python3/mascaret.py <case.xcas>` 运行链。
+- 默认发布镜像不捆绑 MASCARET，因此默认 `MASCARET_ENABLED=0`。未发现可用运行时的集成测试必须明确记录 `SKIPPED_MASCARET_RUNTIME_NOT_AVAILABLE`，不允许伪造成功运算。
+- 闸门与泵站当前均不进入生产 Adapter；在完整业务语义、官方文件合同和真实运行时 benchmark 全部验证前必须 fail closed，不得伪装成横向流量或猜测奇异建筑物参数。
+- 现行配置和已验证子集见 [MASCARET 1D Adapter](docs/model/MASCARET-1D-ADAPTER.md)；架构迁移见 [HYDRO-1D-RESET-01](docs/migration/HYDRO-1D-RESET-01.md)。
+- 旧 `HYDRO-MODEL-02` 阶段文档、审查过程和失效工作计划已从当前树清理；仅保留一份最终 D3A RC1 发布索引，完整历史由 Git 标签保存，不能作为现行产品说明。
 
 ## 广东开放参考数据
 
@@ -171,74 +155,13 @@ npm.cmd run build
 
 涉及数据库迁移、角色轮换或 GeoServer 配置的验证，应先在独立 Compose 项目和新卷中执行。不得把隔离验证结果冒充现有持久环境部署结果。
 
-## HYDRO-MODEL-02-D1
+## 历史自研 Solver 发布证据（已归档）
 
-`v4-lite-7` 增加限定单 Branch 的 completed-interface Gate 与 external Q-H/Q-η Pump
-逐 SSP-RK2 stage 强耦合。冻结的 20 断面、6 小时示例位于
-`examples/hydraulic/gate-pump-strong-coupling/`。
-
-详细资料：
-
-- `docs/model/HYDRO-MODEL-02-D1-pump-equation.md`
-- `docs/model/HYDRO-MODEL-02-D1-development-report.md`
-- `docs/model/HYDRO-MODEL-02-D1-validation-report.md`
-- `docs/model/HYDRO-MODEL-02-D1-benchmark-report.md`
-- `docs/model/HYDRO-MODEL-02-D1-known-limitations.md`
-- `docs/review/HYDRO-MODEL-02-D1-RC1-cross-platform-audit.md`
-- `docs/model/HYDRO-MODEL-02-D1-RC1-release-report.md`
-- `docs/verification/HYDRO-MODEL-02-D1-RC1-ci-report.md`
-
-RC1 将 v4-lite-3 动态冻结输入迁移为 checked-in canonical JSON，拆分 authoritative
-input/runtime projection/mesh/solver/validation policy 身份，并将 MODEL-02 改为
-Ubuntu/Windows Python 3.11 matrix。首次 hosted run `33097599382` 的失败历史保留；
-RC1 run `33102252587`、最终 HEAD run `33102637908` 与 PR #10 run `33102843115`
-均全绿，测试 artifacts 已核对。PR [#10](https://github.com/zj1310426307-stack/dayu-tiangong/pull/10)
-后续以 merge commit `cc6936d` 合入 `main`，annotated tag `hydro-model-02-d1-rc1`
-指向该合并提交；合并后 main run `33105713834` 全绿。
-
-## HYDRO-MODEL-02-D3A-RC1 / D3B
-
-D3A-RC1 在 single Branch、fully wet、forward、`Fr<=0.8` 的冻结边界内增加动态
-runtime envelope、SSP-RK2 全阶段 fail-closed 检查和摩阻时间步预测器。FIX1 将
-旧 60/70/80 证据降级为 `superseded-pre-FIX1`，改用运行前冻结的 18/54/162
-structure-aligned odd3 网格。FIX1A 进一步补齐 global peak-Q 的 argmax time/chainage；
-审计发现 argmax 在空间层间漂移，因此将其重分类为 `non-smooth-global-extremum`，
-并以精确 2850 m fixed-monitor peak Q（`p=2.215707`）替代 smooth Q convergence。
-FIX1 的 `13.99%` 只保留为显式 known limitation，不再解释为有效的 smooth
-Richardson 误差界。
-
-FIX1A 本地 Python 3.11 与 Python 3.12 science 均为 9/9；MODEL02 375/375、
-legacy/D1 26/26、D3A model-engine contracts 双版本均 43/43，v2 collector 负控按预期
-拒绝。evidence head `d20275a` 的 Hosted Python 3.11 science push/PR 均为 82/82，
-Python 3.12.14 shipping science push/PR 均为 51/51；四个 workflows 全绿，五份下载
-artifact 在机器相关字段规则下逐字段一致。以上是 PR 合并前的 FIX1A 冻结证据。
-
-PR [#12](https://github.com/zj1310426307-stack/dayu-tiangong/pull/12) 已于 2026-08-30
-以 merge commit `eb6b1b4` 合入 `main`；main runs `33309205534` / `33309205538`
-全部成功，strict required checks 11/11。annotated tag `hydro-model-02-d3a-rc1`
-已验证指向该受测 merge commit。D3A-RC1 已正式冻结，`13.99%` known limitation
-不因发布而消失。
-
-D3B 分支已从同一提交创建。当前真实输入审计结论为 `INPUT GATE NO-GO`：现有受控
-成果缺权威闸泵参数、上下游边界、控制点和水流方向确认，不能冒充可计算真实案例。
-当前发布事实、输入审计和未来计划分别见：
-
-- `docs/release/HYDRO-MODEL-02-D3A-RC1-release.md`
-- `docs/review/HYDRO-MODEL-02-D3B-input-readiness-audit.md`
-- `docs/workplans/HYDRO-MODEL-02-D3B-real-engineering-validation.md`
-
-完整 FIX1A 历史证据见：
-
-- `docs/review/HYDRO-MODEL-02-D3A-RC1-FIX1-audit.md`
-- `docs/review/HYDRO-MODEL-02-D3A-RC1-FIX1A-baseline-audit.md`
-- `docs/review/HYDRO-MODEL-02-D3A-RC1-FIX1A-audit.md`
-- `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1-grid-family.md`
-- `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1-event-error.md`
-- `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1A-convergence.md`
-- `docs/model/HYDRO-MODEL-02-D3A-RC1-runtime-envelope.md`
-- `docs/model/HYDRO-MODEL-02-D3A-RC1-FIX1A-validation-report.md`
-- `docs/release/HYDRO-MODEL-02-D3A-RC1-FIX1A-release-readiness.md`
-- `outputs/d3a/final-convergence-fix1a.json`
+自研 `v4-lite` / D1 / D3A 求解路线已由 HYDRO-1D-RESET-01 废止；旧示例、运行工具
+和阶段性报告不再随当前生产代码分发。其最终发布事实见
+`docs/release/HYDRO-MODEL-02-D3A-RC1-release.md`，完整实现与验证证据由 Git 历史及
+`hydro-model-02-d1-rc1`、`hydro-model-02-d2-rc2`、`hydro-model-02-d3a-rc1` 标签保存。
+这些历史材料不得作为重新启用自研生产 Solver 的依据。
 
 ## 当前边界
 

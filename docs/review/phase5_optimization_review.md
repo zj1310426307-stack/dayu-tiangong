@@ -1,5 +1,7 @@
 # Phase 5 多目标调度优化评审
 
+> **历史基线：** PSO/Pareto 等优化设计可作历史参考，但文中对 Phase 4 `HydraulicEngine`、v2 输入和自研求解任务的绑定已由 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md) 废止。本文不定义当前 Standard 1D 生产执行链。
+
 ## 1. 完成情况
 
 已实现 PSO 候选生成、Phase 4 水动力复用、三目标评分、硬约束、Pareto 分层、人工推荐、三张数据库表、异步生命周期、OpenAPI 客户端与三个优化页面。CGCS2000 / EPSG:4490 继续写入冻结快照。

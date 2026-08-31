@@ -1,5 +1,7 @@
 # Phase 4 数值与性能基准
 
+> **历史归档 / 已由 HYDRO-1D-RESET-01 废止（2026-08-31）：** 本文数值与 CFL 证据来自已删除的自研 1D Solver，不是现行 MASCARET Benchmark 验收证据。当前路线见 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md)。
+
 - 执行日期：2026-08-12（Asia/Shanghai）
 - 环境：Windows + Docker Desktop；Python 3.12；PostgreSQL 17/PostGIS 3.5；Redis 7.4；Celery 5.5.3
 - 命令：`pytest -q`，最终 `83 passed`

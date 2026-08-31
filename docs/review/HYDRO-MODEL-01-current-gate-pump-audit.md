@@ -1,5 +1,7 @@
 # HYDRO-MODEL-01 现有闸泵能力审查
 
+> **历史基线 / 自研 Solver 路线已废止（2026-08-31）：** 文中“当前”只指 2026-08-19 审查时点；闸泵数据与公式可作历史参考，但旧河网求解器与调度执行链已由 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md) 废止。当前 MASCARET Adapter 对未验证的 Gate/Pump 映射 fail closed。
+
 - 项目：大禹·天工（dayu-tiangong）
 - 审查日期：2026-08-19
 - 审查范围：现有 Gate/Pump、模型输入、数值内核、调度、任务持久化和前端

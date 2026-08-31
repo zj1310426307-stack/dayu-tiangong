@@ -1,5 +1,8 @@
 # HYDRO-MODEL-02-D3A-RC1 正式发布记录
 
+> **HISTORICAL RELEASE / SUPERSEDED ROUTE (2026-08-31):** 发布、CI 和 tag 事实保留不变；
+> 其自研 1D Solver 产品路线已由 HYDRO-1D-RESET-01 废止。
+
 - 发布日期：2026-08-30
 - 记录更新：2026-08-31
 - 状态：`D3A RC1 RELEASED`
@@ -47,5 +50,6 @@ completed-interface Gate 和一个 external Q-H/Q-efficiency Pump 的受限能�
 它不证明真实工程率定、一般河网、湿干、倒流、internal Pump、多闸多泵、第三方模型
 等价或生产水利决策能力。
 
-FIX1/FIX1A readiness 与 validation 文档保留当时的独立审查状态，是发布前历史证据；
-本文件是合并、main CI 与 tag 完成后的当前发布事实。
+重复的 FIX1/FIX1A readiness、validation 与 PR 过程文档已从当前生产树清理；
+原始证据仍可从 `hydro-model-02-d3a-rc1` 冻结标签查阅。本文件作为唯一历史
+索引，保留合并、main CI、tag 与已知局限事实。

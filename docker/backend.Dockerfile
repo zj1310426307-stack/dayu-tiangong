@@ -3,7 +3,12 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app:/app/backend
+    PYTHONPATH=/app:/app/backend \
+    MASCARET_ENABLED=0 \
+    MASCARET_RUNTIME=cli \
+    MASCARET_EXECUTABLE=mascaret.py \
+    MASCARET_TIMEOUT=3600 \
+    HYDRAULIC_WORKSPACE_ROOT=/app/backend/storage/hydraulic-workspaces
 
 WORKDIR /app
 
@@ -18,7 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Build arguments live below the expensive dependency layers so a new source SHA
 # does not invalidate the Python/GDAL runtime cache.
-ARG ENGINE_VERSION=dayu-hydraulic-4.0.0
+ARG ENGINE_VERSION=dayu-hydraulic-platform-5.0.0
 ARG ENGINE_COMMIT
 ARG BUILD_MODE=release
 ARG SOURCE_URL=https://github.com/zj1310426307-stack/dayu-tiangong
@@ -31,6 +36,10 @@ LABEL org.opencontainers.image.title="Dayu Tiangong hydraulic runtime" \
       org.opencontainers.image.source=${SOURCE_URL} \
       org.opencontainers.image.version=${ENGINE_VERSION} \
       org.opencontainers.image.revision=${ENGINE_COMMIT}
+
+# MASCARET is intentionally not installed or copied into this image. A deployment
+# may enable the Adapter only after providing the official v9.1.1 CLI in its own
+# licensed runtime image or controlled host integration.
 
 # 后端运行时镜像包含后端源码、数据库迁移和导入模板，不挂载前端树。
 COPY backend ./backend

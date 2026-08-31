@@ -1,6 +1,21 @@
-"""暴露 Phase 3 一维水动力引擎的稳定公共接口。"""
+"""Public solver-neutral API for Dayu one-dimensional hydraulics."""
 
-from .engine import HydraulicEngine
-from .hydraulic_model import HydraulicModel
+from model.hydraulic_1d import (
+    HYDRAULIC_1D_INPUT_SCHEMA,
+    HYDRAULIC_RESULT_SCHEMA,
+    Hydraulic1DEngine,
+    Hydraulic1DExecutionContext,
+    Hydraulic1DModel,
+    HydraulicResult,
+    create_hydraulic_1d_engine,
+)
 
-__all__ = ["HydraulicEngine", "HydraulicModel"]
+__all__ = [
+    "HYDRAULIC_1D_INPUT_SCHEMA",
+    "HYDRAULIC_RESULT_SCHEMA",
+    "Hydraulic1DEngine",
+    "Hydraulic1DExecutionContext",
+    "Hydraulic1DModel",
+    "HydraulicResult",
+    "create_hydraulic_1d_engine",
+]

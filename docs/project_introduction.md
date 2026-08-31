@@ -1,16 +1,19 @@
 # 大禹·天工项目介绍
 
-“大禹·天工”按可验证能力建设河网数字孪生平台。Phase 4 在 GIS、版本化水利数据库和单河水动力基线上，交付河网联合求解、动态闸泵、调度计划/规则、异步任务与基准对比。
+“大禹·天工”是面向河网数字孪生的统一水利数据、自动建模、计算调度、GIS 和成果分析平台。平台不以重新实现成熟数值求解器为目标，而是通过统一数据模型、Adapter、独立任务和统一结果层整合成熟开源能力。
 
 ## 当前能力
 
-- Phase 1：Cesium + PostGIS GIS 一张图与 Esri World Imagery 影像。
-- Phase 2：版本化河道、断面、闸门、泵站、拓扑、导入、校验与模型输入。
-- Phase 3/4.0：任务创建时冻结完整输入，SHA-256/引擎版本追溯；严格方案—边界关联；well-balanced；矩形/表格断面；水量平衡。
-- Phase 4：有向河网汇流/分流，闸门内部边通量，泵站内部/外部节点源汇，Q-H/Q-η、功率能耗、约束审计，人工计划/阈值规则，Redis/Celery 生命周期，基准/调度对比与 GIS 联动。
-
-演示版本含 3 条河道、20 个断面、5 座闸、3 座泵、8 个节点。空间统一 CGCS2000 / EPSG:4490；求解距离采用米制桩号和河段长度。
+- GIS：PostGIS 权威数据、GeoServer 发布、OpenLayers 展示和 QGIS 受控生产链。
+- HYDRO-DATA-01：保留 `Network → Branch → Chainage → Cross Section`，支持断面点、粗糙率、边界、初始条件、方案和导入校验。
+- Standard 1D：`Hydraulic1DEngine → MascaretEngine → 官方 MASCARET v9.1.1 → Unified Hydraulic Result`。
+- 任务平台：Simulation Case 冻结、输入摘要、构建身份、Celery 生命周期、取消/重试和结果持久化。
+- Benchmark：矩形恒定均匀流、粗糙率敏感性、洪水过程、多断面天然河道和上下游边界五类基准。
 
 ## 能力边界
 
-河网采用“共同节点水位 + 流量连续 + Manning 回水”的最低耦合方法，未完整实现节点动量/能量兼容；模型尚未率定。Phase 4 不接实时遥测、不下发真实设备、不做 PSO/遗传算法/Pareto 优化，也不让 AI 直接作调度决策。
+默认 Dayu 镜像不捆绑 MASCARET 执行文件；只有在部署方提供并验证官方 v9.1.1 运行时后才可设置 `MASCARET_ENABLED=1`。未安装运行时不等于模拟成功，集成测试必须显式跳过。
+
+当前 Adapter 不支持 Pump，不支持的数据必须显式验证失败，不得降级成其他物理对象。多 Branch、湿干、工程率定、实时遥测、PLC/SCADA 下发、统一 IAM/RBAC 和生产高可用仍待后续建设。
+
+详细架构见 [当前架构](./architecture.md) 和 [MASCARET 1D Adapter](./model/MASCARET-1D-ADAPTER.md)。

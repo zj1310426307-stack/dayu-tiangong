@@ -10,15 +10,11 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.gis.models import (
-    CrossSection,
     DatasetVersion,
-    Gate,
     GISImportBatch,
     GISPublication,
     GISReview,
     GISValidationIssue,
-    GISValidationRun,
-    Pump,
     River,
 )
 from app.gis_governance.errors import GovernanceError

@@ -1,6 +1,6 @@
 # GIS-OPT-2 Final Review
 
-> 历史基线：本报告记录 2026-08-16 的 GIS-OPT-2 验收。2026-08-17 起当前架构以 ADR-0014 和 `GIS_RESET_COMPLETION_REPORT.md` 为准。
+> 历史基线：本报告记录 2026-08-16 的 GIS-OPT-2 验收。2026-08-17 起 GIS 架构以 ADR-0014 和 `GIS_RESET_COMPLETION_REPORT.md` 为准；文中旧 Solver 读取合同已由 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md) 废止。
 
 日期：2026-08-16
 

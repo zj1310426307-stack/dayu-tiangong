@@ -1,6 +1,12 @@
 # ADR-HYDRO-D2-RC1-0004: Result and Artifact Reconciliation
 
-- Status: accepted for the RC1 candidate implementation
+> **Status: Superseded (2026-08-31).** The native-v4 artifact reconciliation
+> command and custom-solver result path documented here are retired. Production
+> 1D execution now uses MASCARET and the unified result contract; see
+> [`HYDRO-1D-RESET-01`](../migration/HYDRO-1D-RESET-01.md). It must not be used
+> as operational guidance.
+
+- Original status: accepted for the RC1 candidate implementation (now superseded)
 - Date: 2026-08-28
 
 ## Context

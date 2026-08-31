@@ -1,5 +1,7 @@
 # HYDRO-DATA-01 仓库差距审计
 
+> **历史基线（2026-08-18）：** HYDRO-DATA-01 数据治理结论仍有价值，但本文中 v1/v2/v3 与 Saint-Venant 自研 Solver 路线已由 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md) 废止，不得作为现行架构指引。
+
 日期：2026-08-18
 当前分支：`feature/HYDRO-DATA-01`
 基线：`main@cfd2b02`

@@ -3,6 +3,7 @@ import {
   CheckCircleOutlined,
   PlayCircleOutlined,
   ReloadOutlined,
+  SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import {
   Alert,
@@ -28,76 +29,25 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   cancelHydraulicTask,
   createHydraulicTask,
-  downloadHydraulicV4Artifact,
   enqueueHydraulicTask,
+  getHydraulicReadiness,
   getHydraulicResult,
-  getHydraulicV4Events,
-  getHydraulicV4Gates,
-  getHydraulicV4Pumps,
-  getHydraulicV4Section,
-  getHydraulicV4Summary,
-  getModelInputV4Readiness,
   getSimulationCases,
-  listDispatchPlans,
   listHydraulicTasks,
-  listHydraulicV4Sections,
+  previewHydraulicModel,
   retryHydraulicTask,
+  type Hydraulic1DReadinessResponse,
   type SimulationResultResponse,
   type SimulationTaskCreate,
   type SimulationTaskRecord,
-  type DispatchPlanRecord,
-  type V4ArtifactManifest,
-  type V4ControlEventRecord,
-  type V4GateResultRecord,
-  type V4PumpResultRecord,
-  type V4ReadinessResponse,
-  type V4ResultSummary,
-  type V4SectionResultResponse,
 } from '../../api/generated/client';
 import { useDatasetVersion } from '../../context/DatasetVersionContext';
 
 const { Paragraph, Text, Title } = Typography;
-const D1_SOLVER_ID = 'saint-venant-fv-hll-ssp-rk2-d1-v1';
-const D1_CAPABILITY_ID = 'single-branch-gate-external-pump-d1-v1';
-const D3A_1_CAPABILITY_ID = 'single-branch-gate-pump-manning-v1';
-const D3A_2_CAPABILITY_ID = 'single-branch-gate-pump-manning-slope-v1';
-const D3A_3_CAPABILITY_ID = 'single-branch-gate-pump-engineering-profile-v1';
-const D3A_CAPABILITY_IDS = new Set([
-  D3A_1_CAPABILITY_ID,
-  D3A_2_CAPABILITY_ID,
-  D3A_3_CAPABILITY_ID,
-]);
-const RETRY_BLOCKED_ARTIFACT_STATUSES = new Set([
-  'prepared',
-  'publishing',
-  'reconciliation_required',
-  'orphaned',
-]);
+const HYDRAULIC_INPUT_SCHEMA = 'dayu.hydraulic-1d.input.v1' as const;
+const HYDRAULIC_ENGINE = 'mascaret' as const;
 
-function asDiagnosticRecord(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : undefined;
-}
-
-function runtimeDiagnostics(value: unknown): Record<string, unknown> | undefined {
-  const outer = asDiagnosticRecord(value);
-  return asDiagnosticRecord(outer?.diagnostics) ?? outer;
-}
-
-function diagnosticNumber(
-  diagnostics: Record<string, unknown> | undefined,
-  key: string,
-): number | undefined {
-  const value = diagnostics?.[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function canRetryTask(task: SimulationTaskRecord): boolean {
-  return task.retry_eligible === true
-    && !RETRY_BLOCKED_ARTIFACT_STATUSES.has(task.artifact_status ?? '');
-}
-
+/** Render the shared title block for the Standard 1D workflow. */
 function HydraulicHeader({
   eyebrow,
   title,
@@ -121,135 +71,208 @@ function HydraulicHeader({
   );
 }
 
+/** Convert a durable task state into a stable Chinese status label. */
 function statusTag(status: SimulationTaskRecord['status']) {
-  const colors = { pending: 'default', queued: 'blue', running: 'processing', cancel_requested: 'warning', cancelled: 'default', success: 'success', failed: 'error' } as const;
-  const labels = { pending: '待入队', queued: '排队中', running: '计算中', cancel_requested: '取消中', cancelled: '已取消', success: '成功', failed: '失败' } as const;
+  const colors = {
+    pending: 'default',
+    queued: 'blue',
+    running: 'processing',
+    cancel_requested: 'warning',
+    cancelled: 'default',
+    success: 'success',
+    failed: 'error',
+  } as const;
+  const labels = {
+    pending: '待入队',
+    queued: '排队中',
+    running: '计算中',
+    cancel_requested: '取消中',
+    cancelled: '已取消',
+    success: '成功',
+    failed: '失败',
+  } as const;
   return <Tag color={colors[status]}>{labels[status]}</Tag>;
 }
 
+/** Present validation issues whether the backend returns text or structured details. */
+function issueLabel(issue: unknown): string {
+  if (typeof issue === 'string') return issue;
+  if (issue && typeof issue === 'object') {
+    const detail = issue as Record<string, unknown>;
+    return [detail.code, detail.message].filter((value) => typeof value === 'string').join(' · ')
+      || JSON.stringify(issue);
+  }
+  return String(issue);
+}
+
+/** Enforce that the optional initial water level and discharge are supplied together. */
+function pairedInitialRule(peer: 'initial_water_level' | 'initial_flow', label: string) {
+  return ({ getFieldValue }: { getFieldValue: (name: string) => unknown }) => ({
+    validator(_: unknown, value: unknown) {
+      const peerValue = getFieldValue(peer);
+      const hasValue = value !== undefined && value !== null;
+      const hasPeer = peerValue !== undefined && peerValue !== null;
+      return hasValue === hasPeer
+        ? Promise.resolve()
+        : Promise.reject(new Error(`初始${label}与对应初始条件必须成对填写`));
+    },
+  });
+}
+
+/** Build the one supported production request without exposing solver-specific controls. */
+function normalizeTaskRequest(values: SimulationTaskCreate): SimulationTaskCreate {
+  return {
+    case_id: values.case_id,
+    duration_seconds: values.duration_seconds,
+    time_step_seconds: values.time_step_seconds,
+    output_interval_seconds: values.output_interval_seconds,
+    initial_water_level: values.initial_water_level,
+    initial_flow: values.initial_flow,
+    engine: HYDRAULIC_ENGINE,
+    input_schema_version: HYDRAULIC_INPUT_SCHEMA,
+    storage_level: 'full',
+  };
+}
+
+/** Configure and validate the single production Standard 1D / MASCARET route. */
 export function HydraulicConfigPage() {
   const navigate = useNavigate();
   const { datasetVersionId } = useDatasetVersion();
   const [form] = Form.useForm<SimulationTaskCreate>();
-  const schemaVersion = Form.useWatch('input_schema_version', form) ?? 'dayu.model-input.v3';
   const selectedCaseId = Form.useWatch('case_id', form);
-  const selectedPlanId = Form.useWatch('dispatch_plan_id', form);
-  const selectedCapabilityId = Form.useWatch('capability_id', form) ?? D1_CAPABILITY_ID;
   const [cases, setCases] = useState<Array<{ id: number; name: string }>>([]);
-  const [plans, setPlans] = useState<DispatchPlanRecord[]>([]);
-  const [readiness, setReadiness] = useState<V4ReadinessResponse>();
+  const [readiness, setReadiness] = useState<Hydraulic1DReadinessResponse>();
+  const [preview, setPreview] = useState<Awaited<ReturnType<typeof previewHydraulicModel>>>();
   const [readinessLoading, setReadinessLoading] = useState(false);
   const [loadingCases, setLoadingCases] = useState(true);
+  const [previewing, setPreviewing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     if (!datasetVersionId) {
       setCases([]);
-      setPlans([]);
       setLoadingCases(false);
       return;
     }
+    let cancelled = false;
     setLoadingCases(true);
     form.setFieldValue('case_id', undefined);
     void getSimulationCases(datasetVersionId)
       .then((items) => {
+        if (cancelled) return;
         setCases(items.map((item) => ({ id: item.id, name: item.name })));
         if (items[0]) form.setFieldValue('case_id', items[0].id);
         setError('');
       })
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : '计算方案加载失败'))
-      .finally(() => setLoadingCases(false));
-    void listDispatchPlans({ dataset_version_id: datasetVersionId, status: 'frozen', limit: 100 })
-      .then((page) => setPlans(page.items.filter((item) => item.status === 'frozen')))
-      .catch(() => setPlans([]));
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : '计算方案加载失败');
+      })
+      .finally(() => { if (!cancelled) setLoadingCases(false); });
+    return () => { cancelled = true; };
   }, [datasetVersionId, form]);
 
   useEffect(() => {
     setReadiness(undefined);
-    if (schemaVersion !== 'dayu.model-input.v4' || !selectedCaseId || !selectedPlanId) return;
+    setPreview(undefined);
+    if (!selectedCaseId) return;
     let cancelled = false;
     setReadinessLoading(true);
-    void getModelInputV4Readiness(selectedCaseId, selectedPlanId, selectedCapabilityId)
+    void getHydraulicReadiness(selectedCaseId)
       .then((value) => { if (!cancelled) setReadiness(value); })
       .catch((reason: unknown) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : 'v4 readiness 检查失败');
+        if (!cancelled) setError(reason instanceof Error ? reason.message : '模型就绪检查失败');
       })
       .finally(() => { if (!cancelled) setReadinessLoading(false); });
     return () => { cancelled = true; };
-  }, [schemaVersion, selectedCaseId, selectedPlanId, selectedCapabilityId]);
+  }, [selectedCaseId]);
+
+  const runPreview = async (): Promise<Awaited<ReturnType<typeof previewHydraulicModel>> | undefined> => {
+    setPreviewing(true);
+    setError('');
+    try {
+      const values = await form.validateFields();
+      const result = await previewHydraulicModel(normalizeTaskRequest(values));
+      setPreview(result);
+      if (result.readiness.ready) message.success('MASCARET 模型映射检查通过');
+      else if (result.snapshot_hash) message.info('模型映射已通过，但 MASCARET 运行时尚不可用');
+      return result;
+    } catch (reason) {
+      setPreview(undefined);
+      if (reason instanceof Error) setError(reason.message);
+      return undefined;
+    } finally {
+      setPreviewing(false);
+    }
+  };
 
   const submit = async (values: SimulationTaskCreate) => {
     setSubmitting(true);
     setError('');
     try {
-      const body: SimulationTaskCreate = schemaVersion === 'dayu.model-input.v4'
-        ? {
-            case_id: values.case_id,
-            input_schema_version: 'dayu.model-input.v4',
-            solver_id: D1_SOLVER_ID,
-            capability_id: selectedCapabilityId,
-            dispatch_plan_id: values.dispatch_plan_id,
-            execution_mode: 'validation',
-            storage_level: values.storage_level ?? 'full',
-          }
-        : { ...values, input_schema_version: 'dayu.model-input.v3', dispatch_plan_id: undefined, capability_id: undefined };
+      const body = normalizeTaskRequest(values);
+      const checked = await previewHydraulicModel(body);
+      setPreview(checked);
+      if (!checked.readiness.ready) throw new Error('模型映射未通过，请先处理阻断项');
+      if (!checked.readiness.runtime_available) throw new Error(checked.readiness.runtime_detail || 'MASCARET 运行时不可用');
       const created = await createHydraulicTask(body);
       await enqueueHydraulicTask(created.id);
-      message.success(`任务 #${created.id} 已进入 Celery/Redis 队列`);
+      message.success(`任务 #${created.id} 已进入 Standard 1D 计算队列`);
       navigate('/hydraulic/tasks');
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '任务创建或运行失败');
+      setError(reason instanceof Error ? reason.message : '任务创建或入队失败');
     } finally {
       setSubmitting(false);
     }
   };
 
+  const activeReadiness = preview?.readiness ?? readiness;
+  const modelBlockers = (activeReadiness?.blockers ?? []).filter(
+    (item) => item.code !== 'MASCARET_RUNTIME_NOT_AVAILABLE',
+  );
+  const modelMappingReady = activeReadiness?.input_summary != null && modelBlockers.length === 0;
+  const canRun = activeReadiness?.ready === true && activeReadiness.runtime_available === true;
+
   return (
     <div className="data-page hydraulic-page">
       <HydraulicHeader
-        eyebrow="SAINT-VENANT / CONFIGURATION"
-        title="水动力模拟配置"
-        description="基于已版本化的河网、断面、糙率和边界条件创建可追溯的一维非恒定流任务。"
+        eyebrow="STANDARD 1D / MASCARET"
+        title="标准一维水动力模拟"
+        description="使用大禹统一河网、断面、糙率与边界数据建模，通过 MASCARET Adapter 独立运行并回写统一结果。"
         action={<Button onClick={() => navigate('/hydraulic/tasks')}>查看任务监控</Button>}
       />
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}
       {!loadingCases && datasetVersionId && cases.length === 0 && (
-        <Alert className="data-alert" type="warning" showIcon message="当前版本没有可运行的计算方案" description="请切换到包含模型参数和边界条件的已发布版本，或先在草稿中完善模型数据。" />
+        <Alert
+          className="data-alert"
+          type="warning"
+          showIcon
+          message="当前版本没有可运行的计算方案"
+          description="请切换到包含完整河网、断面、糙率及上下游边界的已发布数据版本。"
+        />
       )}
       <Card className="data-card hydraulic-config-card" title="计算参数">
         <Alert
           showIcon
           type="info"
-          message="空间坐标统一为 CGCS2000 / EPSG:4490；网格距离采用断面桩号与河段米制长度。"
+          message="产品只提供 Standard 1D；引擎固定为 MASCARET v9.1.1，不暴露求解器私有文件或旧自研算法选项。"
         />
         <Form
           form={form}
           layout="vertical"
           className="hydraulic-form"
           initialValues={{
-            input_schema_version: 'dayu.model-input.v3',
+            engine: HYDRAULIC_ENGINE,
+            input_schema_version: HYDRAULIC_INPUT_SCHEMA,
             storage_level: 'full',
-            capability_id: D1_CAPABILITY_ID,
             duration_seconds: 3600,
-            time_step_seconds: 60,
-            output_interval_seconds: 300,
-            cfl_number: 0.75,
-            initial_water_level: 10.8,
-            initial_flow: 60,
-            minimum_depth: 0.05,
+            time_step_seconds: 10,
+            output_interval_seconds: 60,
           }}
+          onValuesChange={() => setPreview(undefined)}
           onFinish={(values) => void submit(values)}
         >
           <Row gutter={16}>
-            <Col xs={24} md={12}>
-              <Form.Item name="input_schema_version" label="求解器路线" rules={[{ required: true }]}>
-                <Select options={[
-                  { value: 'dayu.model-input.v3', label: 'Legacy v3 · 河网连续性/Manning' },
-                  { value: 'dayu.model-input.v4', label: 'Saint-Venant native v4（显式能力）' },
-                ]} />
-              </Form.Item>
-            </Col>
             <Col xs={24} md={12}>
               <Form.Item name="case_id" label="计算方案" rules={[{ required: true, message: '请选择计算方案' }]}>
                 <Select
@@ -258,99 +281,102 @@ export function HydraulicConfigPage() {
                 />
               </Form.Item>
             </Col>
-            {schemaVersion === 'dayu.model-input.v4' && (
-              <Col xs={24} md={12}>
-                <Form.Item name="capability_id" label="科学能力" rules={[{ required: true, message: '请选择显式能力' }]}>
-                  <Select options={[
-                    { value: D1_CAPABILITY_ID, label: 'D1 validation · n=0' },
-                    { value: D3A_1_CAPABILITY_ID, label: 'D3A-1 Manning · 0<n≤0.10' },
-                    { value: D3A_2_CAPABILITY_ID, label: 'D3A-2 Manning + Slope · 显式河床' },
-                    { value: D3A_3_CAPABILITY_ID, label: 'D3A-3 Engineering Profiles · 渐变断面' },
-                  ]} />
-                </Form.Item>
-              </Col>
-            )}
-            {schemaVersion === 'dayu.model-input.v4' && (
-              <Col xs={24} md={12}>
-                <Form.Item name="dispatch_plan_id" label="冻结调度方案" rules={[{ required: true, message: 'v4 必须选择冻结调度方案' }]}>
-                  <Select options={plans
-                    .filter((item) => !selectedCaseId || item.simulation_case_id === selectedCaseId)
-                    .map((item) => ({ value: item.id, label: `${item.name} · v${item.version} · #${item.id}` }))} />
-                </Form.Item>
-              </Col>
-            )}
-            {schemaVersion !== 'dayu.model-input.v4' && <Col xs={12} md={6}>
+            <Col xs={12} md={6}>
               <Form.Item name="duration_seconds" label="模拟时长（s）" rules={[{ required: true }]}>
                 <InputNumber min={1} precision={0} style={{ width: '100%' }} />
               </Form.Item>
-            </Col>}
-            {schemaVersion !== 'dayu.model-input.v4' && <Col xs={12} md={6}>
-              <Form.Item name="time_step_seconds" label="请求步长（s）" rules={[{ required: true }]}>
+            </Col>
+            <Col xs={12} md={6}>
+              <Form.Item name="time_step_seconds" label="计算步长（s）" rules={[{ required: true }]}>
                 <InputNumber min={0.001} style={{ width: '100%' }} />
               </Form.Item>
-            </Col>}
+            </Col>
           </Row>
-          {schemaVersion !== 'dayu.model-input.v4' && <Row gutter={16}>
+          <Row gutter={16}>
             <Col xs={12} md={6}>
               <Form.Item name="output_interval_seconds" label="输出间隔（s）" rules={[{ required: true }]}>
                 <InputNumber min={0.001} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
             <Col xs={12} md={6}>
-              <Form.Item name="cfl_number" label="CFL 系数" rules={[{ required: true }]}>
-                <InputNumber min={0.01} max={1} step={0.05} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-            <Col xs={12} md={6}>
-              <Form.Item name="initial_water_level" label="初始水位（m）">
+              <Form.Item
+                name="initial_water_level"
+                label="初始水位（m，可选）"
+                dependencies={['initial_flow']}
+                rules={[pairedInitialRule('initial_flow', '水位')]}
+              >
                 <InputNumber step={0.1} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
             <Col xs={12} md={6}>
-              <Form.Item name="initial_flow" label="初始流量（m³/s）">
+              <Form.Item
+                name="initial_flow"
+                label="初始流量（m³/s，可选）"
+                dependencies={['initial_water_level']}
+                rules={[pairedInitialRule('initial_water_level', '流量')]}
+              >
                 <InputNumber step={1} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
-          </Row>}
-          {schemaVersion !== 'dayu.model-input.v4' && <Row gutter={16}>
-            <Col xs={12} md={6}>
-              <Form.Item name="minimum_depth" label="最小水深（m）" rules={[{ required: true }]}>
-                <InputNumber min={0.001} step={0.01} style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>}
-          {schemaVersion === 'dayu.model-input.v4' && (
-            <Alert
-              className="data-alert"
-              showIcon
-              type={readiness?.ready ? 'success' : readiness ? 'error' : 'info'}
-              message={readiness?.ready ? `${selectedCapabilityId === D3A_3_CAPABILITY_ID ? 'D3A-3 Engineering Profiles' : selectedCapabilityId === D3A_2_CAPABILITY_ID ? 'D3A-2 Manning + Slope' : selectedCapabilityId === D3A_1_CAPABILITY_ID ? 'D3A-1 Manning' : 'D1'} v4 readiness 通过` : readinessLoading ? '正在检查 v4 readiness' : '请选择科学能力、工况与冻结调度方案'}
-              description={readiness ? (
-                <Space direction="vertical" size={2}>
-                  <Text>solver: {readiness.solver_id}</Text>
-                  <Text>capability: {readiness.capability_id}</Text>
-                  {readiness.errors.map((item) => <Text type="danger" key={`${item.code}-${item.field_path}`}>{item.code} · {item.message}</Text>)}
-                  <Text type="secondary">单 Branch · 全湿 · 正向严格亚临界 · {selectedCapabilityId === D3A_3_CAPABILITY_ID ? '正有效 Manning、显式下降河床、相邻 A/T/P/I1 变化率≤0.25 的渐变非同断面' : selectedCapabilityId === D3A_2_CAPABILITY_ID ? '正有效 Manning、显式线性河床、相同局部断面形状' : selectedCapabilityId === D3A_1_CAPABILITY_ID ? '正有效 Manning、平床、相同断面' : 'n=0、平床、相同断面'} · 1 Gate · 1 external Pump · 仅验证用途 · 非生产率定</Text>
-                </Space>
-              ) : undefined}
-            />
+          </Row>
+          <Alert
+            className="data-alert"
+            showIcon
+            type={canRun ? 'success' : modelMappingReady ? 'warning' : activeReadiness ? 'error' : 'info'}
+            message={readinessLoading
+              ? '正在检查 Standard 1D 就绪状态'
+              : canRun
+                ? `模型映射已就绪 · ${activeReadiness.engine_id ?? HYDRAULIC_ENGINE} ${activeReadiness.engine_version ?? 'v9.1.1'}`
+                : modelMappingReady
+                  ? '模型映射已通过，等待 MASCARET 运行时'
+                : '请选择计算方案并处理模型阻断项'}
+            description={activeReadiness && (
+              <Space direction="vertical" size={2}>
+                <Text type={activeReadiness.runtime_available ? 'success' : 'warning'}>
+                  运行时：{activeReadiness.runtime_available ? '可用' : '不可用'} · {activeReadiness.runtime_detail}
+                </Text>
+                {(activeReadiness.blockers ?? []).map((item, index) => (
+                  <Text type="danger" key={`blocker-${index}`}>{issueLabel(item)}</Text>
+                ))}
+                {(activeReadiness.warnings ?? []).map((item, index) => (
+                  <Text type="warning" key={`warning-${index}`}>{issueLabel(item)}</Text>
+                ))}
+                {preview?.snapshot_hash && <Text type="secondary">冻结输入：{preview.snapshot_hash}</Text>}
+              </Space>
+            )}
+          />
+          {activeReadiness?.input_summary && (
+            <Card size="small" title="输入摘要">
+              <pre className="hydraulic-diagnostics">{JSON.stringify(activeReadiness.input_summary, null, 2)}</pre>
+            </Card>
           )}
-          <Button
-            type="primary"
-            size="large"
-            icon={<PlayCircleOutlined />}
-            htmlType="submit"
-            loading={submitting}
-            disabled={!datasetVersionId || cases.length === 0 || (schemaVersion === 'dayu.model-input.v4' && !readiness?.ready)}
-          >
-            创建并运行模拟
-          </Button>
+          <Space wrap>
+            <Button
+              icon={<SafetyCertificateOutlined />}
+              loading={previewing}
+              disabled={!selectedCaseId}
+              onClick={() => void runPreview()}
+            >
+              检查模型映射
+            </Button>
+            <Button
+              type="primary"
+              size="large"
+              icon={<PlayCircleOutlined />}
+              htmlType="submit"
+              loading={submitting}
+              disabled={!datasetVersionId || cases.length === 0 || !canRun}
+            >
+              创建并运行模拟
+            </Button>
+          </Space>
         </Form>
       </Card>
     </div>
   );
 }
 
+/** Show the generic durable lifecycle without old solver-specific counters. */
 export function HydraulicTasksPage() {
   const navigate = useNavigate();
   const { datasetVersionId } = useDatasetVersion();
@@ -393,95 +419,50 @@ export function HydraulicTasksPage() {
     return () => window.clearInterval(timer);
   }, [reload]);
 
-  const enqueuePending = async (task: SimulationTaskRecord) => {
-    await enqueueHydraulicTask(task.id);
-    await reload();
-  };
-
   const columns: ColumnsType<SimulationTaskRecord> = [
     { title: '任务', dataIndex: 'id', width: 90, render: (value: number) => `#${value}` },
     { title: '方案 ID', dataIndex: 'case_id', width: 100 },
-    { title: 'Schema', dataIndex: 'input_schema_version', width: 150, render: (value: string | null) => value?.replace('dayu.model-input.', 'v') ?? '—' },
-    { title: '求解器 / 能力', key: 'solver', width: 260, render: (_, task) => <Space direction="vertical" size={0}><Text>{task.solver_id ?? 'legacy default'}</Text><Text type="secondary">{task.capability_id ?? '—'}</Text></Space> },
     {
-      title: '运行构建',
-      key: 'runtime-build',
-      width: 230,
+      title: '引擎',
+      key: 'engine',
+      width: 220,
       render: (_, task) => (
         <Space direction="vertical" size={0}>
-          <Space size={4}>
-            <Tag color={task.build_verified ? 'success' : 'warning'}>{task.build_verified ? '已验证' : '开发构建'}</Tag>
-            <Text>{task.build_mode ?? '—'}</Text>
-          </Space>
-          <Text type="secondary" title={task.solver_build_id ?? undefined}>
-            {task.engine_commit?.slice(0, 12) ?? '—'} · {task.solver_build_id?.slice(-12) ?? '—'}
-          </Text>
+          <Text>Standard 1D</Text>
+          <Text type="secondary">{task.solver_id ?? HYDRAULIC_ENGINE} {task.engine_version ?? 'v9.1.1'} · {task.runtime_adapter_id ?? '—'}</Text>
         </Space>
       ),
     },
+    { title: '输入 Schema', dataIndex: 'input_schema_version', width: 220, render: (value: string | null) => value ?? '—' },
     { title: '状态', dataIndex: 'status', width: 110, render: statusTag },
     { title: '进度', dataIndex: 'progress', width: 180, render: (value: number) => <Progress percent={value} size="small" /> },
     { title: '阶段', dataIndex: 'execution_phase', width: 150, render: (value: string | null) => value ?? '—' },
-    { title: '模拟时刻 / CFL', key: 'runtime', width: 160, render: (_, task) => `${task.current_simulation_time?.toFixed(1) ?? '—'} s / ${task.current_cfl?.toFixed(3) ?? '—'}` },
-    { title: '接受步', dataIndex: 'accepted_step_count', width: 100 },
-    { title: '执行尝试', key: 'execution-attempts', width: 100, dataIndex: 'execution_attempt_count' },
-    { title: '投递尝试', key: 'delivery-attempts', width: 100, dataIndex: 'delivery_attempt_count' },
-    { title: '人工重试', key: 'manual-retries', width: 100, dataIndex: 'manual_retry_count' },
-    { title: '基础设施重试', key: 'infrastructure-retries', width: 125, dataIndex: 'infrastructure_retry_count' },
-    { title: '数值重试', key: 'numerical-retries', width: 100, dataIndex: 'numerical_retry_count' },
-    { title: '数值重试分类', key: 'retry-breakdown', width: 230, render: (_, task) => `CFL ${task.cfl_reduction_count} · 正性 ${task.positivity_retry_count} · 事件 ${task.event_refinement_count} · 闸 ${task.gate_solver_retry_count} · 泵 ${task.pump_solver_retry_count}` },
-    {
-      title: 'D3A 运行包络',
-      key: 'd3a-envelope',
-      width: 260,
-      render: (_, task) => {
-        if (!D3A_CAPABILITY_IDS.has(task.capability_id ?? '')) return '—';
-        const diagnostics = runtimeDiagnostics(task.diagnostics);
-        const status = diagnostics?.runtime_envelope_status;
-        return (
-          <Space direction="vertical" size={0}>
-            <Tag color={status === 'pass' ? 'success' : 'warning'}>{String(status ?? '待生成')}</Tag>
-            <Text type="secondary">
-              min h {diagnosticNumber(diagnostics, 'minimum_water_depth_m')?.toFixed(3) ?? '—'} m · max Fr {diagnosticNumber(diagnostics, 'maximum_froude_number')?.toFixed(3) ?? '—'}
-            </Text>
-            <Text type="secondary">
-              摩阻重试 {diagnosticNumber(diagnostics, 'friction_retry_count') ?? '—'} · 包络重试 {diagnosticNumber(diagnostics, 'runtime_envelope_retry_count') ?? '—'}
-            </Text>
-          </Space>
-        );
-      },
-    },
-    {
-      title: '重试资格',
-      key: 'retry-eligibility',
-      width: 220,
-      render: (_, task) => {
-        const artifactStateBlocksRetry = RETRY_BLOCKED_ARTIFACT_STATUSES.has(task.artifact_status ?? '');
-        const eligible = canRetryTask(task);
-        return (
-          <Space direction="vertical" size={0}>
-            <Tag color={eligible ? 'success' : 'default'}>{eligible ? '可重试' : '不可重试'}</Tag>
-            {task.retry_block_reason && <Text type="secondary">{task.retry_block_reason}</Text>}
-            {artifactStateBlocksRetry && !task.retry_block_reason && (
-              <Text type="secondary">Artifact {task.artifact_status} 阶段不可重试</Text>
-            )}
-          </Space>
-        );
-      },
-    },
+    { title: '执行尝试', dataIndex: 'execution_attempt_count', width: 100 },
+    { title: '投递尝试', dataIndex: 'delivery_attempt_count', width: 100 },
+    { title: '人工重试', dataIndex: 'manual_retry_count', width: 100 },
+    { title: '基础设施重试', dataIndex: 'infrastructure_retry_count', width: 125 },
     { title: '心跳', dataIndex: 'heartbeat_time', width: 190, render: (value: string | null) => value ? new Date(value).toLocaleString() : '—' },
     { title: '创建时间', dataIndex: 'created_time', width: 190, render: (value: string) => new Date(value).toLocaleString() },
-    { title: '错误信息', dataIndex: 'error_message', ellipsis: true, render: (value: string | null) => value || '—' },
+    { title: '错误信息', dataIndex: 'error_message', width: 300, ellipsis: true, render: (value: string | null) => value || '—' },
     {
       title: '操作',
       key: 'actions',
-      width: 210,
+      fixed: 'right',
+      width: 220,
       render: (_, task) => (
         <Space>
-          {task.status === 'pending' && <Button size="small" icon={<PlayCircleOutlined />} onClick={() => void enqueuePending(task)}>入队</Button>}
-          {['queued', 'running'].includes(task.status) && <Button size="small" danger onClick={async () => { await cancelHydraulicTask(task.id); await reload(); }}>取消</Button>}
-          {canRetryTask(task) && <Button size="small" onClick={async () => { await retryHydraulicTask(task.id); await reload(); }}>重试</Button>}
-          {task.status === 'success' && <Button size="small" icon={<AreaChartOutlined />} onClick={() => navigate(`/hydraulic/results?taskId=${task.id}`)}>结果</Button>}
+          {task.status === 'pending' && (
+            <Button size="small" icon={<PlayCircleOutlined />} onClick={async () => { await enqueueHydraulicTask(task.id); await reload(); }}>入队</Button>
+          )}
+          {['queued', 'running'].includes(task.status) && (
+            <Button size="small" danger onClick={async () => { await cancelHydraulicTask(task.id); await reload(); }}>取消</Button>
+          )}
+          {task.retry_eligible && (
+            <Button size="small" title={task.retry_block_reason ?? undefined} onClick={async () => { await retryHydraulicTask(task.id); await reload(); }}>重试</Button>
+          )}
+          {task.status === 'success' && (
+            <Button size="small" icon={<AreaChartOutlined />} onClick={() => navigate(`/hydraulic/results?taskId=${task.id}`)}>结果</Button>
+          )}
         </Space>
       ),
     },
@@ -490,14 +471,19 @@ export function HydraulicTasksPage() {
   return (
     <div className="data-page hydraulic-page">
       <HydraulicHeader
-        eyebrow="SIMULATION TASKS / MONITOR"
-        title="模拟任务监控"
-        description="任务状态按 pending → running → success / failed 持久化，可追踪开始时间、完成时间和失败原因。"
-        action={<Space><Button type="primary" onClick={() => navigate('/hydraulic/config')}>新建模拟</Button><Button icon={<ReloadOutlined />} onClick={() => void reload()} /></Space>}
+        eyebrow="STANDARD 1D / TASKS"
+        title="Standard 1D 任务监控"
+        description="跟踪 MASCARET 任务的排队、执行、取消、成功与失败状态，保留冻结输入和运行来源。"
+        action={(
+          <Space>
+            <Button type="primary" onClick={() => navigate('/hydraulic/config')}>新建模拟</Button>
+            <Button icon={<ReloadOutlined />} onClick={() => void reload()} />
+          </Space>
+        )}
       />
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}
       <Card className="data-card">
-        <Table rowKey="id" loading={loading} dataSource={tasks} columns={columns} pagination={{ pageSize: 12 }} scroll={{ x: 3100 }} />
+        <Table rowKey="id" loading={loading} dataSource={tasks} columns={columns} pagination={{ pageSize: 12 }} scroll={{ x: 2250 }} />
       </Card>
     </div>
   );
@@ -510,6 +496,7 @@ interface HydraulicChartSeries {
   velocity: number[];
 }
 
+/** Draw the three primary solver-neutral time series with a lazily loaded chart runtime. */
 function HydraulicResultChart({ result }: { result?: HydraulicChartSeries }) {
   const element = useRef<HTMLDivElement>(null);
 
@@ -533,7 +520,9 @@ function HydraulicResultChart({ result }: { result?: HydraulicChartSeries }) {
           { left: 58, right: 30, top: '70%', height: '20%' },
         ],
         xAxis: [0, 1, 2].map((index) => ({
-          type: 'category', gridIndex: index, data: labels,
+          type: 'category',
+          gridIndex: index,
+          data: labels,
           axisLabel: { color: '#628196', show: index === 2 },
           axisLine: { lineStyle: { color: 'rgba(102,145,168,.24)' } },
         })),
@@ -569,6 +558,7 @@ function HydraulicResultChart({ result }: { result?: HydraulicChartSeries }) {
   return <div ref={element} className="hydraulic-result-chart" />;
 }
 
+/** Read a unified result and expose no MASCARET-native output format to the UI. */
 export function HydraulicResultsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -576,12 +566,6 @@ export function HydraulicResultsPage() {
   const [tasks, setTasks] = useState<SimulationTaskRecord[]>([]);
   const [tasksLoaded, setTasksLoaded] = useState(false);
   const [result, setResult] = useState<SimulationResultResponse>();
-  const [v4Result, setV4Result] = useState<V4SectionResultResponse>();
-  const [v4Gates, setV4Gates] = useState<V4GateResultRecord[]>([]);
-  const [v4Pumps, setV4Pumps] = useState<V4PumpResultRecord[]>([]);
-  const [v4Events, setV4Events] = useState<V4ControlEventRecord[]>([]);
-  const [v4Summary, setV4Summary] = useState<V4ResultSummary>();
-  const [downloadingArtifactId, setDownloadingArtifactId] = useState<number>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -593,11 +577,6 @@ export function HydraulicResultsPage() {
     setTasks([]);
     setTasksLoaded(false);
     setResult(undefined);
-    setV4Result(undefined);
-    setV4Gates([]);
-    setV4Pumps([]);
-    setV4Events([]);
-    setV4Summary(undefined);
     if (!datasetVersionId) {
       setLoading(false);
       setTasksLoaded(true);
@@ -645,43 +624,19 @@ export function HydraulicResultsPage() {
     let cancelled = false;
     setLoading(true);
     setError('');
-    const task = tasks.find((item) => item.id === taskId);
-    const request = task?.input_schema_version === 'dayu.model-input.v4'
-      ? (async () => {
-          const options = await listHydraulicV4Sections(taskId);
-          const resolvedSectionId = sectionId || options[0]?.hydraulic_cross_section_id;
-          if (!resolvedSectionId) throw new Error('v4 任务没有可用断面结果');
-          if (!sectionId) {
-            setSearchParams((current) => {
-              const next = new URLSearchParams(current);
-              next.set('sectionId', String(resolvedSectionId));
-              return next;
-            }, { replace: true });
-          }
-          const [section, gates, pumps, events, summary] = await Promise.all([
-            getHydraulicV4Section(taskId, resolvedSectionId),
-            getHydraulicV4Gates(taskId),
-            getHydraulicV4Pumps(taskId),
-            getHydraulicV4Events(taskId),
-            getHydraulicV4Summary(taskId),
-          ]);
-          if (!cancelled) {
-            setResult(undefined);
-            setV4Result(section);
-            setV4Gates(gates);
-            setV4Pumps(pumps);
-            setV4Events(events);
-            setV4Summary(summary);
-          }
-        })()
-      : getHydraulicResult(taskId, sectionId || undefined)
-          .then((value) => {
-            if (!cancelled) {
-              setV4Result(undefined);
-              setResult(value);
-            }
-          });
-    void request
+    void getHydraulicResult(taskId, sectionId || undefined)
+      .then((value) => {
+        if (cancelled) return;
+        setResult(value);
+        const firstSectionId = value.available_sections[0]?.section_id;
+        if (!sectionId && firstSectionId) {
+          setSearchParams((current) => {
+            const next = new URLSearchParams(current);
+            next.set('sectionId', String(firstSectionId));
+            return next;
+          }, { replace: true });
+        }
+      })
       .catch((reason: unknown) => {
         if (!cancelled) setError(reason instanceof Error ? reason.message : '结果加载失败');
       })
@@ -690,18 +645,24 @@ export function HydraulicResultsPage() {
   }, [sectionId, setSearchParams, taskId, tasks, tasksLoaded]);
 
   const selectedTask = useMemo(() => tasks.find((item) => item.id === taskId), [taskId, tasks]);
-  const isD3AResult = D3A_CAPABILITY_IDS.has(selectedTask?.capability_id ?? '');
-  const d3aDiagnostics = v4Summary?.runtime_envelope;
-  const latestValues = result ? {
-    stage: result.water_level.at(-1), flow: result.flow.at(-1), velocity: result.velocity.at(-1),
-  } : v4Result ? {
-    stage: v4Result.water_level_m.at(-1), flow: v4Result.flow_m3s.at(-1), velocity: v4Result.velocity_m_s.at(-1),
+  const latestIndex = result ? result.time.length - 1 : -1;
+  const latest = latestIndex >= 0 && result ? {
+    waterLevel: result.water_level[latestIndex],
+    depth: result.depth[latestIndex],
+    flow: result.flow[latestIndex],
+    velocity: result.velocity[latestIndex],
+    flowArea: result.flow_area[latestIndex],
+    wetArea: result.wet_area[latestIndex],
+    hydraulicRadius: result.hydraulic_radius[latestIndex],
+    topWidth: result.top_width[latestIndex],
+    froude: result.froude_number[latestIndex],
   } : undefined;
-  const chartResult: HydraulicChartSeries | undefined = result
-    ? { time: result.time, water_level: result.water_level, flow: result.flow, velocity: result.velocity }
-    : v4Result
-      ? { time: v4Result.time_seconds, water_level: v4Result.water_level_m, flow: v4Result.flow_m3s, velocity: v4Result.velocity_m_s }
-      : undefined;
+  const chartResult = result ? {
+    time: result.time,
+    water_level: result.water_level,
+    flow: result.flow,
+    velocity: result.velocity,
+  } : undefined;
 
   const changeTask = (value: number) => {
     const next = new URLSearchParams(searchParams);
@@ -715,176 +676,70 @@ export function HydraulicResultsPage() {
     setSearchParams(next);
   };
 
-  const downloadArtifact = async (artifact: V4ArtifactManifest) => {
-    if (artifact.status !== 'published') return;
-    setDownloadingArtifactId(artifact.id);
-    try {
-      const blob = await downloadHydraulicV4Artifact(taskId, artifact.id);
-      const objectUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = objectUrl;
-      anchor.download = artifact.storage_key.split('/').at(-1) || `${artifact.artifact_type}-${artifact.id}`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(objectUrl);
-    } catch (reason) {
-      message.error(reason instanceof Error ? reason.message : 'Artifact 下载失败');
-    } finally {
-      setDownloadingArtifactId(undefined);
-    }
-  };
-
   return (
     <div className="data-page hydraulic-page">
       <HydraulicHeader
-        eyebrow="HYDRAULIC RESULTS / TIMESERIES"
-        title="水动力模拟结果"
-        description="按计算任务和真实横断面查看水位、流量与流速时序；GIS 选中断面可直接联动到本页。"
+        eyebrow="UNIFIED HYDRAULIC RESULT"
+        title="Standard 1D 模拟结果"
+        description="按任务和横断面查看大禹统一结果；页面不直接读取 MASCARET 原生文件。"
         action={<Space><Button onClick={() => navigate('/gis')}>返回 GIS</Button><Button onClick={() => navigate('/hydraulic/tasks')}>任务监控</Button></Space>}
       />
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}
-      {!taskId && !loading && <Alert showIcon type="info" message="暂无成功任务，请先创建并运行模拟。" action={<Button onClick={() => navigate('/hydraulic/config')}>新建模拟</Button>} />}
-      {taskId && (
+      {!taskId && !loading && (
+        <Alert showIcon type="info" message="暂无成功任务，请先创建并运行模拟。" action={<Button onClick={() => navigate('/hydraulic/config')}>新建模拟</Button>} />
+      )}
+      {taskId > 0 && (
         <>
           <Card className="data-card" loading={loading}>
             <Row gutter={[16, 16]} align="bottom">
               <Col xs={24} md={8}>
                 <Text type="secondary">成功任务</Text>
-                <Select className="hydraulic-select" value={taskId} onChange={changeTask} options={tasks.map((task) => ({ value: task.id, label: `任务 #${task.id} · ${new Date(task.created_time).toLocaleString()}` }))} />
+                <Select
+                  className="hydraulic-select"
+                  value={taskId}
+                  onChange={changeTask}
+                  options={tasks.map((task) => ({ value: task.id, label: `任务 #${task.id} · ${new Date(task.created_time).toLocaleString()}` }))}
+                />
               </Col>
               <Col xs={24} md={8}>
                 <Text type="secondary">横断面</Text>
                 <Select
                   className="hydraulic-select"
-                  value={result?.section_id ?? v4Result?.hydraulic_cross_section_id ?? undefined}
+                  value={result?.section_id ?? undefined}
                   onChange={changeSection}
-                  options={result
-                    ? result.available_sections.filter((item) => item.section_id !== null).map((item) => ({ value: item.section_id as number, label: `${item.section_code} · ${item.station.toFixed(1)} m` }))
-                    : v4Result?.available_sections.map((item) => ({ value: item.hydraulic_cross_section_id, label: `${item.section_code} · ${item.chainage_m.toFixed(1)} m` })) ?? []}
+                  options={result?.available_sections
+                    .map((item) => ({ value: item.section_id, label: `${item.section_code} · ${item.chainage_m.toFixed(1)} m` })) ?? []}
                 />
               </Col>
               <Col xs={24} md={8}>
                 <Descriptions size="small" column={1} items={[
                   { key: 'status', label: '状态', children: selectedTask ? statusTag(selectedTask.status) : <Tag>—</Tag> },
-                  { key: 'schema', label: 'Schema', children: selectedTask?.input_schema_version ?? '—' },
-                  { key: 'section', label: '当前断面', children: result?.section_code ?? v4Result?.section_code ?? '—' },
+                  { key: 'engine', label: '引擎', children: result ? `Standard 1D · ${result.engine} ${result.engine_version}` : selectedTask ? `Standard 1D · ${selectedTask.solver_id ?? HYDRAULIC_ENGINE} ${selectedTask.engine_version ?? 'v9.1.1'}` : '—' },
+                  { key: 'scenario', label: '模拟 / 情景', children: result ? `${result.simulation_id} / ${result.scenario_id}` : '—' },
+                  { key: 'branch', label: '河段 / 桩号', children: result ? `#${result.branch_id} / ${result.chainage_m.toFixed(1)} m` : '—' },
+                  { key: 'section', label: '当前断面', children: result?.section_code ?? '—' },
                 ]} />
               </Col>
             </Row>
           </Card>
-          {(result || v4Result) && (
+          {result && (
             <>
-              <Row gutter={16} className="hydraulic-stats">
-                <Col xs={24} md={8}><Card className="data-card"><Statistic prefix={<CheckCircleOutlined />} title="末时刻水位" value={latestValues?.stage} precision={3} suffix="m" /></Card></Col>
-                <Col xs={24} md={8}><Card className="data-card"><Statistic title="末时刻流量" value={latestValues?.flow} precision={3} suffix="m³/s" /></Card></Col>
-                <Col xs={24} md={8}><Card className="data-card"><Statistic title="末时刻流速" value={latestValues?.velocity} precision={3} suffix="m/s" /></Card></Col>
+              <Row gutter={[16, 16]} className="hydraulic-stats">
+                <Col xs={12} md={8} xl={6}><Card className="data-card"><Statistic prefix={<CheckCircleOutlined />} title="末时刻水位" value={latest?.waterLevel} precision={3} suffix="m" /></Card></Col>
+                <Col xs={12} md={8} xl={6}><Card className="data-card"><Statistic title="末时刻水深" value={latest?.depth ?? undefined} precision={3} suffix="m" /></Card></Col>
+                <Col xs={12} md={8} xl={6}><Card className="data-card"><Statistic title="末时刻流量" value={latest?.flow} precision={3} suffix="m³/s" /></Card></Col>
+                <Col xs={12} md={8} xl={6}><Card className="data-card"><Statistic title="末时刻流速" value={latest?.velocity} precision={3} suffix="m/s" /></Card></Col>
+                <Col xs={12} md={8} xl={6}><Card className="data-card"><Statistic title="过流面积" value={latest?.flowArea ?? undefined} precision={3} suffix="m²" /></Card></Col>
+                <Col xs={12} md={8} xl={6}><Card className="data-card"><Statistic title="湿面积" value={latest?.wetArea ?? undefined} precision={3} suffix="m²" /></Card></Col>
+                <Col xs={12} md={8} xl={6}><Card className="data-card"><Statistic title="水力半径" value={latest?.hydraulicRadius ?? undefined} precision={3} suffix="m" /></Card></Col>
+                <Col xs={12} md={8} xl={6}><Card className="data-card"><Statistic title="水面宽" value={latest?.topWidth ?? undefined} precision={3} suffix="m" /></Card></Col>
+                <Col xs={12} md={8} xl={6}><Card className="data-card"><Statistic title="Froude 数" value={latest?.froude ?? undefined} precision={4} /></Card></Col>
               </Row>
-              <Card className="data-card" title={`${result?.section_code ?? v4Result?.section_code} · 时序曲线`} extra={<Tag color="cyan">{chartResult?.time.length} 个输出时刻</Tag>}>
+              <Card className="data-card" title={`${result.section_code} · 时序曲线`} extra={<Tag color="cyan">{result.time.length} 个输出时刻</Tag>}>
                 <HydraulicResultChart result={chartResult} />
               </Card>
-              {v4Result && (
-                <>
-                  <Alert
-                    className="data-alert"
-                    type="warning"
-                    showIcon
-                    message={`Saint-Venant ${isD3AResult ? 'D3A' : 'D1'} v4 受限验证结果`}
-                    description={isD3AResult
-                      ? '单 Branch、全湿、正向 Fr≤0.8、正 Manning、1 个 completed-interface Gate、1 个 external Pump；仅用于验证。'
-                      : '单 Branch、全湿、正向严格亚临界、1 个 completed-interface Gate、1 个 external Pump；非生产率定或水利决策依据。'}
-                  />
-                  {isD3AResult && (
-                    <Row gutter={[12, 12]} className="hydraulic-stats">
-                      <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="包络状态" value={String(d3aDiagnostics?.runtime_envelope_status ?? '—')} /></Card></Col>
-                      <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="最小水深" value={d3aDiagnostics?.minimum_water_depth_m ?? '—'} precision={4} suffix="m" /></Card></Col>
-                      <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="最小流量 Q" value={d3aDiagnostics?.minimum_discharge_m3s ?? '—'} precision={9} suffix="m³/s" /></Card></Col>
-                      <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="最大 Froude" value={d3aDiagnostics?.maximum_froude_number ?? '—'} precision={4} /></Card></Col>
-                      <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="摩阻重试" value={d3aDiagnostics?.friction_retry_count ?? '—'} /></Card></Col>
-                      <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="包络重试" value={d3aDiagnostics?.runtime_envelope_retry_count ?? '—'} /></Card></Col>
-                    </Row>
-                  )}
-                  <Card className="data-card" title="Gate 输出">
-                    <Table
-                      rowKey={(row) => `${row.canonical_gate_id}-${row.time_seconds}`}
-                      size="small"
-                      dataSource={v4Gates}
-                      pagination={{ pageSize: 8 }}
-                      scroll={{ x: 1050 }}
-                      columns={[
-                        { title: 't / s', dataIndex: 'time_seconds' },
-                        { title: '开度 / m', dataIndex: 'opening_m' },
-                        { title: 'Q / m³/s', dataIndex: 'flow_m3s' },
-                        { title: '上游 H / m', dataIndex: 'upstream_stage_m' },
-                        { title: '下游 H / m', dataIndex: 'downstream_stage_m' },
-                        { title: '水头损失 / m', dataIndex: 'head_loss_m' },
-                        { title: '流态', dataIndex: 'regime' },
-                      ]}
-                    />
-                  </Card>
-                  <Card className="data-card" title="External Pump 输出">
-                    <Table
-                      rowKey={(row) => `${row.canonical_pump_id}-${row.time_seconds}`}
-                      size="small"
-                      dataSource={v4Pumps}
-                      pagination={{ pageSize: 8 }}
-                      scroll={{ x: 1500 }}
-                      columns={[
-                        { title: 't / s', dataIndex: 'time_seconds' },
-                        { title: '状态', dataIndex: 'control_state', render: (value: string) => <Tag color={value === 'on' ? 'green' : 'default'}>{value.toUpperCase()}</Tag> },
-                        { title: '机组', dataIndex: 'running_units' },
-                        { title: 'Q / m³/s', dataIndex: 'flow_m3s' },
-                        { title: '源 H / m', dataIndex: 'source_stage_m' },
-                        { title: '出口 H / m', dataIndex: 'outlet_stage_m' },
-                        { title: 'Pump head / m', dataIndex: 'pump_head_m' },
-                        { title: 'System head / m', dataIndex: 'system_head_m' },
-                        { title: '效率', dataIndex: 'efficiency' },
-                        { title: '输入功率 / kW', dataIndex: 'input_power_kw' },
-                        { title: '累计能耗 / kWh', dataIndex: 'cumulative_energy_kwh' },
-                        { title: '迭代', dataIndex: 'iterations' },
-                      ]}
-                    />
-                  </Card>
-                  <Card className="data-card" title="控制事件时间轴">
-                    <Table
-                      rowKey={(row) => `${row.structure_type}-${row.canonical_structure_id}-${row.time_seconds}-${row.event_type}`}
-                      size="small"
-                      pagination={false}
-                      dataSource={v4Events}
-                      columns={[
-                        { title: 't / s', dataIndex: 'time_seconds' },
-                        { title: '结构', dataIndex: 'structure_type' },
-                        { title: '权威 ID', dataIndex: 'canonical_structure_id' },
-                        { title: '事件', dataIndex: 'event_type' },
-                        { title: '原因', dataIndex: 'reason' },
-                      ]}
-                    />
-                  </Card>
-                  <Card className="data-card" title="Result v3 / Artifact">
-                    <Space direction="vertical">
-                      <Text>result schema: {v4Summary?.result_schema_version}</Text>
-                      {v4Summary?.artifacts.map((artifact) => {
-                        const downloadable = artifact.status === 'published';
-                        return (
-                          <Space key={artifact.id}>
-                            <Button
-                              type="link"
-                              disabled={!downloadable}
-                              loading={downloadingArtifactId === artifact.id}
-                              onClick={() => void downloadArtifact(artifact)}
-                            >
-                              {artifact.artifact_type} · {artifact.record_count} records · SHA-256 {artifact.sha256.slice(0, 16)}…
-                            </Button>
-                            <Tag color={downloadable ? 'success' : 'default'}>{artifact.status}</Tag>
-                          </Space>
-                        );
-                      })}
-                    </Space>
-                  </Card>
-                </>
-              )}
-              <Card className="data-card" title="稳定性诊断">
-                <pre className="hydraulic-diagnostics">{JSON.stringify(result?.diagnostics ?? v4Summary?.provenance, null, 2)}</pre>
+              <Card className="data-card" title="运行与结果诊断">
+                <pre className="hydraulic-diagnostics">{JSON.stringify(result.diagnostics, null, 2)}</pre>
               </Card>
             </>
           )}

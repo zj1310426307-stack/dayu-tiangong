@@ -16,7 +16,7 @@ from app.dataset.lifecycle import assert_dataset_version_mutable
 from app.gis import service as gis_service
 from app.gis.models import (
     CrossSection, DatasetVersion, Gate, MapAnnotation, Pump, River, RiverConnection,
-    SimulationCase, SimulationTask,
+    SimulationTask,
 )
 from app.gis_analysis.schemas import (
     AnnotationCreate, AnnotationRecord, AnnotationUpdate, BufferAnalysisRequest,
@@ -569,31 +569,41 @@ def build_thematic_pdf(session: Session, payload: ThematicMapRequest) -> bytes:
     y = height - 118
     pdf.setFont("STSong-Light", 9)
     for color, label in legend:
-        pdf.setFillColor(colors.HexColor(color)); pdf.rect(panel_x, y - 3, 10, 10, fill=1, stroke=0)
-        pdf.setFillColor(colors.HexColor("#294A53")); pdf.drawString(panel_x + 16, y, label); y -= 20
+        pdf.setFillColor(colors.HexColor(color))
+        pdf.rect(panel_x, y - 3, 10, 10, fill=1, stroke=0)
+        pdf.setFillColor(colors.HexColor("#294A53"))
+        pdf.drawString(panel_x + 16, y, label)
+        y -= 20
     selected_time = frame.selected_time_seconds if frame.selected_time_seconds is not None else payload.time_seconds
     task = session.get(SimulationTask, frame.task_id) if frame.task_id else None
-    model_version = task.engine_version if task and task.engine_version else "DEMO simplified hydraulic engine"
+    model_version = task.engine_version if task and task.engine_version else "未记录的历史模型版本"
     if task and task.engine_commit:
         model_version = f"{model_version} / {task.engine_commit}"
     metadata = [
-        f"坐标系：CGCS2000 / EPSG:4490", f"数据版本：#{payload.dataset_version_id}",
+        "坐标系：CGCS2000 / EPSG:4490",
+        f"数据版本：#{payload.dataset_version_id}",
         f"模型版本：{model_version}",
-        f"模型任务：#{frame.task_id or '无'}", f"调度运行：#{frame.dispatch_run_id or '无'}",
-        f"模拟时刻：{selected_time:.0f} s", f"水动力点：{len(frame.water_samples)}",
-        f"闸泵状态：{len(frame.structure_samples)}", f"制图人：{payload.author}",
+        f"模型任务：#{frame.task_id or '无'}",
+        f"调度运行：#{frame.dispatch_run_id or '无'}",
+        f"模拟时刻：{selected_time:.0f} s",
+        f"水动力点：{len(frame.water_samples)}",
+        f"闸泵状态：{len(frame.structure_samples)}",
+        f"制图人：{payload.author}",
     ]
     y -= 12
     for line in metadata:
-        pdf.drawString(panel_x, y, line); y -= 17
+        pdf.drawString(panel_x, y, line)
+        y -= 17
     pdf.setFillColor(colors.HexColor("#9B3C45"))
     pdf.setFont("STSong-Light", 8.5)
     for line in ("本图为 DEMO 模拟专题图，仅供人工分析。", "不代表实时遥测，不具有设备执行权限。"):
-        pdf.drawString(panel_x, y, line); y -= 14
+        pdf.drawString(panel_x, y, line)
+        y -= 14
     pdf.setFillColor(colors.HexColor("#49646C"))
     pdf.drawString(36, 44, f"范围：{bbox[0]:.5f}, {bbox[1]:.5f} - {bbox[2]:.5f}, {bbox[3]:.5f}")
     pdf.drawRightString(width - 36, 44, "图例 · 比例尺 · 指北针 · 坐标 · 时间 · 数据/模型版本")
-    pdf.showPage(); pdf.save()
+    pdf.showPage()
+    pdf.save()
     return stream.getvalue()
 
 
@@ -628,10 +638,18 @@ def _feature(
     geometry_json = session.scalar(select(func.ST_AsGeoJSON(row.geometry, 8)))
     name = row.name if hasattr(row, "name") else row.section_name
     properties = {"dataset_version_id": row.dataset_version_id}
-    if object_type == "river": properties.update(code=row.code, length=row.length)
-    elif object_type == "gate": properties.update(code=row.gate_code, river_id=row.river_id)
-    elif object_type == "pump": properties.update(code=row.pump_code, river_id=row.river_id)
-    else: properties.update(code=row.section_code, river_id=row.river_id, station=row.station)
+    if object_type == "river":
+        properties.update(code=row.code, length=row.length)
+    elif object_type == "gate":
+        properties.update(code=row.gate_code, river_id=row.river_id)
+    elif object_type == "pump":
+        properties.update(code=row.pump_code, river_id=row.river_id)
+    else:
+        properties.update(
+            code=row.section_code,
+            river_id=row.river_id,
+            station=row.station,
+        )
     return SpatialFeature(
         object_type=object_type, object_id=row.id, name=name,
         geometry=json.loads(geometry_json), properties=properties, distance_m=distance_m,
@@ -707,12 +725,15 @@ def _project(
 def _draw_grid(pdf: Any, bbox: tuple[float, float, float, float], x: float, y: float, width: float, height: float, colors: Any) -> None:
     """Draw coordinate ticks and labels around the thematic map frame."""
 
-    pdf.setStrokeColor(colors.HexColor("#2C5964")); pdf.setFillColor(colors.HexColor("#B8D3D9"))
+    pdf.setStrokeColor(colors.HexColor("#2C5964"))
+    pdf.setFillColor(colors.HexColor("#B8D3D9"))
     pdf.setFont("Helvetica", 7)
     for index in range(5):
         ratio = index / 4
         gx, gy = x + ratio * width, y + ratio * height
-        pdf.setDash(1, 4); pdf.line(gx, y, gx, y + height); pdf.line(x, gy, x + width, gy)
+        pdf.setDash(1, 4)
+        pdf.line(gx, y, gx, y + height)
+        pdf.line(x, gy, x + width, gy)
         pdf.drawCentredString(gx, y - 11, f"{bbox[0] + ratio * (bbox[2] - bbox[0]):.4f}E")
         pdf.drawRightString(x - 4, gy - 2, f"{bbox[1] + ratio * (bbox[3] - bbox[1]):.4f}N")
     pdf.setDash()
@@ -721,9 +742,15 @@ def _draw_grid(pdf: Any, bbox: tuple[float, float, float, float], x: float, y: f
 def _draw_north_arrow(pdf: Any, x: float, y: float, colors: Any) -> None:
     """Draw a compact north arrow with an unambiguous map orientation."""
 
-    pdf.setFillColor(colors.HexColor("#F4F8FA")); pdf.setFont("Helvetica-Bold", 11)
+    pdf.setFillColor(colors.HexColor("#F4F8FA"))
+    pdf.setFont("Helvetica-Bold", 11)
     pdf.drawCentredString(x, y + 20, "N")
-    path = pdf.beginPath(); path.moveTo(x, y + 15); path.lineTo(x - 7, y - 10); path.lineTo(x, y - 5); path.lineTo(x + 7, y - 10); path.close()
+    path = pdf.beginPath()
+    path.moveTo(x, y + 15)
+    path.lineTo(x - 7, y - 10)
+    path.lineTo(x, y - 5)
+    path.lineTo(x + 7, y - 10)
+    path.close()
     pdf.drawPath(path, fill=1, stroke=0)
 
 
@@ -734,6 +761,10 @@ def _draw_scale(pdf: Any, bbox: tuple[float, float, float, float], x: float, y: 
     width_km = (bbox[2] - bbox[0]) * 111.32 * max(0.1, __import__("math").cos(__import__("math").radians(middle_latitude)))
     bar_km = max(1, round(width_km / 5))
     bar_width = min(map_width / 3, map_width * bar_km / max(width_km, 0.1))
-    pdf.setStrokeColor(colors.white); pdf.setFillColor(colors.white); pdf.setFont("Helvetica", 7)
-    pdf.line(x, y, x + bar_width, y); pdf.line(x, y - 3, x, y + 3); pdf.line(x + bar_width, y - 3, x + bar_width, y + 3)
+    pdf.setStrokeColor(colors.white)
+    pdf.setFillColor(colors.white)
+    pdf.setFont("Helvetica", 7)
+    pdf.line(x, y, x + bar_width, y)
+    pdf.line(x, y - 3, x, y + 3)
+    pdf.line(x + bar_width, y - 3, x + bar_width, y + 3)
     pdf.drawCentredString(x + bar_width / 2, y + 5, f"{bar_km} km")

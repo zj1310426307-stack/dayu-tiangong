@@ -1,5 +1,7 @@
 # 持续优化 01 执行计划
 
+> **已完成计划 / 2026-08-24 基线归档：** 本文不再定义当前水动力 Solver 或任务版本语义；相关内容已由 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md) 取代。
+
 计划日期：2026-08-24  
 分支：`feature/continuous-optimization-01`  
 基线：`07948e663fedc220d8ca6cdbdb34fd3fb4e2beee`

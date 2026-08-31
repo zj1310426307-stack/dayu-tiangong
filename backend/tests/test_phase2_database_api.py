@@ -48,13 +48,15 @@ def test_phase2_lists_topology_validation_and_model_input() -> None:
     cases = client.get(
         "/api/v1/model-data/simulation-cases", params={"dataset_version_id": 1}
     ).json()
-    snapshot = client.get(f"/api/v1/model-data/simulation-cases/{cases[0]['id']}/input")
-    assert snapshot.status_code == 200
-    payload = snapshot.json()
-    assert payload["schema_version"] == "dayu.model-input.v1"
-    assert len(payload["rivers"]) == 3
-    assert len(payload["cross_sections"]) == 20
-    assert len(payload["segments"]) == 7
+    readiness = client.get(
+        "/api/v1/model/readiness", params={"case_id": cases[0]["id"]}
+    )
+    assert readiness.status_code == 200
+    payload = readiness.json()
+    assert payload["engine_id"] == "mascaret"
+    assert payload["engine_version"] == "v9.1.1"
+    assert isinstance(payload["runtime_available"], bool)
+    assert isinstance(payload["blockers"], list)
 
 
 def test_river_crud_round_trip_and_conflict_contract() -> None:
@@ -169,7 +171,7 @@ def test_phase2_physical_tables_revision_and_spatial_indexes() -> None:
     """直接审计物理版本、拓扑表和新增 GIST 索引。"""
 
     with SessionLocal() as session:
-        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260818_0019"
+        assert session.scalar(text("SELECT version_num FROM alembic_version")) == "20260831_0024"
         tables = set(
             session.execute(
                 text(

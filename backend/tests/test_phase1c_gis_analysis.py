@@ -14,7 +14,6 @@ from app.gis.models import (
     CrossSection,
     DatasetVersion,
     Gate,
-    MapAnnotation,
     SimulationCase,
     SimulationResult,
     SimulationTask,

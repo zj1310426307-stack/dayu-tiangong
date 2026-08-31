@@ -45,7 +45,7 @@ import type {
   ImportResource,
   ModelParameterCreate,
   ModelParameterRecord,
-  ModelInputSnapshot,
+  Hydraulic1DPreviewResponse,
   PumpCreate,
   PumpRecord,
   RiverCreate,
@@ -72,13 +72,13 @@ import {
   deleteSimulationCase,
   generateTopology,
   getBoundaryConditions,
-  getModelInput,
   getModelParameters,
   getSimulationCases,
   listCrossSectionRecords,
   listGateRecords,
   listPumpRecords,
   listRiverRecords,
+  previewHydraulicModel,
   runValidation,
   updateCrossSectionRecord,
   updateBoundaryCondition,
@@ -473,8 +473,10 @@ interface ModelParameterFormValues {
 
 interface BoundaryFormValues {
   name: string;
-  boundary_type: string;
-  target_node_id?: number;
+  boundary_type: BoundaryConditionCreate['boundary_type'];
+  hydraulic_node_id?: number;
+  branch_id?: number;
+  chainage_m?: number;
   values_json: string;
   unit: string;
   description?: string;
@@ -489,7 +491,7 @@ interface SimulationCaseFormValues {
 /** 提供模型参数、边界条件与计算方案的草稿编辑，以及任意版本的只读快照。 */
 export function ModelDataPage() {
   const { versions, datasetVersionId, isMutable } = useDatasetVersion();
-  const [snapshot, setSnapshot] = useState<ModelInputSnapshot>();
+  const [snapshot, setSnapshot] = useState<Hydraulic1DPreviewResponse>();
   const [parameterOpen, setParameterOpen] = useState(false);
   const [parameterEditing, setParameterEditing] = useState<ModelParameterRecord>();
   const [boundaryOpen, setBoundaryOpen] = useState(false);
@@ -500,6 +502,7 @@ export function ModelDataPage() {
   const [parameterForm] = Form.useForm<ModelParameterFormValues>();
   const [boundaryForm] = Form.useForm<BoundaryFormValues>();
   const [caseForm] = Form.useForm<SimulationCaseFormValues>();
+  const boundaryType = Form.useWatch('boundary_type', boundaryForm);
   const parameters = useRemoteList(() => getModelParameters(datasetVersionId), [datasetVersionId], Boolean(datasetVersionId));
   const boundaries = useRemoteList(() => getBoundaryConditions(datasetVersionId), [datasetVersionId], Boolean(datasetVersionId));
   const cases = useRemoteList(() => getSimulationCases(datasetVersionId), [datasetVersionId], Boolean(datasetVersionId));
@@ -560,11 +563,13 @@ export function ModelDataPage() {
     boundaryForm.setFieldsValue(record ? {
       name: record.name,
       boundary_type: record.boundary_type,
-      target_node_id: record.target_node_id ?? undefined,
+      hydraulic_node_id: record.hydraulic_node_id ?? undefined,
+      branch_id: record.branch_id ?? undefined,
+      chainage_m: record.chainage_m ?? undefined,
       values_json: jsonText(record.values),
       unit: record.unit,
       description: record.description ?? undefined,
-    } : { boundary_type: 'upstream_flow', values_json: '{\n  "type": "constant",\n  "value": 0\n}', unit: 'm³/s' });
+    } : { boundary_type: 'upstream_discharge', values_json: '{\n  "mode": "constant",\n  "value": 0\n}', unit: 'm³/s' });
     setBoundaryOpen(true);
   };
 
@@ -579,7 +584,9 @@ export function ModelDataPage() {
         dataset_version_id: datasetVersionId,
         name: values.name,
         boundary_type: values.boundary_type,
-        target_node_id: values.target_node_id,
+        hydraulic_node_id: values.boundary_type === 'lateral_inflow' ? undefined : values.hydraulic_node_id,
+        branch_id: values.boundary_type === 'lateral_inflow' ? values.branch_id : undefined,
+        chainage_m: values.boundary_type === 'lateral_inflow' ? values.chainage_m : undefined,
         values: parsed as Record<string, unknown>,
         unit: values.unit,
         description: values.description,
@@ -673,7 +680,7 @@ export function ModelDataPage() {
       children: <Table rowKey="id" loading={boundaries.loading} dataSource={boundaries.data ?? []} pagination={false} title={() => <Button type="primary" icon={<PlusOutlined />} disabled={!isMutable} onClick={() => editBoundary()}>新增边界条件</Button>} columns={[
         { title: '名称', dataIndex: 'name' },
         { title: '类型', dataIndex: 'boundary_type' },
-        { title: '目标节点', dataIndex: 'target_node_id', render: (value?: number) => value ?? '—' },
+        { title: '水力位置', render: (_, record: BoundaryConditionRecord) => record.boundary_type === 'lateral_inflow' ? `Branch #${record.branch_id ?? '—'} · ${record.chainage_m ?? '—'} m` : `Node #${record.hydraulic_node_id ?? '—'}` },
         { title: '单位', dataIndex: 'unit' },
         { title: '操作', width: 130, render: (_, record: BoundaryConditionRecord) => <Space><Button type="text" icon={<EditOutlined />} disabled={!isMutable} onClick={() => editBoundary(record)} /><Popconfirm disabled={!isMutable} title="确认删除该边界？" onConfirm={() => removeRecord(() => deleteBoundaryCondition(record.id), '边界条件', boundaries.reload)}><Button type="text" danger icon={<DeleteOutlined />} disabled={!isMutable} /></Popconfirm></Space> },
       ]} />,
@@ -685,18 +692,24 @@ export function ModelDataPage() {
         { title: '名称', dataIndex: 'name' },
         { title: '数据版本', dataIndex: 'dataset_version_id' },
         { title: '边界条件', dataIndex: 'boundary_condition_ids', render: (value: number[]) => value.join(', ') },
-        { title: '操作', width: 270, render: (_, record: SimulationCaseRecord) => <Space><Button onClick={async () => setSnapshot(await getModelInput(record.id))}>查看模型输入</Button><Button type="text" icon={<EditOutlined />} disabled={!isMutable} onClick={() => editCase(record)} /><Popconfirm disabled={!isMutable} title="确认删除该方案？" onConfirm={() => removeRecord(() => deleteSimulationCase(record.id), '计算方案', cases.reload)}><Button type="text" danger icon={<DeleteOutlined />} disabled={!isMutable} /></Popconfirm></Space> },
+        { title: '操作', width: 270, render: (_, record: SimulationCaseRecord) => <Space><Button onClick={async () => { try { setSnapshot(await previewHydraulicModel({ case_id: record.id })); } catch (reason) { message.error(reason instanceof Error ? reason.message : '模型输入预览失败'); } }}>查看模型输入</Button><Button type="text" icon={<EditOutlined />} disabled={!isMutable} onClick={() => editCase(record)} /><Popconfirm disabled={!isMutable} title="确认删除该方案？" onConfirm={() => removeRecord(() => deleteSimulationCase(record.id), '计算方案', cases.reload)}><Button type="text" danger icon={<DeleteOutlined />} disabled={!isMutable} /></Popconfirm></Space> },
       ]} />,
     },
   ];
-  const inputCounts = snapshot ? [{ label: '河道', value: snapshot.rivers.length }, { label: '河段', value: snapshot.segments.length }, { label: '节点', value: snapshot.nodes.length }, { label: '断面', value: snapshot.cross_sections.length }, { label: '闸门', value: snapshot.gates.length }, { label: '泵站', value: snapshot.pumps.length }] : [];
+  const summary = snapshot?.readiness.input_summary;
+  const inputCounts = summary ? [
+    { label: '河段', value: Number(summary.branch_count ?? 0) },
+    { label: '断面', value: Number(summary.section_count ?? 0) },
+    { label: '边界', value: Number(summary.boundary_count ?? 0) },
+    { label: '建筑物', value: Number(summary.structure_count ?? 0) },
+  ] : [];
 
   return (
     <div className="data-page">
       <DataPageHeader eyebrow="PHASE 3 HANDOFF / MODEL DATA" title="模型数据管理" description="草稿可维护参数、边界条件和计算方案；已发布版本只生成可追溯模型输入快照。" />
       <DatasetWriteNotice />
       <Card className="data-card"><Tabs items={tabs} /></Card>
-      {snapshot && <Card className="data-card model-snapshot" title={`输入快照 · ${snapshot.simulation_case.name}`} extra={<Tag color="cyan">{snapshot.schema_version}</Tag>}><Row gutter={12}>{inputCounts.map((item) => <Col key={item.label} span={4}><Statistic title={item.label} value={item.value} /></Col>)}</Row><Descriptions className="snapshot-meta" column={2} items={[{ key: 'version', label: '数据版本', children: `${snapshot.dataset_version.version} · ${snapshot.dataset_version.name}` }, { key: 'time', label: '生成时间', children: new Date(snapshot.generated_time).toLocaleString() }]} /></Card>}
+      {snapshot && <Card className="data-card model-snapshot" title={`Standard 1D 输入预览 · ${String(summary?.scenario_id ?? `Case #${snapshot.readiness.case_id}`)}`} extra={<Tag color={snapshot.readiness.ready ? 'success' : snapshot.snapshot_hash ? 'warning' : 'error'}>{String(summary?.schema_version ?? '未生成')}</Tag>}><Row gutter={12}>{inputCounts.map((item) => <Col key={item.label} span={6}><Statistic title={item.label} value={item.value} /></Col>)}</Row><Descriptions className="snapshot-meta" column={2} items={[{ key: 'dataset', label: '数据版本 ID', children: String(summary?.dataset_version_id ?? '—') }, { key: 'engine', label: '引擎', children: `${snapshot.readiness.engine_id ?? 'mascaret'} ${snapshot.readiness.engine_version ?? 'v9.1.1'}` }, { key: 'runtime', label: '运行时', children: snapshot.readiness.runtime_available ? '可用' : snapshot.readiness.runtime_detail }, { key: 'hash', label: '冻结输入哈希', children: snapshot.snapshot_hash ?? '—' }]} /></Card>}
 
       <Modal open={parameterOpen} title={parameterEditing ? '编辑模型参数' : '新增模型参数'} onCancel={() => setParameterOpen(false)} onOk={() => parameterForm.submit()} confirmLoading={submitting} destroyOnHidden>
         <Form form={parameterForm} layout="vertical" onFinish={(values) => void saveParameter(values)}>
@@ -708,9 +721,10 @@ export function ModelDataPage() {
 
       <Modal open={boundaryOpen} title={boundaryEditing ? '编辑边界条件' : '新增边界条件'} onCancel={() => setBoundaryOpen(false)} onOk={() => boundaryForm.submit()} confirmLoading={submitting} destroyOnHidden width={680}>
         <Form form={boundaryForm} layout="vertical" onFinish={(values) => void saveBoundary(values)}>
-          <Row gutter={12}><Col span={12}><Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item></Col><Col span={12}><Form.Item name="boundary_type" label="边界类型" rules={[{ required: true }]}><Select options={[{ value: 'upstream_flow', label: '上游流量' }, { value: 'downstream_stage', label: '下游水位' }, { value: 'lateral_inflow', label: '侧向入流' }]} /></Form.Item></Col></Row>
-          <Row gutter={12}><Col span={12}><Form.Item name="target_node_id" label="目标节点 ID"><InputNumber min={1} style={{ width: '100%' }} /></Form.Item></Col><Col span={12}><Form.Item name="unit" label="单位" rules={[{ required: true }]}><Input /></Form.Item></Col></Row>
-          <Form.Item name="values_json" label="边界值 JSON" rules={[{ required: true }]}><Input.TextArea rows={6} /></Form.Item>
+          <Row gutter={12}><Col span={12}><Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item></Col><Col span={12}><Form.Item name="boundary_type" label="边界类型" rules={[{ required: true }]}><Select onChange={(value: BoundaryFormValues['boundary_type']) => boundaryForm.setFieldsValue({ hydraulic_node_id: undefined, branch_id: undefined, chainage_m: undefined, unit: value === 'downstream_water_level' ? 'm' : 'm³/s' })} options={[{ value: 'upstream_discharge', label: '上游流量' }, { value: 'downstream_water_level', label: '下游水位' }, { value: 'lateral_inflow', label: '侧向入流' }]} /></Form.Item></Col></Row>
+          {boundaryType === 'lateral_inflow' ? <Row gutter={12}><Col span={12}><Form.Item preserve={false} name="branch_id" label="水力河段 ID" rules={[{ required: true }]}><InputNumber min={1} precision={0} style={{ width: '100%' }} /></Form.Item></Col><Col span={12}><Form.Item preserve={false} name="chainage_m" label="定向桩号（m）" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col></Row> : <Form.Item preserve={false} name="hydraulic_node_id" label="水力端点 ID" rules={[{ required: true }]} extra="上游流量绑定河段上游端点；下游水位绑定河段下游端点。"><InputNumber min={1} precision={0} style={{ width: '100%' }} /></Form.Item>}
+          <Form.Item name="unit" label="单位" rules={[{ required: true }]}><Input /></Form.Item>
+          <Form.Item name="values_json" label="边界值 JSON" rules={[{ required: true }]} extra="只填写定值或时间—数值序列；水力位置由上方独立字段保存。"><Input.TextArea rows={6} /></Form.Item>
           <Form.Item name="description" label="说明"><Input.TextArea rows={2} /></Form.Item>
         </Form>
       </Modal>

@@ -65,16 +65,16 @@ def test_task_list_openapi_exposes_additive_dataset_version_filters() -> None:
         assert required <= parameters
 
 
-def test_hydraulic_tasks_filter_through_simulation_case_dataset_version() -> None:
-    """Hydraulic tasks derive version identity from their authoritative case relation."""
+def test_hydraulic_tasks_filter_on_frozen_dataset_version() -> None:
+    """Hydraulic tasks query their persisted immutable Dataset Version identity."""
 
     session = _CaptureSession()
     assert model_service.list_tasks(
         cast(Session, session), dataset_version_id=17
     ) == []
     sql, params = _compiled(session.scalars_statements[-1])
-    assert "JOIN simulation_case" in sql
-    assert "simulation_case.dataset_version_id" in sql
+    assert "JOIN simulation_case" not in sql
+    assert "simulation_task.dataset_version_id" in sql
     assert 17 in params.values()
 
 

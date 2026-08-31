@@ -1,12 +1,10 @@
-"""数据集版本、模型配置和 Phase 3 输入快照业务服务。"""
+"""Dataset Version, model configuration, boundary, and Case services."""
 
-from datetime import UTC, datetime
 from typing import Any, TypeVar
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.common.spatial import geometry_json
 from app.dataset.lifecycle import assert_dataset_version_mutable
 from app.dataset.schemas import (
     BoundaryConditionCreate,
@@ -15,7 +13,6 @@ from app.dataset.schemas import (
     DatasetVersionCreate,
     DatasetVersionRecord,
     DatasetVersionUpdate,
-    ModelInputSnapshot,
     ModelParameterCreate,
     ModelParameterRecord,
     ModelParameterUpdate,
@@ -25,17 +22,14 @@ from app.dataset.schemas import (
 )
 from app.gis.models import (
     BoundaryCondition,
-    CrossSection,
     DatasetVersion,
-    Gate,
     ModelParameter,
-    Pump,
-    River,
-    RiverConnection,
-    RiverNode,
-    RiverSegment,
     SimulationCase,
     SimulationCaseBoundary,
+)
+from app.hydraulic.models import (
+    HydraulicBranch as HydraulicBranchRow,
+    HydraulicNode,
 )
 
 
@@ -124,11 +118,74 @@ def list_boundaries(session: Session, dataset_version_id: int | None) -> list[Bo
     return [BoundaryConditionRecord(**_dump(item)) for item in session.scalars(statement).all()]
 
 
+def _validate_boundary_binding(session: Session, state: dict[str, Any]) -> None:
+    """Validate the persisted Standard 1D location against HYDRO-DATA."""
+
+    boundary_type = state.get("boundary_type")
+    dataset_version_id = state.get("dataset_version_id")
+    hydraulic_node_id = state.get("hydraulic_node_id")
+    branch_id = state.get("branch_id")
+    chainage_m = state.get("chainage_m")
+    endpoint_columns = {
+        "upstream_discharge": HydraulicBranchRow.upstream_node_id,
+        "downstream_water_level": HydraulicBranchRow.downstream_node_id,
+    }
+    endpoint_column = endpoint_columns.get(boundary_type)
+    if endpoint_column is not None:
+        if hydraulic_node_id is None:
+            raise ValueError(f"{boundary_type} requires hydraulic_node_id")
+        if branch_id is not None or chainage_m is not None:
+            raise ValueError(
+                "端点边界只允许 hydraulic_node_id，不得设置 branch_id 或 chainage_m"
+            )
+        node = session.scalar(
+            select(HydraulicNode).where(
+                HydraulicNode.id == hydraulic_node_id,
+                HydraulicNode.dataset_version_id == dataset_version_id,
+            )
+        )
+        if node is None:
+            raise ValueError("hydraulic_node_id 必须属于边界条件的数据版本")
+        matching_branches = list(
+            session.scalars(
+                select(HydraulicBranchRow).where(
+                    HydraulicBranchRow.dataset_version_id == dataset_version_id,
+                    endpoint_column == hydraulic_node_id,
+                )
+            ).all()
+        )
+        if len(matching_branches) != 1:
+            raise ValueError(
+                f"{boundary_type} 的 hydraulic_node_id 必须唯一绑定一个定向河段端点"
+            )
+        return
+    if boundary_type != "lateral_inflow":
+        raise ValueError(f"不支持的边界类型：{boundary_type}")
+    if hydraulic_node_id is not None:
+        raise ValueError("lateral_inflow 不得设置 hydraulic_node_id")
+    if branch_id is None or chainage_m is None:
+        raise ValueError("lateral_inflow requires branch_id and chainage_m")
+    branch = session.scalar(
+        select(HydraulicBranchRow).where(
+            HydraulicBranchRow.id == branch_id,
+            HydraulicBranchRow.dataset_version_id == dataset_version_id,
+        )
+    )
+    if branch is None:
+        raise ValueError("branch_id 必须属于边界条件的数据版本")
+    if isinstance(chainage_m, bool) or not isinstance(chainage_m, (int, float)):
+        raise ValueError("chainage_m 必须是非负米制数值")
+    if not branch.start_chainage <= float(chainage_m) <= branch.end_chainage:
+        raise ValueError("chainage_m 必须位于 branch_id 的定向桩号范围内")
+
+
 def create_boundary(session: Session, payload: BoundaryConditionCreate) -> BoundaryConditionRecord:
     """新增边界条件。"""
 
     assert_dataset_version_mutable(session, payload.dataset_version_id)
-    entity = BoundaryCondition(**payload.model_dump())
+    values = payload.model_dump()
+    _validate_boundary_binding(session, values)
+    entity = BoundaryCondition(**values)
     session.add(entity)
     session.flush()
     return BoundaryConditionRecord(**_dump(entity))
@@ -138,7 +195,17 @@ def update_boundary(session: Session, entity: BoundaryCondition, payload: Bounda
     """局部修改边界条件。"""
 
     assert_dataset_version_mutable(session, entity.dataset_version_id)
-    _apply(entity, payload.model_dump(exclude_unset=True))
+    values = payload.model_dump(exclude_unset=True)
+    state = {
+        "dataset_version_id": entity.dataset_version_id,
+        "boundary_type": entity.boundary_type,
+        "hydraulic_node_id": entity.hydraulic_node_id,
+        "branch_id": entity.branch_id,
+        "chainage_m": entity.chainage_m,
+    }
+    state.update(values)
+    _validate_boundary_binding(session, state)
+    _apply(entity, values)
     session.flush()
     return BoundaryConditionRecord(**_dump(entity))
 
@@ -155,7 +222,7 @@ def list_cases(session: Session, dataset_version_id: int | None) -> list[Simulat
 def _validate_case_boundaries(
     session: Session, dataset_version_id: int, boundary_ids: list[int]
 ) -> list[BoundaryCondition]:
-    """验证边界存在、同版本且没有同节点同类型冲突。"""
+    """Require current authoritative bindings and reject duplicate locations."""
 
     unique_ids = list(dict.fromkeys(boundary_ids))
     if not unique_ids:
@@ -171,11 +238,22 @@ def _validate_case_boundaries(
         item.dataset_version_id != dataset_version_id for item in boundaries
     ):
         raise ValueError("全部边界条件必须存在且属于计算方案的数据版本")
-    keys: set[tuple[int | None, str]] = set()
+    keys: set[tuple[Any, ...]] = set()
     for boundary in boundaries:
-        key = (boundary.target_node_id, boundary.boundary_type)
+        state = {
+            "dataset_version_id": boundary.dataset_version_id,
+            "boundary_type": boundary.boundary_type,
+            "hydraulic_node_id": boundary.hydraulic_node_id,
+            "branch_id": boundary.branch_id,
+            "chainage_m": boundary.chainage_m,
+        }
+        _validate_boundary_binding(session, state)
+        if boundary.boundary_type == "lateral_inflow":
+            key = (boundary.boundary_type, boundary.branch_id, boundary.chainage_m)
+        else:
+            key = (boundary.boundary_type, boundary.hydraulic_node_id)
         if key in keys:
-            raise ValueError("同一节点不可关联多个同类型边界")
+            raise ValueError("同一水力位置不可关联多个同类型边界")
         keys.add(key)
     return boundaries
 
@@ -249,100 +327,3 @@ def _apply(entity: Any, values: dict[str, Any]) -> None:
 
     for key, value in values.items():
         setattr(entity, key, value)
-
-
-def build_model_input(session: Session, case_id: int) -> ModelInputSnapshot | None:
-    """汇总指定方案对应版本的全部静态水动力输入，绝不写入计算结果。"""
-
-    case = session.get(SimulationCase, case_id)
-    if case is None:
-        return None
-    version_id = case.dataset_version_id
-    dataset_version = session.get(DatasetVersion, version_id)
-    if dataset_version is None:
-        return None
-
-    def spatial_rows(model: Any) -> list[dict[str, Any]]:
-        """序列化指定版本内某类空间表。"""
-
-        entities = session.scalars(select(model).where(model.dataset_version_id == version_id).order_by(model.id)).all()
-        rows: list[dict[str, Any]] = []
-        for entity in entities:
-            row = _dump(entity)
-            row["geometry"] = geometry_json(session, entity.geometry)
-            rows.append(row)
-        return rows
-
-    parameters = list_parameters(session, version_id)
-    boundary_ids = list(
-        session.scalars(
-            select(SimulationCaseBoundary.boundary_condition_id).where(
-                SimulationCaseBoundary.case_id == case.id
-            )
-        ).all()
-    )
-    if not boundary_ids:
-        boundary_ids = [case.boundary_condition_id]
-    boundaries = [
-        BoundaryConditionRecord(**_dump(item))
-        for item in session.scalars(
-            select(BoundaryCondition)
-            .where(BoundaryCondition.id.in_(boundary_ids))
-            .order_by(BoundaryCondition.id)
-        ).all()
-    ]
-    connections = [_dump(item) for item in session.scalars(select(RiverConnection).where(RiverConnection.dataset_version_id == version_id).order_by(RiverConnection.id)).all()]
-    return ModelInputSnapshot(
-        generated_time=datetime.now(UTC),
-        simulation_case=_case_record(session, case),
-        dataset_version=DatasetVersionRecord(**_dump(dataset_version)),
-        rivers=spatial_rows(River),
-        nodes=spatial_rows(RiverNode),
-        segments=spatial_rows(RiverSegment),
-        connections=connections,
-        cross_sections=spatial_rows(CrossSection),
-        gates=spatial_rows(Gate),
-        pumps=spatial_rows(Pump),
-        parameters=parameters,
-        boundary_conditions=boundaries,
-    )
-
-
-def build_model_input_v2(
-    session: Session,
-    case_id: int,
-    *,
-    controls: dict[str, Any] | None = None,
-    dispatch_plan: dict[str, Any] | None = None,
-    engine_version: str = "dayu-hydraulic-4.0.0",
-) -> dict[str, Any] | None:
-    """构建可冻结的 v2 输入，显式声明几何、边界、单位和来源。"""
-
-    legacy = build_model_input(session, case_id)
-    if legacy is None:
-        return None
-    payload = legacy.model_dump(mode="json")
-    payload.pop("generated_time", None)
-    payload["schema_version"] = "dayu.model-input.v2"
-    geometry_mode = str((controls or {}).get("section_geometry", "rectangular"))
-    payload["cross_sections"] = [
-        {**item, "geometry_type": geometry_mode} for item in payload["cross_sections"]
-    ]
-    payload["controls"] = {
-        "allow_fallback_boundary": False,
-        "section_geometry": geometry_mode,
-        **(controls or {}),
-    }
-    payload["dispatch_plan"] = dispatch_plan
-    payload["units"] = {
-        "length": "m",
-        "time": "s",
-        "flow": "m3/s",
-        "water_level": "m",
-        "power": "kW",
-        "energy": "kWh",
-    }
-    payload["coordinate_system"] = "CGCS2000 (EPSG:4490)"
-    payload["distance_basis"] = "section station and segment length in metres"
-    payload["engine_version"] = engine_version
-    return payload

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -15,11 +14,11 @@ from sqlalchemy import func, select
 
 from ai.guardrails import inspect_question
 from ai.retrieval import chunk_text, cosine_similarity, embed_text
-from app.ai.models import AIConversation, AIReport, AIToolCallLog, KnowledgeDocument
+from app.ai.models import AIConversation, AIReport, AIToolCallLog
 from app.ai.service import (
     AIServiceError,
-    REPOSITORY_ROOT,
     _resolve_dataset_version,
+    get_report_file,
     get_optimization_result,
     get_simulation_result,
     seed_builtin_knowledge,
@@ -115,12 +114,12 @@ def test_docx_text_extraction_uses_standard_document_xml() -> None:
     assert _decode_docx(payload.getvalue()) == "水利知识正文"
 
 
-def test_generated_pdf_can_be_read_back_for_knowledge_ingestion() -> None:
+def test_generated_pdf_can_be_read_back_for_knowledge_ingestion(tmp_path) -> None:
     """The locked PDF parser reads text from a report produced by the local renderer."""
 
     from ai.report import markdown_to_pdf
 
-    output = REPOSITORY_ROOT / "backend/storage/ai-reports/_knowledge-parser-test.pdf"
+    output = tmp_path / "_knowledge-parser-test.pdf"
     try:
         markdown_to_pdf("# 水利报告\n\n最高水位需人工复核", output)
         extracted = _decode_pdf(output.read_bytes())
@@ -338,8 +337,8 @@ def test_report_generates_downloadable_markdown_and_pdf() -> None:
     with SessionLocal() as session:
         report = session.get(AIReport, payload["report_id"])
         assert report is not None
-        markdown_path, _ = service.get_report_file(session, report.id, "markdown")
-        pdf_path, _ = service.get_report_file(session, report.id, "pdf")
+        markdown_path, _ = get_report_file(session, report.id, "markdown")
+        pdf_path, _ = get_report_file(session, report.id, "pdf")
         session.delete(report)
         session.commit()
     markdown_path.unlink(missing_ok=True)

@@ -29,7 +29,7 @@ celery_app.conf.update(
     task_always_eager=getenv("CELERY_TASK_ALWAYS_EAGER", "0") == "1",
     task_eager_propagates=True,
     task_routes={
-        "dayu.run_hydraulic_v4_task": {"queue": "hydraulic-v4-d1"},
+        "dayu.run_hydraulic_task": {"queue": "hydraulic-1d"},
         "dayu.recover_hydraulic_tasks": {"queue": "celery"},
     },
     beat_schedule={

@@ -1,5 +1,7 @@
 # Phase 4 闸泵水力方程与约束
 
+> **历史归档 / 自研 Solver 路线已废止（2026-08-31）：** 公式可作为历史专业参考，但它们已不是 Standard 1D 的生产执行实现；当前 MASCARET Adapter 对未验证的 Gate/Pump 映射明确 fail closed。见 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md)。
+
 ## 闸门
 
 闸门必须使用已持久化的 `river_segment_id/upstream_node_id/downstream_node_id`，不从 GIS 坐标猜测正式拓扑。
