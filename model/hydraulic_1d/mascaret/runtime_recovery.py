@@ -100,7 +100,7 @@ def _linux_process_stat(pid: int) -> dict[str, int] | None:
         fields = raw_stat[closing + 2 :].split()
         if len(fields) < 20:
             raise ValueError("short proc stat")
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return None
     except (OSError, UnicodeError, ValueError) as exc:
         raise Hydraulic1DExecutionError(
@@ -125,7 +125,7 @@ def _linux_process(pid: int) -> dict[str, Any] | None:
         command_line = (process_root / "cmdline").read_bytes()
         cwd = (process_root / "cwd").resolve(strict=True)
         environment = (process_root / "environ").read_bytes().split(b"\0")
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return None
     except (OSError, UnicodeError, ValueError) as exc:
         raise Hydraulic1DExecutionError(
