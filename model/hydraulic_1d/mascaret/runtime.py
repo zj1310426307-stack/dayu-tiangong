@@ -27,6 +27,7 @@ from model.hydraulic_1d.errors import (
 from model.hydraulic_1d.mascaret.config import (
     MASCARET_ENGINE_ID,
     MASCARET_SOURCE_ARCHIVE_SHA256,
+    MASCARET_SOURCE_TREE_SHA256,
     MASCARET_VERSION,
     MascaretRuntimeConfig,
 )
@@ -62,6 +63,7 @@ class MascaretRuntimeIdentity:
     upstream_tag: str
     upstream_commit: str
     source_archive_sha256: str
+    source_tree_sha256: str
     runtime_mode: str
     executable: str | None
     executable_hash: str | None
@@ -109,6 +111,7 @@ class MascaretRuntime(ABC):
             upstream_tag="unknown",
             upstream_commit="unknown",
             source_archive_sha256="unknown",
+            source_tree_sha256="unknown",
             runtime_mode="test-seam",
             executable=None,
             executable_hash=None,
@@ -467,6 +470,7 @@ class CliMascaretRuntime(_ProcessMascaretRuntime):
             upstream_tag=self.config.upstream_tag,
             upstream_commit=self.config.upstream_commit,
             source_archive_sha256=MASCARET_SOURCE_ARCHIVE_SHA256,
+            source_tree_sha256=MASCARET_SOURCE_TREE_SHA256,
             runtime_mode="external",
             # Public provenance identifies the reviewed binary by basename and
             # digest without leaking a worker host path through result APIs.
@@ -617,6 +621,7 @@ class ContainerMascaretRuntime(_ProcessMascaretRuntime):
             upstream_tag=self.config.upstream_tag,
             upstream_commit=self.config.upstream_commit,
             source_archive_sha256=MASCARET_SOURCE_ARCHIVE_SHA256,
+            source_tree_sha256=MASCARET_SOURCE_TREE_SHA256,
             runtime_mode="container",
             # Do not expose image-internal paths through readiness/result APIs.
             executable=Path(self.config.executable).name,

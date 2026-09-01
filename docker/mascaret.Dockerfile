@@ -3,16 +3,18 @@ ARG DEBIAN_RELEASE=bookworm
 FROM debian:${DEBIAN_RELEASE}-slim AS builder
 
 ARG MASCARET_SOURCE_URL="https://gitlab.pam-retd.fr/api/v4/projects/otm%2Ftelemac-mascaret/repository/archive.tar.gz?sha=1fe3b5141f7d9c9fa8fe6d6d0316c994a39c2d95"
-ARG MASCARET_SOURCE_SHA256="54b52798435baeb294ad3418c2fe146b5c10ef0d6e8e3e9d72d606e0f9fdb5e3"
+ARG MASCARET_SOURCE_TREE_SHA256="db66c18f0c9d275288a5674abfa09772324a8bb2306e34d8918623fc664d15b9"
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends \
         ca-certificates cmake curl gcc gfortran make \
     && rm -rf /var/lib/apt/lists/*
 RUN curl --fail --location --retry 3 --output /tmp/mascaret-source.tar.gz "$MASCARET_SOURCE_URL" \
-    && echo "$MASCARET_SOURCE_SHA256  /tmp/mascaret-source.tar.gz" | sha256sum --check --strict \
     && mkdir -p /src \
-    && tar --extract --gzip --file /tmp/mascaret-source.tar.gz --directory /src --strip-components=1
+    && tar --extract --gzip --file /tmp/mascaret-source.tar.gz --directory /src --strip-components=1 \
+    && observed="$(tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner --format=gnu --create --file=- --directory=/src . | sha256sum | cut -d' ' -f1)" \
+    && test "$observed" = "$MASCARET_SOURCE_TREE_SHA256" \
+    && rm /tmp/mascaret-source.tar.gz
 RUN cmake -S /src -B /build \
         -DCMAKE_BUILD_TYPE=Release \
         -DUSE_MPI=OFF \

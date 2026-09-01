@@ -358,6 +358,7 @@ export function HydraulicConfigPage() {
                 items={[
                   { key: 'version', label: '官方版本', children: String(activeReadiness.runtime_identity.upstream_tag ?? activeReadiness.engine_version) },
                   { key: 'commit', label: '源码提交', children: String(activeReadiness.runtime_identity.upstream_commit ?? '未验证') },
+                  { key: 'source-tree', label: '源码树哈希', children: String(activeReadiness.runtime_identity.source_tree_sha256 ?? '未验证') },
                   { key: 'mode', label: '运行方式', children: String(activeReadiness.runtime_identity.runtime_mode ?? '未知') },
                   { key: 'platform', label: '平台', children: `${String(activeReadiness.runtime_identity.platform ?? '未知')} / ${String(activeReadiness.runtime_identity.architecture ?? '未知')}` },
                   { key: 'hash', label: '可执行文件哈希', children: String(activeReadiness.runtime_identity.executable_hash ?? activeReadiness.runtime_identity.container_digest ?? '未验证') },

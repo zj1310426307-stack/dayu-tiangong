@@ -109,7 +109,7 @@ HYDRO-DATA-01 (Network → Branch → Chainage → Cross Section)
 ```
 
 - Dayu 保留统一数据、自动建模、任务生命周期、GIS 和结果体系，不再开发或提供自研生产级 1D 数值求解器。
-- MASCARET 源码不复制到本仓库；可重复构建从官方 `v9.1.1`、提交 `1fe3b514` 和固定源码归档哈希生成原生运行时。
+- MASCARET 源码不复制到本仓库；可重复构建从官方 `v9.1.1`、提交 `1fe3b514` 和固定的规范化源码树哈希生成原生运行时。
 - External 模式核对二进制 SHA-256、官方资源摘要、tag、commit 和构建时间；Container 模式只接受不可变镜像 digest，并核对 OCI version/revision/created 标签。
 - 默认发布镜像不捆绑 MASCARET，因此默认 `MASCARET_ENABLED=0`。未发现可用运行时的集成测试必须明确记录 `SKIPPED_MASCARET_RUNTIME_NOT_AVAILABLE`，不允许伪造成功运算。
 - 闸门与泵站当前均不进入生产 Adapter；在完整业务语义、官方文件合同和真实运行时 benchmark 全部验证前必须 fail closed，不得伪装成横向流量或猜测奇异建筑物参数。

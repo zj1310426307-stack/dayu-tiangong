@@ -136,7 +136,7 @@ jobs:
       - uses: actions/cache@v5
         with:
           path: outputs/cache/mascaret
-          key: mascaret-source-v9.1.1-54b52798435baeb2
+          key: mascaret-source-v9.1.1-tree-db66c18f0c9d2752
       - name: Build reviewed official runtime
         run: bash tools/build_mascaret_runtime.sh outputs/cache/mascaret outputs/runtime/mascaret
       - name: Freeze runtime identity
