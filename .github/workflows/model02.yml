@@ -158,7 +158,7 @@ jobs:
           cd outputs/ci/mascaret/official-case
           printf "'mascaret_exp.xcas'\n" > FichierCas.txt
           "$MASCARET_EXECUTABLE" > official.stdout.log 2> official.stderr.log
-          test -s mascaret_exp.opt
+          test -s mascaret_exp_ecr.opt
       - name: Run Dayu real-runtime acceptance and lifecycle contracts
         run: |
           mkdir -p outputs/ci/mascaret/workspaces
