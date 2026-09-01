@@ -100,7 +100,10 @@ const requiredPaths = [
   '/api/v1/gis-governance/publications',
   '/api/v1/gis-governance/versions/{version_id}/publish',
   '/api/v1/gis-governance/versions/{version_id}/retire',
-  '/api/v1/hydraulic/capabilities', '/api/v1/hydraulic/networks',
+  '/api/v1/hydraulic/capabilities', '/api/v1/hydraulic/engine-capabilities',
+  '/api/v1/hydraulic/networks', '/api/v1/hydraulic/networks/{network_id}/graph',
+  '/api/v1/hydraulic/structures', '/api/v1/hydraulic/structures/{structure_id}',
+  '/api/v1/hydraulic/structures/{structure_id}/scenarios/{case_id}',
   '/api/v1/hydraulic/cross-sections/{section_id}', '/api/v1/hydraulic/imports',
   '/api/v1/hydraulic/imports/preview', '/api/v1/hydraulic/imports/commit',
   '/api/v1/hydraulic/networks/{network_id}/topology',
@@ -142,6 +145,7 @@ export interface DatabaseListQuery { dataset_version_id?: number; river_id?: num
 export interface DatasetTaskListQuery { dataset_version_id?: number; }
 export interface DispatchListQuery { dataset_version_id?: number; plan_id?: number; status?: string; limit?: number; offset?: number; }
 export interface HydraulicExportQuery { dataset_version_id: number; network_id?: number; native?: boolean; }
+export interface HydraulicStructureListQuery { dataset_version_id: number; network_id?: number; }
 export interface HydraulicCoordinateOptions {
   source_crs: string;
   engineering_crs: string;
@@ -389,6 +393,14 @@ export const deleteSimulationCase = (caseId: number, baseUrl = '') => requestJso
 export const runValidation = (datasetVersionId: number, baseUrl = '') => requestJson<ValidationReport>('/api/v1/validation/run', jsonOptions('POST', { dataset_version_id: datasetVersionId }), baseUrl);
 
 export const getHydraulicCapabilities = (baseUrl = '') => requestJson<HydraulicCapabilityResponse>('/api/v1/hydraulic/capabilities', {}, baseUrl);
+export const getHydraulicEngineCapabilities = (baseUrl = '') => requestJson<Array<SolverCapabilityRecord>>('/api/v1/hydraulic/engine-capabilities', {}, baseUrl);
+export const getHydraulicNetworkGraph = (networkId: number, baseUrl = '') => requestJson<HydraulicNetworkGraphRecord>(\`/api/v1/hydraulic/networks/\${networkId}/graph\`, {}, baseUrl);
+export const listHydraulicStructures = (params: HydraulicStructureListQuery, baseUrl = '') => requestJson<Array<HydraulicStructureRecord>>(\`/api/v1/hydraulic/structures\${toQuery(params)}\`, {}, baseUrl);
+export const getHydraulicStructure = (structureId: number, baseUrl = '') => requestJson<HydraulicStructureRecord>(\`/api/v1/hydraulic/structures/\${structureId}\`, {}, baseUrl);
+export const createHydraulicStructure = (body: HydraulicStructureCreate, baseUrl = '') => requestJson<HydraulicStructureRecord>('/api/v1/hydraulic/structures', jsonOptions('POST', body), baseUrl);
+export const updateHydraulicStructure = (structureId: number, body: HydraulicStructureUpdate, baseUrl = '') => requestJson<HydraulicStructureRecord>(\`/api/v1/hydraulic/structures/\${structureId}\`, jsonOptions('PUT', body), baseUrl);
+export const deleteHydraulicStructure = (structureId: number, baseUrl = '') => requestJson<void>(\`/api/v1/hydraulic/structures/\${structureId}\`, { method: 'DELETE' }, baseUrl);
+export const upsertHydraulicStructureScenario = (structureId: number, caseId: number, body: HydraulicStructureScenarioUpsert, baseUrl = '') => requestJson<HydraulicStructureScenarioRecord>(\`/api/v1/hydraulic/structures/\${structureId}/scenarios/\${caseId}\`, jsonOptions('PUT', body), baseUrl);
 export const listHydraulicNetworks = (datasetVersionId: number, baseUrl = '') => requestJson<Array<HydraulicNetworkRecord>>(\`/api/v1/hydraulic/networks\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
 export const getHydraulicSection = (sectionId: number, baseUrl = '') => requestJson<HydraulicSectionDetail>(\`/api/v1/hydraulic/cross-sections/\${sectionId}\`, {}, baseUrl);
 export const listHydraulicImportJobs = (datasetVersionId: number, baseUrl = '') => requestJson<Array<HydraulicImportJobRecord>>(\`/api/v1/hydraulic/imports\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);

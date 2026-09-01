@@ -8,6 +8,7 @@ from model.hydraulic_1d.contracts import (
     Hydraulic1DModel,
     HydraulicBranch,
     HydraulicCrossSection,
+    HydraulicNode,
     HydraulicResult,
     HydraulicResultRecord,
     HydraulicStructure,
@@ -19,6 +20,7 @@ from model.hydraulic_1d.contracts import (
 )
 from model.hydraulic_1d.engine import Hydraulic1DEngine, Hydraulic1DExecutionContext
 from model.hydraulic_1d.factory import create_hydraulic_1d_engine
+from model.hydraulic_1d.network import HydraulicNetworkGraph, HydraulicNetworkValidator
 from model.hydraulic_1d.registry import (
     DEFAULT_HYDRAULIC_1D_ENGINE_ID,
     DEFAULT_HYDRAULIC_1D_ENGINE_VERSION,
@@ -59,6 +61,9 @@ __all__ = [
     "HydraulicBranch",
     "HydraulicBenchmarkMetrics",
     "HydraulicCrossSection",
+    "HydraulicNode",
+    "HydraulicNetworkGraph",
+    "HydraulicNetworkValidator",
     "HydraulicResult",
     "HydraulicResultRecord",
     "HydraulicStructure",

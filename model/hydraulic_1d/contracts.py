@@ -82,7 +82,9 @@ class HydraulicCrossSection(StrictHydraulicModel):
             raise ValueError("cross-section stations must be strictly increasing")
         for zone in self.roughness_zones:
             if zone.end_station_m > stations[-1]:
-                raise ValueError("roughness zone exceeds the cross-section station range")
+                raise ValueError(
+                    "roughness zone exceeds the cross-section station range"
+                )
         return self
 
 
@@ -105,6 +107,23 @@ class HydraulicBranch(StrictHydraulicModel):
         if self.upstream_node_id == self.downstream_node_id:
             raise ValueError("branch endpoints must be distinct")
         return self
+
+
+class HydraulicNode(StrictHydraulicModel):
+    """Represent one solver-neutral network node and its engineering role."""
+
+    id: str = Field(min_length=1, max_length=128)
+    code: str = Field(min_length=1, max_length=128)
+    node_type: Literal[
+        "boundary",
+        "junction",
+        "bifurcation",
+        "internal",
+        "storage_connection",
+    ]
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    location_geometry: dict[str, Any] | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class BoundaryCondition(StrictHydraulicModel):
@@ -153,21 +172,55 @@ class InitialCondition(StrictHydraulicModel):
 
         has_uniform = self.water_level_m is not None or self.discharge_m3s is not None
         if self.by_section and has_uniform:
-            raise ValueError("initial condition cannot mix uniform and by-section values")
+            raise ValueError(
+                "initial condition cannot mix uniform and by-section values"
+            )
         if self.by_section:
             return self
         if self.water_level_m is None or self.discharge_m3s is None:
-            raise ValueError("uniform initial condition requires water level and discharge")
+            raise ValueError(
+                "uniform initial condition requires water level and discharge"
+            )
         return self
 
 
 class HydraulicStructure(StrictHydraulicModel):
-    """Preserve a Dayu structure so an adapter can support it or fail closed."""
+    """Preserve structure geometry, behaviour, and operation without solver syntax."""
 
     id: str = Field(min_length=1, max_length=128)
+    name: str = Field(
+        default="Unnamed hydraulic structure", min_length=1, max_length=128
+    )
     branch_id: str = Field(min_length=1, max_length=128)
-    kind: Literal["gate", "weir", "pump", "culvert"]
+    kind: Literal[
+        "weir",
+        "culvert",
+        "bridge",
+        "gate",
+        "sluice",
+        "pump",
+        "orifice",
+        "dam",
+        "storage_link",
+        "compound",
+    ]
     chainage_m: FiniteFloat = Field(ge=0.0)
+    location_geometry: dict[str, Any] | None = None
+    geometry: dict[str, Any] = Field(default_factory=dict)
+    hydraulic_law_type: str = Field(default="none", min_length=1, max_length=64)
+    hydraulic_law_parameters: dict[str, Any] = Field(default_factory=dict)
+    operation_rule_type: Literal[
+        "fixed",
+        "time_series",
+        "water_level_controlled",
+        "scenario_specific",
+    ] = "fixed"
+    operation_parameters: dict[str, Any] = Field(default_factory=dict)
+    scenario_id: str | None = Field(default=None, min_length=1, max_length=128)
+    status: Literal["draft", "active", "inactive", "retired"] = "active"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    # Compatibility field for pre-Engineering-03 snapshots. New callers use the
+    # separated geometry/law/operation fields above.
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -207,6 +260,7 @@ class Hydraulic1DModel(StrictHydraulicModel):
     simulation_id: str = Field(min_length=1, max_length=128)
     scenario_id: str = Field(min_length=1, max_length=128)
     network_id: str = Field(min_length=1, max_length=128)
+    nodes: tuple[HydraulicNode, ...] = ()
     branches: tuple[HydraulicBranch, ...] = Field(min_length=1)
     cross_sections: tuple[HydraulicCrossSection, ...] = Field(min_length=2)
     boundaries: tuple[BoundaryCondition, ...] = Field(min_length=2)
@@ -222,6 +276,15 @@ class Hydraulic1DModel(StrictHydraulicModel):
         branch_map = {item.id: item for item in self.branches}
         if len(branch_map) != len(self.branches):
             raise ValueError("branch ids must be unique")
+        node_map = {item.id: item for item in self.nodes}
+        if len(node_map) != len(self.nodes):
+            raise ValueError("node ids must be unique")
+        if node_map:
+            for branch in self.branches:
+                if branch.upstream_node_id not in node_map:
+                    raise ValueError("branch upstream node reference is dangling")
+                if branch.downstream_node_id not in node_map:
+                    raise ValueError("branch downstream node reference is dangling")
         section_map = {item.id: item for item in self.cross_sections}
         if len(section_map) != len(self.cross_sections):
             raise ValueError("cross-section ids must be unique")
@@ -229,7 +292,11 @@ class Hydraulic1DModel(StrictHydraulicModel):
             branch = branch_map.get(section.branch_id)
             if branch is None:
                 raise ValueError("cross section references an unknown branch")
-            if not branch.start_chainage_m <= section.chainage_m <= branch.end_chainage_m:
+            if (
+                not branch.start_chainage_m
+                <= section.chainage_m
+                <= branch.end_chainage_m
+            ):
                 raise ValueError("cross-section chainage lies outside its branch")
         for branch in self.branches:
             sections = sorted(
@@ -265,7 +332,9 @@ class Hydraulic1DModel(StrictHydraulicModel):
                 branch.start_chainage_m <= boundary.chainage_m <= branch.end_chainage_m
             ):
                 raise ValueError("lateral boundary chainage lies outside its branch")
-        state_ids = [item.cross_section_id for item in self.initial_condition.by_section]
+        state_ids = [
+            item.cross_section_id for item in self.initial_condition.by_section
+        ]
         if len(state_ids) != len(set(state_ids)):
             raise ValueError("initial-state cross-section ids must be unique")
         if state_ids and set(state_ids) != set(section_map):
@@ -274,8 +343,15 @@ class Hydraulic1DModel(StrictHydraulicModel):
             branch = branch_map.get(structure.branch_id)
             if branch is None:
                 raise ValueError("structure references an unknown branch")
-            if not branch.start_chainage_m <= structure.chainage_m <= branch.end_chainage_m:
+            if (
+                not branch.start_chainage_m
+                <= structure.chainage_m
+                <= branch.end_chainage_m
+            ):
                 raise ValueError("structure chainage lies outside its branch")
+        structure_ids = [item.id for item in self.structures]
+        if len(structure_ids) != len(set(structure_ids)):
+            raise ValueError("structure ids must be unique")
         return self
 
     @classmethod

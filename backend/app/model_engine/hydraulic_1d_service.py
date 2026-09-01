@@ -21,7 +21,10 @@ from app.hydraulic.models import (
     HydraulicCrossSectionPoint,
     HydraulicCrossSectionProfile,
     HydraulicNetwork,
+    HydraulicNode as HydraulicNodeRow,
     HydraulicRoughnessZone,
+    HydraulicStructure as HydraulicStructureRow,
+    HydraulicStructureScenario,
 )
 from model.hydraulic_1d import (
     BoundaryCondition,
@@ -29,6 +32,7 @@ from model.hydraulic_1d import (
     Hydraulic1DModel,
     HydraulicBranch,
     HydraulicCrossSection,
+    HydraulicNode,
     HydraulicStructure,
     InitialCondition,
     RoughnessZone,
@@ -127,10 +131,7 @@ def _time_values(
             "boundary requires aligned non-empty time and value arrays",
             f"boundary_condition[{row.id}].values",
         )
-    return tuple(
-        TimeValue(time_seconds=time, value=value)
-        for time, value in zip(times, ordinates)
-    )
+    return tuple(TimeValue(time_seconds=time, value=value) for time, value in zip(times, ordinates))
 
 
 def _boundary(
@@ -153,7 +154,11 @@ def _boundary(
     elif row.boundary_type == "lateral_inflow":
         branch_id = row.branch_id
         chainage = row.chainage_m
-        if isinstance(branch_id, bool) or not isinstance(branch_id, int) or branch_id not in branch_by_id:
+        if (
+            isinstance(branch_id, bool)
+            or not isinstance(branch_id, int)
+            or branch_id not in branch_by_id
+        ):
             _reject(
                 "DAYU_LATERAL_LOCATION_INVALID",
                 "lateral boundary requires an authoritative hydraulic branch_id",
@@ -201,15 +206,17 @@ def _structures(
     session: Session,
     case: SimulationCase,
     case_config: Mapping[str, Any],
-    sections: list[HydraulicCrossSectionRow],
+    network_id: int,
 ) -> tuple[HydraulicStructure, ...]:
-    """Reject structures until their complete MASCARET semantics are runtime-verified."""
-
-    del session, case, sections
+    """Build unified structures with case overrides before capability validation."""
 
     raw = case_config.get("structures", {})
     if raw is None:
-        return ()
+        _reject(
+            "DAYU_STRUCTURE_CONFIGURATION_INVALID",
+            "structures configuration must be an object, not null",
+            "simulation_case.hydraulic_1d_configuration.structures",
+        )
     if not isinstance(raw, Mapping):
         _reject(
             "DAYU_STRUCTURE_CONFIGURATION_INVALID",
@@ -232,11 +239,119 @@ def _structures(
         )
     if gates or pumps:
         _reject(
-            "MASCARET_STRUCTURE_MAPPING_UNSUPPORTED",
-            "Gate and Pump mappings remain disabled until full semantics pass a real runtime benchmark",
+            "MODEL_ENGINE_INCOMPATIBLE",
+            "legacy Gate/Pump case lists are unsupported; use unified structures and capability status",
             "simulation_case.hydraulic_1d_configuration.structures",
         )
-    return ()
+    selected = raw.get("structure_ids")
+    if selected is not None and (
+        not isinstance(selected, Sequence) or isinstance(selected, (str, bytes))
+    ):
+        _reject(
+            "DAYU_STRUCTURE_CONFIGURATION_INVALID",
+            "structures.structure_ids must be an array",
+            "simulation_case.hydraulic_1d_configuration.structures.structure_ids",
+        )
+    selected_ids: list[int] | None = None
+    if selected is not None:
+        try:
+            selected_ids = [int(value) for value in selected]
+        except (TypeError, ValueError):
+            _reject(
+                "DAYU_STRUCTURE_CONFIGURATION_INVALID",
+                "structures.structure_ids must contain integer identifiers",
+                "simulation_case.hydraulic_1d_configuration.structures.structure_ids",
+            )
+        if len(set(selected_ids)) != len(selected_ids):
+            _reject(
+                "DAYU_STRUCTURE_CONFIGURATION_INVALID",
+                "structures.structure_ids must not contain duplicates",
+                "simulation_case.hydraulic_1d_configuration.structures.structure_ids",
+            )
+    statement = (
+        select(HydraulicStructureRow)
+        .where(
+            HydraulicStructureRow.dataset_version_id == case.dataset_version_id,
+            HydraulicStructureRow.network_id == network_id,
+        )
+        .order_by(
+            HydraulicStructureRow.branch_id,
+            HydraulicStructureRow.chainage_m,
+            HydraulicStructureRow.id,
+        )
+    )
+    rows = list(session.scalars(statement).all())
+    overrides = (
+        {
+            item.structure_id: item
+            for item in session.scalars(
+                select(HydraulicStructureScenario).where(
+                    HydraulicStructureScenario.case_id == case.id,
+                    HydraulicStructureScenario.structure_id.in_([item.id for item in rows]),
+                )
+            ).all()
+        }
+        if rows
+        else {}
+    )
+    result: list[HydraulicStructure] = []
+    for row in rows:
+        override = overrides.get(row.id)
+        hydraulic_parameters = dict(row.hydraulic_parameters)
+        operation_parameters = dict(row.operation_parameters)
+        if override is not None:
+            hydraulic_parameters.update(override.hydraulic_parameters_override)
+            operation_parameters.update(override.operation_parameters_override)
+        geometry = {
+            key: value
+            for key, value in {
+                "crest_elevation_m": row.crest_elevation_m,
+                "invert_elevation_m": row.invert_elevation_m,
+                "crest_width_m": row.width_m,
+                "height_m": row.height_m,
+            }.items()
+            if value is not None
+        }
+        result.append(
+            HydraulicStructure(
+                id=str(row.id),
+                name=row.structure_name,
+                branch_id=str(row.branch_id),
+                kind=row.structure_type,
+                chainage_m=row.chainage_m,
+                location_geometry=geometry_json(session, row.location),
+                geometry=geometry,
+                hydraulic_law_type=row.hydraulic_law_type,
+                hydraulic_law_parameters=hydraulic_parameters,
+                operation_rule_type=(
+                    override.operation_rule_type_override
+                    if override is not None and override.operation_rule_type_override
+                    else row.operation_rule_type
+                ),
+                operation_parameters=operation_parameters,
+                scenario_id=str(case.id) if override is not None else None,
+                status=(
+                    override.status_override
+                    if override is not None and override.status_override
+                    else row.status
+                ),
+                metadata={
+                    **row.metadata_json,
+                    "structure_code": row.structure_code,
+                    "scenario_override_id": override.id if override is not None else None,
+                },
+            )
+        )
+    if selected_ids is not None:
+        active_ids = {int(item.id) for item in result if item.status == "active"}
+        if set(selected_ids) != active_ids:
+            _reject(
+                "DAYU_STRUCTURE_CONFIGURATION_INVALID",
+                "structures.structure_ids must exactly match every effectively active "
+                "Structure in the case Network",
+                "simulation_case.hydraulic_1d_configuration.structures.structure_ids",
+            )
+    return tuple(result)
 
 
 def _with_simulation_identity(model: Hydraulic1DModel) -> Hydraulic1DModel:
@@ -298,7 +413,11 @@ def build_hydraulic_1d_model(
         _reject("DAYU_BRANCH_MISSING", "Network contains no hydraulic Branch", "branches")
     branches: list[HydraulicBranch] = []
     for index, row in enumerate(branch_rows):
-        if row.direction_status != "confirmed" or row.upstream_node_id is None or row.downstream_node_id is None:
+        if (
+            row.direction_status != "confirmed"
+            or row.upstream_node_id is None
+            or row.downstream_node_id is None
+        ):
             _reject(
                 "DAYU_BRANCH_DIRECTION_UNCONFIRMED",
                 "Branch direction and both hydraulic endpoint nodes must be confirmed",
@@ -312,6 +431,43 @@ def build_hydraulic_1d_model(
                 downstream_node_id=str(row.downstream_node_id),
                 start_chainage_m=row.start_chainage,
                 end_chainage_m=row.end_chainage,
+            )
+        )
+    incoming_counts: dict[int, int] = {}
+    outgoing_counts: dict[int, int] = {}
+    for row in branch_rows:
+        assert row.upstream_node_id is not None and row.downstream_node_id is not None
+        outgoing_counts[row.upstream_node_id] = outgoing_counts.get(row.upstream_node_id, 0) + 1
+        incoming_counts[row.downstream_node_id] = incoming_counts.get(row.downstream_node_id, 0) + 1
+    node_rows = list(
+        session.scalars(
+            select(HydraulicNodeRow)
+            .where(HydraulicNodeRow.network_id == network.id)
+            .order_by(HydraulicNodeRow.node_code, HydraulicNodeRow.id)
+        ).all()
+    )
+    nodes: list[HydraulicNode] = []
+    for row in node_rows:
+        incoming = incoming_counts.get(row.id, 0)
+        outgoing = outgoing_counts.get(row.id, 0)
+        if row.node_type == "storage_connection":
+            node_type = "storage_connection"
+        elif incoming == 0 or outgoing == 0:
+            node_type = "boundary"
+        elif incoming >= 1 and outgoing >= 2:
+            node_type = "bifurcation"
+        elif incoming >= 2 and outgoing >= 1:
+            node_type = "junction"
+        else:
+            node_type = "internal"
+        nodes.append(
+            HydraulicNode(
+                id=str(row.id),
+                code=row.node_code,
+                name=row.node_name,
+                node_type=node_type,
+                location_geometry=geometry_json(session, row.geometry),
+                metadata=row.metadata_json,
             )
         )
     section_rows = list(
@@ -405,14 +561,10 @@ def build_hydraulic_1d_model(
                     else None
                 ),
                 left_bank=(
-                    geometry_json(session, row.left_bank)
-                    if row.left_bank is not None
-                    else None
+                    geometry_json(session, row.left_bank) if row.left_bank is not None else None
                 ),
                 right_bank=(
-                    geometry_json(session, row.right_bank)
-                    if row.right_bank is not None
-                    else None
+                    geometry_json(session, row.right_bank) if row.right_bank is not None else None
                 ),
             )
         )
@@ -477,12 +629,13 @@ def build_hydraulic_1d_model(
         time_step_seconds=_number(task_config, settings_config, "time_step_seconds"),
         output_interval_seconds=_number(task_config, settings_config, "output_interval_seconds"),
     )
-    structures = _structures(session, case, case_config, section_rows)
+    structures = _structures(session, case, case_config, network.id)
     configuration_hash = snapshot_hash(dict(case_config))
     provisional = Hydraulic1DModel(
         simulation_id="pending-identity",
         scenario_id=str(case.id),
         network_id=str(network.id),
+        nodes=tuple(nodes),
         branches=tuple(branches),
         cross_sections=tuple(cross_sections),
         boundaries=boundaries,

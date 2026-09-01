@@ -1,0 +1,77 @@
+schema_version: dayu.hydraulic-engine-capabilities.v1
+engines:
+  - engine: mascaret
+    engine_version: v9.1.1
+    adapter_version: dayu-mascaret-adapter-v2
+    upstream_tag: v9.1.1
+    upstream_commit: 1fe3b5141f7d9c9fa8fe6d6d0316c994a39c2d95
+    capabilities:
+      - feature: UNSTEADY_1D
+        status: VERIFIED_NATIVE
+        benchmark_ids: [B01, B02, B03, B04, B05]
+        verified_at: 2026-09-01
+        reason: Official runtime and the five retained Standard 1D benchmarks pass.
+      - feature: STEADY_1D
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: The production adapter currently emits the unsteady transcritical kernel only.
+      - feature: BRANCHED_NETWORK
+        status: VERIFIED_NATIVE
+        benchmark_ids: [N01, N02, N03]
+        verified_at: 2026-09-01
+        reason: Native listeBranches/listeNoeuds mapping is covered by real runtime cases.
+      - feature: LATERAL_INFLOW
+        status: VERIFIED_NATIVE
+        benchmark_ids: [N04, N05]
+        verified_at: 2026-09-01
+        reason: Native debitsApports mapping is covered by time-varying real runtime cases.
+      - feature: COMBINED_BOUNDARIES
+        status: VERIFIED_NATIVE
+        benchmark_ids: [N05]
+        verified_at: 2026-09-01
+        reason: Multiple upstream hydrographs, downstream stage, and lateral inflow are verified together.
+      - feature: WEIR
+        status: VERIFIED_NATIVE
+        benchmark_ids: [S01]
+        verified_at: 2026-09-01
+        reason: A fixed geometric broad-crested weir maps to the native geometric seuil and passes a real runtime case.
+      - feature: CULVERT
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: No equivalent Dayu-to-MASCARET engineering mapping has passed a runtime benchmark.
+      - feature: BRIDGE
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: No native bridge semantics were established for the pinned MASCARET adapter.
+      - feature: GATE
+        status: UNSUPPORTED
+        benchmark_ids: []
+        reason: Gate remains explicitly disabled pending a complete semantic and runtime acceptance phase.
+      - feature: SLUICE
+        status: UNSUPPORTED
+        benchmark_ids: []
+        reason: Sluice operation is not mapped by the production adapter.
+      - feature: PUMP
+        status: UNSUPPORTED
+        benchmark_ids: []
+        reason: MASCARET Pump support is not available through the verified adapter.
+      - feature: ORIFICE
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: No verified production mapping exists.
+      - feature: DAM
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: Dam/breach semantics require a dedicated engineering acceptance scope.
+      - feature: STORAGE_LINK
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: Storage connection and liaison semantics are not integrated.
+      - feature: COMPOUND
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: Compound structures must be decomposed only by a future verified mapping.
+      - feature: CASIER
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: Official source support exists, but Dayu geometry, liaison, and runtime benchmarks are not complete.

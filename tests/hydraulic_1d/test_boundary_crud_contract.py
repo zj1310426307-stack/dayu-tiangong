@@ -15,6 +15,7 @@ from app.gis.models import BoundaryCondition as BoundaryConditionRow
 from app.model_engine import hydraulic_1d_service, service
 from app.model_engine.hydraulic_1d_service import _boundary
 from app.model_engine.schemas import SimulationTaskCreate
+from model.hydraulic_1d.errors import Hydraulic1DValidationError
 
 
 def test_boundary_crud_openapi_exposes_only_current_hydraulic_semantics() -> None:
@@ -166,6 +167,20 @@ class _PreviewSession:
             start_chainage=0.0,
             end_chainage=1000.0,
         )
+        nodes = [
+            SimpleNamespace(
+                id=node_id,
+                node_code=f"N-{node_id}",
+                node_name=f"Node {node_id}",
+                node_type="boundary",
+                geometry={"type": "Point", "coordinates": coordinates},
+                metadata_json={},
+            )
+            for node_id, coordinates in (
+                (10, [120.0, 30.0]),
+                (11, [120.01, 30.0]),
+            )
+        ]
         sections = [
             SimpleNamespace(
                 id=30,
@@ -249,6 +264,7 @@ class _PreviewSession:
         build_rows = [
             [network],
             [branch],
+            nodes,
             sections,
             [profiles[0]],
             points,
@@ -257,6 +273,7 @@ class _PreviewSession:
             points,
             [],
             boundaries,
+            [],
         ]
         self._scalar_rows = iter(build_rows + build_rows)
 
@@ -311,3 +328,54 @@ def test_service_preview_and_readiness_keep_lateral_binding(
         item for item in preview.snapshot["boundaries"] if item["location"] == "lateral"
     )
     assert (lateral["branch_id"], lateral["chainage_m"]) == ("20", 300.0)
+
+
+def test_structure_selection_cannot_silently_omit_an_active_network_asset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit ID list is an assertion, not a bypass around capability checks."""
+
+    structure = SimpleNamespace(
+        id=90,
+        structure_name="Unsupported active gate",
+        structure_code="G-90",
+        branch_id=20,
+        structure_type="gate",
+        chainage_m=500.0,
+        location={"type": "Point", "coordinates": [120.005, 30.0]},
+        crest_elevation_m=1.0,
+        invert_elevation_m=0.0,
+        width_m=4.0,
+        height_m=3.0,
+        hydraulic_law_type="legacy_gate",
+        hydraulic_parameters={},
+        operation_rule_type="fixed",
+        operation_parameters={},
+        status="active",
+        metadata_json={},
+    )
+
+    class StructureSession:
+        def __init__(self) -> None:
+            self.rows = iter(([structure], []))
+
+        def scalars(self, statement: Any) -> _Rows:
+            del statement
+            return _Rows(next(self.rows))
+
+    monkeypatch.setattr(
+        hydraulic_1d_service,
+        "geometry_json",
+        lambda _session, geometry: geometry,
+    )
+
+    with pytest.raises(
+        Hydraulic1DValidationError,
+        match="DAYU_STRUCTURE_CONFIGURATION_INVALID",
+    ):
+        hydraulic_1d_service._structures(
+            StructureSession(),  # type: ignore[arg-type]
+            SimpleNamespace(id=5, dataset_version_id=7),
+            {"structures": {"structure_ids": []}},
+            8,
+        )

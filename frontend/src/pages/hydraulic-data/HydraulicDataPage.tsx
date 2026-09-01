@@ -1,7 +1,9 @@
 import {
   CheckCircleOutlined,
   CloudUploadOutlined,
+  DeleteOutlined,
   DownloadOutlined,
+  EditOutlined,
   FileExcelOutlined,
   ReloadOutlined,
   SafetyCertificateOutlined,
@@ -12,6 +14,11 @@ import {
   Card,
   Col,
   Descriptions,
+  Form,
+  Input,
+  InputNumber,
+  Modal,
+  Popconfirm,
   Row,
   Select,
   Space,
@@ -30,19 +37,24 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   buildHydraulicTopology,
   commitHydraulicImport,
+  createHydraulicStructure,
+  deleteHydraulicStructure,
   downloadHydraulicNetwork,
   downloadHydraulicSections,
   downloadHydraulicTemplate,
   getHydraulicCapabilities,
+  getHydraulicEngineCapabilities,
   getHydraulicSection,
   listHydraulicImportJobs,
   listHydraulicNetworks,
+  listHydraulicStructures,
   locateHydraulicSection,
   previewHydraulicImport,
   processHydraulicProfile,
   recalculateHydraulicBranchChainage,
   reverseHydraulicBranch,
   runHydraulicDataValidation,
+  updateHydraulicStructure,
   type HydraulicCapabilityResponse,
   type HydraulicImportJobRecord,
   type HydraulicImportPreview,
@@ -50,7 +62,10 @@ import {
   type HydraulicNetworkRecord,
   type HydraulicProfileRecord,
   type HydraulicSectionDetail,
+  type HydraulicStructureCreate,
+  type HydraulicStructureRecord,
   type HydraulicValidationRunRecord,
+  type SolverCapabilityRecord,
 } from '../../api/generated/client';
 import { datasetVersionStatusLabel, useDatasetVersion } from '../../context/DatasetVersionContext';
 
@@ -61,6 +76,7 @@ const ENGINEERING_SRIDS = [4546, 4547, 4548, 4549];
 const CENTRAL_MERIDIANS: Record<number, number> = {
   4546: 111, 4547: 114, 4548: 117, 4549: 120,
 };
+type StructureFormValues = HydraulicStructureCreate & { discharge_coefficient?: number };
 
 /** Trigger a browser download for a blob returned through the generated API client. */
 function saveBlob(blob: Blob, filename: string): void {
@@ -134,19 +150,40 @@ function SectionProfileChart({ section, profile }: { section?: HydraulicSectionD
 }
 
 /** Build stable tree keys while retaining the selected network needed by exports. */
-function networkTree(items: HydraulicNetworkRecord[]): DataNode[] {
+function networkTree(
+  items: HydraulicNetworkRecord[],
+  structures: HydraulicStructureRecord[],
+): DataNode[] {
   return items.map((network) => ({
     key: `network:${network.id}`,
     title: `${network.name} · ${network.code}`,
-    children: (network.branches ?? []).map((branch) => ({
-      key: `branch:${network.id}:${branch.id}`,
-      title: `${branch.branch_name} · ${branch.branch_code} · ${branch.direction_status} · ${branch.reach_count} Reach`,
-      children: (branch.sections ?? []).map((section) => ({
-        key: `section:${network.id}:${branch.id}:${section.id}`,
-        title: `${section.section_code} · K${section.chainage.toFixed(3)}`,
-        isLeaf: true,
+    children: [
+      {
+        key: `nodes:${network.id}`,
+        title: `节点（${network.nodes?.length ?? 0}）`,
+        children: (network.nodes ?? []).map((node) => ({
+          key: `node:${network.id}:${node.id}`,
+          title: `${node.node_code} · ${node.node_type}`,
+          isLeaf: true,
+        })),
+      },
+      ...(network.branches ?? []).map((branch) => ({
+        key: `branch:${network.id}:${branch.id}`,
+        title: `${branch.branch_name} · ${branch.branch_code} · ${branch.direction_status} · ${branch.reach_count} Reach`,
+        children: [
+          ...(branch.sections ?? []).map((section) => ({
+            key: `section:${network.id}:${branch.id}:${section.id}`,
+            title: `${section.section_code} · K${section.chainage.toFixed(3)}`,
+            isLeaf: true,
+          })),
+          ...structures.filter((item) => item.branch_id === branch.id).map((item) => ({
+            key: `structure:${network.id}:${branch.id}:${item.id}`,
+            title: `${item.structure_name} · ${item.structure_type} · K${item.chainage_m.toFixed(3)}`,
+            isLeaf: true,
+          })),
+        ],
       })),
-    })),
+    ],
   }));
 }
 
@@ -156,6 +193,11 @@ export function HydraulicDataPage() {
   const [networks, setNetworks] = useState<HydraulicNetworkRecord[]>([]);
   const [jobs, setJobs] = useState<HydraulicImportJobRecord[]>([]);
   const [capabilities, setCapabilities] = useState<HydraulicCapabilityResponse>();
+  const [engineCapabilities, setEngineCapabilities] = useState<SolverCapabilityRecord[]>([]);
+  const [structures, setStructures] = useState<HydraulicStructureRecord[]>([]);
+  const [structureModalOpen, setStructureModalOpen] = useState(false);
+  const [editingStructure, setEditingStructure] = useState<HydraulicStructureRecord>();
+  const [structureForm] = Form.useForm<StructureFormValues>();
   const [section, setSection] = useState<HydraulicSectionDetail>();
   const [selectedNetworkId, setSelectedNetworkId] = useState<number>();
   const [selectedBranchId, setSelectedBranchId] = useState<number>();
@@ -174,14 +216,18 @@ export function HydraulicDataPage() {
     setLoading(true);
     setError('');
     try {
-      const [networkRows, jobRows, capability] = await Promise.all([
+      const [networkRows, jobRows, capability, engineRows, structureRows] = await Promise.all([
         listHydraulicNetworks(datasetVersionId),
         listHydraulicImportJobs(datasetVersionId),
         getHydraulicCapabilities(),
+        getHydraulicEngineCapabilities(),
+        listHydraulicStructures({ dataset_version_id: datasetVersionId }),
       ]);
       setNetworks(networkRows);
       setJobs(jobRows);
       setCapabilities(capability);
+      setEngineCapabilities(engineRows);
+      setStructures(structureRows);
       setSelectedNetworkId((current) => (
         current && networkRows.some((item) => item.id === current)
           ? current
@@ -361,7 +407,93 @@ export function HydraulicDataPage() {
     }
   };
 
-  const treeData = useMemo(() => networkTree(networks), [networks]);
+  const openStructureCreate = () => {
+    const network = networks.find((item) => item.id === selectedNetworkId) ?? networks[0];
+    const branches = network?.branches ?? [];
+    const branch = branches.find((item) => item.id === selectedBranchId) ?? branches[0];
+    setEditingStructure(undefined);
+    structureForm.resetFields();
+    structureForm.setFieldsValue({
+      dataset_version_id: datasetVersionId,
+      network_id: network?.id,
+      branch_id: branch?.id,
+      structure_type: 'weir',
+      hydraulic_law_type: 'broad_crested_weir',
+      operation_rule_type: 'fixed',
+      status: 'draft',
+    });
+    setStructureModalOpen(true);
+  };
+
+  const openStructureEdit = (record: HydraulicStructureRecord) => {
+    const coordinates = Array.isArray(record.location_geometry.coordinates)
+      ? record.location_geometry.coordinates as number[]
+      : [];
+    setEditingStructure(record);
+    structureForm.setFieldsValue({
+      dataset_version_id: record.dataset_version_id,
+      network_id: record.network_id,
+      branch_id: record.branch_id,
+      structure_code: record.structure_code,
+      structure_name: record.structure_name,
+      structure_type: record.structure_type,
+      chainage_m: record.chainage_m,
+      x: coordinates[0],
+      y: coordinates[1],
+      crest_elevation_m: record.crest_elevation_m ?? undefined,
+      invert_elevation_m: record.invert_elevation_m ?? undefined,
+      width_m: record.width_m ?? undefined,
+      height_m: record.height_m ?? undefined,
+      hydraulic_law_type: record.hydraulic_law_type,
+      discharge_coefficient: Number(record.hydraulic_parameters.discharge_coefficient ?? 0.435),
+      operation_rule_type: record.operation_rule_type,
+      status: record.status,
+    });
+    setStructureModalOpen(true);
+  };
+
+  const saveStructure = async () => {
+    try {
+      const values = await structureForm.validateFields();
+      const { discharge_coefficient: coefficient, dataset_version_id, network_id, ...mutable } = values;
+      const existingHydraulicParameters = editingStructure?.hydraulic_parameters ?? {};
+      const hydraulicParameters = values.structure_type === 'weir'
+        ? { ...existingHydraulicParameters, discharge_coefficient: coefficient }
+        : existingHydraulicParameters;
+      mutable.operation_parameters = editingStructure?.operation_parameters ?? {};
+      mutable.metadata = editingStructure?.metadata ?? {};
+      if (editingStructure) {
+        await updateHydraulicStructure(editingStructure.id, {
+          ...mutable,
+          hydraulic_parameters: hydraulicParameters,
+        });
+      } else {
+        await createHydraulicStructure({
+          ...mutable,
+          dataset_version_id,
+          network_id,
+          hydraulic_parameters: hydraulicParameters,
+        });
+      }
+      setStructureModalOpen(false);
+      await reload();
+      message.success(editingStructure ? '建筑物已更新' : '建筑物已创建');
+    } catch (reason) {
+      if (reason instanceof Error) setError(reason.message);
+    }
+  };
+
+  const removeStructure = async (structureId: number) => {
+    try {
+      await deleteHydraulicStructure(structureId);
+      await reload();
+      message.success('统一建筑物已删除；关联旧资产未被删除');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '建筑物删除失败');
+    }
+  };
+
+  const treeData = useMemo(() => networkTree(networks, structures), [networks, structures]);
   const totalBranches = networks.reduce((sum, item) => sum + item.branch_count, 0);
   const totalSections = networks.reduce(
     (sum, item) => sum + (item.branches ?? []).reduce((branchSum, branch) => branchSum + branch.section_count, 0),
@@ -386,6 +518,28 @@ export function HydraulicDataPage() {
     { title: '规则', dataIndex: 'code', width: 220 },
     { title: '对象', dataIndex: 'entity_ref', width: 140, render: (value) => value ?? '—' },
     { title: '说明', dataIndex: 'message' },
+  ];
+  const structureColumns: ColumnsType<HydraulicStructureRecord> = [
+    { title: '名称', dataIndex: 'structure_name', ellipsis: true },
+    { title: '类型', dataIndex: 'structure_type', width: 110 },
+    { title: '河段', dataIndex: 'branch_id', width: 80 },
+    { title: '桩号（m）', dataIndex: 'chainage_m', width: 120, render: (value: number) => value.toFixed(3) },
+    { title: '状态', dataIndex: 'status', width: 95, render: (value: string) => <Tag>{value}</Tag> },
+    {
+      title: 'MASCARET 9.1.1', dataIndex: 'solver_status', width: 170,
+      render: (value: string, record) => (
+        <Tag title={record.solver_reason} color={value.startsWith('VERIFIED') ? 'success' : value === 'UNSUPPORTED' ? 'error' : 'warning'}>{value}</Tag>
+      ),
+    },
+    {
+      title: '操作', key: 'actions', width: 150,
+      render: (_, record) => <Space>
+        <Button size="small" icon={<EditOutlined />} disabled={!isMutable} onClick={() => openStructureEdit(record)}>编辑</Button>
+        <Popconfirm title="删除统一建筑物？旧 Gate/Pump 资产不会随之删除。" onConfirm={() => void removeStructure(record.id)}>
+          <Button size="small" danger icon={<DeleteOutlined />} disabled={!isMutable} />
+        </Popconfirm>
+      </Space>,
+    },
   ];
 
   return (
@@ -419,6 +573,45 @@ export function HydraulicDataPage() {
         <Col xs={12} md={6}><Card className="data-card"><Statistic title="河段" value={totalBranches} /></Card></Col>
         <Col xs={12} md={6}><Card className="data-card"><Statistic title="节点 / 断面" value={`${totalNodes} / ${totalSections}`} /></Card></Col>
         <Col xs={12} md={6}><Card className="data-card"><Statistic title="最近导入" value={jobs[0]?.status ?? '—'} /></Card></Col>
+      </Row>
+
+      <Row gutter={[16, 16]}>
+        <Col xs={24} xl={15}>
+          <Card
+            className="data-card"
+            title="统一水工建筑物"
+            extra={<Button type="primary" disabled={!isMutable || !networks.length} onClick={openStructureCreate}>创建建筑物</Button>}
+          >
+            <Alert
+              type="info"
+              showIcon
+              message="可建模不等于可求解"
+              description="Bridge、Culvert、Gate、Pump 等可以准确保存；提交 Standard 1D 前会按版本化能力矩阵明确阻断未验证或不支持的类型。"
+              style={{ marginBottom: 12 }}
+            />
+            <Table rowKey="id" dataSource={structures} columns={structureColumns} pagination={{ pageSize: 6 }} scroll={{ x: 900 }} />
+          </Card>
+        </Col>
+        <Col xs={24} xl={9}>
+          <Card className="data-card" title="MASCARET 9.1.1 工程能力">
+            <Table
+              rowKey="feature"
+              size="small"
+              pagination={false}
+              dataSource={engineCapabilities}
+              scroll={{ y: 360 }}
+              columns={[
+                { title: '能力', dataIndex: 'feature' },
+                {
+                  title: '状态', dataIndex: 'status', width: 165,
+                  render: (value: string, record: SolverCapabilityRecord) => (
+                    <Tag title={record.reason} color={value.startsWith('VERIFIED') ? 'success' : value === 'UNSUPPORTED' ? 'error' : 'warning'}>{value}</Tag>
+                  ),
+                },
+              ]}
+            />
+          </Card>
+        </Col>
       </Row>
 
       <Row gutter={[16, 16]}>
@@ -538,6 +731,37 @@ export function HydraulicDataPage() {
       <Card className="data-card" title="导入审计记录">
         <Table rowKey="id" loading={loading} dataSource={jobs} columns={jobColumns} scroll={{ x: 1300 }} pagination={{ pageSize: 8 }} />
       </Card>
+
+      <Modal
+        title={editingStructure ? `编辑 ${editingStructure.structure_name}` : '创建统一水工建筑物'}
+        open={structureModalOpen}
+        width={760}
+        onCancel={() => setStructureModalOpen(false)}
+        onOk={() => void saveStructure()}
+        okText="保存"
+      >
+        <Form form={structureForm} layout="vertical">
+          <Form.Item name="dataset_version_id" hidden><InputNumber /></Form.Item>
+          <Form.Item name="network_id" hidden><InputNumber /></Form.Item>
+          <Row gutter={12}>
+            <Col xs={24} md={12}><Form.Item name="structure_code" label="编码" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col xs={24} md={12}><Form.Item name="structure_name" label="名称" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="structure_type" label="类型" rules={[{ required: true }]}><Select onChange={(value) => structureForm.setFieldValue('hydraulic_law_type', value === 'weir' ? 'broad_crested_weir' : 'none')} options={['weir', 'culvert', 'bridge', 'gate', 'sluice', 'pump', 'orifice', 'dam', 'storage_link', 'compound'].map((value) => ({ value, label: value.toUpperCase() }))} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="branch_id" label="河段" rules={[{ required: true }]}><Select options={networks.flatMap((network) => (network.branches ?? []).map((branch) => ({ value: branch.id, label: `${network.code} / ${branch.branch_code}` })))} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="status" label="模型状态" rules={[{ required: true }]}><Select options={['draft', 'active', 'inactive', 'retired'].map((value) => ({ value, label: value }))} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="chainage_m" label="桩号（m）" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="x" label="CGCS2000 X（经度）" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="y" label="CGCS2000 Y（纬度）" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="crest_elevation_m" label="堰顶/顶高程（m）"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="invert_elevation_m" label="底高程（m）"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="width_m" label="宽度（m）"><InputNumber min={0.001} style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="height_m" label="高度（m）"><InputNumber min={0.001} style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="discharge_coefficient" label="堰流量系数"><InputNumber min={0.001} style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="operation_rule_type" label="运行规则" rules={[{ required: true }]}><Select options={['fixed', 'time_series', 'water_level_controlled', 'scenario_specific'].map((value) => ({ value, label: value }))} /></Form.Item></Col>
+          </Row>
+          <Form.Item name="hydraulic_law_type" label="水力规律" rules={[{ required: true }]}><Input /></Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 }

@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from hmac import compare_digest
 from math import isclose, isfinite
+from time import monotonic
 from typing import Any
 
 from sqlalchemy import delete, select, update
@@ -431,6 +432,7 @@ def persist_hydraulic_1d_result(
 ) -> SimulationTaskRecord:
     """Atomically replace authoritative Section rows and mark one task successful."""
 
+    persistence_started = monotonic()
     if task.status not in {"running", "pending"}:
         raise TaskStateError("only an active task can persist a result")
     if task.input_schema_version != HYDRAULIC_1D_INPUT_SCHEMA:
@@ -492,8 +494,13 @@ def persist_hydraulic_1d_result(
     task.end_time = datetime.now(UTC)
     task.heartbeat_time = task.end_time
     task.result_path = f"database://hydraulic_task_section_result/{task.id}"
+    # Flush the authoritative result rows so the diagnostic includes database
+    # serialization and insert work, while the surrounding commit stays atomic.
+    session.flush()
+    persistence_seconds = monotonic() - persistence_started
     task.diagnostics = {
         **result.diagnostics,
+        "persistence_seconds": persistence_seconds,
         "engine": result.engine,
         "engine_version": result.engine_version,
         "result_schema_version": result.schema_version,

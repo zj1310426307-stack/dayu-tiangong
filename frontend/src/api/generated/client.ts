@@ -1171,6 +1171,15 @@ export interface HydraulicLocateRequest {
   "actor"?: string | null;
 }
 
+export interface HydraulicNetworkGraphRecord {
+  "network_id": number;
+  "nodes": Array<Record<string, unknown>>;
+  "branches": Array<Record<string, unknown>>;
+  "cross_sections": Array<Record<string, unknown>>;
+  "structures": Array<HydraulicStructureRecord>;
+  "boundaries": Array<Record<string, unknown>>;
+}
+
 export interface HydraulicNetworkRecord {
   "id": number;
   "dataset_version_id": number;
@@ -1311,6 +1320,95 @@ export interface HydraulicSectionSummary {
   "orientation_status": string;
   "bed_elevation_m": number | null;
   "bed_elevation_source": string;
+}
+
+export interface HydraulicStructureCreate {
+  "dataset_version_id": number;
+  "network_id": number;
+  "branch_id": number;
+  "structure_code": string;
+  "structure_name": string;
+  "structure_type": "weir" | "culvert" | "bridge" | "gate" | "sluice" | "pump" | "orifice" | "dam" | "storage_link" | "compound";
+  "chainage_m": number;
+  "x": number;
+  "y": number;
+  "crest_elevation_m"?: number | null;
+  "invert_elevation_m"?: number | null;
+  "width_m"?: number | null;
+  "height_m"?: number | null;
+  "hydraulic_law_type"?: string;
+  "hydraulic_parameters"?: Record<string, unknown>;
+  "operation_rule_type"?: "fixed" | "time_series" | "water_level_controlled" | "scenario_specific";
+  "operation_parameters"?: Record<string, unknown>;
+  "status"?: "draft" | "active" | "inactive" | "retired";
+  "metadata"?: Record<string, unknown>;
+}
+
+export interface HydraulicStructureRecord {
+  "id": number;
+  "dataset_version_id": number;
+  "network_id": number;
+  "branch_id": number;
+  "structure_code": string;
+  "structure_name": string;
+  "structure_type": "weir" | "culvert" | "bridge" | "gate" | "sluice" | "pump" | "orifice" | "dam" | "storage_link" | "compound";
+  "chainage_m": number;
+  "location_geometry": Record<string, unknown>;
+  "crest_elevation_m": number | null;
+  "invert_elevation_m": number | null;
+  "width_m": number | null;
+  "height_m": number | null;
+  "hydraulic_law_type": string;
+  "hydraulic_parameters": Record<string, unknown>;
+  "operation_rule_type": "fixed" | "time_series" | "water_level_controlled" | "scenario_specific";
+  "operation_parameters": Record<string, unknown>;
+  "status": "draft" | "active" | "inactive" | "retired";
+  "metadata": Record<string, unknown>;
+  "legacy_gate_id": number | null;
+  "legacy_pump_id": number | null;
+  "solver_status": string;
+  "solver_reason": string;
+}
+
+export interface HydraulicStructureScenarioRecord {
+  "status_override"?: "draft" | "active" | "inactive" | "retired" | null;
+  "hydraulic_parameters_override"?: Record<string, unknown>;
+  "operation_rule_type_override"?: "fixed" | "time_series" | "water_level_controlled" | "scenario_specific" | null;
+  "operation_parameters_override"?: Record<string, unknown>;
+  "metadata"?: Record<string, unknown>;
+  "id": number;
+  "dataset_version_id": number;
+  "case_id": number;
+  "structure_id": number;
+  "updated_at": string;
+}
+
+export interface HydraulicStructureScenarioUpsert {
+  "status_override"?: "draft" | "active" | "inactive" | "retired" | null;
+  "hydraulic_parameters_override"?: Record<string, unknown>;
+  "operation_rule_type_override"?: "fixed" | "time_series" | "water_level_controlled" | "scenario_specific" | null;
+  "operation_parameters_override"?: Record<string, unknown>;
+  "metadata"?: Record<string, unknown>;
+}
+
+export interface HydraulicStructureUpdate {
+  "branch_id"?: number | null;
+  "structure_code"?: string | null;
+  "structure_name"?: string | null;
+  "structure_type"?: "weir" | "culvert" | "bridge" | "gate" | "sluice" | "pump" | "orifice" | "dam" | "storage_link" | "compound" | null;
+  "chainage_m"?: number | null;
+  "x"?: number | null;
+  "y"?: number | null;
+  "crest_elevation_m"?: number | null;
+  "invert_elevation_m"?: number | null;
+  "width_m"?: number | null;
+  "height_m"?: number | null;
+  "hydraulic_law_type"?: string | null;
+  "hydraulic_parameters"?: Record<string, unknown> | null;
+  "operation_rule_type"?: "fixed" | "time_series" | "water_level_controlled" | "scenario_specific" | null;
+  "operation_parameters"?: Record<string, unknown> | null;
+  "status"?: "draft" | "active" | "inactive" | "retired" | null;
+  "metadata"?: Record<string, unknown> | null;
 }
 
 export interface HydraulicTopologyBuildRequest {
@@ -1963,6 +2061,17 @@ export interface SimulationTaskRecord {
   "end_time": string | null;
 }
 
+export interface SolverCapabilityRecord {
+  "engine": string;
+  "engine_version": string;
+  "adapter_version": string;
+  "feature": string;
+  "status": string;
+  "reason": string;
+  "benchmark_ids": Array<string>;
+  "verified_at": string | null;
+}
+
 export interface SourceCitation {
   "source_type": "knowledge" | "database" | "simulation" | "optimization";
   "title": string;
@@ -2125,6 +2234,7 @@ export interface DatabaseListQuery { dataset_version_id?: number; river_id?: num
 export interface DatasetTaskListQuery { dataset_version_id?: number; }
 export interface DispatchListQuery { dataset_version_id?: number; plan_id?: number; status?: string; limit?: number; offset?: number; }
 export interface HydraulicExportQuery { dataset_version_id: number; network_id?: number; native?: boolean; }
+export interface HydraulicStructureListQuery { dataset_version_id: number; network_id?: number; }
 export interface HydraulicCoordinateOptions {
   source_crs: string;
   engineering_crs: string;
@@ -2372,6 +2482,14 @@ export const deleteSimulationCase = (caseId: number, baseUrl = '') => requestJso
 export const runValidation = (datasetVersionId: number, baseUrl = '') => requestJson<ValidationReport>('/api/v1/validation/run', jsonOptions('POST', { dataset_version_id: datasetVersionId }), baseUrl);
 
 export const getHydraulicCapabilities = (baseUrl = '') => requestJson<HydraulicCapabilityResponse>('/api/v1/hydraulic/capabilities', {}, baseUrl);
+export const getHydraulicEngineCapabilities = (baseUrl = '') => requestJson<Array<SolverCapabilityRecord>>('/api/v1/hydraulic/engine-capabilities', {}, baseUrl);
+export const getHydraulicNetworkGraph = (networkId: number, baseUrl = '') => requestJson<HydraulicNetworkGraphRecord>(`/api/v1/hydraulic/networks/${networkId}/graph`, {}, baseUrl);
+export const listHydraulicStructures = (params: HydraulicStructureListQuery, baseUrl = '') => requestJson<Array<HydraulicStructureRecord>>(`/api/v1/hydraulic/structures${toQuery(params)}`, {}, baseUrl);
+export const getHydraulicStructure = (structureId: number, baseUrl = '') => requestJson<HydraulicStructureRecord>(`/api/v1/hydraulic/structures/${structureId}`, {}, baseUrl);
+export const createHydraulicStructure = (body: HydraulicStructureCreate, baseUrl = '') => requestJson<HydraulicStructureRecord>('/api/v1/hydraulic/structures', jsonOptions('POST', body), baseUrl);
+export const updateHydraulicStructure = (structureId: number, body: HydraulicStructureUpdate, baseUrl = '') => requestJson<HydraulicStructureRecord>(`/api/v1/hydraulic/structures/${structureId}`, jsonOptions('PUT', body), baseUrl);
+export const deleteHydraulicStructure = (structureId: number, baseUrl = '') => requestJson<void>(`/api/v1/hydraulic/structures/${structureId}`, { method: 'DELETE' }, baseUrl);
+export const upsertHydraulicStructureScenario = (structureId: number, caseId: number, body: HydraulicStructureScenarioUpsert, baseUrl = '') => requestJson<HydraulicStructureScenarioRecord>(`/api/v1/hydraulic/structures/${structureId}/scenarios/${caseId}`, jsonOptions('PUT', body), baseUrl);
 export const listHydraulicNetworks = (datasetVersionId: number, baseUrl = '') => requestJson<Array<HydraulicNetworkRecord>>(`/api/v1/hydraulic/networks${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
 export const getHydraulicSection = (sectionId: number, baseUrl = '') => requestJson<HydraulicSectionDetail>(`/api/v1/hydraulic/cross-sections/${sectionId}`, {}, baseUrl);
 export const listHydraulicImportJobs = (datasetVersionId: number, baseUrl = '') => requestJson<Array<HydraulicImportJobRecord>>(`/api/v1/hydraulic/imports${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
