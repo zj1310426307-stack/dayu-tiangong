@@ -5,6 +5,8 @@ from __future__ import annotations
 from csv import reader
 from dataclasses import dataclass
 from math import hypot, isclose, isfinite
+from pathlib import Path
+from re import DOTALL, findall, sub
 from model.hydraulic_1d.contracts import (
     Hydraulic1DModel,
     HydraulicCrossSection,
@@ -13,7 +15,10 @@ from model.hydraulic_1d.contracts import (
 )
 from model.hydraulic_1d.errors import Hydraulic1DResultError
 from model.hydraulic_1d.mascaret.config import MASCARET_ENGINE_ID, MASCARET_VERSION
-from model.hydraulic_1d.mascaret.adapter import MascaretPreparedCase
+from model.hydraulic_1d.mascaret.adapter import (
+    MascaretPreparedCase,
+    mascaret_branch_offsets,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,8 +58,21 @@ class MascaretResultParser:
             raise Hydraulic1DResultError(
                 "MASCARET result lacks required variables: " + ", ".join(missing)
             )
-        branch = model.branches[0]
-        sections = sorted(model.cross_sections, key=lambda item: item.chainage_m)
+        branches = sorted(model.branches, key=lambda item: (item.code, item.id))
+        branch_by_reach = {
+            str(index): branch for index, branch in enumerate(branches, start=1)
+        }
+        branch_offsets = mascaret_branch_offsets(branches)
+        sections_by_branch = {
+            branch.id: sorted(
+                (item for item in model.cross_sections if item.branch_id == branch.id),
+                key=lambda item: item.chainage_m,
+            )
+            for branch in branches
+        }
+        sections = [
+            section for branch in branches for section in sections_by_branch[branch.id]
+        ]
         records: list[HydraulicResultRecord] = []
         last_time_by_section: dict[tuple[str, str], float] = {}
         raw_location_by_section: dict[tuple[str, str], float] = {}
@@ -77,11 +95,14 @@ class MascaretResultParser:
             time_seconds = self._number(values[0], line_number, "time")
             reach_id = values[1].strip()
             section_number = values[2].strip()
-            if reach_id != "1":
+            branch = branch_by_reach.get(reach_id)
+            if branch is None:
                 raise Hydraulic1DResultError(
-                    f"unexpected MASCARET reach id {reach_id!r}; adapter generated only reach 1"
+                    f"unexpected MASCARET reach id {reach_id!r}; adapter generated "
+                    f"{len(branches)} branches"
                 )
-            chainage_m = self._number(values[3], line_number, "chainage")
+            native_chainage_m = self._number(values[3], line_number, "chainage")
+            chainage_m = native_chainage_m - branch_offsets[branch.id]
             raw_values = [
                 self._number(value, line_number, abbreviation)
                 for abbreviation, value in zip(variables, values[4:])
@@ -89,8 +110,15 @@ class MascaretResultParser:
             row = dict(zip(variables, raw_values))
             raw_rows += 1
             raw_key = reach_id, section_number
-            previous_chainage = raw_location_by_section.setdefault(raw_key, chainage_m)
-            if not isclose(previous_chainage, chainage_m, rel_tol=0.0, abs_tol=1e-6):
+            previous_chainage = raw_location_by_section.setdefault(
+                raw_key, native_chainage_m
+            )
+            if not isclose(
+                previous_chainage,
+                native_chainage_m,
+                rel_tol=0.0,
+                abs_tol=1e-6,
+            ):
                 raise Hydraulic1DResultError(
                     f"MASCARET section {raw_key!r} changed chainage across time"
                 )
@@ -100,7 +128,7 @@ class MascaretResultParser:
                     f"MASCARET section {raw_key!r} has a repeated or decreasing time"
                 )
             last_time_by_section[raw_key] = time_seconds
-            section = self._match_section(sections, chainage_m)
+            section = self._match_section(sections_by_branch[branch.id], chainage_m)
             if section is None:
                 continue
             mapped_key = section.id, time_seconds
@@ -152,7 +180,9 @@ class MascaretResultParser:
                     wet_area_m2=area,
                     hydraulic_radius_m=hydraulic_radius,
                     top_width_m=top_width,
-                    froude_number=row.get("FR"),
+                    # REZO signs its raw Froude value with flow direction;
+                    # the unified contract stores the dimensionless magnitude.
+                    froude_number=(abs(row["FR"]) if "FR" in row else None),
                 )
             )
             seen_sections.add(section.id)
@@ -200,7 +230,17 @@ class MascaretResultParser:
             raise Hydraulic1DResultError(
                 "MASCARET result does not cover the complete expected output time axis"
             )
-        records.sort(key=lambda item: (float(item.timestamp), item.chainage_m))
+        branch_rank = {item.id: index for index, item in enumerate(branches)}
+        records.sort(
+            key=lambda item: (
+                float(item.timestamp),
+                branch_rank[item.branch_id],
+                item.chainage_m,
+            )
+        )
+        native_mass_balance = self._native_mass_balance(
+            prepared.workspace / "results.lis"
+        )
         return HydraulicResult(
             simulation_id=model.simulation_id,
             scenario_id=model.scenario_id,
@@ -213,6 +253,7 @@ class MascaretResultParser:
                 "mapped_result_rows": len(records),
                 "variable_abbreviations": list(variables),
                 "source_format": "opthyca-opt",
+                **native_mass_balance,
                 # The official native executable stores the first solved time
                 # step, then the requested interval; it cannot store t=0.
                 "time_axis_mode": "platform-t0" if platform_axis else "mascaret-native",
@@ -221,6 +262,74 @@ class MascaretResultParser:
             # after parsing. Durable artifacts require a separate object-store path.
             artifacts=(),
         )
+
+    @staticmethod
+    def _native_mass_balance(listing_file: Path) -> dict[str, object]:
+        """Read the final global mass report emitted by the official runtime."""
+
+        try:
+            content = listing_file.read_text(encoding="iso-8859-1", errors="strict")
+        except (OSError, UnicodeError):
+            return {}
+        relative = findall(
+            r"ERREUR RELATIVE\s*:\s*([+-]?[0-9.]+(?:[Ee][+-]?[0-9]+)?)",
+            content,
+        )
+        node_block_pattern = (
+            r"BILAN DE MASSE FINAL DANS LE CONFLUENT\s*:\s*"
+            r"(\d+)(.*?)(?=\n={20,}|\Z)"
+        )
+        global_content = sub(node_block_pattern, "", content, flags=DOTALL)
+        absolute = findall(
+            r"ERREUR SUR LA MASSE D'EAU\s*:\s*([+-]?[0-9.]+(?:[Ee][+-]?[0-9]+)?)",
+            global_content,
+        )
+        if not relative:
+            return {}
+        result: dict[str, object] = {
+            "network_mass_balance_residual": abs(float(relative[-1]))
+        }
+        if absolute:
+            result["network_mass_balance_error_m3"] = abs(float(absolute[-1]))
+        node_rows: dict[int, dict[str, float | int]] = {}
+        blocks = findall(node_block_pattern, content, flags=DOTALL)
+        labels = {
+            "initial_volume_m3": r"MASSE D'EAU INITIALE\s*:\s*([+\-0-9.Ee]+)",
+            "inflow_volume_m3": r"MASSE D'EAU ENTREE AUX FRONTIERES\s*:\s*([+\-0-9.Ee]+)",
+            "outflow_volume_m3": r"MASSE D'EAU SORTIE AUX FRONTIERES\s*:\s*([+\-0-9.Ee]+)",
+            "final_volume_m3": r"MASSE D'EAU FINALE\s*:\s*([+\-0-9.Ee]+)",
+            "mass_error_m3": r"ERREUR SUR LA MASSE D'EAU\s*:\s*([+\-0-9.Ee]+)",
+        }
+        for node_number, block in blocks:
+            values: dict[str, float | int] = {"mascaret_node_number": int(node_number)}
+            for key, pattern in labels.items():
+                matches = findall(pattern, block)
+                if matches:
+                    values[key] = float(matches[-1])
+            if "mass_error_m3" not in values:
+                continue
+            denominator = max(
+                (
+                    abs(float(values.get(key, 0.0)))
+                    for key in (
+                        "initial_volume_m3",
+                        "inflow_volume_m3",
+                        "outflow_volume_m3",
+                        "final_volume_m3",
+                    )
+                ),
+                default=1.0,
+            )
+            values["continuity_residual"] = abs(float(values["mass_error_m3"])) / max(
+                denominator, 1.0
+            )
+            node_rows[int(node_number)] = values
+        if node_rows:
+            result["node_continuity"] = [node_rows[key] for key in sorted(node_rows)]
+            result["node_continuity_residual"] = max(
+                float(item["continuity_residual"]) for item in node_rows.values()
+            )
+        return result
 
     @staticmethod
     def _same_time_axis(

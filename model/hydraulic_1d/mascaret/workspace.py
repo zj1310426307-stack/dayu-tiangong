@@ -8,6 +8,7 @@ from os import replace
 from pathlib import Path
 from re import sub
 from shutil import rmtree
+from time import monotonic, sleep
 from typing import Any
 from uuid import uuid4
 
@@ -146,7 +147,20 @@ def cleanup_verified_workspace(root: Path, workspace: Path, *, job_id: str) -> N
         raise Hydraulic1DExecutionError(
             "refusing to remove a workspace whose external runtime is not released"
         )
-    rmtree(resolved)
+    deadline = monotonic() + 2.0
+    while True:
+        try:
+            rmtree(resolved)
+            return
+        except FileNotFoundError:
+            return
+        except OSError:
+            # A terminated Windows process can briefly retain its current-directory
+            # handle after the exact Job Object has been proven stopped. The target
+            # was marker-verified above, so retry only this already-authorized path.
+            if monotonic() >= deadline:
+                raise
+            sleep(0.05)
 
 
 def prune_retained_workspaces(root: Path, *, maximum: int) -> None:

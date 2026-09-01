@@ -81,11 +81,88 @@ jobs:
           for fk in i.get_foreign_keys('boundary_condition'));
           assert {'depth_m','flow_area_m2','wet_area_m2','hydraulic_radius_m','top_width_m','froude_number'} <= set(result);
           assert result['control_volume_m3']['nullable']"
+      - name: Verify Engineering-03 persistence and legacy preservation
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, inspect, text
+
+          engine = create_engine(os.environ["DATABASE_URL"])
+          inspector = inspect(engine)
+          assert {"structure", "structure_scenario"} <= set(
+              inspector.get_table_names(schema="hydraulic")
+          )
+          structure = {
+              item["name"]
+              for item in inspector.get_columns("structure", schema="hydraulic")
+          }
+          assert {
+              "network_id", "branch_id", "chainage_m", "location",
+              "hydraulic_parameters", "operation_parameters",
+              "legacy_gate_id", "legacy_pump_id",
+          } <= structure
+          structure_fks = {
+              item["name"]
+              for item in inspector.get_foreign_keys("structure", schema="hydraulic")
+          }
+          scenario_fks = {
+              item["name"]
+              for item in inspector.get_foreign_keys(
+                  "structure_scenario", schema="hydraulic"
+              )
+          }
+          assert "fk_hydraulic_structure_branch_network_version" in structure_fks
+          assert {
+              "fk_hydraulic_structure_scenario_structure_version",
+              "fk_hydraulic_structure_scenario_case_version",
+          } <= scenario_fks
+          with engine.connect() as connection:
+              missing = connection.scalar(text("""
+                  SELECT count(*)
+                    FROM (
+                      SELECT gate.id
+                        FROM public.gate AS gate
+                        JOIN hydraulic.branch AS branch
+                          ON branch.legacy_river_id = gate.river_id
+                         AND branch.dataset_version_id = gate.dataset_version_id
+                        LEFT JOIN hydraulic.structure AS structure
+                          ON structure.legacy_gate_id = gate.id
+                       WHERE structure.id IS NULL
+                      UNION ALL
+                      SELECT pump.id
+                        FROM public.pump AS pump
+                        JOIN hydraulic.branch AS branch
+                          ON branch.legacy_river_id = pump.river_id
+                         AND branch.dataset_version_id = pump.dataset_version_id
+                        LEFT JOIN hydraulic.structure AS structure
+                          ON structure.legacy_pump_id = pump.id
+                       WHERE structure.id IS NULL
+                    ) AS missing
+              """))
+              floating = connection.scalar(text("""
+                  SELECT count(*)
+                    FROM hydraulic.structure AS structure
+                    JOIN hydraulic.branch AS branch
+                      ON branch.id = structure.branch_id
+                     AND branch.network_id = structure.network_id
+                     AND branch.dataset_version_id = structure.dataset_version_id
+                   WHERE NOT ST_DWithin(structure.location, branch.centerline, 1e-10)
+              """))
+          assert missing == 0
+          assert floating == 0
+          PY
       - name: Round-trip latest migration
         run: |
           alembic -c database/alembic.ini downgrade -1
           alembic -c database/alembic.ini upgrade head
           test "$(alembic -c database/alembic.ini heads | grep -c '(head)')" -eq 1
+      - name: Run Engineering-03 PostGIS and API integration
+        env:
+          RUN_HYDRAULIC_ENGINEERING_POSTGIS: "1"
+        run: >-
+          python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
+          backend/tests/test_hydraulic_engineering_postgis.py
 
   worker-integration:
     name: Worker integration

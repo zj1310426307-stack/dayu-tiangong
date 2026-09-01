@@ -95,7 +95,9 @@ class MascaretEngine(Hydraulic1DEngine):
         succeeded = False
         failure: Hydraulic1DError | None = None
         try:
+            build_started = monotonic()
             prepared = self.builder.build(model, workspace.path)
+            model_build_seconds = monotonic() - build_started
             if context.progress_callback is not None:
                 context.progress_callback(20.0, {"phase": "prepared"})
             last_heartbeat = monotonic()
@@ -125,15 +127,19 @@ class MascaretEngine(Hydraulic1DEngine):
             )
             if context.progress_callback is not None:
                 context.progress_callback(90.0, {"phase": "parsing"})
+            parser_started = monotonic()
             result = self.parser.parse(
                 model,
                 prepared,
                 runtime_seconds=execution.elapsed_seconds,
             )
+            parser_seconds = monotonic() - parser_started
             result = result.model_copy(
                 update={
                     "diagnostics": {
                         **result.diagnostics,
+                        "model_build_seconds": model_build_seconds,
+                        "parser_seconds": parser_seconds,
                         "runtime_provenance": (
                             execution.runtime_identity
                             or self.runtime.identity().as_metadata()
