@@ -13,10 +13,10 @@ from app.hydraulic.production.contracts import (
     CalibrationObjective,
     DatasetWindow,
     ExternalResultPreview,
-    HydraulicMetrics,
     HydraulicModelQARequest,
     ParameterSweepRequest,
     ResultProductRequest,
+    TimeAlignmentOptions,
     TimeSeriesImportPreview,
 )
 from app.model_engine.schemas import SimulationTaskCreate
@@ -105,6 +105,17 @@ class ExternalResultRecord(BaseModel):
     imported_at: datetime
 
 
+class MetricEvidenceRequest(BaseModel):
+    """Map one persisted Observation to one immutable task-result Section."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    observation_series_id: int = Field(gt=0)
+    cross_section_id: int = Field(gt=0)
+    maximum_chainage_distance_m: float = Field(ge=0)
+    alignment: TimeAlignmentOptions = Field(default_factory=TimeAlignmentOptions)
+
+
 class CalibrationRunCommitRequest(BaseModel):
     """Persist one bounded sweep and its explicit objective."""
 
@@ -119,6 +130,7 @@ class CalibrationRunCommitRequest(BaseModel):
     dataset: DatasetWindow
     sweep: ParameterSweepRequest
     objective: CalibrationObjective
+    metric_evidence: list[MetricEvidenceRequest] = Field(min_length=1, max_length=2)
     candidates: list[CalibrationCandidate]
 
 
@@ -133,6 +145,7 @@ class CalibrationSweepCreateRequest(BaseModel):
     dataset: DatasetWindow
     sweep: ParameterSweepRequest
     objective: CalibrationObjective
+    metric_evidence: list[MetricEvidenceRequest] = Field(min_length=1, max_length=2)
 
 
 class CalibrationRunRecord(BaseModel):
@@ -178,7 +191,7 @@ class ValidationRunCommitRequest(BaseModel):
     calibration_dataset: DatasetWindow
     validation_dataset: DatasetWindow
     criteria: AcceptanceCriteria
-    metrics: list[HydraulicMetrics]
+    metric_evidence: list[MetricEvidenceRequest] = Field(min_length=1, max_length=2)
     mass_balance_relative_error: float | None = Field(default=None, ge=0)
 
 

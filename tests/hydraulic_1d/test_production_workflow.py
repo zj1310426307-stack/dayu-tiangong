@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
+from types import SimpleNamespace
 
 from openpyxl import load_workbook
 import pytest
@@ -45,6 +46,7 @@ from app.hydraulic.production.gate import (
     assert_production_gate,
     build_production_gate,
 )
+from app.hydraulic.production.evidence import compute_persisted_task_metrics
 from app.hydraulic.production.importers import EngineeringDataImporter
 from app.hydraulic.production.metrics import align_and_score
 from app.hydraulic.production.products import (
@@ -53,7 +55,12 @@ from app.hydraulic.production.products import (
     export_product_geojson,
     export_product_xlsx,
 )
+from app.hydraulic.production.records import MetricEvidenceRequest
 from app.hydraulic.production.qa import HydraulicModelQA
+from app.hydraulic.models import (
+    HydraulicCrossSection as StoredCrossSection,
+    HydraulicObservationSeries,
+)
 from model.hydraulic_1d import (
     BoundaryCondition,
     CrossSectionPoint,
@@ -355,6 +362,72 @@ def test_p03_calibration_metrics_sweep_and_ranking_are_explicit() -> None:
                 max_runs=3,
             )
         )
+
+
+def test_p03_formal_metrics_are_recomputed_from_persisted_evidence() -> None:
+    """P03: formal state cannot substitute client-authored metrics for stored evidence."""
+
+    observation = SimpleNamespace(
+        id=11,
+        dataset_version_id=1,
+        series_code="OBS-H",
+        station_id="STA-1",
+        branch_id=7,
+        chainage_m=50.0,
+        variable="water_level",
+        unit="m",
+        vertical_datum="1985-national-height",
+        time_basis="relative",
+        timezone=None,
+        source="synthetic-contract-fixture",
+        source_filename="observed.csv",
+        source_sha256="a" * 64,
+        samples_json=[
+            {"time_seconds": 0, "value": 3.0, "quality_flag": "GOOD"},
+            {"time_seconds": 60, "value": 3.2, "quality_flag": "GOOD"},
+            {"time_seconds": 120, "value": 3.1, "quality_flag": "GOOD"},
+        ],
+    )
+    section = SimpleNamespace(
+        id=21, dataset_version_id=1, branch_id=7, chainage=52.0
+    )
+    profile = SimpleNamespace(vertical_datum="1985-national-height")
+    rows = [
+        SimpleNamespace(time_seconds=time, water_level_m=value, flow_m3s=10.0)
+        for time, value in ((0, 3.1), (60, 3.2), (120, 3.0))
+    ]
+
+    class ScalarRows:
+        def all(self) -> list[SimpleNamespace]:
+            return rows
+
+    class FakeSession:
+        def get(self, model: object, identity: int) -> SimpleNamespace | None:
+            if model is HydraulicObservationSeries and identity == 11:
+                return observation
+            if model is StoredCrossSection and identity == 21:
+                return section
+            return None
+
+        def scalar(self, _statement: object) -> SimpleNamespace:
+            return profile
+
+        def scalars(self, _statement: object) -> ScalarRows:
+            return ScalarRows()
+
+    metrics = compute_persisted_task_metrics(
+        FakeSession(),  # type: ignore[arg-type]
+        SimpleNamespace(id=31, dataset_version_id=1, status="success"),
+        [
+            MetricEvidenceRequest(
+                observation_series_id=11,
+                cross_section_id=21,
+                maximum_chainage_distance_m=5,
+                alignment=TimeAlignmentOptions(),
+            )
+        ],
+    )
+    assert metrics[0].rmse == pytest.approx((0.02 / 3) ** 0.5)
 
 
 def test_p04_validation_requires_independent_evidence_and_project_criteria() -> None:

@@ -101,11 +101,13 @@ const sweepRunTemplate = JSON.stringify({
   dataset: { dataset_id: 'REPLACE', event_id: 'REPLACE', station_ids: ['REPLACE'], start_time: '2026-01-01T00:00:00+08:00', end_time: '2026-01-02T00:00:00+08:00', role: 'calibration', holdout_type: 'independent_event' },
   sweep: JSON.parse(sweepTemplate),
   objective: { mode: 'water-level-focused', weights: { 'water_level.rmse': 1 } },
+  metric_evidence: [{ observation_series_id: 0, cross_section_id: 0, maximum_chainage_distance_m: 0, alignment: { method: 'exact', tolerance_seconds: 0, minimum_valid_samples: 3, minimum_coverage_ratio: 0.5 } }],
 }, null, 2);
 const calibrationCommitTemplate = JSON.stringify({
   run_code: 'REPLACE', calibration_run_id: 0, production_run_id: 0, dataset_version_id: 0, case_id: 0, actor: 'REPLACE',
   dataset: { dataset_id: 'REPLACE', event_id: 'REPLACE', station_ids: ['REPLACE'], start_time: '2026-01-01T00:00:00+08:00', end_time: '2026-01-02T00:00:00+08:00', role: 'calibration', holdout_type: 'independent_event' },
-  sweep: JSON.parse(sweepTemplate), objective: { mode: 'water-level-focused', weights: { 'water_level.rmse': 1 } }, candidates: [],
+  sweep: JSON.parse(sweepTemplate), objective: { mode: 'water-level-focused', weights: { 'water_level.rmse': 1 } },
+  metric_evidence: [{ observation_series_id: 0, cross_section_id: 0, maximum_chainage_distance_m: 0, alignment: { method: 'exact', tolerance_seconds: 0, minimum_valid_samples: 3, minimum_coverage_ratio: 0.5 } }], candidates: [],
 }, null, 2);
 const promotionTemplate = JSON.stringify({
   calibration_run_id: 0, candidate_id: 'REPLACE', accepted_by: 'REPLACE', acceptance_reason: 'REPLACE_WITH_REVIEWED_REASON',
@@ -120,7 +122,8 @@ const independenceTemplate = JSON.stringify({ calibration: {}, validation: {} },
 const acceptanceTemplate = JSON.stringify({ metrics: [], criteria: {}, independence: { independent: false, temporal_holdout: false, issues: [] } }, null, 2);
 const validationCommitTemplate = JSON.stringify({
   validation_code: 'REPLACE', production_run_id: 0, dataset_version_id: 0, case_id: 0, calibration_run_id: 0, actor: 'REPLACE',
-  calibration_dataset: {}, validation_dataset: {}, criteria: {}, metrics: [], mass_balance_relative_error: null,
+  calibration_dataset: {}, validation_dataset: {}, criteria: {},
+  metric_evidence: [{ observation_series_id: 0, cross_section_id: 0, maximum_chainage_distance_m: 0, alignment: { method: 'exact', tolerance_seconds: 0, minimum_valid_samples: 3, minimum_coverage_ratio: 0.5 } }], mass_balance_relative_error: null,
 }, null, 2);
 const approvalTemplate = JSON.stringify({ run_id: 0, approved_by: 'REPLACE', approval_reason: 'REPLACE_WITH_PROFESSIONAL_SIGN_OFF' }, null, 2);
 const compareTemplate = JSON.stringify({ dayu_series: [], external_series: [], alignment: { method: 'exact', tolerance_seconds: 0, minimum_valid_samples: 3, minimum_coverage_ratio: 0.5 } }, null, 2);

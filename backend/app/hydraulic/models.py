@@ -1053,6 +1053,7 @@ class HydraulicCalibrationRun(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     calibration_dataset_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     parameter_groups_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    metric_evidence_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
     candidates_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
     objective_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     selected_candidate_id: Mapped[str | None] = mapped_column(String(128))
@@ -1095,6 +1096,7 @@ class HydraulicModelValidationAssessment(Base):
     validation_dataset_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     independence_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     criteria_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    metric_evidence_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
     metrics_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
     evaluation_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(

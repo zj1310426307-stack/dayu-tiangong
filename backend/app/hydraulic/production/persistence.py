@@ -35,6 +35,7 @@ from app.hydraulic.production.contracts import (
     HydraulicModelQARequest,
     HydraulicModelQAResult,
 )
+from app.hydraulic.production.evidence import compute_persisted_task_metrics
 from app.hydraulic.production.products import build_result_products
 from app.hydraulic.production.qa import HydraulicModelQA
 from app.hydraulic.production.records import (
@@ -294,6 +295,8 @@ def commit_external_result(
 def commit_calibration_run(
     session: Session, payload: CalibrationRunCommitRequest
 ) -> CalibrationRunRecord:
+    """Recompute candidate metrics from persisted evidence and update the sweep."""
+
     _require_dataset(session, payload.dataset_version_id)
     _require_case(session, payload.case_id, payload.dataset_version_id)
     run = _require_production_run(
@@ -308,42 +311,6 @@ def commit_calibration_run(
     planned = {item.candidate_id: item for item in plan.candidates}
     if len(payload.candidates) != len(plan.candidates):
         raise ValueError("Calibration results must cover every planned candidate")
-    for candidate in payload.candidates:
-        expected = planned.get(candidate.candidate_id)
-        if expected is None or expected.overrides != candidate.overrides:
-            raise ValueError("Calibration candidate does not match the server-generated sweep")
-        if candidate.task_id is None:
-            raise ValueError("Every calibration candidate must reference an immutable task")
-        candidate_task = session.get(SimulationTask, candidate.task_id)
-        expected_task_status = {
-            "planned": "pending",
-            "queued": "queued",
-            "running": "running",
-            "completed": "success",
-            "failed": "failed",
-            "cancelled": "cancelled",
-        }[candidate.status]
-        if (
-            candidate_task is None
-            or candidate_task.dataset_version_id != payload.dataset_version_id
-            or candidate_task.case_id != payload.case_id
-            or candidate_task.status != expected_task_status
-        ):
-            raise ValueError("Calibration candidate task identity or status is inconsistent")
-        expected_overrides = [
-            {
-                "group_id": parameter.group_id,
-                "cross_section_ids": [int(value) for value in parameter.target_ids],
-                "manning_n": candidate.overrides[f"manning_n:{parameter.group_id}"],
-            }
-            for parameter in payload.sweep.parameters
-        ]
-        if candidate_task.config.get("roughness_overrides") != expected_overrides:
-            raise ValueError("Calibration task roughness overrides do not match its candidate")
-    ranked = rank_calibration_candidates(
-        CalibrationRankingRequest(candidates=payload.candidates, objective=payload.objective)
-    )
-    terminal = {"completed", "failed", "cancelled"}
     row = (
         session.get(HydraulicCalibrationRun, payload.calibration_run_id)
         if payload.calibration_run_id is not None
@@ -356,6 +323,71 @@ def commit_calibration_run(
         or row.status not in {"planned", "queued", "running", "completed"}
     ):
         raise ValueError("Calibration Run identity or lifecycle state is inconsistent")
+    evidence_json = [item.model_dump(mode="json") for item in payload.metric_evidence]
+    if row is not None and row.metric_evidence_json != evidence_json:
+        raise ValueError("Calibration metric mapping cannot change after sweep creation")
+    stored_task_ids = (
+        {
+            str(item.get("candidate_id")): item.get("task_id")
+            for item in row.candidates_json
+        }
+        if row is not None
+        else {}
+    )
+    verified_candidates: list[CalibrationCandidate] = []
+    task_statuses = {
+        "pending": "planned",
+        "queued": "queued",
+        "running": "running",
+        "success": "completed",
+        "failed": "failed",
+        "cancelled": "cancelled",
+    }
+    for candidate in payload.candidates:
+        expected = planned.get(candidate.candidate_id)
+        if expected is None or expected.overrides != candidate.overrides:
+            raise ValueError("Calibration candidate does not match the server-generated sweep")
+        if candidate.task_id is None:
+            raise ValueError("Every calibration candidate must reference an immutable task")
+        if row is not None and stored_task_ids.get(candidate.candidate_id) != candidate.task_id:
+            raise ValueError("Calibration candidate task cannot change after sweep creation")
+        candidate_task = session.get(SimulationTask, candidate.task_id)
+        if (
+            candidate_task is None
+            or candidate_task.dataset_version_id != payload.dataset_version_id
+            or candidate_task.case_id != payload.case_id
+            or candidate_task.status not in task_statuses
+        ):
+            raise ValueError("Calibration candidate task identity or status is inconsistent")
+        expected_overrides = [
+            {
+                "group_id": parameter.group_id,
+                "cross_section_ids": [int(value) for value in parameter.target_ids],
+                "manning_n": candidate.overrides[f"manning_n:{parameter.group_id}"],
+            }
+            for parameter in payload.sweep.parameters
+        ]
+        if candidate_task.config.get("roughness_overrides") != expected_overrides:
+            raise ValueError("Calibration task roughness overrides do not match its candidate")
+        status = task_statuses[candidate_task.status]
+        metrics = (
+            compute_persisted_task_metrics(session, candidate_task, payload.metric_evidence)
+            if status == "completed"
+            else []
+        )
+        verified_candidates.append(
+            expected.model_copy(
+                update={
+                    "task_id": candidate_task.id,
+                    "status": status,
+                    "metrics": metrics,
+                }
+            )
+        )
+    ranked = rank_calibration_candidates(
+        CalibrationRankingRequest(candidates=verified_candidates, objective=payload.objective)
+    )
+    terminal = {"completed", "failed", "cancelled"}
     status = (
         "completed"
         if ranked and all(candidate.status in terminal for candidate in ranked)
@@ -367,6 +399,7 @@ def commit_calibration_run(
         "parameter_groups_json": [
             item.model_dump(mode="json") for item in payload.sweep.parameters
         ],
+        "metric_evidence_json": evidence_json,
         "candidates_json": [item.model_dump(mode="json") for item in ranked],
         "objective_json": payload.objective.model_dump(mode="json"),
     }
@@ -399,6 +432,7 @@ def create_calibration_sweep(
     base_task = session.get(SimulationTask, run.task_id)
     if base_task is None or base_task.status != "success":
         raise ValueError("Calibration sweep requires a successful bound Production task")
+    compute_persisted_task_metrics(session, base_task, payload.metric_evidence)
     plan = build_parameter_sweep(payload.sweep)
     allowed_config = {
         key: value
@@ -442,6 +476,9 @@ def create_calibration_sweep(
         parameter_groups_json=[
             item.model_dump(mode="json") for item in payload.sweep.parameters
         ],
+        metric_evidence_json=[
+            item.model_dump(mode="json") for item in payload.metric_evidence
+        ],
         candidates_json=[item.model_dump(mode="json") for item in candidates],
         objective_json=payload.objective.model_dump(mode="json"),
     )
@@ -458,6 +495,7 @@ def create_calibration_sweep(
             "run_code": calibration.run_code,
             "production_run_id": run.id,
             "candidate_task_ids": [item.task_id for item in candidates],
+            "metric_evidence": calibration.metric_evidence_json,
         },
     )
     return CalibrationSweepRunResponse(
@@ -625,9 +663,12 @@ def commit_validation_run(
     independence = evaluate_validation_independence(
         payload.calibration_dataset, payload.validation_dataset
     )
+    metrics = compute_persisted_task_metrics(
+        session, formal_task, payload.metric_evidence
+    )
     evaluation = evaluate_acceptance(
         AcceptanceEvaluationRequest(
-            metrics=payload.metrics,
+            metrics=metrics,
             criteria=payload.criteria,
             independence=independence,
             mass_balance_relative_error=run.mass_balance_relative_error,
@@ -644,7 +685,10 @@ def commit_validation_run(
         validation_dataset_json=payload.validation_dataset.model_dump(mode="json"),
         independence_json=independence.model_dump(mode="json"),
         criteria_json=payload.criteria.model_dump(mode="json"),
-        metrics_json=[item.model_dump(mode="json") for item in payload.metrics],
+        metric_evidence_json=[
+            item.model_dump(mode="json") for item in payload.metric_evidence
+        ],
+        metrics_json=[item.model_dump(mode="json") for item in metrics],
         evaluation_json=evaluation.model_dump(mode="json"),
     )
     session.add(row)

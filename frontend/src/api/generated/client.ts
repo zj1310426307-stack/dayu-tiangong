@@ -468,6 +468,7 @@ export interface CalibrationRunCommitRequest {
   "dataset": DatasetWindow;
   "sweep": ParameterSweepRequest;
   "objective": CalibrationObjective;
+  "metric_evidence": Array<MetricEvidenceRequest>;
   "candidates": Array<CalibrationCandidate>;
 }
 
@@ -491,6 +492,7 @@ export interface CalibrationSweepCreateRequest {
   "dataset": DatasetWindow;
   "sweep": ParameterSweepRequest;
   "objective": CalibrationObjective;
+  "metric_evidence": Array<MetricEvidenceRequest>;
 }
 
 export interface CalibrationSweepRunResponse {
@@ -1824,6 +1826,13 @@ export interface MetricEvaluationRequest {
   "alignment"?: TimeAlignmentOptions;
 }
 
+export interface MetricEvidenceRequest {
+  "observation_series_id": number;
+  "cross_section_id": number;
+  "maximum_chainage_distance_m": number;
+  "alignment"?: TimeAlignmentOptions;
+}
+
 export interface ModelParameterCreate {
   "dataset_version_id": number;
   "parameter_type": string;
@@ -2743,7 +2752,7 @@ export interface ValidationRunCommitRequest {
   "calibration_dataset": DatasetWindow;
   "validation_dataset": DatasetWindow;
   "criteria": AcceptanceCriteria;
-  "metrics": Array<HydraulicMetrics>;
+  "metric_evidence": Array<MetricEvidenceRequest>;
   "mass_balance_relative_error"?: number | null;
 }
 

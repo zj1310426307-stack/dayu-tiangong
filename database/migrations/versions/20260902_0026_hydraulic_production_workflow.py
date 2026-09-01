@@ -206,6 +206,7 @@ def upgrade() -> None:
         sa.Column("status", sa.String(16), nullable=False),
         sa.Column("calibration_dataset_json", postgresql.JSONB(), nullable=False),
         sa.Column("parameter_groups_json", postgresql.JSONB(), nullable=False),
+        sa.Column("metric_evidence_json", postgresql.JSONB(), nullable=False),
         sa.Column("candidates_json", postgresql.JSONB(), nullable=False),
         sa.Column("objective_json", postgresql.JSONB(), nullable=False),
         sa.Column("selected_candidate_id", sa.String(128)),
@@ -254,6 +255,7 @@ def upgrade() -> None:
         sa.Column("validation_dataset_json", postgresql.JSONB(), nullable=False),
         sa.Column("independence_json", postgresql.JSONB(), nullable=False),
         sa.Column("criteria_json", postgresql.JSONB(), nullable=False),
+        sa.Column("metric_evidence_json", postgresql.JSONB(), nullable=False),
         sa.Column("metrics_json", postgresql.JSONB(), nullable=False),
         sa.Column("evaluation_json", postgresql.JSONB(), nullable=False),
         sa.Column(

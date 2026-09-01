@@ -6,6 +6,8 @@
 
 Observed 与 Simulated 在不移动观测时刻的前提下按明确策略对齐：exact、interpolation 或 nearest-with-tolerance。只有 GOOD 观测进入指标，MISSING/REJECTED 不变为零。H 与 Q 分开计算单位一致的 MAE、RMSE、Bias、NSE、R²、峰值误差、峰现时间误差、有效样本数和覆盖率。
 
+正式率定/验证不接受调用方提交的 metrics 作为状态依据。请求必须给出已导入 `observation_series_id`、明确的 `cross_section_id`、经审核的最大桩号距离和时间对齐方法；后端核对 Dataset/Branch/chainage/水位基准后，从持久化观测与不可变任务断面结果重新计算。率定扫描创建后不允许更换该映射，防止看到结果后选点。
+
 候选排序使用用户声明的权重和可读键，例如 `water_level.rmse` 或 `discharge.nse`。不满足样本/覆盖率或缺少目标指标的候选不参与合格排序。选中候选必须由专业人员记录接受人、原因和项目 Acceptance Criteria；后端使用已持久化的候选 metrics 与任务水量平衡诊断重新评价，不接受前端自报的“已达标”布尔值。接受操作会基于候选 override 创建一个新的冻结快照、重建生产 QA 封套并交回现有 Job Manager 执行；候选任务本身不会被偷换为正式运行。
 
 ## 验证独立性
