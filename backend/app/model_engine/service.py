@@ -17,7 +17,8 @@ from app.gis.models import (
     SimulationCase,
     SimulationTask,
 )
-from app.hydraulic.models import HydraulicCrossSection
+from app.hydraulic.models import HydraulicCrossSection, HydraulicProductionRun
+from app.hydraulic.production.gate import assert_production_gate
 from app.model_engine.hydraulic_1d_service import (
     build_hydraulic_1d_model,
     freeze_hydraulic_1d_input,
@@ -507,6 +508,32 @@ def persist_hydraulic_1d_result(
         "record_count": len(result.records),
         "build_identity": build_identity.provenance(),
     }
+    production_runs = session.scalars(
+        select(HydraulicProductionRun).where(HydraulicProductionRun.task_id == task.id)
+    ).all()
+    water_balance = result.diagnostics.get("water_balance")
+    nested_balance = water_balance if isinstance(water_balance, Mapping) else {}
+    mass_balance = result.diagnostics.get(
+        "network_mass_balance_residual",
+        nested_balance.get("relative_balance_residual"),
+    )
+    normalized_mass_balance = (
+        abs(float(mass_balance))
+        if isinstance(mass_balance, (int, float))
+        and not isinstance(mass_balance, bool)
+        and isfinite(float(mass_balance))
+        else None
+    )
+    for production_run in production_runs:
+        production_run.runtime_provenance_json = {
+            "task_id": task.id,
+            "result_schema_version": result.schema_version,
+            "engine": result.engine,
+            "engine_version": result.engine_version,
+            "record_count": len(result.records),
+            "build_identity": build_identity.provenance(),
+        }
+        production_run.mass_balance_relative_error = normalized_mass_balance
     session.commit()
     session.refresh(task)
     return _record(task)
@@ -554,6 +581,7 @@ def run_task(session: Session, task_id: int) -> SimulationTaskRecord:
             expected_registry_hash=task.registry_hash,
         )
         model = parse_frozen_task_model(task)
+        assert_production_gate(task.config, model, str(task.input_snapshot_hash or ""))
         engine = create_hydraulic_1d_engine()
 
         def progress(value: float, details: dict[str, Any]) -> None:

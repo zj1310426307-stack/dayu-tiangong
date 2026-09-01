@@ -16,6 +16,7 @@ from app.gis_analysis.router import router as gis_analysis_router
 from app.geoserver.router import router as geoserver_router
 from app.import_service.router import router as import_router
 from app.hydraulic.router import router as hydraulic_router
+from app.hydraulic.production_router import router as hydraulic_production_router
 from app.model_engine.router import router as model_engine_router
 from app.optimization.router import router as optimization_router
 from app.river.router import router as river_router
@@ -44,3 +45,4 @@ api_router.include_router(dataset_router)
 api_router.include_router(import_router)
 api_router.include_router(validation_router)
 api_router.include_router(hydraulic_router)
+api_router.include_router(hydraulic_production_router)

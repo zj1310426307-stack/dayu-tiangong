@@ -477,6 +477,78 @@ def build_hydraulic_1d_model(
             .order_by(HydraulicCrossSectionRow.branch_id, HydraulicCrossSectionRow.chainage)
         ).all()
     )
+    raw_roughness_overrides = task_config.get("roughness_overrides", [])
+    if not isinstance(raw_roughness_overrides, Sequence) or isinstance(
+        raw_roughness_overrides, (str, bytes)
+    ):
+        _reject(
+            "DAYU_ROUGHNESS_OVERRIDE_INVALID",
+            "roughness_overrides must be an array",
+            "task.roughness_overrides",
+        )
+    roughness_by_section: dict[int, tuple[str, float]] = {}
+    for group_index, group in enumerate(raw_roughness_overrides):
+        if not isinstance(group, Mapping):
+            _reject(
+                "DAYU_ROUGHNESS_OVERRIDE_INVALID",
+                "each roughness override must be an object",
+                f"task.roughness_overrides[{group_index}]",
+            )
+        group_id = group.get("group_id")
+        section_ids = group.get("cross_section_ids")
+        manning_n = group.get("manning_n")
+        if not isinstance(group_id, str) or not group_id.strip():
+            _reject(
+                "DAYU_ROUGHNESS_OVERRIDE_INVALID",
+                "roughness override requires group_id",
+                f"task.roughness_overrides[{group_index}].group_id",
+            )
+        if not isinstance(section_ids, Sequence) or isinstance(section_ids, (str, bytes)):
+            _reject(
+                "DAYU_ROUGHNESS_OVERRIDE_INVALID",
+                "roughness override requires cross_section_ids",
+                f"task.roughness_overrides[{group_index}].cross_section_ids",
+            )
+        if (
+            isinstance(manning_n, bool)
+            or not isinstance(manning_n, (int, float))
+            or not 0 < float(manning_n) <= 0.3
+        ):
+            _reject(
+                "DAYU_ROUGHNESS_OVERRIDE_INVALID",
+                "roughness override manning_n must be in (0, 0.3]",
+                f"task.roughness_overrides[{group_index}].manning_n",
+            )
+        for raw_section_id in section_ids:
+            if isinstance(raw_section_id, bool):
+                _reject(
+                    "DAYU_ROUGHNESS_OVERRIDE_INVALID",
+                    "roughness override Cross Section identifiers must be integers",
+                    f"task.roughness_overrides[{group_index}].cross_section_ids",
+                )
+            try:
+                section_id = int(raw_section_id)
+            except (TypeError, ValueError):
+                _reject(
+                    "DAYU_ROUGHNESS_OVERRIDE_INVALID",
+                    "roughness override Cross Section identifiers must be integers",
+                    f"task.roughness_overrides[{group_index}].cross_section_ids",
+                )
+            if section_id in roughness_by_section:
+                _reject(
+                    "DAYU_ROUGHNESS_OVERRIDE_INVALID",
+                    "a Cross Section cannot belong to two override groups",
+                    f"task.roughness_overrides[{group_index}].cross_section_ids",
+                )
+            roughness_by_section[section_id] = (group_id, float(manning_n))
+    known_section_ids = {row.id for row in section_rows}
+    unknown_override_sections = sorted(set(roughness_by_section) - known_section_ids)
+    if unknown_override_sections:
+        _reject(
+            "DAYU_ROUGHNESS_OVERRIDE_INVALID",
+            f"roughness override references unknown Cross Sections {unknown_override_sections}",
+            "task.roughness_overrides",
+        )
     cross_sections: list[HydraulicCrossSection] = []
     for index, row in enumerate(section_rows):
         if row.orientation_status != "confirmed":
@@ -526,6 +598,8 @@ def build_hydraulic_1d_model(
                 .order_by(HydraulicRoughnessZone.zone_order)
             ).all()
         )
+        override = roughness_by_section.get(row.id)
+        adopted_manning_n = override[1] if override is not None else profile.default_manning_n
         cross_sections.append(
             HydraulicCrossSection(
                 id=str(row.id),
@@ -545,12 +619,12 @@ def build_hydraulic_1d_model(
                     )
                     for point in points
                 ),
-                manning_n=profile.default_manning_n,
+                manning_n=adopted_manning_n,
                 roughness_zones=tuple(
                     RoughnessZone(
                         start_station_m=zone.offset_start_m,
                         end_station_m=zone.offset_end_m,
-                        manning_n=zone.manning_n,
+                        manning_n=adopted_manning_n if override is not None else zone.manning_n,
                     )
                     for zone in zones
                 ),
@@ -651,6 +725,7 @@ def build_hydraulic_1d_model(
             "vertical_unit": network.vertical_unit,
             "vertical_datum": network.vertical_datum,
             "hydraulic_1d_configuration_hash": configuration_hash,
+            "roughness_overrides": [dict(value) for value in raw_roughness_overrides],
         },
     )
     model = _with_simulation_identity(provisional)

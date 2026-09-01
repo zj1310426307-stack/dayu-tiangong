@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, model_validator
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator, model_validator
 
 from model.hydraulic_1d import (
     DEFAULT_HYDRAULIC_1D_ENGINE_ID,
@@ -17,6 +17,35 @@ from model.hydraulic_1d import (
 TaskStatus = Literal[
     "pending", "queued", "running", "cancel_requested", "cancelled", "success", "failed"
 ]
+
+
+class RoughnessOverride(BaseModel):
+    """Apply one calibration candidate to an explicit Cross Section group."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    group_id: str = Field(min_length=1, max_length=128)
+    cross_section_ids: list[int] = Field(min_length=1)
+    manning_n: FiniteFloat = Field(gt=0, le=0.3)
+
+    @field_validator("cross_section_ids", mode="before")
+    @classmethod
+    def reject_boolean_targets(cls, value: object) -> object:
+        """Do not allow JSON booleans to coerce into integer database identities."""
+
+        if isinstance(value, list) and any(isinstance(item, bool) for item in value):
+            raise ValueError("roughness override cross_section_ids must contain integers")
+        return value
+
+    @model_validator(mode="after")
+    def validate_targets(self) -> "RoughnessOverride":
+        """Reject duplicated targets inside one parameter group."""
+
+        if len(self.cross_section_ids) != len(set(self.cross_section_ids)):
+            raise ValueError("roughness override cross_section_ids must be unique")
+        if any(value <= 0 for value in self.cross_section_ids):
+            raise ValueError("roughness override cross_section_ids must be positive")
+        return self
 
 
 class SimulationTaskCreate(BaseModel):
@@ -33,6 +62,7 @@ class SimulationTaskCreate(BaseModel):
     engine: Literal[DEFAULT_HYDRAULIC_1D_ENGINE_ID] = DEFAULT_HYDRAULIC_1D_ENGINE_ID
     input_schema_version: Literal[HYDRAULIC_1D_INPUT_SCHEMA] = HYDRAULIC_1D_INPUT_SCHEMA
     storage_level: Literal["full"] = "full"
+    roughness_overrides: list[RoughnessOverride] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_initial_override_pair(self) -> "SimulationTaskCreate":
@@ -41,6 +71,16 @@ class SimulationTaskCreate(BaseModel):
         supplied = (self.initial_water_level is not None, self.initial_flow is not None)
         if supplied[0] != supplied[1]:
             raise ValueError("initial_water_level and initial_flow must be supplied together")
+        group_ids = [item.group_id for item in self.roughness_overrides]
+        if len(group_ids) != len(set(group_ids)):
+            raise ValueError("roughness override group_id values must be unique")
+        targets = [
+            section_id
+            for group in self.roughness_overrides
+            for section_id in group.cross_section_ids
+        ]
+        if len(targets) != len(set(targets)):
+            raise ValueError("a Cross Section cannot belong to two roughness override groups")
         return self
 
 
