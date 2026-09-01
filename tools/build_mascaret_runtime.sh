@@ -22,7 +22,7 @@ source_archive="$cache_dir/telemac-mascaret-v9.1.1-1fe3b514.tar.gz"
 source_dir="$output_dir/source"
 build_dir="$output_dir/build"
 source_url='https://gitlab.pam-retd.fr/api/v4/projects/otm%2Ftelemac-mascaret/repository/archive.tar.gz?sha=1fe3b5141f7d9c9fa8fe6d6d0316c994a39c2d95'
-source_tree_sha256='db66c18f0c9d275288a5674abfa09772324a8bb2306e34d8918623fc664d15b9'
+source_tree_sha256='cd116294009e08872331cab1dedc54f2321f13bbb304c863c0e06c07e17e3a6f'
 
 mkdir -p "$cache_dir" "$output_dir"
 if [[ ! -f "$source_archive" ]]; then
@@ -32,9 +32,9 @@ rm -rf "$source_dir" "$build_dir"
 mkdir -p "$source_dir"
 tar --extract --gzip --file "$source_archive" --directory "$source_dir" --strip-components=1
 observed_tree_sha256="$(
-  tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner \
-    --format=gnu --create --file=- --directory="$source_dir" . \
-    | sha256sum | cut -d' ' -f1
+  cd "$source_dir"
+  find . -type f -print0 | LC_ALL=C sort -z \
+    | xargs -0 sha256sum | sha256sum | cut -d' ' -f1
 )"
 if [[ "$observed_tree_sha256" != "$source_tree_sha256" ]]; then
   echo "official MASCARET source tree SHA-256 mismatch" >&2

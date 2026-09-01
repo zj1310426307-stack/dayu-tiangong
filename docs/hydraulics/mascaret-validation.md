@@ -23,14 +23,14 @@ Gate 与 Pump 继续 fail closed；本结论不扩大到桥梁、涵洞、堰坝
 | tag object | `ed0ec0c755ed5a8618865b250c38c85d20f1cff5` |
 | release commit | `1fe3b5141f7d9c9fa8fe6d6d0316c994a39c2d95` |
 | source archive SHA-256 | `54b52798435baeb294ad3418c2fe146b5c10ef0d6e8e3e9d72d606e0f9fdb5e3` |
-| canonical source tree SHA-256 | `db66c18f0c9d275288a5674abfa09772324a8bb2306e34d8918623fc664d15b9` |
+| canonical source tree SHA-256 | `cd116294009e08872331cab1dedc54f2321f13bbb304c863c0e06c07e17e3a6f` |
 | local verified executable SHA-256 | `632967296f39bf548b37eceee242f0125ed4364ddced4e50a697d3047b7c48b9` |
 | official runtime resource digest | `fa720e8a5a023ff46feccede55f69861ca0a1afbd408e12d6c2be49af934cb39` |
 | license | GPL-3.0-only；容器保留上游 `LICENSE.txt` |
 
 官方来源为 `https://gitlab.pam-retd.fr/otm/telemac-mascaret`，许可证说明为 `https://www.opentelemac.org/index.php/licence`。本仓库只保存构建说明、固定身份和 Adapter，不 vendoring 上游源码。许可证的具体商业分发义务须由部署方独立审查。
 
-GitLab 的提交归档是动态生成的；同一提交的 gzip/tar 时间与所有者元数据可能变化。表中的归档 SHA-256 是本次审查样本记录，构建门禁实际强制校验去除时间、所有者和文件顺序差异后的规范化源码树 SHA-256。内容、相对路径或权限有任何变化都会失败关闭。
+GitLab 的提交归档是动态生成的；同一提交的 gzip/tar 时间、所有者和权限映射可能变化。表中的归档 SHA-256 是本次审查样本记录，构建门禁实际强制校验按相对路径排序的逐文件内容 SHA-256 清单摘要。文件内容或相对路径有任何变化都会失败关闭。
 
 ## 可重复运行时
 
