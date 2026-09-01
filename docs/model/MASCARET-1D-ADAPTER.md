@@ -1,6 +1,6 @@
 # MASCARET 1D Adapter
 
-更新日期：2026-08-31
+更新日期：2026-09-02
 状态：当前 Standard 1D 产品路线
 
 ## 架构与版本
@@ -17,7 +17,7 @@ HYDRO-DATA-01
 
 本 Adapter 锁定 MASCARET `v9.1.1`、官方提交 `1fe3b5141f7d9c9fa8fe6d6d0316c994a39c2d95`。MASCARET 作为 TELEMAC-MASCARET 的外部 GPL-3.0-only 运行时使用，Dayu 仓库和默认业务镜像均不复制其源码或执行文件；独立运行时镜像保留上游许可证。部署和分发方仍须自行完成许可证合规审查，本文件不作法律判断。
 
-`D-Flow FM` 只在 engine registry 中作为未来保留位，本阶段没有实现、配置或对外声明其可用。
+`D-Flow FM` 只完成独立 HYDROLIB-core 结构序列化 Spike，没有实现、配置或对外声明生产可用。
 
 官方依据：
 
@@ -62,13 +62,15 @@ cd <isolated-job-workspace>
 
 | Dayu | MASCARET | 当前状态 |
 |---|---|---|
-| Network / single Branch | 单 reach case | 已验证；多 Branch 显式拒绝 |
+| Network / directed Branch graph | native branch/node lists | N01–N03 已验证；当前内部 native node 限三条 extremity |
 | Cross Section / profile points | `.geo` profile | 已验证 |
 | longitudinal Manning `n` | Strickler `K=1/n` | 已验证 |
 | upstream Q(t) / constant Q | hydraulic law | 已验证 |
 | downstream H(t) / constant H | hydraulic law | 已验证 |
 | point lateral inflow/withdrawal | `debitsApports`, zero length | 已验证；正值入流、负值取水 |
+| fixed broad-crested geometric weir | native geometric seuil / REZO | S01 已验证；不外推到活动或淹没控制 |
 | initial stage / flow | `.lig` | 已验证 |
+| Bridge / Culvert / CASIER | 上游线索存在但 Dayu 映射证据不足 | **未验证，fail closed** |
 | Gate | 尚未完成全业务语义与真实运行时验证 | **不支持，fail closed** |
 | Pump | 无经证实的官方对应 | **不支持，fail closed** |
 | transverse roughness variation | 未在当前转换合同内 | 不支持，fail closed |
@@ -79,7 +81,7 @@ cd <isolated-job-workspace>
 
 ## 结果合同
 
-Parser 严格读取 Opthyca `[variables]` / `[resultats]`，核对列数、时间、reach/section、桩号、重复行、非有限数以及完整输出 cadence；同时兼容平台 `t=0` 轴和官方从首个计算步开始的原生轴。水位和流量为必需变量；统一结果至少包含：
+Parser 严格读取 Opthyca `[variables]` / `[resultats]`，核对列数、时间、reach/section、分支原生桩号偏移、桩号、重复行、非有限数以及完整输出 cadence；同时兼容平台 `t=0` 轴和官方从首个计算步开始的原生轴。水位和流量为必需变量；统一结果至少包含：
 
 ```text
 simulation_id, scenario_id, engine, engine_version,
@@ -87,7 +89,7 @@ branch_id, chainage_m, cross_section_id, timestamp_seconds,
 water_level_m, depth_m, discharge_m3s, velocity_ms, flow_area_m2
 ```
 
-若官方输出含 `S1/S2`、`B1/B2`、`P1/P2`，则使用两部分之和计算流通面积、顶宽、湿周和水力半径，并以 `Q/area` 统一速度。MASCARET 私有文件和原始变量不直接暴露给前端。
+若官方输出含 `S1/S2`、`B1/B2`、`P1/P2`，则使用两部分之和计算流通面积、顶宽、湿周和水力半径，并以 `Q/area` 统一速度；REZO 带方向符号的 Froude 归一为统一合同中的非负幅值。Parser 还提取全局及汇流控制体质量报告。MASCARET 私有文件和原始变量不直接暴露给前端。
 
 ## 测试口径
 

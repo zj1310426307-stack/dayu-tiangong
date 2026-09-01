@@ -1,18 +1,18 @@
 # MASCARET v9.1.1 正式验证
 
-更新日期：2026-09-01  
-验证范围：HYDRO-1D-MASCARET-02
+更新日期：2026-09-02
+验证范围：HYDRO-1D-MASCARET-02 + HYDRO-1D-ENGINEERING-03
 
 ## 结论
 
-Dayu Standard 1D 已通过官方 MASCARET `v9.1.1` 原生运行时的五组真实数值验收、并发隔离和故障边界验证。生产调用链保持：
+Dayu Standard 1D 已通过官方 MASCARET `v9.1.1` 原生运行时的 B01–B05、N01–N05、S01、并发隔离和故障边界验证。生产调用链保持：
 
 ```text
 Unified Hydraulic Model → Adapter → verified runtime → native Opthyca
 → strict parser → Unified Hydraulic Result → PostGIS/API/GIS
 ```
 
-Gate 与 Pump 继续 fail closed；本结论不扩大到桥梁、涵洞、堰坝、复杂河网或真实工程率定。
+复杂河网、横向入流、组合边界和固定宽顶几何堰已在下述范围内验证。Gate 与 Pump 继续 fail closed；Bridge、Culvert 与 CASIER 仍为 UNVERIFIED。本结论不扩大到真实工程率定。
 
 ## 上游身份与许可证
 
@@ -59,6 +59,21 @@ relative residual = abs((storage_end - storage_start) - integral(Qin - Qout)dt)
 
 体积由权威断面流通面积沿桩号做梯形积分；边界流量沿统一相对时间轴做梯形积分。正式 JSON 共 5 个 case、31 个检查，并保存 7 份原生 `.opt` 快照的 SHA-256。
 
+## Engineering-03 验收
+
+N01–N05 与 S01 由相同 binary/tag/commit/source-tree provenance 运行。网络节点连续性优先使用官方 listing 的汇流控制体初末库容和累计边界通量；S01 的 REZO listing 不提供同一全局字段，因此明确使用断面积分估计，不混淆证据来源。
+
+| Case | 结果 | 节点连续性 | 全网质量残差 | Runtime |
+|---|---|---:|---:|---:|
+| N01 confluence | PASS | 0.251302% | 0.176207% | 10.69 s |
+| N02 bifurcation | PASS | 0.201340% | 0.148250% | 7.19 s |
+| N03 branched network | PASS | 0.131800% | 0.061818% | 10.77 s |
+| N04 lateral inflow | PASS | 0 | 0.015465% | 9.54 s |
+| N05 combined boundaries | PASS | 0.279968% | 0.218371% | 13.43 s |
+| S01 broad-crested weir | PASS | 0 | 0.469375% | 9.48 s |
+
+S01 对照运行证明结构并未被 Adapter 忽略：有堰工况上游峰值水位比无堰基线高 `0.350 m`。完整网络、结构与能力边界分别见 [复杂一维河网](hydraulic-network.md)、[统一水工建筑物](hydraulic-structures.md)和[求解器能力矩阵](solver-capabilities.md)。
+
 ## 官方示例与 Adapter 分离验证
 
 官方 `examples/mascaret/01_Steady_Kernel/mascaret_exp.xcas` 未修改物理参数，直接由上述原生二进制运行，退出码为 0，生成非空 `mascaret_exp_ecr.opt`。Dayu Adapter 生成的五类原生 case 由同一二进制接受并求解，从而分别证明官方 runtime 可用和 Adapter 输出可执行。官方示例采用可变时间步与上游自带初始水面，当前 Dayu 冻结模型采用固定相对时间步，因此不宣称两者逐行完全等价；该差异不以放宽 B01–B05 阈值掩盖。
@@ -76,5 +91,5 @@ relative residual = abs((storage_end - storage_start) - integral(Qin - Qout)dt)
 
 - 当前本机没有可用 Docker CLI/daemon，因此运行时容器镜像的本地构建留给新增的受控 GitHub job 复验；不得在该 job 通过前声明最终 `PRODUCTION_READY`。
 - 本机没有启动持久 PostGIS/Redis/Celery 全栈；既有 persistence/API/GIS 合同由全量测试覆盖，真实服务托管闭环需由受控 CI 或部署环境复验。
-- Gate、Pump、其他结构物、多 Branch/复杂河网及真实工程率定均不在本阶段能力内。
+- Gate、Pump、Bridge、Culvert、CASIER、其他未验证结构物及真实工程率定均不在已验证范围内。
 - 回退时设置 `MASCARET_ENABLED=0` 即恢复明确的 runtime-unavailable 行为；不得回退到已废止的 Dayu 自研生产 Solver。
