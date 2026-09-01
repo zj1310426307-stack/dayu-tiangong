@@ -209,7 +209,12 @@ class _PreviewSession:
                 source_crs=None,
                 source_axis_mapping=None,
             )
-            for distance, elevation in ((0.0, 3.0), (5.0, 0.0), (15.0, 0.0), (20.0, 3.0))
+            for distance, elevation in (
+                (0.0, 3.0),
+                (5.0, 0.0),
+                (15.0, 0.0),
+                (20.0, 3.0),
+            )
         ]
         boundaries = [
             SimpleNamespace(
@@ -278,7 +283,11 @@ def test_service_preview_and_readiness_keep_lateral_binding(
         "geometry_json",
         lambda _session, geometry: geometry,
     )
-    monkeypatch.setattr(service, "_runtime_readiness", lambda _case_id: (True, "test"))
+    monkeypatch.setattr(
+        service,
+        "_runtime_readiness",
+        lambda _case_id: (True, "test", {"version_verified": True}),
+    )
     preview = service.preview_model(
         _PreviewSession(),  # type: ignore[arg-type]
         SimulationTaskCreate(case_id=5),

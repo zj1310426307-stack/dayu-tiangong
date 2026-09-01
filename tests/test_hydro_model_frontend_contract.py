@@ -43,7 +43,10 @@ def test_dispatch_detail_exposes_a_non_synthetic_24_hour_structure_view() -> Non
     assert "clearResultData();" in source
     assert "activeRunIdRef.current === requestedRunId" in source
     assert "const currentRun = run?.id === id ? run : undefined" in source
-    assert "const currentComparison = resultRunId === id ? comparison : undefined" in source
+    assert (
+        "const currentComparison = resultRunId === id ? comparison : undefined"
+        in source
+    )
     assert "structureCoverage.every" in source
     assert "connectNulls: false" in source
     assert "空缺时段显式断线，不做插值或伪造补齐" in source
@@ -64,6 +67,8 @@ def test_hydraulic_ui_exposes_runtime_lifecycle_and_unified_results() -> None:
     assert "task.retry_eligible" in source
     assert "task.retry_block_reason" in source
     assert "runtime_available" in source
+    assert "runtime_identity" in source
+    assert "MASCARET 运行时身份" in source
     assert "MASCARET 运行时不可用" in source
     for result_field in (
         "result.depth",

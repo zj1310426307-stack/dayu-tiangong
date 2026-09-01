@@ -103,16 +103,17 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 HYDRO-DATA-01 (Network → Branch → Chainage → Cross Section)
   → Dayu Unified Hydraulic Model
   → MASCARET Adapter
-  → 官方 MASCARET v9.1.1 CLI / 独立进程
+  → 经身份校验的官方 MASCARET v9.1.1 外部进程 / 容器
   → Opthyca Result Parser
   → Dayu Unified Hydraulic Result
 ```
 
 - Dayu 保留统一数据、自动建模、任务生命周期、GIS 和结果体系，不再开发或提供自研生产级 1D 数值求解器。
-- MASCARET 源码不复制到本仓库；调用官方 `scripts/python3/mascaret.py <case.xcas>` 运行链。
+- MASCARET 源码不复制到本仓库；可重复构建从官方 `v9.1.1`、提交 `1fe3b514` 和固定源码归档哈希生成原生运行时。
+- External 模式核对二进制 SHA-256、官方资源摘要、tag、commit 和构建时间；Container 模式只接受不可变镜像 digest，并核对 OCI version/revision/created 标签。
 - 默认发布镜像不捆绑 MASCARET，因此默认 `MASCARET_ENABLED=0`。未发现可用运行时的集成测试必须明确记录 `SKIPPED_MASCARET_RUNTIME_NOT_AVAILABLE`，不允许伪造成功运算。
 - 闸门与泵站当前均不进入生产 Adapter；在完整业务语义、官方文件合同和真实运行时 benchmark 全部验证前必须 fail closed，不得伪装成横向流量或猜测奇异建筑物参数。
-- 现行配置和已验证子集见 [MASCARET 1D Adapter](docs/model/MASCARET-1D-ADAPTER.md)；架构迁移见 [HYDRO-1D-RESET-01](docs/migration/HYDRO-1D-RESET-01.md)。
+- 五组真实数值算例、官方示例、生命周期和平台验收见 [MASCARET 正式验证](docs/hydraulics/mascaret-validation.md)；现行映射见 [MASCARET 1D Adapter](docs/model/MASCARET-1D-ADAPTER.md)。
 - 旧 `HYDRO-MODEL-02` 阶段文档、审查过程和失效工作计划已从当前树清理；仅保留一份最终 D3A RC1 发布索引，完整历史由 Git 标签保存，不能作为现行产品说明。
 
 ## 广东开放参考数据

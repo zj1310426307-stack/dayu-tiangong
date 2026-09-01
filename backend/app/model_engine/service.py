@@ -187,9 +187,7 @@ def list_tasks(
 
     statement = select(SimulationTask)
     if dataset_version_id is not None:
-        statement = statement.where(
-            SimulationTask.dataset_version_id == dataset_version_id
-        )
+        statement = statement.where(SimulationTask.dataset_version_id == dataset_version_id)
     tasks = session.scalars(statement.order_by(SimulationTask.id.desc())).all()
     return [_record(task) for task in tasks]
 
@@ -256,11 +254,13 @@ def reset_task_for_manual_retry(session: Session, task: SimulationTask) -> Simul
     return current
 
 
-def _runtime_readiness(case_id: int) -> tuple[bool, str]:
+def _runtime_readiness(case_id: int) -> tuple[bool, str, dict[str, object]]:
     """Return the configured external runtime status without doing work."""
 
     del case_id
-    return create_hydraulic_1d_engine().availability()
+    engine = create_hydraulic_1d_engine()
+    available, detail = engine.availability()
+    return available, detail, engine.runtime_provenance()
 
 
 def _blocker(exc: Exception) -> dict[str, Any]:
@@ -282,7 +282,7 @@ def assess_readiness(
 ) -> Hydraulic1DReadinessResponse:
     """Validate authoritative mapping and report runtime availability independently."""
 
-    runtime_available, runtime_detail = _runtime_readiness(case_id)
+    runtime_available, runtime_detail, runtime_identity = _runtime_readiness(case_id)
     blockers: list[dict[str, Any]] = []
     model: Hydraulic1DModel | None = None
     try:
@@ -305,6 +305,7 @@ def assess_readiness(
         ready=model is not None and runtime_available,
         runtime_available=runtime_available,
         runtime_detail=runtime_detail,
+        runtime_identity=runtime_identity,
         blockers=blockers,
         warnings=(
             [
@@ -323,9 +324,7 @@ def assess_readiness(
     )
 
 
-def preview_model(
-    session: Session, payload: SimulationTaskCreate
-) -> Hydraulic1DPreviewResponse:
+def preview_model(session: Session, payload: SimulationTaskCreate) -> Hydraulic1DPreviewResponse:
     """Return the exact unified snapshot without creating a task or workspace."""
 
     config = _task_config(payload)
@@ -369,9 +368,7 @@ def _validate_result(task: SimulationTask, result: HydraulicResult) -> None:
     section_by_id = {item.id: item for item in snapshot.cross_sections}
     branch_ids = {item.id for item in snapshot.branches}
     seen: set[tuple[str, float]] = set()
-    times_by_section: dict[str, set[float]] = {
-        item.id: set() for item in snapshot.cross_sections
-    }
+    times_by_section: dict[str, set[float]] = {item.id: set() for item in snapshot.cross_sections}
     for record in result.records:
         section = section_by_id.get(record.cross_section_id)
         if section is None or record.branch_id not in branch_ids:
@@ -413,9 +410,7 @@ def _validate_result(task: SimulationTask, result: HydraulicResult) -> None:
         if not all(isfinite(float(value)) for value in numeric):
             raise ValueError("hydraulic result contains a non-finite required value")
     reference_times = next(iter(times_by_section.values()))
-    if not reference_times or any(
-        times != reference_times for times in times_by_section.values()
-    ):
+    if not reference_times or any(times != reference_times for times in times_by_section.values()):
         raise ValueError("hydraulic result does not cover every Section on one time axis")
     observed_times = sorted(reference_times)
     expected_times = snapshot.settings.expected_output_times()
@@ -456,16 +451,12 @@ def persist_hydraulic_1d_result(
     ).all()
     sections = {str(item.id): item for item in section_rows}
     session.execute(
-        delete(HydraulicTaskSectionResult).where(
-            HydraulicTaskSectionResult.task_id == task.id
-        )
+        delete(HydraulicTaskSectionResult).where(HydraulicTaskSectionResult.task_id == task.id)
     )
     for record in result.records:
         section = sections.get(record.cross_section_id)
         if section is None or str(section.branch_id) != record.branch_id:
-            raise ValueError(
-                "result Section identity is absent from the task Dataset Version"
-            )
+            raise ValueError("result Section identity is absent from the task Dataset Version")
         assert not isinstance(record.timestamp, datetime)
         session.add(
             HydraulicTaskSectionResult(
@@ -481,21 +472,15 @@ def persist_hydraulic_1d_result(
                 flow_m3s=float(record.discharge_m3s),
                 velocity_m_s=float(record.velocity_m_s),
                 flow_area_m2=float(record.flow_area_m2),
-                wet_area_m2=(
-                    float(record.wet_area_m2) if record.wet_area_m2 is not None else None
-                ),
+                wet_area_m2=(float(record.wet_area_m2) if record.wet_area_m2 is not None else None),
                 hydraulic_radius_m=(
                     float(record.hydraulic_radius_m)
                     if record.hydraulic_radius_m is not None
                     else None
                 ),
-                top_width_m=(
-                    float(record.top_width_m) if record.top_width_m is not None else None
-                ),
+                top_width_m=(float(record.top_width_m) if record.top_width_m is not None else None),
                 froude_number=(
-                    float(record.froude_number)
-                    if record.froude_number is not None
-                    else None
+                    float(record.froude_number) if record.froude_number is not None else None
                 ),
                 control_volume_m3=None,
             )
@@ -578,9 +563,7 @@ def run_task(session: Session, task_id: int) -> SimulationTaskRecord:
                 progress_callback=progress,
             ),
         )
-        return persist_hydraulic_1d_result(
-            session, task, result, executed_build_identity=identity
-        )
+        return persist_hydraulic_1d_result(session, task, result, executed_build_identity=identity)
     except Exception as exc:
         return _fail_sync_task(session, task_id, exc)
 

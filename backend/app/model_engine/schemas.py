@@ -40,9 +40,7 @@ class SimulationTaskCreate(BaseModel):
 
         supplied = (self.initial_water_level is not None, self.initial_flow is not None)
         if supplied[0] != supplied[1]:
-            raise ValueError(
-                "initial_water_level and initial_flow must be supplied together"
-            )
+            raise ValueError("initial_water_level and initial_flow must be supplied together")
         return self
 
 
@@ -154,6 +152,7 @@ class Hydraulic1DReadinessResponse(BaseModel):
     )
     runtime_available: bool
     runtime_detail: str
+    runtime_identity: dict[str, Any]
     blockers: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[dict[str, Any]] = Field(default_factory=list)
     input_summary: dict[str, Any] | None = None

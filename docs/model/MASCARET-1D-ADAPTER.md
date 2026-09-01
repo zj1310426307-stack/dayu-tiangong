@@ -15,7 +15,7 @@ HYDRO-DATA-01
   → Dayu Unified Hydraulic Result
 ```
 
-本 Adapter 锁定 MASCARET `v9.1.1`。MASCARET 作为 TELEMAC-MASCARET 的外部开源运行时使用，Dayu 仓库和默认镜像均不复制、修改或捆绑其源码/执行文件。部署方必须独立审查官方软件的 GPL 许可证和发布方式。
+本 Adapter 锁定 MASCARET `v9.1.1`、官方提交 `1fe3b5141f7d9c9fa8fe6d6d0316c994a39c2d95`。MASCARET 作为 TELEMAC-MASCARET 的外部 GPL-3.0-only 运行时使用，Dayu 仓库和默认业务镜像均不复制其源码或执行文件；独立运行时镜像保留上游许可证。部署和分发方仍须自行完成许可证合规审查，本文件不作法律判断。
 
 `D-Flow FM` 只在 engine registry 中作为未来保留位，本阶段没有实现、配置或对外声明其可用。
 
@@ -29,27 +29,34 @@ HYDRO-DATA-01
 
 ## 运行时边界
 
-官方 Python launcher 的调用形式为：
+经验证的原生运行时调用形式为：
 
 ```text
-python <official-telemac>/scripts/python3/mascaret.py case.xcas
+cd <isolated-job-workspace>
+<verified-mascaret-binary>
 ```
 
-`MASCARET_EXECUTABLE` 应指向上述官方 `mascaret.py`，或指向一个等价的、已审查非 shell launcher。Adapter 会将 case 文件名作为唯一位置参数，在当前 job 的唯一工作目录中启动进程。不使用 shell，并对超时、取消、非零退出、缺失或空 `.opt` 结果 fail closed。长时计算每 15 秒通过任务回调刷新一次执行租约；取消、回调异常或超时会终止 launcher 及其子进程组。
+原生二进制从当前 job 目录读取带单引号的 `FichierCas.txt`；兼容测试仍允许已审查的官方 Python launcher。两种方式均不使用 shell，并对身份未知、超时、取消、非零退出、缺失或空 `.opt` 结果 fail closed。长时计算每 15 秒刷新执行租约；Linux session/process-group 与 Windows Job Object 负责进程归属和崩溃恢复。
 
 | 变量 | 含义 | 默认 |
 |---|---|---|
 | `MASCARET_ENABLED` | 明确启用外部运行时 | `0` |
-| `MASCARET_RUNTIME` | `cli` 或 `container` | `cli` |
-| `MASCARET_EXECUTABLE` | 官方 launcher 路径/镜像内路径 | `mascaret.py` |
-| `MASCARET_EXECUTABLE_SHA256` | 已审查 v9.1.1 CLI launcher 的 SHA-256；启用 CLI 时必填 | 空 |
+| `MASCARET_RUNTIME` | `external` 或 `container`；旧 `cli` 只作只读别名 | `external` |
+| `MASCARET_EXECUTABLE` | 官方原生二进制/launcher 路径 | `mascaret` |
+| `MASCARET_EXECUTABLE_SHA256` | 已审查可执行文件 SHA-256；启用 external 时必填 | 空 |
+| `MASCARET_DATA_DIR` | 原生运行时官方资源目录 | 空 |
+| `MASCARET_UPSTREAM_TAG` | 审核锁定的官方 tag | `v9.1.1` |
+| `MASCARET_UPSTREAM_COMMIT` | 审核锁定的官方提交 | `1fe3b514...` |
+| `MASCARET_BUILD_TIMESTAMP` | 构建身份时间；启用时必填 | 空 |
 | `MASCARET_CONTAINER_IMAGE` | 经许可审查且固定为 `image@sha256:...` 的外部镜像 | 空 |
 | `MASCARET_TIMEOUT` | 单 job 超时秒数 | `3600` |
 | `HYDRAULIC_WORKSPACE_ROOT` | 唯一 job 目录根 | `backend/storage/hydraulic-workspaces` |
+| `MASCARET_RETENTION_CLASS` | `success`/`failed`/`debug`/`benchmark` | `failed` |
+| `MASCARET_RETENTION_MAX_WORKSPACES` | 有界保留数量 | `20` |
 
 `container` 模式还要求 Worker 主机存在 Docker CLI 和显式镜像名。运行时禁用网络，仅把当前 job 目录以 `/work` 挂载。默认 Compose 不提供 Docker socket，因此不构成已开启的 container 运行时声明。
 
-`.xcas/.geo/.lig/.loi/.opt` 与 stdout/stderr 只属于该 job 的私有交换目录。Parser 生成统一结果后，无论成功或失败都会删除该目录；当前接口不会返回已经删除的伪 artifact。需要长期保留原始文件时，必须另建经审计的对象存储发布流程。
+`.xcas/.geo/.lig/.loi/.opt` 与 stdout/stderr 只属于该 job 的私有交换目录。成功默认清理，失败默认保留诊断；四类保留策略均有数量上限，且只有已证明外部资源释放的目录可清理。当前 API 不暴露主机绝对路径或容器内部路径。
 
 ## 模型映射
 
@@ -72,7 +79,7 @@ python <official-telemac>/scripts/python3/mascaret.py case.xcas
 
 ## 结果合同
 
-Parser 严格读取 Opthyca `[variables]` / `[resultats]`，核对列数、时间、reach/section、桩号、重复行、非有限数以及从 `t=0` 到冻结时段末的完整输出 cadence。水位和流量为必需变量；统一结果至少包含：
+Parser 严格读取 Opthyca `[variables]` / `[resultats]`，核对列数、时间、reach/section、桩号、重复行、非有限数以及完整输出 cadence；同时兼容平台 `t=0` 轴和官方从首个计算步开始的原生轴。水位和流量为必需变量；统一结果至少包含：
 
 ```text
 simulation_id, scenario_id, engine, engine_version,
@@ -87,3 +94,4 @@ water_level_m, depth_m, discharge_m3s, velocity_ms, flow_area_m2
 - `tests/hydraulic_1d/`：Adapter、验证、Parser、运行时边界和架构隔离。
 - `tests/benchmark/hydraulic_1d/`：五类 solver-neutral benchmark；运行时可用时必须真实执行 `engine.run` 并计算 water level、Q、V、peak、peak time、mass balance 与 runtime 七项指标。Benchmark 01 的 Q/H/V 来自同一个矩形 Manning 均匀流工况。
 - 未提供真实运行时时，集成测试状态是 `SKIPPED_MASCARET_RUNTIME_NOT_AVAILABLE`，不是 fake pass。
+- 所有生产验收阈值集中在 `acceptance-manifest.json`；机器报告记录 expected/actual/绝对误差/相对误差/tolerance/operator，不根据结果自动调整阈值。

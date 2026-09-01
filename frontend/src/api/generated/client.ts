@@ -1014,6 +1014,7 @@ export interface Hydraulic1DReadinessResponse {
   "engine_version"?: "v9.1.1";
   "runtime_available": boolean;
   "runtime_detail": string;
+  "runtime_identity": Record<string, unknown>;
   "blockers"?: Array<Record<string, unknown>>;
   "warnings"?: Array<Record<string, unknown>>;
   "input_summary"?: Record<string, unknown> | null;
