@@ -3,8 +3,15 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.dispatch.assets import resolve_plan_asset_snapshots
 from app.dispatch.repository import dump
 from app.gis.models import DispatchAction, DispatchPlan, DispatchRule
+from model.hydraulic_1d.registry import registry_hash
+from model.control.replay import (
+    SYNTHETIC_INITIAL_STATE_BASIS,
+    SYNTHETIC_SCHEDULE_EVALUATOR_ID,
+    SYNTHETIC_TIE_BREAK_POLICY,
+)
 from model.provenance import canonical_json, snapshot_hash
 import json
 
@@ -24,8 +31,13 @@ def build_plan_snapshot(session: Session, plan: DispatchPlan) -> tuple[dict, str
             .order_by(DispatchRule.priority.desc(), DispatchRule.id)
         ).all()
     )
+    asset_snapshots, asset_errors = resolve_plan_asset_snapshots(
+        session, plan, actions, rules
+    )
+    if asset_errors:
+        raise ValueError("; ".join(asset_errors))
     snapshot = {
-        "schema_version": "dayu.dispatch-plan.v1",
+        "schema_version": "dayu.dispatch-plan.v2",
         "plan": {
             key: value
             for key, value in dump(plan).items()
@@ -33,12 +45,23 @@ def build_plan_snapshot(session: Session, plan: DispatchPlan) -> tuple[dict, str
         },
         "actions": [dump(item) for item in actions],
         "rules": [dump(item) for item in rules],
+        "assets": asset_snapshots,
+        "control_evaluator": {
+            "version": SYNTHETIC_SCHEDULE_EVALUATOR_ID,
+            "tie_break_policy": SYNTHETIC_TIE_BREAK_POLICY,
+            "hydraulic_feedback": False,
+            "initial_state_basis": SYNTHETIC_INITIAL_STATE_BASIS,
+        },
+        "engine_registry_hash": registry_hash(),
         "command_units": {
             "gate_opening_m": "m", "gate_opening_ratio": "ratio",
             "pump_enabled": "boolean_0_or_1", "pump_unit_count": "count",
             "pump_target_flow": "m3/s",
         },
-        "safety_notice": "simulation only; no command is sent to real equipment",
+        "safety_notice": (
+            "synthetic static scheduling only; no hydraulic feedback and no command "
+            "is sent to real equipment"
+        ),
     }
     # Persist the exact canonical JSON form that was hashed.  This guarantees
     # PostgreSQL JSON receives only portable primitives (not datetimes) and

@@ -21,6 +21,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -2070,13 +2071,51 @@ class DispatchAction(Base):
     __table_args__ = (
         CheckConstraint("structure_type IN ('gate', 'pump')", name="ck_dispatch_action_type"),
         CheckConstraint(
+            "time_seconds >= 0", name="ck_dispatch_action_time_nonnegative"
+        ),
+        CheckConstraint(
+            "interpolation IN ('step', 'linear')",
+            name="ck_dispatch_action_interpolation",
+        ),
+        CheckConstraint(
+            "command_type IN ('gate_opening_m', 'gate_opening_ratio', "
+            "'pump_enabled', 'pump_unit_count', 'pump_target_flow')",
+            name="ck_dispatch_action_command_type",
+        ),
+        CheckConstraint(
+            "(structure_type = 'gate' AND gate_id IS NOT NULL "
+            "AND pump_id IS NULL AND command_type IN "
+            "('gate_opening_m', 'gate_opening_ratio')) OR "
+            "(structure_type = 'pump' AND pump_id IS NOT NULL "
+            "AND gate_id IS NULL AND command_type IN "
+            "('pump_enabled', 'pump_unit_count', 'pump_target_flow'))",
+            name="ck_dispatch_action_structure_command_asset",
+        ),
+        CheckConstraint(
+            "command_type NOT IN ('pump_enabled', 'pump_unit_count') "
+            "OR interpolation = 'step'",
+            name="ck_dispatch_action_discrete_step",
+        ),
+        CheckConstraint(
             "(gate_id IS NOT NULL AND pump_id IS NULL) OR "
             "(gate_id IS NULL AND pump_id IS NOT NULL)",
             name="ck_dispatch_action_single_asset",
         ),
-        UniqueConstraint(
-            "plan_id", "time_seconds", "structure_type", "gate_id", "pump_id",
-            name="uq_dispatch_action_asset_time",
+        Index(
+            "uq_dispatch_action_gate_time",
+            "plan_id",
+            "time_seconds",
+            "gate_id",
+            unique=True,
+            postgresql_where=text("gate_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_dispatch_action_pump_time",
+            "plan_id",
+            "time_seconds",
+            "pump_id",
+            unique=True,
+            postgresql_where=text("pump_id IS NOT NULL"),
         ),
         Index("ix_dispatch_action_plan_time", "plan_id", "time_seconds"),
     )

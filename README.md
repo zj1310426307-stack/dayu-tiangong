@@ -131,6 +131,10 @@ HYDRO-DATA-01 (Network → Branch → Chainage → Cross Section)
 
 当前软件框架的 P01–P06 合成回归已建立，但受控资料缺少权威边界、实测 H/Q、独立验证事件和合法导出的 MIKE11 结果，真实工程 R01–R07 状态为 `DATA_NOT_AVAILABLE`。不得把现有三个不连通测绘片段或测试数据称为生产验证。Bridge/Culvert 保持 `UNVERIFIED`；Gate/Pump/Sluice 保持 `UNSUPPORTED`。
 
+## 一维闸泵调度开发边界
+
+`/dispatch` 支持计划校验、v2 不可变快照、后端权威执行就绪状态，以及基于显式合成轨迹的静态调度预演。预演只评估人工动作、白名单阈值规则、冲突裁决和冻结闸泵约束；不计算 H/Q、功率、能耗或水量平衡，不创建水力任务/调度运行，也不下发真实设备。MASCARET Gate/Pump 仍为 `UNSUPPORTED`，水力运行接口保持 fail closed。详见 [调度领域契约](docs/dispatch/dispatch_contract.md) 与 [合成静态调度预演](docs/dispatch/static-schedule-replay.md)。
+
 ## 广东开放参考数据
 
 - 行政区：geoBoundaries 中国 ADM1/ADM2，经广东范围筛选后导入 `reference_data.administrative_area`。
