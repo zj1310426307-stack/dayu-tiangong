@@ -12,6 +12,9 @@
 自 2026-08-31 起，生产级 Standard 1D 正式采用“Dayu 统一水力模型 → MASCARET Adapter → 外部 MASCARET v9.1.1 → 统一结果”路线；旧自研 1D Solver 已退出生产代码、API、Worker、前端和 CI。HYDRO-DATA-01 的 Network → Branch → Chainage → Cross Section 权威数据结构保持不变。
 
 - [MASCARET 1D Adapter](docs/model/MASCARET-1D-ADAPTER.md)
+- [复杂一维河网工程合同](docs/hydraulics/hydraulic-network.md)
+- [统一水工建筑物模型](docs/hydraulics/hydraulic-structures.md)
+- [一维求解器能力矩阵](docs/hydraulics/solver-capabilities.md)
 - [HYDRO-1D-RESET-01 架构迁移](docs/migration/HYDRO-1D-RESET-01.md)
 - [当前系统架构](docs/architecture.md)
 
@@ -112,7 +115,8 @@ HYDRO-DATA-01 (Network → Branch → Chainage → Cross Section)
 - MASCARET 源码不复制到本仓库；可重复构建从官方 `v9.1.1`、提交 `1fe3b514` 和固定的规范化源码树哈希生成原生运行时。
 - External 模式核对二进制 SHA-256、官方资源摘要、tag、commit 和构建时间；Container 模式只接受不可变镜像 digest，并核对 OCI version/revision/created 标签。
 - 默认发布镜像不捆绑 MASCARET，因此默认 `MASCARET_ENABLED=0`。未发现可用运行时的集成测试必须明确记录 `SKIPPED_MASCARET_RUNTIME_NOT_AVAILABLE`，不允许伪造成功运算。
-- 闸门与泵站当前均不进入生产 Adapter；在完整业务语义、官方文件合同和真实运行时 benchmark 全部验证前必须 fail closed，不得伪装成横向流量或猜测奇异建筑物参数。
+- 复杂河网、横向入流、组合边界与固定宽顶几何堰已由 N01–N05/S01 真实运行验证；能力清单按 engine/version/adapter 版本化。
+- 闸门与泵站当前均不进入生产 Adapter；Bridge、Culvert、CASIER 也未验证。在完整业务语义、官方文件合同和真实运行时 benchmark 全部通过前必须 fail closed，不得伪装成横向流量或猜测奇异建筑物参数。
 - 五组真实数值算例、官方示例、生命周期和平台验收见 [MASCARET 正式验证](docs/hydraulics/mascaret-validation.md)；现行映射见 [MASCARET 1D Adapter](docs/model/MASCARET-1D-ADAPTER.md)。
 - 旧 `HYDRO-MODEL-02` 阶段文档、审查过程和失效工作计划已从当前树清理；仅保留一份最终 D3A RC1 发布索引，完整历史由 Git 标签保存，不能作为现行产品说明。
 

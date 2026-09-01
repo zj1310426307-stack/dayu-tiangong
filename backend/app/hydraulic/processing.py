@@ -5,15 +5,21 @@ from __future__ import annotations
 from datetime import UTC, datetime
 import math
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.dataset.lifecycle import assert_dataset_version_mutable
 from app.hydraulic.models import (
-    HydraulicBranch, HydraulicCrossSection, HydraulicCrossSectionHydraulicRow,
-    HydraulicCrossSectionPoint, HydraulicCrossSectionProcessing,
-    HydraulicCrossSectionProfile, HydraulicNetwork, HydraulicRoughnessZone,
+    HydraulicBranch,
+    HydraulicCrossSection,
+    HydraulicCrossSectionHydraulicRow,
+    HydraulicCrossSectionPoint,
+    HydraulicCrossSectionProcessing,
+    HydraulicCrossSectionProfile,
+    HydraulicNetwork,
+    HydraulicRoughnessZone,
 )
+from app.hydraulic.location import locate_geometry_on_branch
 from app.hydraulic.schemas import HydraulicLocateRequest, HydraulicProcessingRecord
 from model.geometry import TabulatedSectionGeometry
 
@@ -86,10 +92,13 @@ def _roughness_intervals(
     return intervals or [(lower, upper, default_manning_n)]
 
 
-def _processing_record(session: Session, value: HydraulicCrossSectionProcessing) -> HydraulicProcessingRecord:
+def _processing_record(
+    session: Session, value: HydraulicCrossSectionProcessing
+) -> HydraulicProcessingRecord:
     """Return one persisted table in API shape."""
 
     from app.hydraulic.service import _processing_record as record
+
     result = record(session, value)
     assert result is not None
     return result
@@ -104,33 +113,41 @@ def process_profile(
     if profile is None:
         raise ValueError("Hydraulic cross-section profile does not exist")
     assert_dataset_version_mutable(session, profile.dataset_version_id)
-    cached = session.scalar(select(HydraulicCrossSectionProcessing).where(
-        HydraulicCrossSectionProcessing.profile_id == profile.id,
-        HydraulicCrossSectionProcessing.profile_hash == profile.profile_hash,
-        HydraulicCrossSectionProcessing.processor_version == PROCESSOR_VERSION,
-        HydraulicCrossSectionProcessing.vertical_step_m == vertical_step_m,
-        HydraulicCrossSectionProcessing.status == "ready",
-    ))
+    cached = session.scalar(
+        select(HydraulicCrossSectionProcessing).where(
+            HydraulicCrossSectionProcessing.profile_id == profile.id,
+            HydraulicCrossSectionProcessing.profile_hash == profile.profile_hash,
+            HydraulicCrossSectionProcessing.processor_version == PROCESSOR_VERSION,
+            HydraulicCrossSectionProcessing.vertical_step_m == vertical_step_m,
+            HydraulicCrossSectionProcessing.status == "ready",
+        )
+    )
     if cached is not None:
         return _processing_record(session, cached)
-    points = session.scalars(select(HydraulicCrossSectionPoint).where(
-        HydraulicCrossSectionPoint.profile_id == profile.id
-    ).order_by(HydraulicCrossSectionPoint.sequence)).all()
-    roughness_zones = session.scalars(select(HydraulicRoughnessZone).where(
-        HydraulicRoughnessZone.profile_id == profile.id
-    ).order_by(HydraulicRoughnessZone.zone_order)).all()
+    points = session.scalars(
+        select(HydraulicCrossSectionPoint)
+        .where(HydraulicCrossSectionPoint.profile_id == profile.id)
+        .order_by(HydraulicCrossSectionPoint.sequence)
+    ).all()
+    roughness_zones = session.scalars(
+        select(HydraulicRoughnessZone)
+        .where(HydraulicRoughnessZone.profile_id == profile.id)
+        .order_by(HydraulicRoughnessZone.zone_order)
+    ).all()
     profile_points = [(value.distance, value.elevation) for value in points]
-    geometry = TabulatedSectionGeometry.from_points(
-        profile_points, vertical_step=vertical_step_m
-    )
+    geometry = TabulatedSectionGeometry.from_points(profile_points, vertical_step=vertical_step_m)
     intervals = _roughness_intervals(
         profile_points, list(roughness_zones), profile.default_manning_n
     )
     processing = HydraulicCrossSectionProcessing(
-        dataset_version_id=profile.dataset_version_id, profile_id=profile.id,
-        profile_hash=profile.profile_hash, processor_version=PROCESSOR_VERSION,
-        vertical_step_m=vertical_step_m, status="ready",
-        minimum_stage_m=geometry.minimum_stage, maximum_stage_m=geometry.maximum_stage,
+        dataset_version_id=profile.dataset_version_id,
+        profile_id=profile.id,
+        profile_hash=profile.profile_hash,
+        processor_version=PROCESSOR_VERSION,
+        vertical_step_m=vertical_step_m,
+        status="ready",
+        minimum_stage_m=geometry.minimum_stage,
+        maximum_stage_m=geometry.maximum_stage,
         generated_at=datetime.now(UTC),
         diagnostics_json={
             "stage_count": len(geometry.stages),
@@ -153,11 +170,18 @@ def process_profile(
             if zone_area > 0:
                 conveyance += zone_area * zone_radius ** (2.0 / 3.0) / manning_n
         radius = area / max(perimeter, 1.0e-12)
-        session.add(HydraulicCrossSectionHydraulicRow(
-            dataset_version_id=profile.dataset_version_id, processing_id=processing.id,
-            stage_m=stage, area_m2=area, top_width_m=top_width,
-            wetted_perimeter_m=perimeter, hydraulic_radius_m=radius, conveyance=conveyance,
-        ))
+        session.add(
+            HydraulicCrossSectionHydraulicRow(
+                dataset_version_id=profile.dataset_version_id,
+                processing_id=processing.id,
+                stage_m=stage,
+                area_m2=area,
+                top_width_m=top_width,
+                wetted_perimeter_m=perimeter,
+                hydraulic_radius_m=radius,
+                conveyance=conveyance,
+            )
+        )
     session.flush()
     return _processing_record(session, processing)
 
@@ -183,22 +207,9 @@ def locate_section(session: Session, section_id: int, request: HydraulicLocateRe
         raise ValueError("Cross-section branch or engineering CRS is unavailable")
     if section.axis_geometry is None:
         raise ValueError("Cross-section axis is required for chainage computation")
-    srid = int(network.engineering_crs.split(":", 1)[1])
-    row = session.execute(select(
-        func.ST_LineLocatePoint(
-            func.ST_Transform(branch.geometry, srid),
-            func.ST_ClosestPoint(
-                func.ST_Transform(branch.geometry, srid),
-                func.ST_Transform(section.axis_geometry, srid),
-            ),
-        ),
-        func.ST_Distance(
-            func.ST_Transform(branch.geometry, srid),
-            func.ST_Transform(section.axis_geometry, srid),
-        ),
-    )).one()
-    fraction, distance_m = float(row[0]), float(row[1])
-    computed = branch.start_chainage + (branch.end_chainage - branch.start_chainage) * fraction
+    computed, distance_m = locate_geometry_on_branch(
+        session, branch, network, section.axis_geometry
+    )
     section.computed_chainage_m = computed
     section.snap_distance_m = distance_m
     if distance_m > request.snap_tolerance_m:
@@ -215,4 +226,5 @@ def locate_section(session: Session, section_id: int, request: HydraulicLocateRe
     section.orientation_status = "confirmed"
     session.flush()
     from app.hydraulic.service import get_section_detail
+
     return get_section_detail(session, section.id)

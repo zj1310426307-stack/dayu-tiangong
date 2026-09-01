@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.common.http import commit_or_conflict, not_found
 from app.database.session import get_database_session
 from app import files
-from app.hydraulic import processing, service, topology
+from app.hydraulic import engineering, processing, service, topology
 from app.hydraulic.exporters import (
     export_native_xns11,
     export_nwk11_subset,
@@ -30,10 +30,17 @@ from app.hydraulic.schemas import (
     HydraulicProcessRequest,
     HydraulicProcessingRecord,
     HydraulicSectionDetail,
+    HydraulicStructureCreate,
+    HydraulicStructureRecord,
+    HydraulicStructureScenarioRecord,
+    HydraulicStructureScenarioUpsert,
+    HydraulicStructureUpdate,
     HydraulicTopologyBuildRequest,
     HydraulicTopologyReport,
     HydraulicValidationRequest,
     HydraulicValidationRunRecord,
+    HydraulicNetworkGraphRecord,
+    SolverCapabilityRecord,
 )
 
 
@@ -41,11 +48,7 @@ router = APIRouter(prefix="/api/v1/hydraulic", tags=["hydraulic-data"])
 SessionDependency = Annotated[Session, Depends(get_database_session)]
 FileUpload = Annotated[UploadFile, File()]
 VersionForm = Annotated[int, Form(gt=0)]
-TEMPLATE_ROOT = (
-    Path(__file__).resolve().parents[3]
-    / "outputs"
-    / "HYDRO-DATA-01-20260818"
-)
+TEMPLATE_ROOT = Path(__file__).resolve().parents[3] / "outputs" / "HYDRO-DATA-01-20260818"
 SUPPORTED_SUFFIXES = {".nwk11", ".xns11", ".xlsx", ".csv", ".geojson", ".json", ".zip", ".dxf"}
 MAX_UPLOAD_BYTES = DEFAULT_IMPORT_BUDGET.max_import_bytes
 
@@ -79,6 +82,17 @@ def read_capabilities() -> HydraulicCapabilityResponse:
 
 
 @router.get(
+    "/engine-capabilities",
+    response_model=list[SolverCapabilityRecord],
+    summary="查看版本化一维求解能力矩阵",
+)
+def read_engine_capabilities() -> list[SolverCapabilityRecord]:
+    """Return the pinned engine/version capability evidence used by submission gates."""
+
+    return engineering.engine_capabilities()
+
+
+@router.get(
     "/networks",
     response_model=list[HydraulicNetworkRecord],
     summary="查看河网、河段与断面树",
@@ -90,6 +104,126 @@ def read_networks(
     """Return the hierarchical hydraulic data browser for one version."""
 
     return service.list_networks(session, dataset_version_id)
+
+
+@router.get(
+    "/networks/{network_id}/graph",
+    response_model=HydraulicNetworkGraphRecord,
+    summary="查看河网拓扑关系",
+)
+def read_network_graph(network_id: int, session: SessionDependency) -> HydraulicNetworkGraphRecord:
+    """Return reusable upstream/downstream, node, boundary, and structure relations."""
+
+    try:
+        return engineering.network_graph(session, network_id)
+    except LookupError as exc:
+        raise not_found("水动力网络") from exc
+
+
+@router.get(
+    "/structures",
+    response_model=list[HydraulicStructureRecord],
+    summary="查看统一水工建筑物",
+)
+def read_structures(
+    session: SessionDependency,
+    dataset_version_id: int = Query(gt=0),
+    network_id: int | None = Query(default=None, gt=0),
+) -> list[HydraulicStructureRecord]:
+    """List solver-neutral structures whether or not MASCARET can solve them."""
+
+    return engineering.list_structures(
+        session,
+        dataset_version_id=dataset_version_id,
+        network_id=network_id,
+    )
+
+
+@router.post(
+    "/structures",
+    response_model=HydraulicStructureRecord,
+    status_code=201,
+    summary="创建统一水工建筑物",
+)
+def create_structure(
+    payload: HydraulicStructureCreate, session: SessionDependency
+) -> HydraulicStructureRecord:
+    """Create a validated structure independently from solver compatibility."""
+
+    return commit_or_conflict(session, lambda: engineering.create_structure(session, payload))
+
+
+@router.get(
+    "/structures/{structure_id}",
+    response_model=HydraulicStructureRecord,
+    summary="查看统一水工建筑物详情",
+)
+def read_structure(structure_id: int, session: SessionDependency) -> HydraulicStructureRecord:
+    """Return one structure and the pinned solver capability decision."""
+
+    value = engineering.get_structure(session, structure_id)
+    if value is None:
+        raise not_found("统一水工建筑物")
+    return value
+
+
+@router.put(
+    "/structures/{structure_id}",
+    response_model=HydraulicStructureRecord,
+    summary="编辑统一水工建筑物",
+)
+def update_structure(
+    structure_id: int,
+    payload: HydraulicStructureUpdate,
+    session: SessionDependency,
+) -> HydraulicStructureRecord:
+    """Update a structure and re-run shared branch-location validation."""
+
+    if engineering.get_structure(session, structure_id) is None:
+        raise not_found("统一水工建筑物")
+    return commit_or_conflict(
+        session,
+        lambda: engineering.update_structure(session, structure_id, payload),
+    )
+
+
+@router.delete(
+    "/structures/{structure_id}",
+    status_code=204,
+    response_class=Response,
+    summary="删除统一水工建筑物",
+)
+def delete_structure(structure_id: int, session: SessionDependency) -> Response:
+    """Delete the unified row while leaving any linked legacy asset untouched."""
+
+    if engineering.get_structure(session, structure_id) is None:
+        raise not_found("统一水工建筑物")
+    commit_or_conflict(session, lambda: engineering.delete_structure(session, structure_id))
+    return Response(status_code=204)
+
+
+@router.put(
+    "/structures/{structure_id}/scenarios/{case_id}",
+    response_model=HydraulicStructureScenarioRecord,
+    summary="保存工况建筑物覆盖参数",
+)
+def upsert_structure_scenario(
+    structure_id: int,
+    case_id: int,
+    payload: HydraulicStructureScenarioUpsert,
+    session: SessionDependency,
+) -> HydraulicStructureScenarioRecord:
+    """Persist scenario-specific operation without duplicating network geometry."""
+
+    if engineering.get_structure(session, structure_id) is None:
+        raise not_found("统一水工建筑物")
+    try:
+        return commit_or_conflict(
+            session,
+            lambda: engineering.upsert_structure_scenario(session, structure_id, case_id, payload),
+        )
+    except LookupError as exc:
+        raise not_found("计算工况") from exc
 
 
 @router.get(
@@ -147,12 +281,19 @@ async def preview_import(
 
     try:
         coordinate_reference = CoordinateReferenceSpec(
-            source_crs=source_crs, engineering_crs=engineering_crs,
-            coordinate_mode=coordinate_mode, axis_mapping=axis_mapping,
-            x_field=x_field, y_field=y_field, z_field=z_field,
-            horizontal_unit=horizontal_unit, vertical_unit=vertical_unit,
-            vertical_datum=vertical_datum, central_meridian=central_meridian,
-            zone_width=zone_width, zone_prefix_mode=zone_prefix_mode,
+            source_crs=source_crs,
+            engineering_crs=engineering_crs,
+            coordinate_mode=coordinate_mode,
+            axis_mapping=axis_mapping,
+            x_field=x_field,
+            y_field=y_field,
+            z_field=z_field,
+            horizontal_unit=horizontal_unit,
+            vertical_unit=vertical_unit,
+            vertical_datum=vertical_datum,
+            central_meridian=central_meridian,
+            zone_width=zone_width,
+            zone_prefix_mode=zone_prefix_mode,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -191,9 +332,12 @@ def build_network_topology(
 ) -> HydraulicTopologyReport:
     """Build nodes and reaches from endpoints and exact branch intersections."""
 
-    return commit_or_conflict(session, lambda: topology.build_topology(
-        session, network_id, payload.snap_tolerance_m, payload.minimum_reach_length_m
-    ))
+    return commit_or_conflict(
+        session,
+        lambda: topology.build_topology(
+            session, network_id, payload.snap_tolerance_m, payload.minimum_reach_length_m
+        ),
+    )
 
 
 @router.post(
@@ -230,7 +374,9 @@ def locate_cross_section(
 ) -> HydraulicSectionDetail:
     """Compute or explicitly override section chainage with an audit trail."""
 
-    return commit_or_conflict(session, lambda: processing.locate_section(session, section_id, payload))
+    return commit_or_conflict(
+        session, lambda: processing.locate_section(session, section_id, payload)
+    )
 
 
 @router.post(
@@ -293,9 +439,7 @@ def read_validation(run_code: str, session: SessionDependency) -> HydraulicValid
     return record
 
 
-def _export_payload(
-    session: Session, dataset_version_id: int, network_id: int | None
-):
+def _export_payload(session: Session, dataset_version_id: int, network_id: int | None):
     """Map export selection errors to a stable client-facing validation response."""
 
     try:

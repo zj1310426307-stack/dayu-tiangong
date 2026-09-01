@@ -6,6 +6,10 @@ import pytest
 
 from model.hydraulic_1d import BoundaryCondition, TimeValue
 from model.hydraulic_1d.mascaret.adapter import MascaretModelBuilder
+from tests.benchmark.hydraulic_1d.network.cases import (
+    n03_branched_network,
+    s01_broad_crested_weir,
+)
 from tests.hydraulic_1d.helpers import model_fixture
 
 
@@ -17,7 +21,9 @@ def test_adapter_builds_isolated_case_and_unique_lateral_law(tmp_path) -> None:
     prepared = MascaretModelBuilder().build(model_fixture(lateral=True), workspace)
 
     assert prepared.case_file.parent == workspace
-    assert prepared.geometry_file.read_text(encoding="ascii").count("PROFIL Bief_1") == 2
+    assert (
+        prepared.geometry_file.read_text(encoding="ascii").count("PROFIL Bief_1") == 2
+    )
     assert len(prepared.boundary_files) == 3
     tree = parse(prepared.case_file)
     assert tree.findtext(".//extrLibres/numLoi") == "1 2"
@@ -75,7 +81,46 @@ def test_structure_free_case_emits_no_unverified_singularities(tmp_path) -> None
     tree = parse(prepared.case_file)
 
     assert tree.findtext(".//parametresSingularite/nbSeuils") == "0"
-    assert [item.findtext("type") for item in tree.findall(".//structureParametresLoi")] == [
+    assert [
+        item.findtext("type") for item in tree.findall(".//structureParametresLoi")
+    ] == [
         "1",
         "2",
     ]
+
+
+def test_adapter_serializes_native_multi_branch_topology(tmp_path) -> None:
+    """Keep branch endpoints, two internal nodes, and free ends aligned."""
+
+    workspace = tmp_path / "network-job"
+    workspace.mkdir()
+    prepared = MascaretModelBuilder().build(n03_branched_network().model, workspace)
+    tree = parse(prepared.case_file)
+
+    assert tree.findtext(".//listeBranches/nb") == "5"
+    assert tree.findtext(".//listeBranches/numExtremDebut") == "1 3 5 7 9"
+    assert tree.findtext(".//listeBranches/numExtremFin") == "2 4 6 8 10"
+    assert tree.findtext(".//listeNoeuds/nb") == "2"
+    node_extremities = [item.findtext("num") for item in tree.findall(".//noeud")]
+    assert node_extremities == ["2 4 5 0 0", "6 7 9 0 0"]
+    assert tree.findtext(".//extrLibres/numExtrem") == "1 3 8 10"
+    assert (
+        prepared.geometry_file.read_text(encoding="ascii").count("PROFIL Bief_") == 55
+    )
+
+
+def test_adapter_serializes_only_verified_native_geometric_weir(tmp_path) -> None:
+    """Map S01 to one fixed type-3 native geometric threshold."""
+
+    workspace = tmp_path / "weir-job"
+    workspace.mkdir()
+    prepared = MascaretModelBuilder().build(s01_broad_crested_weir().model, workspace)
+    tree = parse(prepared.case_file)
+    weir = tree.find(".//structureParametresSeuil")
+
+    assert tree.findtext(".//parametresSingularite/nbSeuils") == "1"
+    assert weir is not None
+    assert weir.findtext("type") == "3"
+    assert weir.findtext("numBranche") == "1"
+    assert weir.findtext("abscTravCrete") == "0 12"
+    assert weir.findtext("cotesCrete") == "2.45 2.45"

@@ -51,9 +51,7 @@ class CoordinateReferenceSpec(BaseModel):
         if source not in ALLOWED_SOURCE_SRIDS:
             raise ValueError(f"source_crs must be one of {sorted(ALLOWED_SOURCE_SRIDS)}")
         if engineering not in ALLOWED_ENGINEERING_SRIDS:
-            raise ValueError(
-                f"engineering_crs must be one of {sorted(ALLOWED_ENGINEERING_SRIDS)}"
-            )
+            raise ValueError(f"engineering_crs must be one of {sorted(ALLOWED_ENGINEERING_SRIDS)}")
         expected_mode = "geographic" if source in {4326, 4490} else "projected"
         if self.coordinate_mode != expected_mode:
             raise ValueError(f"coordinate_mode must be {expected_mode} for EPSG:{source}")
@@ -139,8 +137,14 @@ class HydraulicBranchInput(BaseModel):
 
 
 MarkerType = Literal[
-    "none", "left_bank", "right_bank", "left_levee", "right_levee",
-    "low_flow_left", "low_flow_right", "thalweg",
+    "none",
+    "left_bank",
+    "right_bank",
+    "left_levee",
+    "right_levee",
+    "low_flow_left",
+    "low_flow_right",
+    "thalweg",
 ]
 
 
@@ -202,9 +206,7 @@ class HydraulicCrossSectionInput(BaseModel):
     survey_date: date | None = None
     survey_method: str | None = Field(default=None, max_length=64)
     bed_elevation_m: float | None = None
-    bed_elevation_source: Literal[
-        "unconfirmed", "surveyed", "design", "synthetic"
-    ] = "unconfirmed"
+    bed_elevation_source: Literal["unconfirmed", "surveyed", "design", "synthetic"] = "unconfirmed"
     bed_elevation_confirmed_by: str | None = Field(default=None, max_length=128)
     bed_elevation_confirmed_at: datetime | None = None
     default_manning_n: float = Field(default=0.03, gt=0)
@@ -302,7 +304,9 @@ class HydraulicExchangePayload(BaseModel):
         if len(branch_codes) != len(set(branch_codes)):
             raise ValueError("branch codes must be unique within one import")
         if len(section_codes) != len(set(section_codes)):
-            raise ValueError("cross-section code and Topography ID pairs must be unique within one import")
+            raise ValueError(
+                "cross-section code and Topography ID pairs must be unique within one import"
+            )
         if self.coordinate_reference and self.coordinate_reference.source_srid != self.source_srid:
             raise ValueError("source_srid and coordinate_reference.source_crs must match")
         return self
@@ -601,3 +605,156 @@ class HydraulicCapabilityResponse(BaseModel):
     engineering_srids: list[int]
     axis_mappings: list[str]
     limitation: str
+
+
+HydraulicStructureType = Literal[
+    "weir",
+    "culvert",
+    "bridge",
+    "gate",
+    "sluice",
+    "pump",
+    "orifice",
+    "dam",
+    "storage_link",
+    "compound",
+]
+HydraulicStructureStatus = Literal["draft", "active", "inactive", "retired"]
+HydraulicOperationRule = Literal[
+    "fixed",
+    "time_series",
+    "water_level_controlled",
+    "scenario_specific",
+]
+
+
+class HydraulicStructureCreate(BaseModel):
+    """Create one located structure with separated geometry and hydraulic behaviour."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    dataset_version_id: int = Field(gt=0)
+    network_id: int = Field(gt=0)
+    branch_id: int = Field(gt=0)
+    structure_code: str = Field(min_length=1, max_length=64)
+    structure_name: str = Field(min_length=1, max_length=128)
+    structure_type: HydraulicStructureType
+    chainage_m: float = Field(ge=0)
+    x: float
+    y: float
+    crest_elevation_m: float | None = None
+    invert_elevation_m: float | None = None
+    width_m: float | None = Field(default=None, gt=0)
+    height_m: float | None = Field(default=None, gt=0)
+    hydraulic_law_type: str = Field(default="none", min_length=1, max_length=64)
+    hydraulic_parameters: dict[str, Any] = Field(default_factory=dict)
+    operation_rule_type: HydraulicOperationRule = "fixed"
+    operation_parameters: dict[str, Any] = Field(default_factory=dict)
+    status: HydraulicStructureStatus = "draft"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class HydraulicStructureUpdate(BaseModel):
+    """Edit mutable structure fields while preserving version/network ownership."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    branch_id: int | None = Field(default=None, gt=0)
+    structure_code: str | None = Field(default=None, min_length=1, max_length=64)
+    structure_name: str | None = Field(default=None, min_length=1, max_length=128)
+    structure_type: HydraulicStructureType | None = None
+    chainage_m: float | None = Field(default=None, ge=0)
+    x: float | None = None
+    y: float | None = None
+    crest_elevation_m: float | None = None
+    invert_elevation_m: float | None = None
+    width_m: float | None = Field(default=None, gt=0)
+    height_m: float | None = Field(default=None, gt=0)
+    hydraulic_law_type: str | None = Field(default=None, min_length=1, max_length=64)
+    hydraulic_parameters: dict[str, Any] | None = None
+    operation_rule_type: HydraulicOperationRule | None = None
+    operation_parameters: dict[str, Any] | None = None
+    status: HydraulicStructureStatus | None = None
+    metadata: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_location_pair(self) -> "HydraulicStructureUpdate":
+        """Require X/Y to move together so a structure never acquires partial geometry."""
+
+        if (self.x is None) != (self.y is None):
+            raise ValueError("x and y must be supplied together")
+        return self
+
+
+class HydraulicStructureRecord(BaseModel):
+    """Return a unified structure, spatial location, and current capability status."""
+
+    id: int
+    dataset_version_id: int
+    network_id: int
+    branch_id: int
+    structure_code: str
+    structure_name: str
+    structure_type: HydraulicStructureType
+    chainage_m: float
+    location_geometry: dict[str, Any]
+    crest_elevation_m: float | None
+    invert_elevation_m: float | None
+    width_m: float | None
+    height_m: float | None
+    hydraulic_law_type: str
+    hydraulic_parameters: dict[str, Any]
+    operation_rule_type: HydraulicOperationRule
+    operation_parameters: dict[str, Any]
+    status: HydraulicStructureStatus
+    metadata: dict[str, Any]
+    legacy_gate_id: int | None
+    legacy_pump_id: int | None
+    solver_status: str
+    solver_reason: str
+
+
+class HydraulicStructureScenarioUpsert(BaseModel):
+    """Override a structure for one Simulation Case without copying its geometry."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status_override: HydraulicStructureStatus | None = None
+    hydraulic_parameters_override: dict[str, Any] = Field(default_factory=dict)
+    operation_rule_type_override: HydraulicOperationRule | None = None
+    operation_parameters_override: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class HydraulicStructureScenarioRecord(HydraulicStructureScenarioUpsert):
+    """Return one persisted case-specific structure override."""
+
+    id: int
+    dataset_version_id: int
+    case_id: int
+    structure_id: int
+    updated_at: datetime
+
+
+class SolverCapabilityRecord(BaseModel):
+    """Expose one version-bound engine capability without adapter internals."""
+
+    engine: str
+    engine_version: str
+    adapter_version: str
+    feature: str
+    status: str
+    reason: str
+    benchmark_ids: list[str]
+    verified_at: str | None
+
+
+class HydraulicNetworkGraphRecord(BaseModel):
+    """Return reusable topology relationships for GIS and model clients."""
+
+    network_id: int
+    nodes: list[dict[str, Any]]
+    branches: list[dict[str, Any]]
+    cross_sections: list[dict[str, Any]]
+    structures: list[HydraulicStructureRecord]
+    boundaries: list[dict[str, Any]]

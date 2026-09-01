@@ -5,7 +5,6 @@ import pytest
 from model.hydraulic_1d import (
     BoundaryCondition,
     Hydraulic1DModel,
-    HydraulicBranch,
     HydraulicStructure,
     RoughnessZone,
     SimulationSettings,
@@ -13,6 +12,7 @@ from model.hydraulic_1d import (
 )
 from model.hydraulic_1d.errors import Hydraulic1DValidationError
 from model.hydraulic_1d.mascaret.adapter import MascaretModelValidator
+from tests.benchmark.hydraulic_1d.network.cases import n01_confluence
 from tests.hydraulic_1d.helpers import model_fixture
 
 
@@ -35,7 +35,7 @@ def test_structure_without_verified_mapping_is_rejected(kind: str) -> None:
 
     with pytest.raises(
         Hydraulic1DValidationError,
-        match="MASCARET_STRUCTURE_MAPPING_UNSUPPORTED",
+        match="MODEL_ENGINE_INCOMPATIBLE",
     ):
         MascaretModelValidator().validate(model)
 
@@ -52,7 +52,9 @@ def test_transverse_roughness_variation_is_rejected() -> None:
         }
     )
     source = model_fixture()
-    model = source.model_copy(update={"cross_sections": (changed, source.cross_sections[1])})
+    model = source.model_copy(
+        update={"cross_sections": (changed, source.cross_sections[1])}
+    )
 
     with pytest.raises(
         Hydraulic1DValidationError,
@@ -74,25 +76,10 @@ def test_malformed_cross_section_is_rejected_by_unified_contract() -> None:
         Hydraulic1DModel.parse_snapshot(payload)
 
 
-def test_unverified_multi_branch_network_is_rejected() -> None:
-    """The v9.1.1 adapter must not pretend its single-river mapping covers networks."""
+def test_connected_multi_branch_network_is_accepted() -> None:
+    """Accept a graph whose native topology is covered by engineering evidence."""
 
-    source = model_fixture()
-    second = HydraulicBranch(
-        id="branch-2",
-        code="B2",
-        upstream_node_id="node-2-up",
-        downstream_node_id="node-2-down",
-        start_chainage_m=0.0,
-        end_chainage_m=1000.0,
-    )
-    model = source.model_copy(update={"branches": (*source.branches, second)})
-
-    with pytest.raises(
-        Hydraulic1DValidationError,
-        match="MASCARET_MULTI_BRANCH_NOT_ENABLED",
-    ):
-        MascaretModelValidator().validate(model)
+    MascaretModelValidator().validate(n01_confluence().model)
 
 
 def test_wrong_downstream_boundary_variable_is_rejected() -> None:
@@ -135,11 +122,11 @@ def test_lateral_withdrawal_is_not_silently_mapped_as_inflow() -> None:
     lateral = source.boundaries[-1].model_copy(
         update={"series": (TimeValue(time_seconds=0.0, value=-0.5),)}
     )
-    model = source.model_copy(
-        update={"boundaries": (*source.boundaries[:-1], lateral)}
-    )
+    model = source.model_copy(update={"boundaries": (*source.boundaries[:-1], lateral)})
 
-    with pytest.raises(Hydraulic1DValidationError, match="NEGATIVE_DISCHARGE_UNVERIFIED"):
+    with pytest.raises(
+        Hydraulic1DValidationError, match="NEGATIVE_DISCHARGE_UNVERIFIED"
+    ):
         MascaretModelValidator().validate(model)
 
 

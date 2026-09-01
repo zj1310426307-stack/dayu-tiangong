@@ -1,0 +1,13 @@
+{
+  "schema_version": "dayu.hydraulic-engineering-acceptance.v1",
+  "engine": "mascaret",
+  "engine_version": "v9.1.1",
+  "adapter_version": "dayu-mascaret-adapter-v2",
+  "thresholds": {
+    "node_continuity_residual_max": 0.005,
+    "network_mass_balance_residual_max": 0.005,
+    "junction_water_level_spread_m_max": 0.05
+  },
+  "network_cases": ["N01", "N02", "N03", "N04", "N05"],
+  "structure_cases": ["S01"]
+}

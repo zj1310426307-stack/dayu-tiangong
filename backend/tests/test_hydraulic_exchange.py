@@ -235,7 +235,12 @@ def test_openapi_exposes_complete_hydraulic_management_surface() -> None:
     paths = TestClient(app).get("/openapi.json").json()["paths"]
     required = {
         "/api/v1/hydraulic/capabilities",
+        "/api/v1/hydraulic/engine-capabilities",
         "/api/v1/hydraulic/networks",
+        "/api/v1/hydraulic/networks/{network_id}/graph",
+        "/api/v1/hydraulic/structures",
+        "/api/v1/hydraulic/structures/{structure_id}",
+        "/api/v1/hydraulic/structures/{structure_id}/scenarios/{case_id}",
         "/api/v1/hydraulic/cross-sections/{section_id}",
         "/api/v1/hydraulic/imports",
         "/api/v1/hydraulic/imports/preview",
