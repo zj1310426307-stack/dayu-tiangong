@@ -160,10 +160,13 @@ class MascaretResultParser:
             raise Hydraulic1DResultError(
                 "MASCARET result contains no rows at authoritative Dayu cross sections"
             )
-        missing_sections = sorted({item.id for item in sections}.difference(seen_sections))
+        missing_sections = sorted(
+            {item.id for item in sections}.difference(seen_sections)
+        )
         if missing_sections:
             raise Hydraulic1DResultError(
-                "MASCARET result is missing Dayu cross sections: " + ", ".join(missing_sections)
+                "MASCARET result is missing Dayu cross sections: "
+                + ", ".join(missing_sections)
             )
         reference_times = mapped_times_by_section[sections[0].id]
         if any(
@@ -174,11 +177,26 @@ class MascaretResultParser:
             )
         observed_times = sorted(reference_times)
         expected_times = model.settings.expected_output_times()
+        native_expected_times = (
+            model.settings.time_step_seconds,
+            *(
+                item
+                for item in expected_times
+                if item > model.settings.time_step_seconds
+            ),
+        )
         time_tolerance = max(1e-6, model.settings.output_interval_seconds * 1e-9)
-        if len(observed_times) != len(expected_times) or any(
-            not isclose(observed, expected, rel_tol=0.0, abs_tol=time_tolerance)
-            for observed, expected in zip(observed_times, expected_times)
-        ):
+        platform_axis = self._same_time_axis(
+            observed_times,
+            expected_times,
+            tolerance=time_tolerance,
+        )
+        native_axis = self._same_time_axis(
+            observed_times,
+            native_expected_times,
+            tolerance=time_tolerance,
+        )
+        if not platform_axis and not native_axis:
             raise Hydraulic1DResultError(
                 "MASCARET result does not cover the complete expected output time axis"
             )
@@ -195,10 +213,27 @@ class MascaretResultParser:
                 "mapped_result_rows": len(records),
                 "variable_abbreviations": list(variables),
                 "source_format": "opthyca-opt",
+                # The official native executable stores the first solved time
+                # step, then the requested interval; it cannot store t=0.
+                "time_axis_mode": "platform-t0" if platform_axis else "mascaret-native",
             },
             # Raw engine files stay private to the job workspace and are deleted
             # after parsing. Durable artifacts require a separate object-store path.
             artifacts=(),
+        )
+
+    @staticmethod
+    def _same_time_axis(
+        observed: list[float],
+        expected: tuple[float, ...],
+        *,
+        tolerance: float,
+    ) -> bool:
+        """Compare one complete axis without accepting gaps or extra timestamps."""
+
+        return len(observed) == len(expected) and all(
+            isclose(left, right, rel_tol=0.0, abs_tol=tolerance)
+            for left, right in zip(observed, expected)
         )
 
     @staticmethod
@@ -219,11 +254,15 @@ class MascaretResultParser:
 
         try:
             variable_start = next(
-                index for index, value in enumerate(lines) if value.strip().lower() == "[variables]"
+                index
+                for index, value in enumerate(lines)
+                if value.strip().lower() == "[variables]"
             )
             result_start = next(
                 index
-                for index, value in enumerate(lines[variable_start + 1 :], start=variable_start + 1)
+                for index, value in enumerate(
+                    lines[variable_start + 1 :], start=variable_start + 1
+                )
                 if value.strip().lower() == "[resultats]"
             )
         except StopIteration as exc:

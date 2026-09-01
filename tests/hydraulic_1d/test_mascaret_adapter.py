@@ -23,7 +23,7 @@ def test_adapter_builds_isolated_case_and_unique_lateral_law(tmp_path) -> None:
     assert tree.findtext(".//extrLibres/numLoi") == "1 2"
     assert tree.findtext(".//debitsApports/numLoi") == "3"
     assert tree.findtext(".//resultats/fichResultat") == "results.opt"
-    assert (workspace / "FichierCas.txt").read_text(encoding="ascii") == "case.xcas\n"
+    assert (workspace / "FichierCas.txt").read_text(encoding="ascii") == "'case.xcas'\n"
 
 
 def test_adapter_converts_manning_n_to_longitudinal_strickler(tmp_path) -> None:

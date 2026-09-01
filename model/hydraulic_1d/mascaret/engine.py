@@ -6,7 +6,7 @@ from time import monotonic
 
 from model.hydraulic_1d.contracts import Hydraulic1DModel, HydraulicResult
 from model.hydraulic_1d.engine import Hydraulic1DEngine, Hydraulic1DExecutionContext
-from model.hydraulic_1d.errors import Hydraulic1DRuntimeUnavailable
+from model.hydraulic_1d.errors import Hydraulic1DError, Hydraulic1DRuntimeUnavailable
 from model.hydraulic_1d.mascaret.adapter import MascaretModelBuilder
 from model.hydraulic_1d.mascaret.config import (
     MASCARET_ENGINE_ID,
@@ -66,6 +66,11 @@ class MascaretEngine(Hydraulic1DEngine):
 
         return self.runtime.availability()
 
+    def runtime_provenance(self) -> dict[str, object]:
+        """Expose the configured runtime identity through the public engine boundary."""
+
+        return self.runtime.identity().as_metadata()
+
     def run(
         self,
         model: Hydraulic1DModel,
@@ -87,6 +92,8 @@ class MascaretEngine(Hydraulic1DEngine):
             simulation_id=model.simulation_id,
             job_id=context.job_id,
         )
+        succeeded = False
+        failure: Hydraulic1DError | None = None
         try:
             prepared = self.builder.build(model, workspace.path)
             if context.progress_callback is not None:
@@ -127,14 +134,40 @@ class MascaretEngine(Hydraulic1DEngine):
                 update={
                     "diagnostics": {
                         **result.diagnostics,
-                        "runtime_provenance": reason,
+                        "runtime_provenance": (
+                            execution.runtime_identity
+                            or self.runtime.identity().as_metadata()
+                        ),
+                        "runtime_verification": reason,
                     }
                 }
             )
             if context.progress_callback is not None:
                 context.progress_callback(100.0, {"phase": "complete"})
+            succeeded = True
             return result
+        except Hydraulic1DError as exc:
+            failure = exc
+            raise
         finally:
-            # Raw MASCARET files are an internal interchange format. The unified
-            # records have already been parsed before a successful return.
-            workspace.cleanup()
+            retention = self.config.retention_class
+            keep = (succeeded and retention in {"success", "debug", "benchmark"}) or (
+                not succeeded and retention in {"failed", "debug", "benchmark"}
+            )
+            if keep:
+                try:
+                    workspace.retain(
+                        "success"
+                        if succeeded and retention == "success"
+                        else retention,
+                        error_code=getattr(failure, "code", None),
+                        error_message=str(failure) if failure is not None else None,
+                        maximum=self.config.retention_max_workspaces,
+                    )
+                except Hydraulic1DError:
+                    # Never delete or mask the primary failure when runtime release
+                    # ownership is uncertain. Recovery owns such workspaces.
+                    if succeeded:
+                        raise
+            else:
+                workspace.cleanup()

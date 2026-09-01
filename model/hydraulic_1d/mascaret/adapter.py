@@ -81,7 +81,9 @@ class MascaretModelValidator:
                 "boundaries",
             )
         for index, boundary in enumerate(model.boundaries):
-            self._validate_series(boundary, model.settings.duration_seconds, index=index)
+            self._validate_series(
+                boundary, model.settings.duration_seconds, index=index
+            )
             if boundary.variable == "discharge" and any(
                 item.value < 0.0 for item in boundary.series
             ):
@@ -90,14 +92,18 @@ class MascaretModelValidator:
                     "negative discharge/withdrawal is not enabled by the verified adapter",
                     f"boundaries[{index}].series",
                 )
-        ratio = model.settings.output_interval_seconds / model.settings.time_step_seconds
+        ratio = (
+            model.settings.output_interval_seconds / model.settings.time_step_seconds
+        )
         if not isclose(ratio, round(ratio), rel_tol=0.0, abs_tol=1e-9):
             self._reject(
                 "MASCARET_OUTPUT_INTERVAL_INVALID",
                 "output interval must be an integer multiple of the time step",
                 "settings.output_interval_seconds",
             )
-        duration_ratio = model.settings.duration_seconds / model.settings.time_step_seconds
+        duration_ratio = (
+            model.settings.duration_seconds / model.settings.time_step_seconds
+        )
         if not isclose(
             duration_ratio,
             round(duration_ratio),
@@ -115,7 +121,8 @@ class MascaretModelValidator:
             for left, right in zip(sections, sections[1:])
         )
         estimated_mesh_sections = (
-            ceil((branch.end_chainage_m - branch.start_chainage_m) / minimum_spacing) + 1
+            ceil((branch.end_chainage_m - branch.start_chainage_m) / minimum_spacing)
+            + 1
         )
         if estimated_mesh_sections > MAX_MASCARET_MESH_SECTIONS:
             self._reject(
@@ -125,7 +132,9 @@ class MascaretModelValidator:
             )
         for index, section in enumerate(sections):
             if any(
-                not isclose(zone.manning_n, section.manning_n, rel_tol=1e-9, abs_tol=1e-12)
+                not isclose(
+                    zone.manning_n, section.manning_n, rel_tol=1e-9, abs_tol=1e-12
+                )
                 for zone in section.roughness_zones
             ):
                 self._reject(
@@ -249,7 +258,12 @@ class MascaretModelBuilder:
         laws, boundary_paths = self._laws(model, resolved)
         case_path = resolved / CASE_FILENAME
         case_path.write_bytes(self._case_xml(model, branch, sections, laws))
-        (resolved / "FichierCas.txt").write_text(f"{CASE_FILENAME}\n", encoding="ascii")
+        # The native Fortran runtime reads this indirection file directly. The
+        # official launcher writes a single-quoted steering-file basename.
+        (resolved / "FichierCas.txt").write_text(
+            f"'{CASE_FILENAME}'\n",
+            encoding="ascii",
+        )
         manifest_path.write_text(
             dumps(
                 {
@@ -383,7 +397,9 @@ class MascaretModelBuilder:
             )
             path = workspace / filename
             path.write_text("\n".join(lines) + "\n", encoding="ascii")
-            laws.append((law_id, "1" if boundary.variable == "discharge" else "2", filename))
+            laws.append(
+                (law_id, "1" if boundary.variable == "discharge" else "2", filename)
+            )
             paths.append(path)
         return laws, paths
 
@@ -451,7 +467,9 @@ class MascaretModelBuilder:
         ):
             self._element(numerical, name, value)
         temporal = self._element(case, "parametresTemporels")
-        steps = round(model.settings.duration_seconds / model.settings.time_step_seconds)
+        steps = round(
+            model.settings.duration_seconds / model.settings.time_step_seconds
+        )
         for name, value in (
             ("pasTemps", model.settings.time_step_seconds),
             ("tempsInit", 0.0),
@@ -508,7 +526,8 @@ class MascaretModelBuilder:
         self._element(mesh, "sauvMaillage", False)
         keyboard = self._element(mesh, "maillageClavier")
         spacing = min(
-            right.chainage_m - left.chainage_m for left, right in zip(sections, sections[1:])
+            right.chainage_m - left.chainage_m
+            for left, right in zip(sections, sections[1:])
         )
         self._element(keyboard, "nbSections", 0)
         self._element(keyboard, "nbPlages", 1)
@@ -560,7 +579,9 @@ class MascaretModelBuilder:
         self._element(friction, "loi", 1)
         self._element(friction, "nbZone", len(sections))
         self._element(friction, "numBranche", " ".join("1" for _ in sections))
-        self._element(friction, "absDebZone", " ".join(f"{v:.12g}" for v in zone_starts))
+        self._element(
+            friction, "absDebZone", " ".join(f"{v:.12g}" for v in zone_starts)
+        )
         self._element(friction, "absFinZone", " ".join(f"{v:.12g}" for v in zone_ends))
         self._element(friction, "coefLitMin", " ".join(f"{v:.12g}" for v in strickler))
         self._element(friction, "coefLitMaj", " ".join(f"{v:.12g}" for v in strickler))
@@ -623,7 +644,9 @@ class MascaretModelBuilder:
         self._element(result_storage, "option", 1)
         self._element(result_storage, "nbSite", 0)
         calculated = self._element(case, "parametresVariablesCalculees")
-        self._element(calculated, "variablesCalculees", " ".join("false" for _ in range(15)))
+        self._element(
+            calculated, "variablesCalculees", " ".join("false" for _ in range(15))
+        )
         stored = self._element(case, "parametresVariablesStockees")
         stored_positions = {1, 6, 7, 8, 9, 10, 11, 13, 14, 16, 17, 18, 19, 20, 21, 23}
         self._element(
@@ -637,4 +660,6 @@ class MascaretModelBuilder:
         indent(root, space="  ")
         body = tostring(root, encoding="iso-8859-1", xml_declaration=True)
         declaration, xml = body.split(b"\n", 1)
-        return declaration + b'\n<!DOCTYPE fichierCas SYSTEM "mascaret-1.0.dtd">\n' + xml
+        return (
+            declaration + b'\n<!DOCTYPE fichierCas SYSTEM "mascaret-1.0.dtd">\n' + xml
+        )

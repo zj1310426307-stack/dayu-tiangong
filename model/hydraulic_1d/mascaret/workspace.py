@@ -35,10 +35,7 @@ def mascaret_attempt_job_id(
 ) -> str:
     """Bind a runtime workspace identity to the exact database execution lease."""
 
-    return (
-        f"task-{task_id}-token-{execution_token}-"
-        f"attempt-{execution_attempt_count}"
-    )
+    return f"task-{task_id}-token-{execution_token}-attempt-{execution_attempt_count}"
 
 
 def _marker_path(workspace: Path) -> Path:
@@ -69,7 +66,9 @@ def read_workspace_marker(workspace: Path) -> dict[str, Any]:
 
     marker = _marker_path(workspace)
     if marker.is_symlink() or not marker.is_file():
-        raise Hydraulic1DExecutionError("MASCARET workspace marker is missing or unsafe")
+        raise Hydraulic1DExecutionError(
+            "MASCARET workspace marker is missing or unsafe"
+        )
     try:
         payload = loads(marker.read_text(encoding="ascii", errors="strict"))
     except (OSError, UnicodeError, ValueError) as exc:
@@ -85,7 +84,9 @@ def read_workspace_marker(workspace: Path) -> dict[str, Any]:
     if any(payload.get(key) != value for key, value in expected.items()):
         raise Hydraulic1DExecutionError("MASCARET workspace marker ownership mismatch")
     if not isinstance(payload.get("job_id"), str) or not payload["job_id"]:
-        raise Hydraulic1DExecutionError("MASCARET workspace marker lacks a job identity")
+        raise Hydraulic1DExecutionError(
+            "MASCARET workspace marker lacks a job identity"
+        )
     return payload
 
 
@@ -95,7 +96,9 @@ def update_workspace_marker(workspace: Path, **changes: Any) -> dict[str, Any]:
     payload = read_workspace_marker(workspace)
     forbidden = {"schema_version", "workspace_name", "simulation_id", "job_id"}
     if forbidden.intersection(changes):
-        raise Hydraulic1DExecutionError("MASCARET marker ownership fields are immutable")
+        raise Hydraulic1DExecutionError(
+            "MASCARET marker ownership fields are immutable"
+        )
     payload.update(changes)
     _write_marker(workspace, payload)
     return payload
@@ -128,16 +131,48 @@ def cleanup_verified_workspace(root: Path, workspace: Path, *, job_id: str) -> N
 
     resolved_root = root.expanduser().resolve()
     resolved = workspace.resolve()
-    if workspace.is_symlink() or resolved == resolved_root or resolved.parent != resolved_root:
+    if (
+        workspace.is_symlink()
+        or resolved == resolved_root
+        or resolved.parent != resolved_root
+    ):
         raise Hydraulic1DExecutionError("refusing to remove an unverified workspace")
     marker = read_workspace_marker(resolved)
     if marker.get("job_id") != job_id:
-        raise Hydraulic1DExecutionError("workspace belongs to another execution attempt")
-    if marker.get("state") not in {"created", "released", "recovered"}:
+        raise Hydraulic1DExecutionError(
+            "workspace belongs to another execution attempt"
+        )
+    if marker.get("state") not in {"created", "released", "recovered", "retained"}:
         raise Hydraulic1DExecutionError(
             "refusing to remove a workspace whose external runtime is not released"
         )
     rmtree(resolved)
+
+
+def prune_retained_workspaces(root: Path, *, maximum: int) -> None:
+    """Bound retained diagnostics while deleting only verified released attempts."""
+
+    resolved_root = root.expanduser().resolve()
+    if not resolved_root.is_dir():
+        return
+    retained: list[tuple[float, Path, str]] = []
+    for child in resolved_root.iterdir():
+        if (
+            child.is_symlink()
+            or not child.is_dir()
+            or child.resolve().parent != resolved_root
+        ):
+            continue
+        try:
+            marker = read_workspace_marker(child.resolve())
+        except Hydraulic1DExecutionError:
+            continue
+        if marker.get("state") != "retained":
+            continue
+        retained.append((child.stat().st_mtime, child.resolve(), str(marker["job_id"])))
+    retained.sort(key=lambda item: item[0], reverse=True)
+    for _, path, job_id in retained[maximum:]:
+        cleanup_verified_workspace(resolved_root, path, job_id=job_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,7 +183,9 @@ class MascaretJobWorkspace:
     path: Path
 
     @classmethod
-    def create(cls, root: Path, *, simulation_id: str, job_id: str) -> "MascaretJobWorkspace":
+    def create(
+        cls, root: Path, *, simulation_id: str, job_id: str
+    ) -> "MascaretJobWorkspace":
         """Create an unshared directory and prove it remains below the configured root."""
 
         resolved_root = root.expanduser().resolve()
@@ -185,3 +222,27 @@ class MascaretJobWorkspace:
                 self.path,
                 job_id=str(marker["job_id"]),
             )
+
+    def retain(
+        self,
+        retention_class: str,
+        *,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        maximum: int = 20,
+    ) -> None:
+        """Keep bounded diagnostics only after the external runtime is released."""
+
+        marker = read_workspace_marker(self.path)
+        if marker.get("state") not in {"created", "released", "recovered"}:
+            raise Hydraulic1DExecutionError(
+                "cannot retain a workspace whose external runtime is not released"
+            )
+        update_workspace_marker(
+            self.path,
+            state="retained",
+            retention_class=retention_class,
+            error_code=error_code,
+            error_message=(error_message or "")[-4000:] or None,
+        )
+        prune_retained_workspaces(self.root, maximum=maximum)

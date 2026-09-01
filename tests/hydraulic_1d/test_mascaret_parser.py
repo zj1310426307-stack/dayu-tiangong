@@ -76,3 +76,26 @@ def test_parser_rejects_an_unexpected_reach_or_partial_time_axis(tmp_path) -> No
         )
         with pytest.raises(Hydraulic1DResultError, match=message):
             MascaretResultParser().parse(model, prepared, runtime_seconds=0.1)
+
+
+def test_parser_accepts_the_official_native_first_step_time_axis(tmp_path) -> None:
+    """Accept native output that begins at dt while retaining one complete axis."""
+
+    workspace = tmp_path / "native-axis"
+    workspace.mkdir()
+    model = model_fixture()
+    prepared = MascaretModelBuilder().build(model, workspace)
+    lines = FIXTURE.read_text(encoding="iso-8859-1").splitlines()
+    prepared.result_file.write_text(
+        "\n".join(
+            "10.0;" + line.removeprefix("0.0;") if line.startswith("0.0;") else line
+            for line in lines
+        )
+        + "\n",
+        encoding="iso-8859-1",
+    )
+
+    result = MascaretResultParser().parse(model, prepared, runtime_seconds=0.1)
+
+    assert result.records[0].timestamp == 10.0
+    assert result.diagnostics["time_axis_mode"] == "mascaret-native"

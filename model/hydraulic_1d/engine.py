@@ -43,6 +43,10 @@ class Hydraulic1DEngine(ABC):
         """Return factual runtime availability without performing a simulation."""
 
     @abstractmethod
+    def runtime_provenance(self) -> dict[str, object]:
+        """Return structured runtime identity without performing a simulation."""
+
+    @abstractmethod
     def validate(self, model: Hydraulic1DModel) -> None:
         """Fail closed when the selected engine cannot represent the Dayu model."""
 

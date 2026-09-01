@@ -206,7 +206,11 @@ if os.name == "nt":
     _KERNEL32.SetInformationJobObject.restype = wintypes.BOOL
     _KERNEL32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
     _KERNEL32.AssignProcessToJobObject.restype = wintypes.BOOL
-    _KERNEL32.OpenJobObjectW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+    _KERNEL32.OpenJobObjectW.argtypes = [
+        wintypes.DWORD,
+        wintypes.BOOL,
+        wintypes.LPCWSTR,
+    ]
     _KERNEL32.OpenJobObjectW.restype = wintypes.HANDLE
     _KERNEL32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
     _KERNEL32.TerminateJobObject.restype = wintypes.BOOL
@@ -233,7 +237,9 @@ def _windows_creation_time_from_handle(handle: int) -> int:
     """Return the Windows FILETIME creation token held by an exact process handle."""
 
     if os.name != "nt":
-        raise Hydraulic1DExecutionError("Windows process identity requested on another OS")
+        raise Hydraulic1DExecutionError(
+            "Windows process identity requested on another OS"
+        )
     created = wintypes.FILETIME()
     exited = wintypes.FILETIME()
     kernel = wintypes.FILETIME()
@@ -344,7 +350,9 @@ def attach_runtime_process(
         or not isinstance(process_identity, str)
         or not process_identity
     ):
-        raise Hydraulic1DExecutionError("runtime launch does not match its workspace marker")
+        raise Hydraulic1DExecutionError(
+            "runtime launch does not match its workspace marker"
+        )
     handle: dict[str, Any] = {
         "schema_version": RUNTIME_HANDLE_SCHEMA,
         "runtime_kind": runtime_kind,
@@ -354,7 +362,9 @@ def attach_runtime_process(
     }
     guard = RuntimeProcessGuard(process=process, workspace=workspace)
     if os.name == "nt":
-        job_name = "DayuMascaret-" + sha256(str(marker["job_id"]).encode("utf-8")).hexdigest()
+        job_name = (
+            "DayuMascaret-" + sha256(str(marker["job_id"]).encode("utf-8")).hexdigest()
+        )
         ctypes.set_last_error(0)
         job_handle = _KERNEL32.CreateJobObjectW(None, job_name)
         if not job_handle:
@@ -364,7 +374,9 @@ def attach_runtime_process(
         guard.windows_job_handle = int(job_handle)
         if ctypes.get_last_error() == _ERROR_ALREADY_EXISTS:
             guard.close()
-            raise Hydraulic1DExecutionError("MASCARET Windows Job Object identity collision")
+            raise Hydraulic1DExecutionError(
+                "MASCARET Windows Job Object identity collision"
+            )
         limits = _ExtendedLimitInformation()
         limits.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
         if not _KERNEL32.SetInformationJobObject(
@@ -385,7 +397,9 @@ def attach_runtime_process(
             {
                 "platform": "windows",
                 "windows_job_name": job_name,
-                "process_creation_time": _windows_creation_time_from_handle(int(process._handle)),
+                "process_creation_time": _windows_creation_time_from_handle(
+                    int(process._handle)
+                ),
             }
         )
     elif sys.platform.startswith("linux"):
@@ -396,15 +410,66 @@ def attach_runtime_process(
             )
         else:
             resolved_workspace = str(workspace.resolve())
-            if (
-                identity["process_group_id"] != process.pid
-                or identity["session_id"] != process.pid
-                or identity["cwd"] != resolved_workspace
-                or identity["command_sha256"] != expected_command
-                or identity["process_identity"] != process_identity
+
+            def matches(observed: dict[str, Any]) -> bool:
+                """Check all public and secret ownership factors together."""
+
+                return (
+                    observed["process_group_id"] == process.pid
+                    and observed["session_id"] == process.pid
+                    and observed["cwd"] == resolved_workspace
+                    and observed["command_sha256"] == expected_command
+                    and observed["process_identity"] == process_identity
+                )
+
+            identity_matches = matches(identity)
+            identity_deadline = monotonic() + 1.0
+            while (
+                not identity_matches
+                and process.poll() is None
+                and monotonic() < identity_deadline
             ):
+                # WSL can briefly expose the new session before procfs publishes
+                # the post-exec argv and inherited environment. Never weaken the
+                # factors; wait for one coherent observation instead.
+                sleep(0.01)
+                observed = _linux_process(process.pid)
+                if observed is None:
+                    break
+                identity = observed
+                identity_matches = matches(identity)
+            if not identity_matches and process.poll() is not None:
+                # Very short native runs can become zombies before procfs argv and
+                # environ are read. Popen still owns the exact unreused PID. Accept
+                # that race only after reaping the direct child and proving that
+                # every remaining member of its new session carries our token, or
+                # that the session is already empty.
+                try:
+                    _linux_group_members(
+                        process_group_id=process.pid,
+                        session_id=process.pid,
+                        workspace=workspace,
+                        minimum_start_time=int(identity["start_time_ticks"]),
+                        process_identity=process_identity,
+                    )
+                except Hydraulic1DExecutionError:
+                    pass
+                else:
+                    identity = {
+                        **identity,
+                        "command_sha256": expected_command,
+                        "process_identity": process_identity,
+                        "leader_exited_before_attach": True,
+                    }
+                    identity_matches = True
+            if not identity_matches:
                 raise Hydraulic1DExecutionError(
-                    "MASCARET Linux launcher does not own the expected session/workspace"
+                    "MASCARET Linux launcher does not own the expected session/workspace "
+                    f"(pgid_match={identity['process_group_id'] == process.pid}, "
+                    f"sid_match={identity['session_id'] == process.pid}, "
+                    f"cwd_match={identity['cwd'] == resolved_workspace}, "
+                    f"argv_match={identity['command_sha256'] == expected_command}, "
+                    f"attempt_match={identity['process_identity'] == process_identity})"
                 )
             handle.update({"platform": "linux", **identity})
     else:
@@ -460,7 +525,9 @@ def _linux_group_members(
     return members
 
 
-def _recover_linux_group(workspace: Path, handle: dict[str, Any]) -> AttemptRecoveryOutcome:
+def _recover_linux_group(
+    workspace: Path, handle: dict[str, Any]
+) -> AttemptRecoveryOutcome:
     """Terminate a Linux session only after start-time, cwd, and argv verification."""
 
     required = (
@@ -496,19 +563,27 @@ def _recover_linux_group(workspace: Path, handle: dict[str, Any]) -> AttemptReco
     except Hydraulic1DExecutionError as exc:
         return AttemptRecoveryOutcome(False, str(exc))
     if not members:
-        return AttemptRecoveryOutcome(True, "recorded Linux process group already exited")
+        return AttemptRecoveryOutcome(
+            True, "recorded Linux process group already exited"
+        )
     leader = next((item for item in members if item["pid"] == pid), None)
     if leader is not None and (
         leader["start_time_ticks"] != started
         or leader["command_sha256"] != handle["command_sha256"]
     ):
-        return AttemptRecoveryOutcome(False, "Linux launcher PID was reused; no process was killed")
+        return AttemptRecoveryOutcome(
+            False, "Linux launcher PID was reused; no process was killed"
+        )
     try:
         os.killpg(group, signal.SIGTERM)
     except ProcessLookupError:
-        return AttemptRecoveryOutcome(True, "recorded Linux process group already exited")
+        return AttemptRecoveryOutcome(
+            True, "recorded Linux process group already exited"
+        )
     except (PermissionError, OSError) as exc:
-        return AttemptRecoveryOutcome(False, f"cannot terminate owned Linux process group: {exc}")
+        return AttemptRecoveryOutcome(
+            False, f"cannot terminate owned Linux process group: {exc}"
+        )
     deadline = monotonic() + 5.0
     while monotonic() < deadline:
         try:
@@ -519,7 +594,9 @@ def _recover_linux_group(workspace: Path, handle: dict[str, Any]) -> AttemptReco
                 minimum_start_time=started,
                 process_identity=process_identity,
             ):
-                return AttemptRecoveryOutcome(True, "owned Linux process group terminated")
+                return AttemptRecoveryOutcome(
+                    True, "owned Linux process group terminated"
+                )
         except Hydraulic1DExecutionError as exc:
             return AttemptRecoveryOutcome(False, str(exc))
         sleep(0.05)
@@ -540,7 +617,9 @@ def _recover_linux_group(workspace: Path, handle: dict[str, Any]) -> AttemptReco
                     "owned Linux process group exited before force termination",
                 )
     except (Hydraulic1DExecutionError, PermissionError, OSError) as exc:
-        return AttemptRecoveryOutcome(False, f"cannot force-stop owned Linux process group: {exc}")
+        return AttemptRecoveryOutcome(
+            False, f"cannot force-stop owned Linux process group: {exc}"
+        )
     deadline = monotonic() + 5.0
     while monotonic() < deadline:
         try:
@@ -551,7 +630,9 @@ def _recover_linux_group(workspace: Path, handle: dict[str, Any]) -> AttemptReco
                 minimum_start_time=started,
                 process_identity=process_identity,
             ):
-                return AttemptRecoveryOutcome(True, "owned Linux process group force-terminated")
+                return AttemptRecoveryOutcome(
+                    True, "owned Linux process group force-terminated"
+                )
         except Hydraulic1DExecutionError as exc:
             return AttemptRecoveryOutcome(False, str(exc))
         sleep(0.05)
@@ -562,7 +643,9 @@ def _recover_windows_job(handle: dict[str, Any]) -> AttemptRecoveryOutcome:
     """Terminate a named Windows Job Object without ever targeting a bare reused PID."""
 
     if os.name != "nt":
-        return AttemptRecoveryOutcome(False, "Windows runtime handle found on another OS")
+        return AttemptRecoveryOutcome(
+            False, "Windows runtime handle found on another OS"
+        )
     pid = handle.get("pid")
     created = handle.get("process_creation_time")
     job_name = handle.get("windows_job_name")
@@ -601,7 +684,9 @@ def _recover_windows_job(handle: dict[str, Any]) -> AttemptRecoveryOutcome:
         if observed is None or observed[0] != created or not observed[1]:
             return AttemptRecoveryOutcome(True, "owned Windows Job Object terminated")
         sleep(0.05)
-    return AttemptRecoveryOutcome(False, "owned Windows launcher did not leave its Job Object")
+    return AttemptRecoveryOutcome(
+        False, "owned Windows launcher did not leave its Job Object"
+    )
 
 
 def _docker_absent(detail: bytes) -> bool:
@@ -624,19 +709,27 @@ def _recover_container(
         return AttemptRecoveryOutcome(False, "MASCARET container cidfile is a symlink")
     if not cidfile.is_file():
         return (
-            AttemptRecoveryOutcome(True, "container launcher exited before creating a cidfile")
+            AttemptRecoveryOutcome(
+                True, "container launcher exited before creating a cidfile"
+            )
             if process_exited
-            else AttemptRecoveryOutcome(False, "running container attempt has no cidfile")
+            else AttemptRecoveryOutcome(
+                False, "running container attempt has no cidfile"
+            )
         )
     try:
         container_id = cidfile.read_text(encoding="ascii", errors="strict").strip()
     except (OSError, UnicodeError) as exc:
         return AttemptRecoveryOutcome(False, f"cannot read MASCARET cidfile: {exc}")
     if fullmatch(r"[0-9a-fA-F]{12,64}", container_id) is None:
-        return AttemptRecoveryOutcome(False, "MASCARET cidfile contains an invalid identity")
+        return AttemptRecoveryOutcome(
+            False, "MASCARET cidfile contains an invalid identity"
+        )
     docker = which("docker")
     if docker is None:
-        return AttemptRecoveryOutcome(False, "Docker is unavailable for orphan recovery")
+        return AttemptRecoveryOutcome(
+            False, "Docker is unavailable for orphan recovery"
+        )
     label_format = '{{ index .Config.Labels "' + CONTAINER_LABEL_KEY + '" }}'
     inspected = run(
         (docker, "inspect", "--format", label_format, container_id),
@@ -648,10 +741,16 @@ def _recover_container(
     )
     if inspected.returncode != 0:
         if _docker_absent(inspected.stdout + inspected.stderr):
-            return AttemptRecoveryOutcome(True, "recorded MASCARET container already exited")
-        return AttemptRecoveryOutcome(False, "Docker could not verify the recorded container")
+            return AttemptRecoveryOutcome(
+                True, "recorded MASCARET container already exited"
+            )
+        return AttemptRecoveryOutcome(
+            False, "Docker could not verify the recorded container"
+        )
     if inspected.stdout.decode("utf-8", errors="strict").strip() != expected_label:
-        return AttemptRecoveryOutcome(False, "container identity label mismatch; nothing was killed")
+        return AttemptRecoveryOutcome(
+            False, "container identity label mismatch; nothing was killed"
+        )
     removed = run(
         (docker, "rm", "--force", container_id),
         stdin=DEVNULL,
@@ -661,7 +760,9 @@ def _recover_container(
         shell=False,
     )
     if removed.returncode != 0 and not _docker_absent(removed.stdout + removed.stderr):
-        return AttemptRecoveryOutcome(False, "owned MASCARET container could not be removed")
+        return AttemptRecoveryOutcome(
+            False, "owned MASCARET container could not be removed"
+        )
     verified = run(
         (docker, "inspect", container_id),
         stdin=DEVNULL,
@@ -670,8 +771,12 @@ def _recover_container(
         check=False,
         shell=False,
     )
-    if verified.returncode == 0 or not _docker_absent(verified.stdout + verified.stderr):
-        return AttemptRecoveryOutcome(False, "owned MASCARET container removal was not confirmed")
+    if verified.returncode == 0 or not _docker_absent(
+        verified.stdout + verified.stderr
+    ):
+        return AttemptRecoveryOutcome(
+            False, "owned MASCARET container removal was not confirmed"
+        )
     return AttemptRecoveryOutcome(True, "owned MASCARET container removed")
 
 
@@ -706,16 +811,25 @@ def _recover_runtime(workspace: Path, marker: dict[str, Any]) -> AttemptRecovery
             "worker disappeared during the unidentifiable process launch window",
         )
     if state not in {"running", "process_exited"}:
-        return AttemptRecoveryOutcome(False, f"unknown workspace runtime state: {state!r}")
+        return AttemptRecoveryOutcome(
+            False, f"unknown workspace runtime state: {state!r}"
+        )
     process_exited = state == "process_exited"
     handle = marker.get("runtime_handle")
-    if not isinstance(handle, dict) or handle.get("schema_version") != RUNTIME_HANDLE_SCHEMA:
-        return AttemptRecoveryOutcome(False, "workspace lacks a validated runtime handle")
+    if (
+        not isinstance(handle, dict)
+        or handle.get("schema_version") != RUNTIME_HANDLE_SCHEMA
+    ):
+        return AttemptRecoveryOutcome(
+            False, "workspace lacks a validated runtime handle"
+        )
     runtime_kind = handle.get("runtime_kind")
     if runtime_kind == "container":
         expected_label = marker.get("container_label")
         if not isinstance(expected_label, str) or not expected_label:
-            return AttemptRecoveryOutcome(False, "container workspace lacks its attempt label")
+            return AttemptRecoveryOutcome(
+                False, "container workspace lacks its attempt label"
+            )
         container = _recover_container(
             workspace,
             expected_label=expected_label,
