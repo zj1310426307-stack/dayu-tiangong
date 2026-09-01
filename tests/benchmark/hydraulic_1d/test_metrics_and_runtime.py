@@ -35,6 +35,8 @@ def test_standard_metric_contract_contains_every_required_measure() -> None:
 
 @pytest.mark.parametrize("case_factory", ALL_BENCHMARKS, ids=lambda item: item.__name__)
 @pytest.mark.mascaret_runtime
+@pytest.mark.mascaret_numerical
+@pytest.mark.mascaret_benchmark
 def test_real_mascaret_benchmark_runtime_is_never_substituted(
     case_factory,
     tmp_path,
@@ -58,19 +60,22 @@ def test_real_mascaret_benchmark_runtime_is_never_substituted(
         result,
         reference_velocity_m_s=case.reference_velocity_m_s,
     )
-    comparison_result = None
-    comparison_metrics = None
-    if case.comparison_model is not None:
+    comparison_results = []
+    comparison_metrics = []
+    for index, comparison_model in enumerate(case.comparison_models, start=1):
         comparison_result = engine.run(
-            case.comparison_model,
+            comparison_model,
             Hydraulic1DExecutionContext(
-                job_id=f"{case.benchmark_id}-comparison",
+                job_id=f"{case.benchmark_id}-comparison-{index}",
                 workspace_root=tmp_path,
             ),
         )
-        comparison_metrics = evaluate_hydraulic_benchmark(
-            case.comparison_model,
-            comparison_result,
+        comparison_results.append(comparison_result)
+        comparison_metrics.append(
+            evaluate_hydraulic_benchmark(
+                comparison_model,
+                comparison_result,
+            )
         )
 
     assert result.engine == "mascaret"
@@ -78,10 +83,13 @@ def test_real_mascaret_benchmark_runtime_is_never_substituted(
         item.id for item in case.model.cross_sections
     }
     assert all(isfinite(value) and value >= 0.0 for value in metrics.to_dict().values())
+    provenance = result.diagnostics["runtime_provenance"]
+    assert provenance["is_real"] is True
+    assert provenance["version_verified"] is True
     assert_case_acceptance(
         case,
         result,
         metrics,
-        comparison_result=comparison_result,
-        comparison_metrics=comparison_metrics,
+        comparison_results=tuple(comparison_results),
+        comparison_metrics=tuple(comparison_metrics),
     )

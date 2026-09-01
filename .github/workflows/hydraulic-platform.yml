@@ -13,8 +13,8 @@ env:
   DAYU_ENGINE_VERSION: dayu-hydraulic-platform-5.0.0
   DAYU_BUILD_MODE: ci
   MASCARET_ENABLED: "0"
-  MASCARET_RUNTIME: cli
-  MASCARET_EXECUTABLE: mascaret.py
+  MASCARET_RUNTIME: external
+  MASCARET_EXECUTABLE: mascaret
   MASCARET_TIMEOUT: "3600"
   HYDRAULIC_WORKSPACE_ROOT: outputs/ci/hydraulic-workspaces
 
@@ -224,7 +224,7 @@ jobs:
         run: >-
           docker run --rm "dayu-backend:$ENGINE_COMMIT"
           python -c "import os, shutil; from model.hydraulic_1d.factory import create_hydraulic_1d_engine;
-          assert os.environ['MASCARET_ENABLED'] == '0'; assert shutil.which('mascaret.py') is None;
+          assert os.environ['MASCARET_ENABLED'] == '0'; assert shutil.which('mascaret') is None;
           available, reason=create_hydraulic_1d_engine().availability(); assert not available; assert 'disabled' in reason"
       - name: Run Adapter and parser tests in image
         run: >-

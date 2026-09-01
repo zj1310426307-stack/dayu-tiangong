@@ -25,10 +25,12 @@ class HydraulicBenchmarkCase:
     benchmark_id: str
     model: Hydraulic1DModel
     reference_velocity_m_s: float | None = None
-    comparison_model: Hydraulic1DModel | None = None
+    comparison_models: tuple[Hydraulic1DModel, ...] = ()
 
 
-def _profile(*, bed_m: float = 0.0, natural: bool = False) -> tuple[CrossSectionPoint, ...]:
+def _profile(
+    *, bed_m: float = 0.0, natural: bool = False
+) -> tuple[CrossSectionPoint, ...]:
     """Return either a trapezoidal or an asymmetric natural profile."""
 
     if natural:
@@ -54,6 +56,8 @@ def _case(
     natural: bool = False,
     upstream: tuple[TimeValue, ...] = (TimeValue(time_seconds=0.0, value=11.0),),
     downstream: tuple[TimeValue, ...] = (TimeValue(time_seconds=0.0, value=2.5),),
+    time_step_seconds: float = 10.0,
+    output_interval_seconds: float = 60.0,
 ) -> HydraulicBenchmarkCase:
     """Build a complete single-Branch benchmark with endpoint coverage."""
 
@@ -118,8 +122,8 @@ def _case(
         ),
         settings=SimulationSettings(
             duration_seconds=3600.0,
-            time_step_seconds=10.0,
-            output_interval_seconds=60.0,
+            time_step_seconds=time_step_seconds,
+            output_interval_seconds=output_interval_seconds,
         ),
         metadata={
             "horizontal_unit": "m",
@@ -134,7 +138,10 @@ def benchmark_01_uniform_rectangular() -> HydraulicBenchmarkCase:
     """Return a hydraulically closed near-vertical rectangular uniform-flow case."""
 
     benchmark_id = "benchmark-01-uniform-rectangular"
-    width_m = 10.0
+    # MASCARET's profile convention does not include the closing bank segments
+    # in the minor-bed wetted perimeter. A very wide rectangle keeps that
+    # convention within 0.5% of the closed rectangular Manning reference.
+    width_m = 1000.0
     depth_m = 2.0
     slope = 0.0001
     manning_n = 0.03
@@ -237,20 +244,30 @@ def benchmark_01_uniform_rectangular() -> HydraulicBenchmarkCase:
 
 
 def benchmark_02_roughness_sensitivity() -> HydraulicBenchmarkCase:
-    """Return otherwise-identical low/high Manning cases for a paired run."""
+    """Return otherwise-identical n1/n2/n3 Manning cases for a monotonic run."""
 
     low = _case(
         "benchmark-02-roughness-low",
-        manning=(0.025, 0.025, 0.025),
+        manning=(0.025,) * 21,
+        time_step_seconds=2.0,
+        output_interval_seconds=10.0,
+    )
+    middle = _case(
+        "benchmark-02-roughness-middle",
+        manning=(0.035,) * 21,
+        time_step_seconds=2.0,
+        output_interval_seconds=10.0,
     )
     high = _case(
         "benchmark-02-roughness-high",
-        manning=(0.045, 0.045, 0.045),
+        manning=(0.045,) * 21,
+        time_step_seconds=2.0,
+        output_interval_seconds=10.0,
     )
     return HydraulicBenchmarkCase(
         benchmark_id="benchmark-02-roughness-sensitivity",
         model=low.model,
-        comparison_model=high.model,
+        comparison_models=(middle.model, high.model),
     )
 
 
@@ -261,13 +278,15 @@ def benchmark_03_flood_hydrograph() -> HydraulicBenchmarkCase:
         "benchmark-03-flood-hydrograph",
         # Interior profiles provide a downstream observation point that is not
         # the prescribed H(t) boundary itself.
-        manning=(0.03, 0.03, 0.03, 0.03, 0.03),
+        manning=(0.03,) * 21,
         upstream=(
             TimeValue(time_seconds=0.0, value=11.0),
             TimeValue(time_seconds=1200.0, value=35.0),
             TimeValue(time_seconds=2400.0, value=18.0),
             TimeValue(time_seconds=3600.0, value=11.0),
         ),
+        time_step_seconds=2.0,
+        output_interval_seconds=10.0,
     )
 
 
@@ -286,6 +305,7 @@ def benchmark_05_boundary_series() -> HydraulicBenchmarkCase:
 
     return _case(
         "benchmark-05-boundary-series",
+        manning=(0.03,) * 21,
         upstream=(
             TimeValue(time_seconds=0.0, value=10.0),
             TimeValue(time_seconds=1800.0, value=20.0),

@@ -1,0 +1,87 @@
+{
+  "schema_version": "dayu.mascaret-benchmark-acceptance.v1",
+  "runtime": {
+    "is_real": true,
+    "version_verified": true,
+    "upstream_tag": "v9.1.1",
+    "upstream_commit": "1fe3b5141f7d9c9fa8fe6d6d0316c994a39c2d95"
+  },
+  "global": {
+    "mass_balance_max_relative_residual": {
+      "tolerance": 0.005,
+      "reason": "Production transient acceptance requires normalized continuity residual <= 0.5%."
+    }
+  },
+  "benchmark-01-uniform-rectangular": {
+    "discharge_relative": {
+      "tolerance": 0.005,
+      "reason": "Manning-theory steady discharge must agree within 0.5%."
+    },
+    "discharge_absolute_m3s": {
+      "tolerance": 0.02,
+      "reason": "Absolute floor covers native text precision near zero error."
+    },
+    "water_level_relative": {
+      "tolerance": 0.01,
+      "reason": "Steady depth/water level must agree within 1%."
+    },
+    "water_level_absolute_m": {
+      "tolerance": 0.005,
+      "reason": "Absolute floor covers millimetre Opthyca rounding."
+    },
+    "velocity_relative": {
+      "tolerance": 0.01,
+      "reason": "Uniform velocity is derived from the analytic rectangular state."
+    },
+    "velocity_absolute_ms": {
+      "tolerance": 0.005,
+      "reason": "Absolute floor covers native area/discharge text precision."
+    }
+  },
+  "benchmark-02-roughness-sensitivity": {
+    "minimum_stage_rise_m": {
+      "tolerance": 0.0001,
+      "reason": "n1<n2<n3 must produce strictly increasing stage beyond output precision."
+    },
+    "minimum_velocity_drop_ms": {
+      "tolerance": 0.00001,
+      "reason": "n1<n2<n3 must produce strictly decreasing velocity beyond output precision."
+    }
+  },
+  "benchmark-03-flood-hydrograph": {
+    "minimum_peak_q_rise_m3s": {
+      "tolerance": 1.0,
+      "reason": "The 24 m3/s pulse must remain materially detectable downstream."
+    },
+    "minimum_peak_h_rise_m": {
+      "tolerance": 0.005,
+      "reason": "The downstream interior stage response must exceed output precision."
+    },
+    "minimum_arrival_lag_output_steps": {
+      "tolerance": 1,
+      "reason": "Propagation must not precede the imposed upstream peak."
+    },
+    "peak_q_overshoot_relative": {
+      "tolerance": 0.05,
+      "reason": "Reject nonphysical peak amplification beyond a 5% numerical allowance."
+    }
+  },
+  "benchmark-05-boundary-series": {
+    "discharge_relative": {
+      "tolerance": 0.005,
+      "reason": "Imposed Q(t) endpoint RMSE must remain within 0.5%."
+    },
+    "discharge_absolute_m3s": {
+      "tolerance": 0.05,
+      "reason": "Absolute floor covers native discharge text precision."
+    },
+    "water_level_relative": {
+      "tolerance": 0.001,
+      "reason": "Imposed H(t) endpoint RMSE must remain within 0.1%."
+    },
+    "water_level_absolute_m": {
+      "tolerance": 0.005,
+      "reason": "Absolute floor covers native stage text precision."
+    }
+  }
+}

@@ -14,8 +14,8 @@ env:
   DAYU_BUILD_MODE: ci
   # Hosted CI validates the Adapter and parser without pretending that MASCARET is installed.
   MASCARET_ENABLED: "0"
-  MASCARET_RUNTIME: cli
-  MASCARET_EXECUTABLE: mascaret.py
+  MASCARET_RUNTIME: external
+  MASCARET_EXECUTABLE: mascaret
   HYDRAULIC_WORKSPACE_ROOT: outputs/ci/hydraulic-workspaces
 
 jobs:
@@ -110,6 +110,73 @@ jobs:
           python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
           tests/benchmark/hydraulic_1d
 
+  mascaret-production-acceptance:
+    name: MASCARET production acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      MASCARET_ENABLED: "1"
+      MASCARET_RUNTIME: external
+      MASCARET_UPSTREAM_TAG: v9.1.1
+      MASCARET_UPSTREAM_COMMIT: 1fe3b5141f7d9c9fa8fe6d6d0316c994a39c2d95
+      MASCARET_RETENTION_CLASS: benchmark
+      MASCARET_RETENTION_MAX_WORKSPACES: "50"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install compiler and Python dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends cmake gfortran make
+          python -m pip install -r backend/requirements.txt
+      - uses: actions/cache@v5
+        with:
+          path: outputs/cache/mascaret
+          key: mascaret-source-v9.1.1-54b52798435baeb2
+      - name: Build reviewed official runtime
+        run: bash tools/build_mascaret_runtime.sh outputs/cache/mascaret outputs/runtime/mascaret
+      - name: Freeze runtime identity
+        shell: bash
+        run: |
+          executable="$PWD/outputs/runtime/mascaret/build/bin/mascaret"
+          data_dir="$PWD/outputs/runtime/mascaret/source/sources/mascaret/data"
+          echo "MASCARET_EXECUTABLE=$executable" >> "$GITHUB_ENV"
+          echo "MASCARET_EXECUTABLE_SHA256=$(sha256sum "$executable" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "MASCARET_DATA_DIR=$data_dir" >> "$GITHUB_ENV"
+          echo "MASCARET_BUILD_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$PWD/outputs/runtime/mascaret/build/lib" >> "$GITHUB_ENV"
+      - name: Run official upstream example directly
+        shell: bash
+        run: |
+          mkdir -p outputs/ci/mascaret/official-case
+          cp -a outputs/runtime/mascaret/source/examples/mascaret/01_Steady_Kernel/. outputs/ci/mascaret/official-case/
+          cp outputs/runtime/mascaret/source/sources/mascaret/data/{Abaques.txt,Controle.txt,dico_Courlis.txt,mascaret-1.0.dtd} outputs/ci/mascaret/official-case/
+          cd outputs/ci/mascaret/official-case
+          printf "'mascaret_exp.xcas'\n" > FichierCas.txt
+          "$MASCARET_EXECUTABLE" > official.stdout.log 2> official.stderr.log
+          test -s mascaret_exp.opt
+      - name: Run Dayu real-runtime acceptance and lifecycle contracts
+        run: |
+          mkdir -p outputs/ci/mascaret/workspaces
+          python tools/run_mascaret_acceptance.py \
+            --workspace-root outputs/ci/mascaret/workspaces \
+            --output outputs/ci/mascaret/acceptance.json
+          python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q \
+            tests/hydraulic_1d/test_runtime_boundary.py \
+            tests/hydraulic_1d/test_runtime_recovery.py \
+            -m "mascaret_runtime or not mascaret_runtime"
+      - name: Upload real-runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mascaret-production-acceptance-py312
+          path: outputs/ci/mascaret/
+          if-no-files-found: error
+
   # This required context validates the shipping image, but does not claim a bundled MASCARET runtime.
   d3a-shipping-science:
     name: D3A shipping science
@@ -128,7 +195,7 @@ jobs:
       - name: Verify external runtime remains disabled by default
         run: >-
           docker run --rm "dayu-hydraulic-platform:$ENGINE_COMMIT"
-          python -c "import os, shutil; assert os.environ['MASCARET_ENABLED'] == '0'; assert shutil.which('mascaret.py') is None"
+          python -c "import os, shutil; assert os.environ['MASCARET_ENABLED'] == '0'; assert shutil.which('mascaret') is None"
       - name: Run Adapter contracts in shipping image
         run: |
           mkdir -p outputs/ci/shipping
