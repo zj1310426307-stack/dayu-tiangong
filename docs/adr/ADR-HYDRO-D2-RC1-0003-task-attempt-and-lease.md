@@ -1,6 +1,11 @@
 # ADR-HYDRO-D2-RC1-0003: Task Attempt and Execution Lease
 
-- Status: accepted for the RC1 candidate implementation
+> **Status: Partially superseded (2026-08-31).** General lease/CAS principles
+> remain historical design context, but all native-v4 and custom numerical
+> solver rules are retired. The active 1D task chain runs the MASCARET adapter;
+> see [`HYDRO-1D-RESET-01`](../migration/HYDRO-1D-RESET-01.md).
+
+- Original status: accepted for the RC1 candidate implementation (partially superseded)
 - Date: 2026-08-28
 
 ## Context

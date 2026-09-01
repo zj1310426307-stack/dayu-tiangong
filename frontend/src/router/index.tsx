@@ -169,8 +169,8 @@ export const navigationItems: NavigationItem[] = [
     label: '水动力模拟',
     path: '/hydraulic',
     icon: <AimOutlined />,
-    eyebrow: 'HYDRODYNAMICS',
-    description: '配置并运行 Saint-Venant 一维模型。',
+    eyebrow: 'STANDARD 1D',
+    description: '通过 MASCARET Adapter 配置并运行标准一维水动力模型。',
   },
   {
     key: 'optimization',

@@ -42,6 +42,17 @@ from app.gis.models import (  # noqa: E402
 from app.river.service import generate_topology  # noqa: E402
 from app.gis_governance.hashing import canonical_sha256  # noqa: E402
 from app.gis_governance.service import _core_content_rows  # noqa: E402
+from app.hydraulic.compatibility import (  # noqa: E402
+    sync_legacy_cross_section,
+    sync_legacy_river,
+)
+from app.hydraulic.coordinate import canonical_hash  # noqa: E402
+from app.hydraulic.models import (  # noqa: E402
+    HydraulicBranch,
+    HydraulicCrossSectionProfile,
+    HydraulicNetwork,
+)
+from app.hydraulic.topology import build_topology  # noqa: E402
 
 
 RIVER_SPECS = [
@@ -346,7 +357,7 @@ def _seed_demo_data_rows() -> dict[str, int]:
             river = rivers_by_code[str(spec["code"])]
             for index in range(1, int(spec["section_count"]) + 1):
                 section_number += 1
-                ratio = index / (int(spec["section_count"]) + 1)
+                ratio = (index - 1) / (int(spec["section_count"]) - 1)
                 station = round(float(spec["length"]) * ratio, 3)
                 section = session.scalar(
                     select(CrossSection).where(
@@ -400,26 +411,93 @@ def _seed_demo_data_rows() -> dict[str, int]:
         # 避免每次容器启动删除节点并破坏历史仿真的可追溯性。
         if node_count == 0 or segment_count == 0 or connection_count != segment_count or segment_count < river_count:
             generate_topology(session, version.id, 0.00001)
-        main_river = rivers_by_code["DEMO-RIVER-A"]
-        main_segments = session.scalars(
-            select(RiverSegment).where(RiverSegment.river_id == main_river.id)
+
+        # The Standard 1D demo is an explicit, synthetic single-river model. Its
+        # projected CRS, direction, vertical datum, and profile orientation are
+        # known seed facts rather than inferences from user-supplied engineering data.
+        demo_river = rivers_by_code["DEMO-RIVER-A"]
+        demo_branch = sync_legacy_river(session, demo_river)
+        demo_network = session.get(HydraulicNetwork, demo_branch.network_id)
+        if demo_network is None:
+            raise RuntimeError("DEMO hydraulic network was not created")
+        demo_network.engineering_crs = "EPSG:32651"
+        demo_network.vertical_datum = "DEMO_LOCAL_DATUM"
+        demo_network.metadata_json = {
+            "demo_data": True,
+            "engineering_crs_status": "confirmed",
+            "direction_source": "RIVER_SPECS coordinate order",
+        }
+        demo_branch.direction_status = "confirmed"
+        demo_branch.metadata_json = {
+            "demo_data": True,
+            "source_flow_direction": "confirmed from RIVER_SPECS coordinate order",
+            "engineering_crs_status": "confirmed",
+        }
+        demo_sections = session.scalars(
+            select(CrossSection)
+            .where(CrossSection.river_id == demo_river.id)
+            .order_by(CrossSection.station)
         ).all()
+        for section in demo_sections:
+            hydraulic_section = sync_legacy_cross_section(session, section)
+            hydraulic_section.orientation_status = "confirmed"
+            profile = session.scalar(
+                select(HydraulicCrossSectionProfile).where(
+                    HydraulicCrossSectionProfile.cross_section_id
+                    == hydraulic_section.id,
+                    HydraulicCrossSectionProfile.is_active.is_(True),
+                )
+            )
+            if profile is None:
+                raise RuntimeError("DEMO hydraulic cross-section profile was not created")
+            profile.vertical_datum = demo_network.vertical_datum
+            profile.profile_hash = canonical_hash(
+                {
+                    "points": section.points.get("points", []),
+                    "default_manning_n": section.roughness,
+                    "vertical_datum": demo_network.vertical_datum,
+                    "vertical_unit": "m",
+                }
+            )
+        session.flush()
+        if demo_branch.upstream_node_id is None or demo_branch.downstream_node_id is None:
+            build_topology(
+                session,
+                demo_network.id,
+                snap_tolerance_m=1.0,
+                minimum_reach_length_m=1.0,
+            )
         all_segments = session.scalars(
             select(RiverSegment).where(RiverSegment.dataset_version_id == version.id)
         ).all()
-        upstream_ids = {item.upstream_node_id for item in all_segments}
-        downstream_ids = {item.downstream_node_id for item in all_segments}
-        source_node_ids = sorted(upstream_ids - downstream_ids)
-        sink_node_ids = sorted(downstream_ids - upstream_ids)
+        hydraulic_branches = session.scalars(
+            select(HydraulicBranch)
+            .where(
+                HydraulicBranch.dataset_version_id == version.id,
+                HydraulicBranch.upstream_node_id.is_not(None),
+                HydraulicBranch.downstream_node_id.is_not(None),
+            )
+            .order_by(HydraulicBranch.id)
+        ).all()
+        upstream_ids = {item.upstream_node_id for item in hydraulic_branches}
+        downstream_ids = {item.downstream_node_id for item in hydraulic_branches}
+        source_node_ids = sorted(
+            node_id
+            for node_id in upstream_ids - downstream_ids
+            if sum(item.upstream_node_id == node_id for item in hydraulic_branches) == 1
+        )
+        sink_node_ids = sorted(
+            node_id
+            for node_id in downstream_ids - upstream_ids
+            if sum(item.downstream_node_id == node_id for item in hydraulic_branches) == 1
+        )
 
         parameter_specs = (
-            ("time_step", 60.0, "s", "请求时间步长；CFL 约束可自动降低"),
+            ("time_step_seconds", 60.0, "s", "Standard 1D 计算时间步长"),
             ("duration_seconds", 3600.0, "s", "模拟总时长"),
-            ("output_interval", 300.0, "s", "结果输出间隔"),
-            ("cfl", 0.75, "-", "CFL 稳定性系数"),
+            ("output_interval_seconds", 300.0, "s", "统一结果输出间隔"),
             ("initial_water_level", 10.8, "m", "初始水位"),
             ("initial_flow", 60.0, "m³/s", "初始流量"),
-            ("minimum_depth", 0.05, "m", "最小计算水深"),
         )
         for name, value, unit, description in parameter_specs:
             _ensure_parameter(session, version.id, name, value, unit, description)
@@ -436,15 +514,19 @@ def _seed_demo_data_rows() -> dict[str, int]:
                 upstream = BoundaryCondition(
                     dataset_version_id=version.id,
                     name=f"DEMO 上游恒定流量 {index}",
-                    boundary_type="upstream_flow",
-                    target_node_id=source_node_id,
+                    boundary_type="upstream_discharge",
+                    hydraulic_node_id=source_node_id,
                     values={"mode": "constant", "value": 60.0 if index == 1 else 20.0},
                     unit="m³/s",
-                    description="DEMO DATA｜Phase 4 显式外边界",
+                    description="DEMO DATA｜Standard 1D 上游流量边界",
                 )
                 session.add(upstream)
             else:
-                upstream.target_node_id = source_node_id
+                upstream.boundary_type = "upstream_discharge"
+                upstream.target_node_id = None
+                upstream.hydraulic_node_id = source_node_id
+                upstream.branch_id = None
+                upstream.chainage_m = None
                 upstream.values = {"mode": "constant", "value": 60.0 if index == 1 else 20.0}
                 upstream.unit = "m³/s"
             session.flush()
@@ -461,46 +543,107 @@ def _seed_demo_data_rows() -> dict[str, int]:
                     dataset_version_id=version.id,
                     name=f"DEMO 下游恒定水位 {index}",
                     boundary_type="downstream_water_level",
-                    target_node_id=sink_node_id,
+                    hydraulic_node_id=sink_node_id,
                     values={"mode": "constant", "value": 10.2},
                     unit="m",
-                    description="DEMO DATA｜Phase 4 显式外边界",
+                    description="DEMO DATA｜Standard 1D 下游水位边界",
                 )
                 session.add(downstream)
             else:
-                downstream.target_node_id = sink_node_id
+                downstream.boundary_type = "downstream_water_level"
+                downstream.target_node_id = None
+                downstream.hydraulic_node_id = sink_node_id
+                downstream.branch_id = None
+                downstream.chainage_m = None
                 downstream.values = {"mode": "constant", "value": 10.2}
                 downstream.unit = "m"
             session.flush()
             explicit_boundaries.append(downstream)
+
+        if hydraulic_branches:
+            lateral_branch = hydraulic_branches[0]
+            lateral_chainage = (
+                lateral_branch.start_chainage + lateral_branch.end_chainage
+            ) / 2.0
+            lateral = session.scalar(
+                select(BoundaryCondition).where(
+                    BoundaryCondition.dataset_version_id == version.id,
+                    BoundaryCondition.name == "DEMO 侧向恒定入流 1",
+                )
+            )
+            if lateral is None:
+                lateral = BoundaryCondition(
+                    dataset_version_id=version.id,
+                    name="DEMO 侧向恒定入流 1",
+                    boundary_type="lateral_inflow",
+                    branch_id=lateral_branch.id,
+                    chainage_m=lateral_chainage,
+                    values={"mode": "constant", "value": 0.0},
+                    unit="m³/s",
+                    description="DEMO DATA｜Standard 1D 侧向入流水力位置示例",
+                )
+                session.add(lateral)
+            else:
+                lateral.boundary_type = "lateral_inflow"
+                lateral.target_node_id = None
+                lateral.hydraulic_node_id = None
+                lateral.branch_id = lateral_branch.id
+                lateral.chainage_m = lateral_chainage
+                lateral.values = {"mode": "constant", "value": 0.0}
+                lateral.unit = "m³/s"
+            session.flush()
+            explicit_boundaries.append(lateral)
 
         simulation_case = session.scalar(
             select(SimulationCase)
             .where(SimulationCase.dataset_version_id == version.id)
             .order_by(SimulationCase.id)
         )
-        if simulation_case is None:
+        if simulation_case is None and explicit_boundaries:
             simulation_case = SimulationCase(
                 name="DEMO 基准工况",
-                description="Phase 4 河网联合调度仿真基线",
+                description="Standard 1D / MASCARET 单河演示基线",
                 dataset_version_id=version.id,
                 boundary_condition_id=explicit_boundaries[0].id,
+                hydraulic_1d_configuration={
+                    "initial_condition": {
+                        "water_level_m": 10.8,
+                        "discharge_m3s": 60.0,
+                    },
+                    "settings": {
+                        "duration_seconds": 3600.0,
+                        "time_step_seconds": 60.0,
+                        "output_interval_seconds": 300.0,
+                    },
+                },
             )
             session.add(simulation_case)
-        else:
+        elif simulation_case is not None and explicit_boundaries:
             simulation_case.boundary_condition_id = explicit_boundaries[0].id
-        session.flush()
-        session.query(SimulationCaseBoundary).filter(
-            SimulationCaseBoundary.case_id == simulation_case.id
-        ).delete(synchronize_session=False)
-        for boundary in explicit_boundaries:
-            session.add(
-                SimulationCaseBoundary(
-                    case_id=simulation_case.id,
-                    boundary_condition_id=boundary.id,
-                    role=boundary.boundary_type,
+            simulation_case.hydraulic_1d_configuration = {
+                "initial_condition": {
+                    "water_level_m": 10.8,
+                    "discharge_m3s": 60.0,
+                },
+                "settings": {
+                    "duration_seconds": 3600.0,
+                    "time_step_seconds": 60.0,
+                    "output_interval_seconds": 300.0,
+                },
+            }
+        if simulation_case is not None and explicit_boundaries:
+            session.flush()
+            session.query(SimulationCaseBoundary).filter(
+                SimulationCaseBoundary.case_id == simulation_case.id
+            ).delete(synchronize_session=False)
+            for boundary in explicit_boundaries:
+                session.add(
+                    SimulationCaseBoundary(
+                        case_id=simulation_case.id,
+                        boundary_condition_id=boundary.id,
+                        role=boundary.boundary_type,
+                    )
                 )
-            )
 
         segments_by_river: dict[int, list[RiverSegment]] = {}
         for segment in all_segments:

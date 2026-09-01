@@ -1,5 +1,7 @@
 # Phase 4 实施计划
 
+> **历史计划 / 已由 HYDRO-1D-RESET-01 废止（2026-08-31）：** 本文中自研数值内核、CFL 与河网求解任务仅保留为当时的计划记录。现行路线是 Unified Hydraulic Model + MASCARET Adapter，见 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md)。
+
 - 版本：V4.0
 - 日期：2026-08-12
 - 执行原则：每一阶段以可运行测试和证据为完成条件；不得删除既有测试或放宽为无意义阈值。

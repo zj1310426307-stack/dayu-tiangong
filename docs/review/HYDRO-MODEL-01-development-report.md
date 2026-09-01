@@ -1,5 +1,7 @@
 # HYDRO-MODEL-01 一维闸泵联合调度开发报告
 
+> **历史归档 / 自研 Solver 路线已废止（2026-08-31）：** 本文保留 2026-08-19 合成案例的工程记录，不是当前 Standard 1D 实现或生产验收。旧 `HydraulicEngine`/准动态河网路线已由 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md) 废止。
+
 - 项目：大禹·天工（dayu-tiangong）
 - 报告日期：2026-08-19
 - 阶段：HYDRO-MODEL-01

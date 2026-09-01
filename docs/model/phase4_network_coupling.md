@@ -1,5 +1,7 @@
 # Phase 4 河网耦合
 
+> **历史归档 / 已由 HYDRO-1D-RESET-01 废止（2026-08-31）：** 本文记录已删除的自研 1D Solver 河网耦合方案，不得作为当前实现或运维指引。现行生产路线是 Unified Hydraulic Model + MASCARET Adapter，见 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md)。
+
 ## 领域模型与拓扑
 
 `NetworkMesh` 由 `river_node`、`river_segment`、`river_connection` 和每河断面网格构建。构建时拒绝有向环、自环、重复边、悬空节点、方向不连续、无法映射的外边界与少于 3 个断面的分支。

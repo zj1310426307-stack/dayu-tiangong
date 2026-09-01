@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY_ROOT / "backend"))
 
-from app.database.session import SessionLocal
-from app.gis.models import BasemapRegistry, GISCatalogLayer
+from app.database.session import SessionLocal  # noqa: E402
+from app.gis.models import BasemapRegistry, GISCatalogLayer  # noqa: E402
 
 
 CATALOG_LAYERS = (

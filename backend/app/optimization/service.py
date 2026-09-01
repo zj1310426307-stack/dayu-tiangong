@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
-
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -14,7 +12,6 @@ from app.gis.models import (
     OptimizationTask,
     SimulationCase,
 )
-from app.model_engine.provenance import freeze_task_input
 from app.optimization.schemas import (
     OptimizationCandidateRecord,
     OptimizationExplanation,
@@ -23,8 +20,6 @@ from app.optimization.schemas import (
     ParetoCandidateRecord,
     RecommendationResponse,
 )
-from optimization.provenance import build_optimization_snapshot
-from model.build_identity import current_runtime_build_identity
 
 
 ALGORITHM_VERSION = "dayu-pso-1.0.0"
@@ -80,56 +75,17 @@ def _pareto_record(
 
 
 def create_task(session: Session, payload: OptimizationTaskCreate) -> OptimizationTaskRecord:
-    """Freeze Phase 4 input and versioned optimization configuration at creation."""
+    """Fail closed until optimization controls have a verified MASCARET mapping."""
 
     case = session.get(SimulationCase, payload.simulation_case_id)
     if case is None:
         raise OptimizationNotFoundError("simulation case does not exist")
     if case.dataset_version_id != payload.dataset_version_id:
         raise OptimizationStateError("simulation case does not belong to dataset version")
-    algorithm_config = payload.algorithm_config.model_dump(mode="json")
-    hydraulic_config = {
-        "duration_seconds": algorithm_config["duration_seconds"],
-        "time_step_seconds": algorithm_config["time_step_seconds"],
-        "output_interval_seconds": algorithm_config["output_interval_seconds"],
-        "storage_level": "full",
-        "section_geometry": "rectangular",
-        "allow_fallback_boundary": False,
-    }
-    build_identity = current_runtime_build_identity()
-    hydraulic_snapshot, _ = freeze_task_input(
-        session,
-        payload.simulation_case_id,
-        hydraulic_config,
-        schema_version="dayu.model-input.v2",
-        build_identity=build_identity,
+    raise OptimizationStateError(
+        "UNSUPPORTED_BY_MASCARET_ADAPTER: optimization is disabled until "
+        "candidate Gate schedules and Pump controls have a verified mapping"
     )
-    objective_config = payload.objective_config.model_dump(mode="json")
-    input_snapshot, input_digest = build_optimization_snapshot(
-        dataset_version_id=payload.dataset_version_id,
-        simulation_case_id=payload.simulation_case_id,
-        algorithm=payload.algorithm,
-        algorithm_version=ALGORITHM_VERSION,
-        objective_config=objective_config,
-        algorithm_config=algorithm_config,
-        hydraulic_input=hydraulic_snapshot,
-    )
-    task = OptimizationTask(
-        name=payload.name,
-        algorithm=payload.algorithm,
-        status="pending",
-        dataset_version_id=payload.dataset_version_id,
-        simulation_case_id=payload.simulation_case_id,
-        objective_config=objective_config,
-        algorithm_config=algorithm_config,
-        input_snapshot=input_snapshot,
-        input_snapshot_hash=input_digest,
-        algorithm_version=ALGORITHM_VERSION,
-    )
-    session.add(task)
-    session.commit()
-    session.refresh(task)
-    return _task_record(session, task)
 
 
 def list_tasks(
@@ -156,20 +112,14 @@ def get_task(session: Session, task_id: int) -> OptimizationTaskRecord:
 
 
 def start_task(session: Session, task_id: int) -> OptimizationTask:
-    """Atomically move a pending task to running before queue submission."""
+    """Reject execution of historical custom-solver optimization tasks."""
 
     task = session.get(OptimizationTask, task_id)
     if task is None:
         raise OptimizationNotFoundError("optimization task does not exist")
-    if task.status != "pending":
-        raise OptimizationStateError("only a pending optimization task can run")
-    task.status = "running"
-    task.progress = 1
-    task.start_time = datetime.now(UTC)
-    task.error_message = None
-    session.commit()
-    session.refresh(task)
-    return task
+    raise OptimizationStateError(
+        "LEGACY_ENGINE_RETIRED: optimization tasks cannot execute on the removed solver"
+    )
 
 
 def cancel_task(session: Session, task_id: int) -> OptimizationTaskRecord:

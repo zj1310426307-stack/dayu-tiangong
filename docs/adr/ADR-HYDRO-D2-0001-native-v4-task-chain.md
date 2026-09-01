@@ -1,6 +1,12 @@
 # ADR-HYDRO-D2-0001: Native v4 Platform Task Chain
 
-- Status: accepted for implementation
+> **Status: Superseded (2026-08-31).** This ADR records the retired custom 1D
+> solver architecture. Production 1D execution now uses the unified hydraulic
+> model through the MASCARET adapter; see
+> [`HYDRO-1D-RESET-01`](../migration/HYDRO-1D-RESET-01.md). It must not be used
+> as implementation guidance.
+
+- Original status: accepted for implementation (now superseded)
 - Date: 2026-08-28
 
 ## Context

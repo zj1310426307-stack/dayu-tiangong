@@ -14,8 +14,8 @@ Phase 3 起，全部业务空间表、GeoJSON 接口、导入模板和 GIS 页�
 - PostGIS：`geometry(LineString, 4490)` 或 `geometry(Point, 4490)`。
 - API：标准 GeoJSON；响应 `meta.crs` 明确返回 `EPSG:4490`。
 - bbox：`minx,miny,maxx,maxy`，采用 CGCS2000 经纬度。
-- CesiumJS：直接消费 EPSG:4490 经纬度 GeoJSON，并负责场景坐标转换。
-- 影像底图：Esri World Imagery 使用其公开瓦片坐标体系；Cesium 在显示层完成底图与业务要素叠加，PostGIS 不存储影像瓦片坐标。
+- OpenLayers：消费 EPSG:4490 业务 GeoJSON，并在 WebGIS 显示层完成投影转换。
+- 影像底图：Esri World Imagery 使用其公开瓦片坐标体系；OpenLayers 在显示层完成底图与业务要素叠加，PostGIS 不存储影像瓦片坐标。
 
 ## 从 Phase 2 迁移
 
@@ -23,13 +23,13 @@ Phase 3 起，全部业务空间表、GeoJSON 接口、导入模板和 GIS 页�
 
 ## 水动力计算距离
 
-EPSG:4490 是地理坐标系，角度不能直接作为一维水动力网格距离。Phase 3 求解器严格使用：
+EPSG:4490 是地理坐标系，角度不能直接作为一维水动力距离。统一模型和 MASCARET Adapter 严格使用：
 
 - `cross_section.station`：沿河桩号，单位 m；
 - `river_segment.length`：河段长度，单位 m；
 - 横断面 `points`：横距和高程，单位 m。
 
-因此 Saint-Venant 方程中的空间步长、面积、流速和 CFL 条件均不使用经纬度差值。
+因此 1D 模型的桩号、断面面积和流速计算均不使用经纬度差值；具体 Solver 文件格式不进入业务数据层。
 
 ## 导入检查
 

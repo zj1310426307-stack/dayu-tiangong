@@ -251,7 +251,10 @@ def test_openapi_exposes_complete_hydraulic_management_surface() -> None:
         "/api/v1/hydraulic/exports/network.nwk11",
         "/api/v1/hydraulic/exports/cross-sections.xns11",
         "/api/v1/hydraulic/templates/{template_name}",
-        "/api/v1/model-data/simulation-cases/{case_id}/input-v3",
+        "/api/v1/model/readiness",
+        "/api/v1/model/preview",
+        "/api/v1/model/tasks",
+        "/api/v1/model/results/{task_id}",
     }
     assert required <= paths.keys()
 

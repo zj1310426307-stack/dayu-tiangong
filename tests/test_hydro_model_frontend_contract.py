@@ -6,14 +6,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HYDRAULIC_PAGE = ROOT / "frontend/src/pages/hydraulic/HydraulicPages.tsx"
 DISPATCH_PAGE = ROOT / "frontend/src/pages/dispatch/DispatchPages.tsx"
+MODEL_DATA_PAGE = ROOT / "frontend/src/pages/data-center/DataCenterPages.tsx"
+GENERATED_CLIENT = ROOT / "frontend/src/api/generated/client.ts"
 
 
-def test_hydraulic_tasks_default_to_model_input_v3() -> None:
-    """The browser must freeze the v3 snapshot instead of silently requesting v2."""
+def test_hydraulic_pages_use_the_single_standard_1d_mascaret_route() -> None:
+    """The browser must expose one solver-neutral input contract and MASCARET route."""
 
     source = HYDRAULIC_PAGE.read_text(encoding="utf-8")
-    assert source.count("input_schema_version: 'dayu.model-input.v3'") == 2
-    assert "input_schema_version: 'dayu.model-input.v2'" not in source
+    assert "const HYDRAULIC_INPUT_SCHEMA = 'dayu.hydraulic-1d.input.v1'" in source
+    assert "const HYDRAULIC_ENGINE = 'mascaret'" in source
+    assert "getHydraulicReadiness" in source
+    assert "previewHydraulicModel" in source
+    assert "STANDARD 1D / MASCARET" in source
+    assert "dayu.model-input.v" not in source
+    assert "D3A" not in source
+    assert "/model/v4" not in source
 
 
 def test_dispatch_detail_exposes_a_non_synthetic_24_hour_structure_view() -> None:
@@ -35,36 +43,66 @@ def test_dispatch_detail_exposes_a_non_synthetic_24_hour_structure_view() -> Non
     assert "clearResultData();" in source
     assert "activeRunIdRef.current === requestedRunId" in source
     assert "const currentRun = run?.id === id ? run : undefined" in source
-    assert "const currentComparison = resultRunId === id ? comparison : undefined" in source
+    assert (
+        "const currentComparison = resultRunId === id ? comparison : undefined"
+        in source
+    )
     assert "structureCoverage.every" in source
     assert "connectNulls: false" in source
     assert "空缺时段显式断线，不做插值或伪造补齐" in source
 
 
-def test_hydraulic_v4_rc1_separates_retry_state_and_gates_artifact_actions() -> None:
-    """RC1 lifecycle and numerical retries must remain distinct and backend-governed."""
+def test_hydraulic_ui_exposes_runtime_lifecycle_and_unified_results() -> None:
+    """Runtime readiness, lifecycle retries, and unified results stay backend-governed."""
 
     source = HYDRAULIC_PAGE.read_text(encoding="utf-8")
     for field_name in (
         "execution_attempt_count",
         "manual_retry_count",
         "infrastructure_retry_count",
-        "numerical_retry_count",
     ):
         assert field_name in source
 
     assert "task.retry_count" not in source
-    assert "task.retry_eligible === true" in source
+    assert "task.retry_eligible" in source
     assert "task.retry_block_reason" in source
-    assert "Rc1SimulationTaskRecord" not in source
-    assert "rc1TaskState" not in source
-    assert "downloadHydraulicV4Artifact(taskId, artifact.id)" in source
-    assert "artifact.status === 'published'" in source
-    assert "href={`/api/v1/model/v4/tasks/" not in source
-    for blocked_status in (
-        "prepared",
-        "publishing",
-        "reconciliation_required",
-        "orphaned",
+    assert "runtime_available" in source
+    assert "runtime_identity" in source
+    assert "MASCARET 运行时身份" in source
+    assert "MASCARET 运行时不可用" in source
+    for result_field in (
+        "result.depth",
+        "result.flow_area",
+        "result.wet_area",
+        "result.hydraulic_radius",
+        "result.top_width",
+        "result.froude_number",
     ):
-        assert f"'{blocked_status}'" in source
+        assert result_field in source
+
+    assert "numerical_retry_count" not in source
+    assert "downloadHydraulicV4Artifact" not in source
+    assert "/model/v4" not in source
+
+
+def test_boundary_editor_uses_authoritative_endpoint_and_lateral_fields() -> None:
+    """The UI and generated client must share the current Boundary CRUD contract."""
+
+    source = MODEL_DATA_PAGE.read_text(encoding="utf-8")
+    generated = GENERATED_CLIENT.read_text(encoding="utf-8")
+    for boundary_type in (
+        "upstream_discharge",
+        "downstream_water_level",
+        "lateral_inflow",
+    ):
+        assert boundary_type in source
+        assert boundary_type in generated
+    for field_name in ("hydraulic_node_id", "branch_id", "chainage_m"):
+        assert field_name in source
+        assert f'"{field_name}"?: number | null;' in generated
+    assert 'name="hydraulic_node_id"' in source
+    assert 'name="branch_id"' in source
+    assert 'name="chainage_m"' in source
+    assert 'name="target_node_id"' not in source
+    assert "upstream_flow" not in source
+    assert "downstream_stage" not in source

@@ -1,5 +1,7 @@
 # 大禹·天工 Phase 1 GIS 底座现状审查报告
 
+> **历史基线（2026-08-13）：** GIS 审查结论仍作历史参考；其中对自研 Saint-Venant/简化水动力模型的“当前”描述已由 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md) 取代，不得用作现行 Solver 架构证据。
+
 > 版本：V1.1（核心结论优化版）
 > 审查日期：2026-08-13（Asia/Shanghai）
 > 审查对象：`dayu-tiangong`，分支 `main`，提交 `921a1d9`

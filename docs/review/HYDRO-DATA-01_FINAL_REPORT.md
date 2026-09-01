@@ -1,5 +1,7 @@
 # HYDRO-DATA-01 生产级优化实施报告
 
+> **历史基线（2026-08-18）：** Network–Branch–Chainage–Cross Section 数据成果继续有效，但本文中 v3→v2 旧求解器边界已由 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md) 取代。当前计算路线为 Unified Hydraulic Model + MASCARET Adapter。
+
 日期：2026-08-18
 分支：`feature/HYDRO-DATA-01`
 基线：`main@cfd2b02`

@@ -15,7 +15,6 @@ from app.dispatch.schemas import (
     Page, ValidationReport,
 )
 from app.gis.models import DispatchRun, SimulationTask
-from app.model_engine.service import _record as task_record
 from app.worker.lifecycle import request_cancel
 
 

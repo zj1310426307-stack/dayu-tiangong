@@ -1,5 +1,9 @@
 # 持续优化 01 兼容与迁移说明
 
+> **ARCHIVED (2026-08-31):** 本文仅保留 CONTINUOUS-OPT-01 当时的兼容事实。
+> 其中对 v1/v2/v3/v4-lite 的描述不再是现行 1D 产品路线；当前迁移见
+> [HYDRO-1D-RESET-01](./HYDRO-1D-RESET-01.md)。
+
 日期：2026-08-24
 
 分支：`feature/continuous-optimization-01`

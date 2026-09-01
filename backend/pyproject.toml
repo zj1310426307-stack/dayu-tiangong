@@ -1,11 +1,26 @@
 [tool.pytest.ini_options]
 markers = [
-    "d3a_shipping_science: long-running D3A FINAL convergence executed by dedicated science jobs",
+    "mascaret_runtime: requires an explicitly installed and enabled MASCARET runtime",
+    "mascaret_numerical: validates physical or numerical properties of real output",
+    "mascaret_integration: exercises the runtime through platform persistence/API boundaries",
+    "mascaret_benchmark: runs the controlled five-case production acceptance suite",
 ]
 # 将仓库根目录与后端目录同时加入导入路径，支持接口和预留模块测试。
 pythonpath = [".", ".."]
 testpaths = ["tests", "../tests"]
 addopts = "-q"
+norecursedirs = [
+    ".git",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "node_modules",
+    "storage",
+    "outputs",
+    "tmp",
+    "dist",
+    "build",
+]
 
 [tool.ruff]
 # Phase 1 继续保持 Python 3.11 兼容语法，方便本地与容器运行。

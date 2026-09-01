@@ -9,9 +9,9 @@ from sqlalchemy import or_, select, update
 
 from app.database.session import SessionLocal
 from app.gis.models import SimulationTask
-from app.model_engine.v4_reconciliation import reconcile_v4_task
 from app.worker.celery_app import celery_app
 from app.worker.lifecycle import recover_stale_tasks
+from model.hydraulic_1d.contracts import HYDRAULIC_1D_INPUT_SCHEMA
 
 
 Delivery = Callable[[SimulationTask], object]
@@ -26,21 +26,14 @@ def recover_stale_running_tasks(stale_seconds: int = 120) -> list[int]:
         return recover_stale_tasks(session, stale_seconds)
 
 
-def reconcile_one_v4_task(task_id: int, *, apply: bool = False) -> dict[str, object]:
-    """以默认 dry-run 的独立会话核对单个 native-v4 任务。"""
-
-    with SessionLocal() as session:
-        return reconcile_v4_task(session, task_id, apply=apply)
-
-
 def _deliver(task: SimulationTask) -> object:
-    """按冻结 schema 把恢复投递发往与 API 相同的队列。"""
+    """Publish only the unified schema to the same queue as the API."""
 
-    from app.worker.tasks import V4_QUEUE, run_hydraulic_task, run_hydraulic_v4_task
+    from app.worker.tasks import HYDRAULIC_1D_QUEUE, run_hydraulic_task
 
-    if task.input_schema_version == "dayu.model-input.v4":
-        return run_hydraulic_v4_task.apply_async(args=[task.id], queue=V4_QUEUE)
-    return run_hydraulic_task.delay(task.id)
+    if task.input_schema_version != HYDRAULIC_1D_INPUT_SCHEMA:
+        raise ValueError("LEGACY_ENGINE_RETIRED")
+    return run_hydraulic_task.apply_async(args=[task.id], queue=HYDRAULIC_1D_QUEUE)
 
 
 def redeliver_stale_queued_tasks(
@@ -69,6 +62,7 @@ def redeliver_stale_queued_tasks(
                 SimulationTask.queued_time,
                 SimulationTask.last_delivery_time,
                 SimulationTask.delivery_attempt_count,
+                SimulationTask.input_schema_version,
             )
             .where(
                 SimulationTask.status == "queued",
@@ -96,6 +90,31 @@ def redeliver_stale_queued_tasks(
                 if candidate.last_delivery_time is not None
                 else SimulationTask.last_delivery_time.is_(None)
             )
+            if candidate.input_schema_version != HYDRAULIC_1D_INPUT_SCHEMA:
+                retired = session.execute(
+                    update(SimulationTask)
+                    .where(
+                        SimulationTask.id == candidate.id,
+                        SimulationTask.status == "queued",
+                        SimulationTask.active_execution_token.is_(None),
+                        last_delivery_predicate,
+                    )
+                    .values(
+                        status="failed",
+                        progress=100,
+                        queue_job_id=None,
+                        error_message=(
+                            "LEGACY_ENGINE_RETIRED: historical custom-solver tasks "
+                            "cannot be redelivered"
+                        ),
+                        end_time=datetime.now(UTC),
+                    )
+                )
+                if retired.rowcount == 1:
+                    session.commit()
+                else:
+                    session.rollback()
+                continue
             if candidate.delivery_attempt_count >= MAX_DELIVERY_ATTEMPTS:
                 failed = session.execute(
                     update(SimulationTask)

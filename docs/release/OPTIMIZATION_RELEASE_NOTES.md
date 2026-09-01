@@ -1,5 +1,7 @@
 # 持续优化 01 发布说明
 
+> **历史发布记录（2026-08-24）：** 本文保留当时的发布事实；其中“旧求解器未删除”不再是当前状态。自研 1D Solver 后续已由 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md) 废止，生产路线现为 Unified Hydraulic Model + MASCARET Adapter。
+
 发布日期：2026-08-24
 
 状态：功能分支 `608d4a653990ed17eefb42ec71f5d28e1fb06e15` 已上传，并以普通双亲合并提交 `b58207ba9195e001c8e535b990dc0d2c563a12a5` 合入 `main`

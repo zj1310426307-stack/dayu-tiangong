@@ -272,7 +272,9 @@ def test_report_object_key_and_legacy_path_resolution(
     )
     assert path == current
 
-    legacy_root = REPOSITORY_ROOT / "backend" / "storage" / "ai-reports"
+    isolated_repository = tmp_path / "legacy-repository"
+    monkeypatch.setattr(ai_service, "REPOSITORY_ROOT", isolated_repository)
+    legacy_root = isolated_repository / "backend" / "storage" / "ai-reports"
     legacy_root.mkdir(parents=True, exist_ok=True)
     legacy = legacy_root / "legacy-storage-test.md"
     legacy.write_text("legacy", encoding="utf-8")

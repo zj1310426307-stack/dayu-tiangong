@@ -1,5 +1,7 @@
 # 大禹·天工持续优化现状审查
 
+> **2026-08-24 基线归档：** “当前”仅指下述审查日期；其中 v1–v4-lite 自研 Solver 状态已由 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md) 取代。
+
 审查日期：2026-08-24  
 审查基线：`main@07948e663fedc220d8ca6cdbdb34fd3fb4e2beee`  
 工作分支：`feature/continuous-optimization-01`

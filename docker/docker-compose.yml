@@ -1,4 +1,5 @@
-# GIS-RESET-01 unified runtime: PostGIS + GeoServer + FastAPI + OpenLayers/Nginx.
+# Unified platform runtime: PostGIS + GeoServer + FastAPI + Workers + OpenLayers/Nginx.
+# Keep the existing project name so an upgrade reuses the governed persistent volumes.
 name: dayu-tiangong-phase1
 
 x-backend-runtime: &backend_runtime
@@ -7,7 +8,7 @@ x-backend-runtime: &backend_runtime
     context: ..
     dockerfile: docker/backend.Dockerfile
     args:
-      ENGINE_VERSION: ${DAYU_ENGINE_VERSION:-dayu-hydraulic-4.0.0}
+      ENGINE_VERSION: ${DAYU_ENGINE_VERSION:-dayu-hydraulic-platform-5.0.0}
       ENGINE_COMMIT: ${ENGINE_COMMIT:?ENGINE_COMMIT is required}
       BUILD_MODE: ${DAYU_BUILD_MODE:-release}
 
@@ -20,9 +21,9 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-dayu_tiangong}
       POSTGRES_USER: ${POSTGRES_USER:-dayu}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dayu_dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in an ignored .env file}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - dayu_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -50,14 +51,29 @@ services:
       POSTGRES_PORT: 5432
       POSTGRES_DB: ${POSTGRES_DB:-dayu_tiangong}
       POSTGRES_USER: ${POSTGRES_USER:-dayu}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dayu_dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in an ignored .env file}
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       DAYU_STORAGE_ROOT: /app/backend/storage
       ENGINE_COMMIT: ${ENGINE_COMMIT:?ENGINE_COMMIT is required}
-      DAYU_ENGINE_VERSION: ${DAYU_ENGINE_VERSION:-dayu-hydraulic-4.0.0}
+      DAYU_ENGINE_VERSION: ${DAYU_ENGINE_VERSION:-dayu-hydraulic-platform-5.0.0}
       DAYU_BUILD_MODE: ${DAYU_BUILD_MODE:-release}
       ENABLE_SYNC_MODEL_RUN: ${ENABLE_SYNC_MODEL_RUN:-0}
+      # The stock image contains the Adapter, not MASCARET itself. Keep this off
+      # until an official v9.1.1 runtime is supplied by the deployment.
+      MASCARET_ENABLED: ${MASCARET_ENABLED:-0}
+      MASCARET_RUNTIME: ${MASCARET_RUNTIME:-external}
+      MASCARET_EXECUTABLE: ${MASCARET_EXECUTABLE:-mascaret}
+      MASCARET_EXECUTABLE_SHA256: ${MASCARET_EXECUTABLE_SHA256:-}
+      MASCARET_DATA_DIR: ${MASCARET_DATA_DIR:-}
+      MASCARET_UPSTREAM_TAG: ${MASCARET_UPSTREAM_TAG:-v9.1.1}
+      MASCARET_UPSTREAM_COMMIT: ${MASCARET_UPSTREAM_COMMIT:-1fe3b5141f7d9c9fa8fe6d6d0316c994a39c2d95}
+      MASCARET_BUILD_TIMESTAMP: ${MASCARET_BUILD_TIMESTAMP:-}
+      MASCARET_CONTAINER_IMAGE: ${MASCARET_CONTAINER_IMAGE:-}
+      MASCARET_RETENTION_CLASS: ${MASCARET_RETENTION_CLASS:-failed}
+      MASCARET_RETENTION_MAX_WORKSPACES: ${MASCARET_RETENTION_MAX_WORKSPACES:-20}
+      MASCARET_TIMEOUT: ${MASCARET_TIMEOUT:-3600}
+      HYDRAULIC_WORKSPACE_ROOT: /app/backend/storage/hydraulic-workspaces
       AI_LLM_PROVIDER: ${AI_LLM_PROVIDER:-local}
       AI_LLM_BASE_URL: ${AI_LLM_BASE_URL:-}
       AI_LLM_MODEL: ${AI_LLM_MODEL:-}
@@ -206,7 +222,7 @@ services:
       retries: 8
       start_period: 20s
 
-  worker-v4:
+  hydraulic-worker:
     <<: *backend_runtime
     command:
       [
@@ -218,8 +234,8 @@ services:
         "worker",
         "--loglevel=INFO",
         "--pool=solo",
-        "--queues=hydraulic-v4-d1",
-        "--hostname=d2-v4@%h",
+        "--queues=hydraulic-1d",
+        "--hostname=hydraulic-1d@%h",
       ]
     environment:
       <<: *backend_environment
@@ -238,7 +254,7 @@ services:
       test:
         [
           "CMD-SHELL",
-          "celery -A app.worker.celery_app:celery_app inspect ping -d d2-v4@$${HOSTNAME} --timeout 3 | grep -q pong",
+          "celery -A app.worker.celery_app:celery_app inspect ping -d hydraulic-1d@$${HOSTNAME} --timeout 3 | grep -q pong",
         ]
       interval: 15s
       timeout: 8s

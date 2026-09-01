@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import shutil
 from collections import defaultdict
-from pathlib import Path
 from typing import Any
 
 from app.data_converter import gdal_service, importer

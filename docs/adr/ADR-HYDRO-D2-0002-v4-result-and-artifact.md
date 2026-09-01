@@ -1,6 +1,12 @@
 # ADR-HYDRO-D2-0002: v4 Result Persistence and Evidence Artifact
 
-- Status: accepted
+> **Status: Superseded (2026-08-31).** This ADR records the retired custom 1D
+> solver result path. Production 1D results now come from the MASCARET adapter
+> and are normalized as Dayu hydraulic results; see
+> [`HYDRO-1D-RESET-01`](../migration/HYDRO-1D-RESET-01.md). It must not be used
+> as implementation guidance.
+
+- Original status: accepted (now superseded)
 - Date: 2026-08-28
 
 ## Context

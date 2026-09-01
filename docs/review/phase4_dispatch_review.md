@@ -1,5 +1,7 @@
 # 大禹·天工 Phase 4 河网耦合与联合调度审查
 
+> **历史归档 / 自研 Solver 路线已废止（2026-08-31）：** 本文的 CFL、well-balanced 与河网耦合“通过”结论只对 2026-08-12 旧实现有效。当前 Standard 1D 执行采用 Unified Hydraulic Model + MASCARET Adapter，见 [HYDRO-1D-RESET-01](../migration/HYDRO-1D-RESET-01.md)。
+
 ## 1. 阶段结论
 
 **通过**。

@@ -1,16 +1,13 @@
 """数据版本、模型参数、边界条件和计算方案 HTTP 路由。"""
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from app.common.http import commit_or_conflict, not_found
 from app.database.session import get_database_session
 from app.dataset import service
-from app.hydraulic.model_input import build_model_input_v3
-from app.model_engine.v4_schemas import V4PreviewResponse, V4ReadinessResponse
-from app.model_engine.v4_service import assess_database_case, preview_from_assessment
 from app.dataset.schemas import (
     BoundaryConditionCreate,
     BoundaryConditionRecord,
@@ -18,7 +15,6 @@ from app.dataset.schemas import (
     DatasetVersionCreate,
     DatasetVersionRecord,
     DatasetVersionUpdate,
-    ModelInputSnapshot,
     ModelParameterCreate,
     ModelParameterRecord,
     ModelParameterUpdate,
@@ -27,12 +23,6 @@ from app.dataset.schemas import (
     SimulationCaseUpdate,
 )
 from app.gis.models import BoundaryCondition, DatasetVersion, ModelParameter, SimulationCase
-from model.solver.registry import (
-    D1_CAPABILITY_ID,
-    D3A_1_CAPABILITY_ID,
-    D3A_2_CAPABILITY_ID,
-    D3A_3_CAPABILITY_ID,
-)
 
 
 router = APIRouter(prefix="/api/v1/model-data", tags=["model-data"])
@@ -82,8 +72,6 @@ def delete_dataset_version(version_id: int, session: SessionDependency) -> Respo
         raise not_found("数据集版本")
     commit_or_conflict(session, lambda: service.delete_entity(session, entity))
     return Response(status_code=204)
-
-
 @router.get("/parameters", response_model=list[ModelParameterRecord], summary="查询模型参数")
 def read_parameters(session: SessionDependency, dataset_version_id: int | None = Query(default=None, gt=0)) -> list[ModelParameterRecord]:
     """按版本查询模型参数。"""
@@ -189,86 +177,4 @@ def delete_case(case_id: int, session: SessionDependency) -> Response:
     return Response(status_code=204)
 
 
-@router.get("/simulation-cases/{case_id}/input", response_model=ModelInputSnapshot, summary="生成 Phase 3 模型输入快照")
-def read_model_input(case_id: int, session: SessionDependency) -> ModelInputSnapshot:
-    """返回只读、可追溯、无计算结果的模型输入。"""
-
-    snapshot = service.build_model_input(session, case_id)
-    if snapshot is None:
-        raise not_found("计算方案")
-    return snapshot
-
-
-@router.get(
-    "/simulation-cases/{case_id}/input-v3",
-    response_model=dict[str, object],
-    summary="生成正式河网与断面模型输入 v3",
-)
-def read_model_input_v3(case_id: int, session: SessionDependency) -> dict[str, object]:
-    """Return a solver-ready snapshot or a clear hydraulic readiness error."""
-
-    try:
-        snapshot = build_model_input_v3(session, case_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    if snapshot is None:
-        raise not_found("计算方案")
-    return snapshot
-
-
-@router.get(
-    "/simulation-cases/{case_id}/input-v4/readiness",
-    response_model=V4ReadinessResponse,
-    summary="Check restricted native-v4 D1 readiness",
-)
-def read_model_input_v4_readiness(
-    case_id: int,
-    session: SessionDependency,
-    dispatch_plan_id: int = Query(gt=0),
-    capability_id: Literal[
-        D1_CAPABILITY_ID,
-        D3A_1_CAPABILITY_ID,
-        D3A_2_CAPABILITY_ID,
-        D3A_3_CAPABILITY_ID,
-    ] = Query(
-        default=D1_CAPABILITY_ID
-    ),
-) -> V4ReadinessResponse:
-    """Return structured fail-closed findings without creating or freezing a task."""
-
-    return assess_database_case(
-        session,
-        case_id,
-        dispatch_plan_id,
-        capability_id=capability_id,
-    ).readiness
-
-
-@router.get(
-    "/simulation-cases/{case_id}/input-v4/preview",
-    response_model=V4PreviewResponse,
-    summary="Preview restricted native-v4 D1 input identities and hashes",
-)
-def read_model_input_v4_preview(
-    case_id: int,
-    session: SessionDependency,
-    dispatch_plan_id: int = Query(gt=0),
-    capability_id: Literal[
-        D1_CAPABILITY_ID,
-        D3A_1_CAPABILITY_ID,
-        D3A_2_CAPABILITY_ID,
-        D3A_3_CAPABILITY_ID,
-    ] = Query(
-        default=D1_CAPABILITY_ID
-    ),
-) -> V4PreviewResponse:
-    """Return a bounded summary; the complete snapshot remains on the task audit route."""
-
-    return preview_from_assessment(
-        assess_database_case(
-            session,
-            case_id,
-            dispatch_plan_id,
-            capability_id=capability_id,
-        )
-    )
+__all__ = ["router"]

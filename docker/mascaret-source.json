@@ -1,0 +1,14 @@
+{
+  "schema_version": "dayu.mascaret-source.v1",
+  "engine": "TELEMAC-MASCARET/MASCARET",
+  "display_version": "9.1.1",
+  "upstream_tag": "v9.1.1",
+  "upstream_commit": "1fe3b5141f7d9c9fa8fe6d6d0316c994a39c2d95",
+  "upstream_tag_object": "ed0ec0c755ed5a8618865b250c38c85d20f1cff5",
+  "source_archive_sha256": "54b52798435baeb294ad3418c2fe146b5c10ef0d6e8e3e9d72d606e0f9fdb5e3",
+  "source_tree_sha256": "cd116294009e08872331cab1dedc54f2321f13bbb304c863c0e06c07e17e3a6f",
+  "source_verification": "sorted-sha256sum-manifest-v1",
+  "source_url": "https://gitlab.pam-retd.fr/api/v4/projects/otm%2Ftelemac-mascaret/repository/archive.tar.gz?sha=1fe3b5141f7d9c9fa8fe6d6d0316c994a39c2d95",
+  "license": "GPL-3.0-only",
+  "license_url": "https://www.opentelemac.org/index.php/licence"
+}

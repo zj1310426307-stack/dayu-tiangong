@@ -13,7 +13,7 @@ from typing import Final, Mapping
 from model.provenance import snapshot_hash
 
 
-ENGINE_VERSION: Final = "dayu-hydraulic-4.0.0"
+ENGINE_VERSION: Final = "dayu-hydraulic-platform-5.0.0"
 BUILD_IDENTITY_SCHEMA: Final = "dayu.runtime-build.v1"
 SOLVER_BUILD_ID_PREFIX: Final = "dayu.solver-build.v1:"
 DEVELOPMENT_COMMIT_SENTINEL: Final = "development-unverified"
@@ -85,7 +85,7 @@ def current_runtime_build_identity(
     callers cannot set ``verified`` independently.
     """
 
-    from model.solver.registry import registry_hash
+    from model.hydraulic_1d.registry import registry_hash
 
     source = environ if environment is None else environment
     mode = source.get("DAYU_BUILD_MODE", "development").strip().lower()
@@ -128,7 +128,7 @@ def assert_runtime_build_matches(
 ) -> RuntimeBuildIdentity:
     """Fail closed when the executing process differs from frozen task identity."""
 
-    from model.solver.registry import registry_hash
+    from model.hydraulic_1d.registry import registry_hash
 
     worker = actual or current_runtime_build_identity()
     comparisons = {
@@ -154,7 +154,7 @@ def assert_runtime_build_matches(
 def runtime_build_diagnostic() -> dict[str, object]:
     """Return a machine-readable release diagnostic without mutable host paths."""
 
-    from model.solver.registry import registry_hash
+    from model.hydraulic_1d.registry import registry_hash
 
     identity = current_runtime_build_identity()
     return {
