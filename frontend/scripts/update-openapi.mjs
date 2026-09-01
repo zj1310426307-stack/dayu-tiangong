@@ -10,9 +10,13 @@ const outputFile = process.env.OPENAPI_OUTPUT_FILE
   : resolve(outputDirectory, 'client.ts');
 const schemaUrl = process.env.OPENAPI_URL ?? 'http://127.0.0.1:8001/openapi.json';
 
+function typeName(value) {
+  return String(value).replace(/[^A-Za-z0-9_$]/g, '_');
+}
+
 function toType(schema = {}) {
   if (Object.keys(schema).length === 0) return 'unknown';
-  if (schema.$ref) return schema.$ref.split('/').at(-1);
+  if (schema.$ref) return typeName(schema.$ref.split('/').at(-1));
   if (Object.hasOwn(schema, 'const')) return JSON.stringify(schema.const);
   if (schema.enum) return schema.enum.map((value) => JSON.stringify(value)).join(' | ');
   if (schema.anyOf) return [...new Set(schema.anyOf.map(toType))].join(' | ');
@@ -37,8 +41,9 @@ function renderInterface(name, schema) {
 }
 
 function renderSchema(name, schema) {
-  if (schema.type === 'object' || schema.properties) return renderInterface(name, schema);
-  return `export type ${name} = ${toType(schema)};`;
+  const safeName = typeName(name);
+  if (schema.type === 'object' || schema.properties) return renderInterface(safeName, schema);
+  return `export type ${safeName} = ${toType(schema)};`;
 }
 
 const response = await fetch(schemaUrl);
@@ -116,6 +121,31 @@ const requiredPaths = [
   '/api/v1/hydraulic/exports/network.nwk11',
   '/api/v1/hydraulic/exports/cross-sections.xns11',
   '/api/v1/hydraulic/templates/{template_name}',
+  '/api/v1/hydraulic/production/capabilities',
+  '/api/v1/hydraulic/production/runs',
+  '/api/v1/hydraulic/production/qa/evaluate',
+  '/api/v1/hydraulic/production/metrics/evaluate',
+  '/api/v1/hydraulic/production/calibration/sweeps/plan',
+  '/api/v1/hydraulic/production/calibration/sweeps/create',
+  '/api/v1/hydraulic/production/calibration/candidates/rank',
+  '/api/v1/hydraulic/production/calibration/runs',
+  '/api/v1/hydraulic/production/calibration/runs/{calibration_run_id}/accept',
+  '/api/v1/hydraulic/production/validation/independence',
+  '/api/v1/hydraulic/production/validation/acceptance',
+  '/api/v1/hydraulic/production/validation/runs',
+  '/api/v1/hydraulic/production/time-series/preview',
+  '/api/v1/hydraulic/production/observations/import',
+  '/api/v1/hydraulic/production/external-results/preview',
+  '/api/v1/hydraulic/production/external-results/import',
+  '/api/v1/hydraulic/production/external-results/compare',
+  '/api/v1/hydraulic/production/products/generate',
+  '/api/v1/hydraulic/production/products/commit',
+  '/api/v1/hydraulic/production/products/export.csv',
+  '/api/v1/hydraulic/production/products/export.xlsx',
+  '/api/v1/hydraulic/production/products/export.geojson',
+  '/api/v1/hydraulic/production/audit',
+  '/api/v1/hydraulic/production/runs/{run_id}/approve',
+  '/api/v1/hydraulic/production/acceptance-manifest',
 ];
 for (const path of requiredPaths) {
   if (!openapi.paths?.[path]) throw new Error(`OpenAPI 缺少接口：${path}`);
@@ -132,6 +162,41 @@ ${interfaces}
 
 export type ValidationReport = app__validation__schemas__ValidationReport;
 export type DispatchValidationReport = app__dispatch__schemas__ValidationReport;
+export type ValidationRunRecord = app__gis_governance__schemas__ValidationRunRecord;
+export type ProductionValidationRunRecord = app__hydraulic__production__records__ValidationRunRecord;
+export interface TimeSeriesImportOptions {
+  series_kind: 'boundary' | 'observation';
+  series_id: string;
+  variable: 'water_level' | 'discharge';
+  unit: 'm' | 'm3/s';
+  source: string;
+  branch_id: string;
+  chainage_m: number;
+  station_id?: string | null;
+  vertical_datum?: string;
+  time_basis: 'relative' | 'absolute';
+  timezone?: string | null;
+  column_mapping: { time: string; value: string; quality_flag?: string | null };
+  sheet_name?: string | null;
+}
+export interface ExternalResultImportOptions {
+  external_model_name: string;
+  external_model_version?: string;
+  scenario: string;
+  vertical_datum: string;
+  time_basis: 'relative' | 'absolute';
+  timezone?: string | null;
+  column_mapping: {
+    branch: string; chainage: string; time: string;
+    water_level?: string | null; discharge?: string | null; velocity?: string | null;
+  };
+  branch_mappings: Array<{
+    external_branch: string; dayu_branch: string; chainage_scale?: number;
+    chainage_offset_m?: number; direction?: 'same' | 'reverse';
+    external_origin_m?: number; dayu_reference_end_m?: number | null;
+  }>;
+  sheet_name?: string | null;
+}
 export interface GISListQuery { dataset_version_id: number; bbox?: string; limit?: number; offset?: number; }
 export interface GISFeatureInfoQuery { dataset_version_id: number; layer_key: string; bbox: string; width: number; height: number; x: number; y: number; }
 export interface GISInteractionQuery { dataset_version_id: number; time_seconds?: number; task_id?: number; dispatch_run_id?: number; }
@@ -425,6 +490,62 @@ export async function previewHydraulicImport(datasetVersionId: number, options: 
   });
   body.set('file', file);
   return requestJson<HydraulicImportPreview>('/api/v1/hydraulic/imports/preview', { method: 'POST', body }, baseUrl);
+}
+
+export const getProductionCapabilities = (baseUrl = '') => requestJson<ProductionCapabilityResponse>('/api/v1/hydraulic/production/capabilities', {}, baseUrl);
+export const createProductionRun = (body: ProductionTaskCreateRequest, baseUrl = '') => requestJson<ProductionRunRecord>('/api/v1/hydraulic/production/runs', jsonOptions('POST', body), baseUrl);
+export const listProductionRuns = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<ProductionRunRecord>>(\`/api/v1/hydraulic/production/runs\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const listProductionAudit = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<AuditEventRecord>>(\`/api/v1/hydraulic/production/audit\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const approveProductionRun = (runId: number, body: ProductionApprovalRequest, baseUrl = '') => requestJson<ProductionRunRecord>(\`/api/v1/hydraulic/production/runs/\${runId}/approve\`, jsonOptions('POST', body), baseUrl);
+export const evaluateProductionQA = (body: HydraulicModelQARequest, baseUrl = '') => requestJson<HydraulicModelQAResult>('/api/v1/hydraulic/production/qa/evaluate', jsonOptions('POST', body), baseUrl);
+export const evaluateProductionMetrics = (body: MetricEvaluationRequest, baseUrl = '') => requestJson<HydraulicMetrics>('/api/v1/hydraulic/production/metrics/evaluate', jsonOptions('POST', body), baseUrl);
+export const planProductionCalibration = (body: ParameterSweepRequest, baseUrl = '') => requestJson<ParameterSweepPlan>('/api/v1/hydraulic/production/calibration/sweeps/plan', jsonOptions('POST', body), baseUrl);
+export const createProductionCalibrationSweep = (body: CalibrationSweepCreateRequest, baseUrl = '') => requestJson<CalibrationSweepRunResponse>('/api/v1/hydraulic/production/calibration/sweeps/create', jsonOptions('POST', body), baseUrl);
+export const commitProductionCalibrationRun = (body: CalibrationRunCommitRequest, baseUrl = '') => requestJson<CalibrationRunRecord>('/api/v1/hydraulic/production/calibration/runs', jsonOptions('POST', body), baseUrl);
+export const rankProductionCalibration = (body: CalibrationRankingRequest, baseUrl = '') => requestJson<Array<CalibrationCandidate>>('/api/v1/hydraulic/production/calibration/candidates/rank', jsonOptions('POST', body), baseUrl);
+export const promoteProductionCalibration = (calibrationRunId: number, body: CalibrationPromotionRequest, baseUrl = '') => requestJson<CalibrationPromotionResponse>(\`/api/v1/hydraulic/production/calibration/runs/\${calibrationRunId}/accept\`, jsonOptions('POST', body), baseUrl);
+export const evaluateProductionIndependence = (body: ValidationIndependenceRequest, baseUrl = '') => requestJson<ValidationIndependenceResult>('/api/v1/hydraulic/production/validation/independence', jsonOptions('POST', body), baseUrl);
+export const evaluateProductionAcceptance = (body: AcceptanceEvaluationRequest, baseUrl = '') => requestJson<AcceptanceEvaluation>('/api/v1/hydraulic/production/validation/acceptance', jsonOptions('POST', body), baseUrl);
+export const commitProductionValidationRun = (body: ValidationRunCommitRequest, baseUrl = '') => requestJson<ProductionValidationRunRecord>('/api/v1/hydraulic/production/validation/runs', jsonOptions('POST', body), baseUrl);
+export const compareProductionExternal = (body: ExternalComparisonRequest, baseUrl = '') => requestJson<ExternalComparisonResult>('/api/v1/hydraulic/production/external-results/compare', jsonOptions('POST', body), baseUrl);
+export const generateProductionProducts = (body: ResultProductRequest, baseUrl = '') => requestJson<ResultProductBundle>('/api/v1/hydraulic/production/products/generate', jsonOptions('POST', body), baseUrl);
+export const commitProductionProduct = (body: ResultProductCommitRequest, baseUrl = '') => requestJson<ResultProductRecord>('/api/v1/hydraulic/production/products/commit', jsonOptions('POST', body), baseUrl);
+export const exportProductionProductsCsv = (body: ResultProductRequest, baseUrl = '') => requestBlob('/api/v1/hydraulic/production/products/export.csv', jsonOptions('POST', body), baseUrl);
+export const exportProductionProductsXlsx = (body: ResultProductRequest, baseUrl = '') => requestBlob('/api/v1/hydraulic/production/products/export.xlsx', jsonOptions('POST', body), baseUrl);
+export const exportProductionProductsGeojson = (body: ResultProductRequest, baseUrl = '') => requestBlob('/api/v1/hydraulic/production/products/export.geojson', jsonOptions('POST', body), baseUrl);
+export const buildProductionAcceptanceManifest = (body: AcceptanceManifestRequest, baseUrl = '') => requestJson<AcceptanceManifest>('/api/v1/hydraulic/production/acceptance-manifest', jsonOptions('POST', body), baseUrl);
+
+export async function previewProductionSeries(options: TimeSeriesImportOptions, file: File, baseUrl = ''): Promise<TimeSeriesImportPreview> {
+  const body = new FormData();
+  body.set('options_json', JSON.stringify(options));
+  body.set('file', file);
+  return requestJson<TimeSeriesImportPreview>('/api/v1/hydraulic/production/time-series/preview', { method: 'POST', body }, baseUrl);
+}
+
+export async function importProductionObservation(datasetVersionId: number, actor: string, options: TimeSeriesImportOptions, file: File, baseUrl = ''): Promise<ObservationRecord> {
+  const body = new FormData();
+  body.set('dataset_version_id', String(datasetVersionId));
+  body.set('actor', actor);
+  body.set('options_json', JSON.stringify(options));
+  body.set('file', file);
+  return requestJson<ObservationRecord>('/api/v1/hydraulic/production/observations/import', { method: 'POST', body }, baseUrl);
+}
+
+export async function previewProductionExternal(options: ExternalResultImportOptions, file: File, baseUrl = ''): Promise<ExternalResultPreview> {
+  const body = new FormData();
+  body.set('options_json', JSON.stringify(options));
+  body.set('file', file);
+  return requestJson<ExternalResultPreview>('/api/v1/hydraulic/production/external-results/preview', { method: 'POST', body }, baseUrl);
+}
+
+export async function importProductionExternal(datasetVersionId: number, resultCode: string, actor: string, options: ExternalResultImportOptions, file: File, baseUrl = ''): Promise<ExternalResultRecord> {
+  const body = new FormData();
+  body.set('dataset_version_id', String(datasetVersionId));
+  body.set('result_code', resultCode);
+  body.set('actor', actor);
+  body.set('options_json', JSON.stringify(options));
+  body.set('file', file);
+  return requestJson<ExternalResultRecord>('/api/v1/hydraulic/production/external-results/import', { method: 'POST', body }, baseUrl);
 }
 
 export const createHydraulicTask = (body: SimulationTaskCreate, baseUrl = '') => requestJson<SimulationTaskRecord>('/api/v1/model/tasks', jsonOptions('POST', body), baseUrl);

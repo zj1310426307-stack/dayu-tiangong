@@ -15,6 +15,11 @@
 - [复杂一维河网工程合同](docs/hydraulics/hydraulic-network.md)
 - [统一水工建筑物模型](docs/hydraulics/hydraulic-structures.md)
 - [一维求解器能力矩阵](docs/hydraulics/solver-capabilities.md)
+- [生产工作流](docs/hydraulics/production-workflow.md)
+- [工程数据导入](docs/hydraulics/engineering-data-import.md)
+- [模型 QA](docs/hydraulics/model-qa.md)
+- [率定与独立验证](docs/hydraulics/calibration-validation.md)
+- [外部模型交叉对比](docs/hydraulics/external-model-comparison.md)
 - [HYDRO-1D-RESET-01 架构迁移](docs/migration/HYDRO-1D-RESET-01.md)
 - [当前系统架构](docs/architecture.md)
 
@@ -119,6 +124,12 @@ HYDRO-DATA-01 (Network → Branch → Chainage → Cross Section)
 - 闸门与泵站当前均不进入生产 Adapter；Bridge、Culvert、CASIER 也未验证。在完整业务语义、官方文件合同和真实运行时 benchmark 全部通过前必须 fail closed，不得伪装成横向流量或猜测奇异建筑物参数。
 - 五组真实数值算例、官方示例、生命周期和平台验收见 [MASCARET 正式验证](docs/hydraulics/mascaret-validation.md)；现行映射见 [MASCARET 1D Adapter](docs/model/MASCARET-1D-ADAPTER.md)。
 - 旧 `HYDRO-MODEL-02` 阶段文档、审查过程和失效工作计划已从当前树清理；仅保留一份最终 D3A RC1 发布索引，完整历史由 Git 标签保存，不能作为现行产品说明。
+
+## 水动力生产工作流
+
+`/hydraulic/production` 提供 Data → QA → Calibration → Validation → Compare → Results 工程工作台。文件先 Preview 和展示 Issues，再由用户显式 Import；正式 Production Run 的 QA 封套绑定不可变输入哈希，Backend 创建任务时检查一次，Worker 执行前重新验算一次。观测、外部结果、率定、验证、成果及重要操作均使用 `hydraulic` schema 的版本化记录和来源哈希。
+
+当前软件框架的 P01–P06 合成回归已建立，但受控资料缺少权威边界、实测 H/Q、独立验证事件和合法导出的 MIKE11 结果，真实工程 R01–R07 状态为 `DATA_NOT_AVAILABLE`。不得把现有三个不连通测绘片段或测试数据称为生产验证。Bridge/Culvert 保持 `UNVERIFIED`；Gate/Pump/Sluice 保持 `UNSUPPORTED`。
 
 ## 广东开放参考数据
 
