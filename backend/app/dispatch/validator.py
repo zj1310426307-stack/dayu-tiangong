@@ -5,6 +5,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.dispatch.assets import resolve_plan_asset_snapshots
 from app.dispatch.schemas import ValidationReport
 from app.gis.models import (
     CrossSection, DispatchAction, DispatchPlan, DispatchRule, Gate, Pump,
@@ -15,6 +16,8 @@ from model.control.constraints import (
     command_matches_structure,
     validate_command_value,
     validate_control_target,
+    validate_interpolation,
+    validate_target_against_asset,
 )
 from model.control.policy import ControlTarget
 from model.control.rules import OBSERVATION_TYPES, OPERATORS, ThresholdRule
@@ -30,9 +33,22 @@ def validate_plan(session: Session, plan: DispatchPlan) -> ValidationReport:
         errors.append("计算方案不存在或与计划数据版本不一致")
     actions = list(session.scalars(select(DispatchAction).where(DispatchAction.plan_id == plan.id)).all())
     rules = list(session.scalars(select(DispatchRule).where(DispatchRule.plan_id == plan.id)).all())
+    asset_snapshots, asset_errors = resolve_plan_asset_snapshots(
+        session, plan, actions, rules
+    )
+    errors.extend(asset_errors)
+    snapshot_by_key = {
+        (item["structure_type"], item["legacy_asset_id"]): item
+        for item in asset_snapshots
+    }
+    command_modes: dict[tuple[str, int], set[str]] = {}
     seen: set[tuple[str, int, float]] = set()
     for action in actions:
         asset_id = action.gate_id if action.structure_type == "gate" else action.pump_id
+        if asset_id is not None:
+            command_modes.setdefault(
+                (action.structure_type, int(asset_id)), set()
+            ).add(action.command_type)
         key = (action.structure_type, int(asset_id or 0), action.time_seconds)
         if key in seen:
             errors.append(f"设备 {key[0]}:{key[1]} 在 {key[2]} s 存在冲突动作")
@@ -47,6 +63,11 @@ def validate_plan(session: Session, plan: DispatchPlan) -> ValidationReport:
             value_valid, reason = validate_command_value(action.command_type, action.target_value)
             if not value_valid:
                 errors.append(f"动作 {action.id}：{reason}")
+            interpolation_valid, interpolation_reason = validate_interpolation(
+                action.command_type, action.interpolation
+            )
+            if not interpolation_valid:
+                errors.append(f"动作 {action.id}：{interpolation_reason}")
         asset = session.get(Gate if action.structure_type == "gate" else Pump, asset_id)
         if asset is None or asset.dataset_version_id != plan.dataset_version_id:
             errors.append(f"动作 {action.id} 设施不存在或跨数据版本")
@@ -75,6 +96,26 @@ def validate_plan(session: Session, plan: DispatchPlan) -> ValidationReport:
                 errors.append(f"泵站 {asset.id} 缺少 {transfer_type} 所需节点")
             elif any(item.dataset_version_id != plan.dataset_version_id for item in references):
                 errors.append(f"泵站 {asset.id} 节点引用跨数据版本")
+        if asset is not None and asset_id is not None:
+            target = ControlTarget(
+                action.structure_type,
+                int(asset_id),
+                action.command_type,
+                action.target_value,
+                action.priority,
+                "manual",
+                action.id,
+            )
+            valid_target, reason = validate_control_target(target, asset.status)
+            if not valid_target:
+                errors.append(f"动作 {action.id} 的设施状态或目标无效：{reason}")
+            snapshot = snapshot_by_key.get((action.structure_type, int(asset_id)))
+            if snapshot is not None:
+                valid_target, reason = validate_target_against_asset(
+                    target, snapshot["constraints"]
+                )
+                if not valid_target:
+                    errors.append(f"动作 {action.id} 的静态约束无效：{reason}")
     for rule in rules:
         if rule.observation_type not in OBSERVATION_TYPES or rule.operator not in OPERATORS:
             errors.append(f"规则 {rule.id} 使用非白名单观测或操作符")
@@ -132,6 +173,7 @@ def validate_plan(session: Session, plan: DispatchPlan) -> ValidationReport:
         ):
             errors.append(f"规则 {rule.id} 的动作模板类型无效")
             continue
+        command_modes.setdefault((structure_type, structure_id), set()).add(command_type)
         asset = session.get(Gate if structure_type == "gate" else Pump, structure_id)
         if asset is None or asset.dataset_version_id != plan.dataset_version_id:
             errors.append(f"规则 {rule.id} 的动作设施不存在或跨数据版本")
@@ -182,6 +224,28 @@ def validate_plan(session: Session, plan: DispatchPlan) -> ValidationReport:
         )
         if not valid_target:
             errors.append(f"规则 {rule.id} 的动作无效：{reason}")
+        snapshot = snapshot_by_key.get((structure_type, structure_id))
+        if snapshot is not None:
+            valid_target, reason = validate_target_against_asset(
+                ControlTarget(
+                    structure_type,
+                    structure_id,
+                    command_type,
+                    float(target_value),
+                    rule.priority,
+                    "rule",
+                    rule.id,
+                ),
+                snapshot["constraints"],
+            )
+            if not valid_target:
+                errors.append(f"规则 {rule.id} 的静态约束无效：{reason}")
+    for (structure_type, structure_id), command_types in sorted(command_modes.items()):
+        if len(command_types) > 1:
+            errors.append(
+                f"[ASSET_COMMAND_MODE_CONFLICT] {structure_type}:{structure_id} "
+                f"只能使用一种控制命令，当前为 {sorted(command_types)}"
+            )
     if not actions and not rules:
         warnings.append("计划没有动作或规则，将与基准工况等效")
     if "warning_level" not in plan.evaluation_config:

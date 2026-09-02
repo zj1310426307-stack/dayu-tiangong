@@ -813,6 +813,17 @@ export interface DispatchActionUpdate {
   "note"?: string | null;
 }
 
+export interface DispatchCapabilityFact {
+  "engine": string;
+  "engine_version": string;
+  "adapter_version": string;
+  "feature": string;
+  "status": string;
+  "reason": string;
+  "benchmark_ids": Array<string>;
+  "verified_at"?: string | null;
+}
+
 export interface DispatchComparison {
   "run_id": number;
   "status": "pending" | "queued" | "running" | "cancel_requested" | "cancelled" | "success" | "failed";
@@ -825,6 +836,28 @@ export interface DispatchComparison {
   "difference": Array<number>;
   "metrics": Record<string, unknown>;
   "diagnostics": Record<string, unknown>;
+}
+
+export interface DispatchExecutionReadiness {
+  "plan_id": number;
+  "plan_status": "draft" | "validated" | "frozen" | "archived";
+  "planning_valid": boolean;
+  "frozen_snapshot_valid": boolean;
+  "static_preview_allowed": boolean;
+  "hydraulic_runtime_supported": false;
+  "run_allowed": boolean;
+  "evidence_class": "SYNTHETIC_DEVELOPMENT_ONLY";
+  "real_validation_status": "SKIPPED_BY_USER";
+  "engine": string;
+  "engine_version": string;
+  "adapter_version": string;
+  "runtime_available": boolean;
+  "runtime_detail": string;
+  "required_features": Array<string>;
+  "capabilities": Array<DispatchCapabilityFact>;
+  "blockers": Array<DispatchReadinessIssue>;
+  "warnings": Array<DispatchReadinessIssue>;
+  "frozen_snapshot_hash": string | null;
 }
 
 export interface DispatchPlanCreate {
@@ -865,6 +898,40 @@ export interface DispatchPlanUpdate {
   "evaluation_config"?: Record<string, unknown> | null;
   "storage_level"?: "summary" | "key_sections" | "full" | null;
   "status"?: "archived" | null;
+}
+
+export interface DispatchReadinessIssue {
+  "code": string;
+  "message": string;
+  "feature"?: string | null;
+  "status"?: string | null;
+}
+
+export interface DispatchReplayRuleEvent {
+  "time_seconds": number;
+  "event_type": "triggered" | "recovered";
+  "rule_id": number | null;
+  "action_template": Record<string, unknown>;
+}
+
+export interface DispatchReplayStep {
+  "time_seconds": number;
+  "targets": Array<DispatchReplayTargetRecord>;
+  "conflict_evaluations": number;
+  "rule_events": Array<DispatchReplayRuleEvent>;
+}
+
+export interface DispatchReplayTargetRecord {
+  "structure_type": "gate" | "pump";
+  "structure_id": number;
+  "command_type": string;
+  "requested_value": number;
+  "resolved_value": number | null;
+  "priority": number;
+  "source_type": "manual" | "rule";
+  "source_id": number | null;
+  "outcome": "selected" | "limited" | "rejected";
+  "reason": string | null;
 }
 
 export interface DispatchRuleCreate {
@@ -921,6 +988,40 @@ export interface DispatchRunRecord {
   "created_time": string;
   "start_time": string | null;
   "end_time": string | null;
+}
+
+export interface DispatchSchedulePreview {
+  "plan_id": number;
+  "evidence_class": "SYNTHETIC_DEVELOPMENT_ONLY";
+  "hydraulic_execution_supported": false;
+  "no_hydraulic_feedback": true;
+  "plan_snapshot_hash": string;
+  "observation_hash": string;
+  "result_hash": string;
+  "steps": Array<DispatchReplayStep>;
+  "conflict_evaluations": number;
+  "rule_trigger_count": number;
+  "rule_recovery_count": number;
+  "evaluator_id": string;
+  "tie_break_policy": string;
+  "initial_state_basis": string;
+  "safety_notice": string;
+}
+
+export interface DispatchSchedulePreviewRequest {
+  "evidence_class": "SYNTHETIC_DEVELOPMENT_ONLY";
+  "observations": Array<DispatchSyntheticObservationFrame>;
+}
+
+export interface DispatchSyntheticObservationFrame {
+  "time_seconds": number;
+  "values"?: Array<DispatchSyntheticObservationValue>;
+}
+
+export interface DispatchSyntheticObservationValue {
+  "observation_type": "node_water_level" | "section_water_level" | "gate_head_difference" | "pump_intake_level";
+  "observation_object_id": number;
+  "value": number;
 }
 
 export interface ExternalComparisonRequest {
@@ -3174,6 +3275,8 @@ export const deleteDispatchPlan = (planId: number, baseUrl = '') => requestJson<
 export const cloneDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchPlanRecord>(`/api/v1/dispatch/plans/${planId}/clone`, { method: 'POST' }, baseUrl);
 export const validateDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchValidationReport>(`/api/v1/dispatch/plans/${planId}/validate`, { method: 'POST' }, baseUrl);
 export const freezeDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchPlanRecord>(`/api/v1/dispatch/plans/${planId}/freeze`, { method: 'POST' }, baseUrl);
+export const getDispatchExecutionReadiness = (planId: number, baseUrl = '') => requestJson<DispatchExecutionReadiness>(`/api/v1/dispatch/plans/${planId}/readiness`, {}, baseUrl);
+export const previewDispatchSchedule = (planId: number, body: DispatchSchedulePreviewRequest, baseUrl = '') => requestJson<DispatchSchedulePreview>(`/api/v1/dispatch/plans/${planId}/schedule-preview`, jsonOptions('POST', body), baseUrl);
 export const listDispatchActions = (planId: number, baseUrl = '') => requestJson<Array<DispatchActionRecord>>(`/api/v1/dispatch/plans/${planId}/actions`, {}, baseUrl);
 export const createDispatchAction = (planId: number, body: DispatchActionCreate, baseUrl = '') => requestJson<DispatchActionRecord>(`/api/v1/dispatch/plans/${planId}/actions`, jsonOptions('POST', body), baseUrl);
 export const updateDispatchAction = (actionId: number, body: DispatchActionUpdate, baseUrl = '') => requestJson<DispatchActionRecord>(`/api/v1/dispatch/actions/${actionId}`, jsonOptions('PATCH', body), baseUrl);

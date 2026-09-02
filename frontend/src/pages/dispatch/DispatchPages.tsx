@@ -42,6 +42,7 @@ import {
   deleteDispatchAction,
   deleteDispatchRule,
   freezeDispatchPlan,
+  getDispatchExecutionReadiness,
   getDispatchComparison,
   getDispatchEvents,
   getDispatchNodes,
@@ -56,17 +57,22 @@ import {
   listDispatchRuns,
   listGateRecords,
   listPumpRecords,
-  retryDispatchRun,
+  previewDispatchSchedule,
   updateDispatchPlan,
   validateDispatchPlan,
   type DispatchActionCreate,
   type DispatchActionRecord,
   type DispatchComparison,
+  type DispatchExecutionReadiness,
   type DispatchPlanCreate,
   type DispatchPlanRecord,
   type DispatchRuleCreate,
   type DispatchRuleRecord,
+  type DispatchReplayRuleEvent,
+  type DispatchReplayTargetRecord,
   type DispatchRunRecord,
+  type DispatchSchedulePreview,
+  type DispatchSchedulePreviewRequest,
   type GateRecord,
   type PumpRecord,
   type SimulationTaskRecord,
@@ -76,6 +82,7 @@ import { useDatasetVersion } from '../../context/DatasetVersionContext';
 
 const { Paragraph, Text, Title } = Typography;
 const SIMULATION_NOTICE = '仿真方案 / 未下发真实设备 / DEMO DATA 不得作为工程审定成果';
+const STATIC_REPLAY_NOTICE = '合成静态预演 / 无水力反馈 / 不计算 H、Q、能耗或水量平衡';
 const DISPATCH_WINDOW_HOURS = 24;
 const DISPATCH_MILESTONES_HOURS = [0, 6, 12, 24] as const;
 
@@ -204,7 +211,7 @@ export function DispatchPlanListPage() {
     }
   };
 
-  const operate = async (plan: DispatchPlanRecord, action: 'validate' | 'freeze' | 'clone' | 'run' | 'archive') => {
+  const operate = async (plan: DispatchPlanRecord, action: 'validate' | 'freeze' | 'clone' | 'archive') => {
     try {
       if (action === 'validate') {
         const report = await validateDispatchPlan(plan.id);
@@ -214,9 +221,6 @@ export function DispatchPlanListPage() {
       } else if (action === 'clone') {
         const clone = await cloneDispatchPlan(plan.id);
         navigate(`/dispatch/plans/${clone.id}?datasetVersionId=${datasetVersionId}`); return;
-      } else if (action === 'run') {
-        const run = await createDispatchRun(plan.id);
-        navigate(`/dispatch/runs/${run.id}?datasetVersionId=${datasetVersionId}`); return;
       } else {
         await updateDispatchPlan(plan.id, { status: 'archived' }); message.success('计划已归档');
       }
@@ -243,7 +247,7 @@ export function DispatchPlanListPage() {
           {row.status === 'draft' && <Button size="small" onClick={() => void operate(row, 'validate')}>校验</Button>}
           {row.status === 'validated' && <Button size="small" icon={<FileProtectOutlined />} onClick={() => void operate(row, 'freeze')}>冻结</Button>}
           <Button size="small" icon={<CopyOutlined />} onClick={() => void operate(row, 'clone')}>克隆</Button>
-          {row.status === 'frozen' && <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => void operate(row, 'run')}>运行</Button>}
+          {row.status === 'frozen' && <Button size="small" disabled title="请进入计划查看后端执行就绪状态">水力运行未开放</Button>}
           {row.status === 'frozen' && <Button size="small" onClick={() => void operate(row, 'archive')}>归档</Button>}
         </Space>
       ),
@@ -255,8 +259,8 @@ export function DispatchPlanListPage() {
       <DispatchHeader
         eyebrow="DISPATCH / VERSIONED PLANS"
         title="闸泵联合调度计划"
-        description="计划按数据版本管理，经过校验和冻结后才能排队运行；冻结版本只能克隆迭代。"
-        action={<Space><Button onClick={() => navigate(`/dispatch/runs?datasetVersionId=${datasetVersionId}`)}>运行中心</Button><Button type="primary" icon={<PlusOutlined />} disabled={!cases.length} onClick={() => { form.setFieldsValue({ simulation_case_id: cases[0]?.id, duration_seconds: 7200, storage_level: 'key_sections', evaluation_config: { warning_level: 200 } }); setOpen(true); }}>新建计划</Button></Space>}
+        description="计划按数据版本管理；冻结版本可做合成静态预演，水力运行必须通过后端 Solver 能力门。"
+        action={<Space><Button onClick={() => navigate(`/dispatch/runs?datasetVersionId=${datasetVersionId}`)}>历史运行</Button><Button type="primary" icon={<PlusOutlined />} disabled={!cases.length} onClick={() => { form.setFieldsValue({ simulation_case_id: cases[0]?.id, duration_seconds: 7200, storage_level: 'key_sections', evaluation_config: { warning_level: 200 } }); setOpen(true); }}>新建计划</Button></Space>}
       />
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}
       {!loading && datasetVersionId && cases.length === 0 && !error && (
@@ -292,6 +296,11 @@ type RuleForm = Omit<DispatchRuleCreate, 'action_template'> & {
   target_value: number;
 };
 
+type PreviewFormValues = {
+  interval_seconds: number;
+  observations?: Record<string, { start?: number; end?: number }>;
+};
+
 export function DispatchPlanEditorPage() {
   const navigate = useNavigate();
   const { planId = '' } = useParams();
@@ -303,12 +312,17 @@ export function DispatchPlanEditorPage() {
   const [gates, setGates] = useState<GateRecord[]>([]);
   const [pumps, setPumps] = useState<PumpRecord[]>([]);
   const [report, setReport] = useState<DispatchValidationReport>();
+  const [readiness, setReadiness] = useState<DispatchExecutionReadiness>();
+  const [preview, setPreview] = useState<DispatchSchedulePreview>();
   const [error, setError] = useState('');
   const [actionOpen, setActionOpen] = useState(false);
   const [ruleOpen, setRuleOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [actionForm] = Form.useForm<ActionForm>();
   const [ruleForm] = Form.useForm<RuleForm>();
+  const [previewForm] = Form.useForm<PreviewFormValues>();
   const watchedActionType = Form.useWatch('structure_type', actionForm) ?? 'gate';
+  const watchedActionCommand = Form.useWatch('command_type', actionForm);
   const watchedRuleType = Form.useWatch('structure_type', ruleForm) ?? 'gate';
 
   const reload = useCallback(async () => {
@@ -318,13 +332,14 @@ export function DispatchPlanEditorPage() {
       if (datasetVersionId && record.dataset_version_id !== datasetVersionId) {
         throw new Error('计划与当前数据版本不一致，请切换数据版本');
       }
-      const [actionRows, ruleRows, gatePage, pumpPage] = await Promise.all([
+      const [actionRows, ruleRows, gatePage, pumpPage, readinessValue] = await Promise.all([
         listDispatchActions(id), listDispatchRules(id),
         listGateRecords({ dataset_version_id: record.dataset_version_id, limit: 200 }),
         listPumpRecords({ dataset_version_id: record.dataset_version_id, limit: 200 }),
+        getDispatchExecutionReadiness(id),
       ]);
       setPlan(record); setActions(actionRows); setRules(ruleRows);
-      setGates(gatePage.items); setPumps(pumpPage.items); setError('');
+      setGates(gatePage.items); setPumps(pumpPage.items); setReadiness(readinessValue); setError('');
     } catch (reason) { setError(errorText(reason, '计划加载失败')); }
   }, [datasetVersionId, id]);
   useEffect(() => { void reload(); }, [reload]);
@@ -351,6 +366,76 @@ export function DispatchPlanEditorPage() {
   const validate = async () => { const value = await validateDispatchPlan(id); setReport(value); await reload(); };
   const freeze = async () => { await freezeDispatchPlan(id); message.success('冻结成功'); await reload(); };
   const run = async () => { const value = await createDispatchRun(id); navigate(`/dispatch/runs/${value.id}?datasetVersionId=${datasetVersionId}`); };
+  const openPreview = () => {
+    if (!plan) return;
+    previewForm.setFieldsValue({
+      interval_seconds: Math.max(1, Math.ceil(plan.duration_seconds / 120)),
+    });
+    setPreviewOpen(true);
+  };
+  const observationRequirements = useMemo(() => {
+    const unique = new Map<string, { key: string; type: string; objectId: number }>();
+    rules.forEach((rule) => {
+      if (!rule.enabled || rule.observation_type === 'elapsed_time' || rule.observation_object_id == null) return;
+      const key = `${rule.observation_type}:${rule.observation_object_id}`;
+      unique.set(key, { key, type: rule.observation_type, objectId: rule.observation_object_id });
+    });
+    return [...unique.values()];
+  }, [rules]);
+  const previewTargets = useMemo(() => preview?.steps.flatMap((step) => step.targets.map((target, index) => ({
+    ...target,
+    key: `${step.time_seconds}-${target.structure_type}-${target.structure_id}-${target.command_type}-${index}`,
+    time_seconds: step.time_seconds,
+  }))) ?? [], [preview]);
+  const previewRuleEvents = useMemo(() => preview?.steps.flatMap((step) => step.rule_events.map((event, index) => ({
+    ...event,
+    key: `${step.time_seconds}-${event.rule_id}-${event.event_type}-${index}`,
+  }))) ?? [], [preview]);
+
+  /** Build an explicit bounded synthetic trace and never infer measured values. */
+  const submitPreview = async (values: PreviewFormValues) => {
+    if (!plan) return;
+    try {
+      const interval = Number(values.interval_seconds);
+      if (!Number.isFinite(interval) || interval <= 0) {
+        throw new Error('合成采样间隔必须是大于 0 的有限数');
+      }
+      const estimatedPoints = Math.ceil(plan.duration_seconds / interval) + 1;
+      if (estimatedPoints > 2000) {
+        throw new Error('合成回放时间点超过 2000，请增大采样间隔');
+      }
+      const times = new Set<number>([0, plan.duration_seconds, ...actions.map((item) => item.time_seconds)]);
+      for (let time = interval; time < plan.duration_seconds; time += interval) times.add(time);
+      const orderedTimes = [...times].sort((left, right) => left - right);
+      if (orderedTimes.length > 2000) {
+        throw new Error('合成回放时间点超过 2000，请增大采样间隔');
+      }
+      const observations: DispatchSchedulePreviewRequest['observations'] = orderedTimes.map((time) => ({
+        time_seconds: time,
+        values: observationRequirements.map((requirement) => {
+          const range = values.observations?.[requirement.key];
+          if (range?.start === undefined || range.end === undefined) {
+            throw new Error(`请填写 ${requirement.type} #${requirement.objectId} 的起止合成值`);
+          }
+          const ratio = plan.duration_seconds > 0 ? time / plan.duration_seconds : 0;
+          return {
+            observation_type: requirement.type as 'node_water_level' | 'section_water_level' | 'gate_head_difference' | 'pump_intake_level',
+            observation_object_id: requirement.objectId,
+            value: range.start + ratio * (range.end - range.start),
+          };
+        }),
+      }));
+      const value = await previewDispatchSchedule(id, {
+        evidence_class: 'SYNTHETIC_DEVELOPMENT_ONLY',
+        observations,
+      });
+      setPreview(value);
+      setPreviewOpen(false);
+      message.success('合成静态预演完成');
+    } catch (reason) {
+      message.error(errorText(reason, '合成静态预演失败'));
+    }
+  };
 
   const actionColumns: ColumnsType<DispatchActionRecord> = [
     { title: '时刻（s）', dataIndex: 'time_seconds', width: 100 },
@@ -371,14 +456,30 @@ export function DispatchPlanEditorPage() {
     { title: '动作模板', dataIndex: 'action_template', render: (value) => <code>{JSON.stringify(value)}</code> },
     { title: '操作', width: 80, render: (_, row) => editable && <Button danger size="small" onClick={async () => { await deleteDispatchRule(row.id); await reload(); }}>删除</Button> },
   ];
+  const previewTargetColumns: ColumnsType<DispatchReplayTargetRecord & { key: string; time_seconds: number }> = [
+    { title: '时刻（s）', dataIndex: 'time_seconds', width: 100 },
+    { title: '设施', width: 120, render: (_, row) => `${row.structure_type} #${row.structure_id}` },
+    { title: '命令', dataIndex: 'command_type', width: 180 },
+    { title: '请求值', dataIndex: 'requested_value', width: 100 },
+    { title: '约束后值', dataIndex: 'resolved_value', width: 100, render: (value) => value ?? '—' },
+    { title: '来源', width: 120, render: (_, row) => `${row.source_type} #${row.source_id ?? '—'}` },
+    { title: '结果', dataIndex: 'outcome', width: 100, render: (value) => <Tag color={value === 'selected' ? 'success' : value === 'limited' ? 'warning' : 'error'}>{value}</Tag> },
+    { title: '原因', dataIndex: 'reason' },
+  ];
+  const previewRuleEventColumns: ColumnsType<DispatchReplayRuleEvent & { key: string }> = [
+    { title: '时刻（s）', dataIndex: 'time_seconds', width: 100 },
+    { title: '规则 ID', dataIndex: 'rule_id', width: 100, render: (value) => value ?? '—' },
+    { title: '事件', dataIndex: 'event_type', width: 110, render: (value) => <Tag color={value === 'triggered' ? 'processing' : 'default'}>{value}</Tag> },
+    { title: '动作模板', dataIndex: 'action_template', render: (value) => <code>{JSON.stringify(value)}</code> },
+  ];
 
   return (
     <div className="data-page dispatch-page">
       <DispatchHeader
         eyebrow="DISPATCH / PLAN EDITOR"
         title={plan ? `${plan.name} · v${plan.version}` : '调度计划编辑器'}
-        description="人工动作和白名单阈值规则在冻结前可编辑；计划命令只进入仿真求解器。"
-        action={<Space><Button onClick={() => navigate(`/dispatch/plans?datasetVersionId=${datasetVersionId}`)}>返回列表</Button>{plan?.status === 'validated' && <Button icon={<FileProtectOutlined />} onClick={() => void freeze()}>冻结</Button>}{plan?.status === 'frozen' && <Button type="primary" icon={<PlayCircleOutlined />} onClick={() => void run()}>运行</Button>}</Space>}
+        description="人工动作和白名单阈值规则在冻结前可编辑；冻结后仅开放无水力反馈的合成静态预演。"
+        action={<Space wrap><Button onClick={() => navigate(`/dispatch/plans?datasetVersionId=${datasetVersionId}`)}>返回列表</Button>{plan?.status === 'validated' && <Button icon={<FileProtectOutlined />} onClick={() => void freeze()}>冻结</Button>}{plan?.status === 'frozen' && <Button icon={<PlayCircleOutlined />} disabled={!readiness?.static_preview_allowed} title={readiness?.static_preview_allowed ? undefined : '冻结快照完整性门未通过'} onClick={openPreview}>合成静态预演</Button>}{plan?.status === 'frozen' && <Button type="primary" disabled={!readiness?.run_allowed} title={readiness?.run_allowed ? undefined : '后端执行就绪门未通过'} onClick={() => void run()}>水力运行</Button>}</Space>}
       />
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}
       {plan && <>
@@ -392,6 +493,36 @@ export function DispatchPlanEditorPage() {
             { key: 'time', label: '冻结时间', children: localTime(plan.frozen_time) },
           ]} />
         </Card>
+        {readiness && <Card className="data-card" title="执行就绪状态（后端权威）" extra={<Tag color={readiness.run_allowed ? 'success' : 'error'}>{readiness.run_allowed ? 'RUN ALLOWED' : 'FAIL CLOSED'}</Tag>}>
+          <Alert
+            showIcon
+            type={readiness.run_allowed ? 'success' : 'warning'}
+            message={readiness.run_allowed
+              ? '水力运行条件已满足'
+              : readiness.static_preview_allowed
+                ? '水力运行未开放；可继续使用合成静态预演'
+                : '水力运行与静态预演均未开放；请先完成计划校验和冻结快照门'}
+            description={STATIC_REPLAY_NOTICE}
+          />
+          <Descriptions className="dispatch-readiness" column={{ xs: 1, sm: 2, lg: 4 }} items={[
+            { key: 'planning', label: '规划校验', children: stateTag(readiness.planning_valid ? 'valid' : 'invalid') },
+            { key: 'snapshot', label: '冻结快照', children: stateTag(readiness.frozen_snapshot_valid ? 'valid' : 'invalid') },
+            { key: 'runtime', label: '运行环境', children: stateTag(readiness.runtime_available ? 'available' : 'unavailable') },
+            { key: 'preview', label: '静态预演', children: stateTag(readiness.static_preview_allowed ? 'allowed' : 'blocked') },
+            { key: 'hydraulic-runtime', label: '闸泵水力能力', children: stateTag(readiness.hydraulic_runtime_supported ? 'supported' : 'unsupported') },
+            { key: 'evidence', label: '证据级别', children: <Tag color="warning">{readiness.evidence_class}</Tag> },
+            { key: 'real-validation', label: '真实验证', children: <Tag color="warning">{readiness.real_validation_status}</Tag> },
+            { key: 'engine', label: 'Solver / 版本', children: `${readiness.engine} / ${readiness.engine_version}` },
+            { key: 'adapter', label: '适配器', children: readiness.adapter_version },
+            { key: 'features', label: '所需能力', children: readiness.required_features.length ? readiness.required_features.map((feature) => <Tag key={feature}>{feature}</Tag>) : '—' },
+            { key: 'runtime-detail', label: '运行环境说明', children: readiness.runtime_detail },
+          ]} />
+          <Space direction="vertical" style={{ width: '100%' }}>
+            {readiness.capabilities.map((capability) => <Alert key={capability.feature} type={capability.status.startsWith('VERIFIED') ? 'success' : 'error'} showIcon message={`${capability.feature}: ${capability.status}`} description={capability.reason} />)}
+            {readiness.blockers.map((issue, index) => <Alert key={`${issue.code}-${index}`} type="error" showIcon message={issue.code} description={issue.message} />)}
+            {readiness.warnings.map((issue, index) => <Alert key={`${issue.code}-${index}`} type="warning" showIcon message={issue.code} description={issue.message} />)}
+          </Space>
+        </Card>}
         <div className="dispatch-timeline" aria-label="动作时间轴">
           <span>0 s</span>
           <div>{actions.map((item) => <i key={item.id} title={`${item.structure_type} #${item.gate_id ?? item.pump_id} @ ${item.time_seconds}s`} style={{ left: `${Math.min(100, item.time_seconds / plan.duration_seconds * 100)}%` }} />)}</div>
@@ -406,14 +537,46 @@ export function DispatchPlanEditorPage() {
         <Card className="data-card" title="计划校验报告" extra={editable && <Button type="primary" icon={<SafetyCertificateOutlined />} onClick={() => void validate()}>运行校验</Button>}>
           {report ? <Alert type={report.valid ? 'success' : 'error'} showIcon message={report.valid ? '校验通过，可冻结' : '校验未通过'} description={[...report.errors, ...report.warnings].join('；') || '未发现问题'} /> : <div className="data-empty">运行校验后显示拓扑、跨版本、命令和规则检查结果。</div>}
         </Card>
+        {preview && <Card className="data-card" title="最近一次合成静态预演" extra={<Space><Tag color="warning">{preview.evidence_class}</Tag><Tag color="error">NO HYDRAULIC FEEDBACK</Tag></Space>}>
+          <Alert type="warning" showIcon message={STATIC_REPLAY_NOTICE} description={preview.safety_notice} />
+          <Descriptions column={{ xs: 1, sm: 2, lg: 3 }} items={[
+            { key: 'steps', label: '时间点', children: preview.steps.length },
+            { key: 'conflicts', label: '冲突判定', children: preview.conflict_evaluations },
+            { key: 'rule-events', label: '触发 / 恢复', children: `${preview.rule_trigger_count} / ${preview.rule_recovery_count}` },
+            { key: 'plan-hash', label: '计划快照哈希', children: <Text copyable>{preview.plan_snapshot_hash}</Text> },
+            { key: 'input-hash', label: '合成输入哈希', children: <Text copyable>{preview.observation_hash}</Text> },
+            { key: 'result-hash', label: '预演结果哈希', children: <Text copyable>{preview.result_hash}</Text> },
+            { key: 'evaluator', label: '评估器合同', children: preview.evaluator_id },
+            { key: 'tie-break', label: '冲突裁决', children: preview.tie_break_policy },
+            { key: 'initial-state', label: '合成初态假设', children: preview.initial_state_basis },
+          ]} />
+          <Title level={5}>命令约束结果</Title>
+          <Table rowKey="key" size="small" pagination={{ pageSize: 20 }} dataSource={previewTargets} columns={previewTargetColumns} scroll={{ x: 1050 }} />
+          <Title level={5}>规则事件</Title>
+          <Table rowKey="key" size="small" pagination={false} dataSource={previewRuleEvents} columns={previewRuleEventColumns} />
+        </Card>}
       </>}
+      <Modal open={previewOpen} title="合成静态预演" onCancel={() => setPreviewOpen(false)} onOk={() => previewForm.submit()} width={760} destroyOnHidden>
+        <Alert type="warning" showIcon message={STATIC_REPLAY_NOTICE} description="起止值只用于生成合成输入；评估器 v1 明确假定所有闸门初始关闭、泵初始停机且已满足最短停机，t=0 设定值立即生效。预演不会创建仿真任务、调度运行或水力结果。" />
+        <Form form={previewForm} layout="vertical" onFinish={(values) => void submitPreview(values)}>
+          <Form.Item name="interval_seconds" label="合成采样间隔（s）" rules={[{ required: true }]}><InputNumber min={0.001} max={plan?.duration_seconds} style={{ width: '100%' }} /></Form.Item>
+          {observationRequirements.length === 0
+            ? <div className="data-empty">当前规则仅依赖经过时间，无需构造额外观测值。</div>
+            : observationRequirements.map((requirement) => <Card size="small" key={requirement.key} title={`${requirement.type} #${requirement.objectId}`}>
+              <Row gutter={12}>
+                <Col span={12}><Form.Item name={['observations', requirement.key, 'start']} label="起始合成值" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+                <Col span={12}><Form.Item name={['observations', requirement.key, 'end']} label="结束合成值" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+              </Row>
+            </Card>)}
+        </Form>
+      </Modal>
       <Modal open={actionOpen} title="新增人工动作" onCancel={() => setActionOpen(false)} onOk={() => actionForm.submit()} destroyOnHidden>
         <Form form={actionForm} layout="vertical" onFinish={(values) => void submitAction(values)}>
           <Row gutter={12}><Col span={12}><Form.Item name="structure_type" label="设施类型" rules={[{ required: true }]}><Select options={[{ value: 'gate', label: '闸门' }, { value: 'pump', label: '泵站' }]} /></Form.Item></Col><Col span={12}><Form.Item name="asset_id" label="设施" rules={[{ required: true }]}><Select options={(watchedActionType === 'gate' ? gates : pumps).map((item) => ({ value: item.id, label: item.name }))} /></Form.Item></Col></Row>
           <Row gutter={12}><Col span={12}><Form.Item name="time_seconds" label="时刻（s）" rules={[{ required: true }]}><InputNumber min={0} max={plan?.duration_seconds} style={{ width: '100%' }} /></Form.Item></Col><Col span={12}><Form.Item name="sequence" label="序号" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col></Row>
-          <Form.Item name="command_type" label="命令（单位由命令确定）" rules={[{ required: true }]}><Select options={(watchedActionType === 'gate' ? ['gate_opening_m', 'gate_opening_ratio'] : ['pump_enabled', 'pump_unit_count', 'pump_target_flow']).map((value) => ({ value, label: value }))} /></Form.Item>
+          <Form.Item name="command_type" label="命令（单位由命令确定）" rules={[{ required: true }]}><Select onChange={(value) => { if (value === 'pump_enabled' || value === 'pump_unit_count') actionForm.setFieldValue('interpolation', 'step'); }} options={(watchedActionType === 'gate' ? ['gate_opening_m', 'gate_opening_ratio'] : ['pump_enabled', 'pump_unit_count', 'pump_target_flow']).map((value) => ({ value, label: value }))} /></Form.Item>
           <Row gutter={12}><Col span={12}><Form.Item name="target_value" label="目标值" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col><Col span={12}><Form.Item name="priority" label="优先级"><InputNumber style={{ width: '100%' }} /></Form.Item></Col></Row>
-          <Form.Item name="interpolation" label="插值"><Select options={['step', 'linear'].map((value) => ({ value, label: value }))} /></Form.Item><Form.Item name="note" label="备注"><Input /></Form.Item>
+          <Form.Item name="interpolation" label="插值"><Select options={(watchedActionCommand === 'pump_enabled' || watchedActionCommand === 'pump_unit_count' ? ['step'] : ['step', 'linear']).map((value) => ({ value, label: value }))} /></Form.Item><Form.Item name="note" label="备注"><Input /></Form.Item>
         </Form>
       </Modal>
       <Modal open={ruleOpen} title="新增受控阈值规则" onCancel={() => setRuleOpen(false)} onOk={() => ruleForm.submit()} width={720} destroyOnHidden>
@@ -473,9 +636,9 @@ export function DispatchRunListPage() {
     { title: '调度任务', dataIndex: 'controlled_task_id', width: 100 },
     { title: '创建时间', dataIndex: 'created_time', width: 180, render: localTime },
     { title: '错误', dataIndex: 'error_message', ellipsis: true },
-    { title: '操作', width: 200, render: (_, row) => <Space><Button size="small" onClick={() => navigate(`/dispatch/runs/${row.id}?datasetVersionId=${datasetVersionId}`)}>详情</Button>{['queued', 'running'].includes(row.status) && <Button size="small" danger onClick={async () => { await cancelDispatchRun(row.id); await reload(); }}>取消</Button>}{['failed', 'cancelled'].includes(row.status) && <Button size="small" onClick={async () => { const value = await retryDispatchRun(row.id); navigate(`/dispatch/runs/${value.id}?datasetVersionId=${datasetVersionId}`); }}>重试</Button>}</Space> },
+    { title: '操作', width: 150, render: (_, row) => <Space><Button size="small" onClick={() => navigate(`/dispatch/runs/${row.id}?datasetVersionId=${datasetVersionId}`)}>详情</Button>{['queued', 'running'].includes(row.status) && <Button size="small" danger onClick={async () => { await cancelDispatchRun(row.id); await reload(); }}>取消</Button>}</Space> },
   ];
-  return <div className="data-page dispatch-page"><DispatchHeader eyebrow="DISPATCH / ASYNC RUNS" title="调度运行中心" description="基准与调度任务通过 Celery/Redis 异步执行；页面轮询数据库状态，不在浏览器请求中等待求解。" action={<Space><Button onClick={() => navigate(`/dispatch/plans?datasetVersionId=${datasetVersionId}`)}>计划列表</Button><Button icon={<ReloadOutlined />} onClick={() => void reload()} /></Space>} /><Card className="data-card"><Table rowKey="id" loading={loading} dataSource={runs} columns={columns} scroll={{ x: 1250 }} /></Card></div>;
+  return <div className="data-page dispatch-page"><DispatchHeader eyebrow="DISPATCH / LEGACY RUNS" title="历史调度运行" description="只读兼容查看既有运行；当前 Gate/Pump 水力运行与重试均保持关闭。" action={<Space><Button onClick={() => navigate(`/dispatch/plans?datasetVersionId=${datasetVersionId}`)}>计划列表</Button><Button icon={<ReloadOutlined />} onClick={() => void reload()} /></Space>} /><Alert className="data-alert" type="warning" showIcon message="历史 success 不代表现行 MASCARET 支持、真实验证或生产可用" description="本阶段的新能力仅为冻结计划的合成静态预演；运行列表不会创建或重试水力任务。" /><Card className="data-card"><Table rowKey="id" loading={loading} dataSource={runs} columns={columns} scroll={{ x: 1250 }} /></Card></div>;
 }
 
 function ComparisonChart({ comparison }: { comparison?: DispatchComparison }) {
@@ -852,8 +1015,9 @@ export function DispatchRunDetailPage() {
   );
   return (
     <div className="data-page dispatch-page">
-      <DispatchHeader eyebrow="DISPATCH / RUN DETAIL" title={`调度运行 #${id}`} description="对齐查看基准与调度工况、结构物执行、规则审计、能耗和质量平衡。" action={<Space><Button onClick={() => navigate(`/dispatch/runs?datasetVersionId=${datasetVersionId}`)}>运行中心</Button><Button icon={<AimOutlined />} onClick={() => navigate(`/gis?datasetVersionId=${datasetVersionId}&dispatchRunId=${id}&time=0`)}>GIS 联动</Button></Space>} />
+      <DispatchHeader eyebrow="DISPATCH / LEGACY RUN DETAIL" title={`历史调度运行 #${id}`} description="只读查看既有记录中的基准/调度、水位、结构、能耗与诊断字段；这些字段不是本阶段静态预演输出。" action={<Space><Button onClick={() => navigate(`/dispatch/runs?datasetVersionId=${datasetVersionId}`)}>历史运行</Button><Button icon={<AimOutlined />} onClick={() => navigate(`/gis?datasetVersionId=${datasetVersionId}&dispatchRunId=${id}&time=0`)}>GIS 联动</Button></Space>} />
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}
+      <Alert className="data-alert" type="warning" showIcon message="历史记录仅供兼容审阅" description="即使状态为 success，也不代表当前 Gate/Pump Solver 能力已支持、真实工程验证已通过或设备可以下发。" />
       {currentRun && <>
         <Card className="data-card" title="运行状态" extra={stateTag(currentRun.status)}><Row gutter={[16, 16]}><Col xs={24} md={8}><Progress percent={currentRun.progress} status={currentRun.status === 'failed' ? 'exception' : currentRun.status === 'success' ? 'success' : 'active'} /></Col><Col xs={24} md={16}><Descriptions column={2} items={[{ key: 'baseline', label: '基准任务', children: currentRun.baseline_task_id }, { key: 'controlled', label: '调度任务', children: currentRun.controlled_task_id }, { key: 'start', label: '开始', children: localTime(currentRun.start_time) }, { key: 'end', label: '结束', children: localTime(currentRun.end_time) }]} /></Col></Row>{currentRun.error_message && <Alert type="error" showIcon message={currentRun.error_message} />}</Card>
         <Card className="data-card" title="Worker 与任务状态"><Table rowKey="id" pagination={false} dataSource={tasks} columns={[{ title: '任务', dataIndex: 'id' }, { title: '状态', dataIndex: 'status', render: stateTag }, { title: '进度', dataIndex: 'progress', render: (value: number) => `${value}%` }, { title: '执行阶段', dataIndex: 'execution_phase', render: (value: string | null) => value ?? '—' }, { title: '引擎', render: (_, task) => `${task.solver_id ?? 'mascaret'} ${task.engine_version ?? 'v9.1.1'}` }, { title: 'Adapter', dataIndex: 'runtime_adapter_id', render: (value: string | null) => value ?? '—' }, { title: 'Worker', dataIndex: 'worker_id', render: (value: string | null) => value ?? '—' }, { title: '心跳', dataIndex: 'heartbeat_time', render: localTime }, { title: '快照 SHA-256', dataIndex: 'input_snapshot_hash', ellipsis: true }]} scroll={{ x: 1350 }} /></Card>

@@ -36,6 +36,7 @@ jobs:
         run: >-
           python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
           tests/hydraulic_1d tests/benchmark/hydraulic_1d
+          tests/test_phase4_control.py tests/test_dispatch_static_replay.py
 
   postgis-migration:
     name: PostGIS migration
@@ -189,6 +190,36 @@ jobs:
           assert {"production_run_id", "metric_evidence_json"} <= calibrations
           assert {"production_run_id", "metric_evidence_json"} <= validations
           PY
+      - name: Verify dispatch action conflict guards
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, inspect
+
+          inspector = inspect(create_engine(os.environ["DATABASE_URL"]))
+          indexes = {
+              item["name"]: item
+              for item in inspector.get_indexes("dispatch_action")
+          }
+          checks = {
+              item["name"]
+              for item in inspector.get_check_constraints("dispatch_action")
+          }
+          assert {
+              "uq_dispatch_action_gate_time",
+              "uq_dispatch_action_pump_time",
+          } <= set(indexes)
+          assert indexes["uq_dispatch_action_gate_time"]["unique"]
+          assert indexes["uq_dispatch_action_pump_time"]["unique"]
+          assert {
+              "ck_dispatch_action_time_nonnegative",
+              "ck_dispatch_action_interpolation",
+              "ck_dispatch_action_command_type",
+              "ck_dispatch_action_structure_command_asset",
+              "ck_dispatch_action_discrete_step",
+          } <= checks
+          PY
       - name: Round-trip latest migration
         run: |
           alembic -c database/alembic.ini downgrade -1
@@ -206,6 +237,12 @@ jobs:
         run: >-
           python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
           backend/tests/test_hydraulic_production_postgis.py
+      - name: Run synthetic static dispatch PostGIS integration
+        env:
+          RUN_DISPATCH_STATIC_REPLAY_POSTGIS: "1"
+        run: >-
+          python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
+          backend/tests/test_dispatch_static_replay_postgis.py
 
   worker-integration:
     name: Worker integration

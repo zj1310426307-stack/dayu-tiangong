@@ -64,6 +64,8 @@ const requiredPaths = [
   '/api/v1/model/tasks/{task_id}/retry', '/api/v1/model/tasks/{task_id}/snapshot',
   '/api/v1/dispatch/plans', '/api/v1/dispatch/plans/{plan_id}',
   '/api/v1/dispatch/plans/{plan_id}/actions', '/api/v1/dispatch/plans/{plan_id}/rules',
+  '/api/v1/dispatch/plans/{plan_id}/readiness',
+  '/api/v1/dispatch/plans/{plan_id}/schedule-preview',
   '/api/v1/dispatch/plans/{plan_id}/runs', '/api/v1/dispatch/runs',
   '/api/v1/dispatch/runs/{run_id}', '/api/v1/dispatch/runs/{run_id}/comparison',
   '/api/v1/optimization/tasks', '/api/v1/optimization/tasks/{task_id}',
@@ -571,6 +573,8 @@ export const deleteDispatchPlan = (planId: number, baseUrl = '') => requestJson<
 export const cloneDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchPlanRecord>(\`/api/v1/dispatch/plans/\${planId}/clone\`, { method: 'POST' }, baseUrl);
 export const validateDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchValidationReport>(\`/api/v1/dispatch/plans/\${planId}/validate\`, { method: 'POST' }, baseUrl);
 export const freezeDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchPlanRecord>(\`/api/v1/dispatch/plans/\${planId}/freeze\`, { method: 'POST' }, baseUrl);
+export const getDispatchExecutionReadiness = (planId: number, baseUrl = '') => requestJson<DispatchExecutionReadiness>(\`/api/v1/dispatch/plans/\${planId}/readiness\`, {}, baseUrl);
+export const previewDispatchSchedule = (planId: number, body: DispatchSchedulePreviewRequest, baseUrl = '') => requestJson<DispatchSchedulePreview>(\`/api/v1/dispatch/plans/\${planId}/schedule-preview\`, jsonOptions('POST', body), baseUrl);
 export const listDispatchActions = (planId: number, baseUrl = '') => requestJson<Array<DispatchActionRecord>>(\`/api/v1/dispatch/plans/\${planId}/actions\`, {}, baseUrl);
 export const createDispatchAction = (planId: number, body: DispatchActionCreate, baseUrl = '') => requestJson<DispatchActionRecord>(\`/api/v1/dispatch/plans/\${planId}/actions\`, jsonOptions('POST', body), baseUrl);
 export const updateDispatchAction = (actionId: number, body: DispatchActionUpdate, baseUrl = '') => requestJson<DispatchActionRecord>(\`/api/v1/dispatch/actions/\${actionId}\`, jsonOptions('PATCH', body), baseUrl);

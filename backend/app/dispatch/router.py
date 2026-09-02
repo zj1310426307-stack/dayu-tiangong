@@ -11,6 +11,8 @@ from app.dispatch import service
 from app.dispatch.schemas import (
     DispatchActionCreate, DispatchActionRecord, DispatchActionUpdate,
     DispatchComparison, DispatchPlanCreate, DispatchPlanRecord, DispatchPlanUpdate,
+    DispatchExecutionReadiness, DispatchSchedulePreview,
+    DispatchSchedulePreviewRequest,
     DispatchRuleCreate, DispatchRuleRecord, DispatchRuleUpdate, DispatchRunRecord,
     Page, ValidationReport,
 )
@@ -76,7 +78,12 @@ def update_plan(plan_id: int, payload: DispatchPlanUpdate, session: SessionDepen
 
     try:
         return service.update_plan(session, plan_id, payload)
-    except (service.DispatchNotFoundError, service.DispatchStateError) as exc:
+    except (
+        service.DispatchNotFoundError,
+        service.DispatchStateError,
+        IntegrityError,
+    ) as exc:
+        session.rollback()
         raise _error(exc) from exc
 
 
@@ -97,7 +104,8 @@ def clone_plan(plan_id: int, session: SessionDependency) -> DispatchPlanRecord:
 
     try:
         return service.clone_plan(session, plan_id)
-    except service.DispatchNotFoundError as exc:
+    except (service.DispatchNotFoundError, IntegrityError) as exc:
+        session.rollback()
         raise _error(exc) from exc
 
 
@@ -118,6 +126,40 @@ def freeze_plan(plan_id: int, session: SessionDependency) -> DispatchPlanRecord:
     try:
         return service.freeze_plan(session, plan_id)
     except (service.DispatchNotFoundError, service.DispatchStateError) as exc:
+        raise _error(exc) from exc
+
+
+@router.get(
+    "/plans/{plan_id}/readiness", response_model=DispatchExecutionReadiness
+)
+def execution_readiness(
+    plan_id: int, session: SessionDependency
+) -> DispatchExecutionReadiness:
+    """Return authoritative plan, capability, snapshot, and runtime readiness."""
+
+    try:
+        return service.execution_readiness(session, plan_id)
+    except service.DispatchNotFoundError as exc:
+        raise _error(exc) from exc
+
+
+@router.post(
+    "/plans/{plan_id}/schedule-preview", response_model=DispatchSchedulePreview
+)
+def preview_schedule(
+    plan_id: int,
+    payload: DispatchSchedulePreviewRequest,
+    session: SessionDependency,
+) -> DispatchSchedulePreview:
+    """Replay a frozen policy against explicit synthetic observations only."""
+
+    try:
+        return service.preview_schedule(session, plan_id, payload)
+    except (
+        service.DispatchNotFoundError,
+        service.DispatchStateError,
+        ValueError,
+    ) as exc:
         raise _error(exc) from exc
 
 
@@ -148,7 +190,12 @@ def update_action(action_id: int, payload: DispatchActionUpdate, session: Sessio
 
     try:
         return service.update_action(session, action_id, payload)
-    except (service.DispatchNotFoundError, service.DispatchStateError) as exc:
+    except (
+        service.DispatchNotFoundError,
+        service.DispatchStateError,
+        IntegrityError,
+    ) as exc:
+        session.rollback()
         raise _error(exc) from exc
 
 
@@ -206,7 +253,7 @@ def delete_rule(rule_id: int, session: SessionDependency) -> Response:
 
 @router.post("/plans/{plan_id}/runs", response_model=DispatchRunRecord, status_code=202)
 def create_run(plan_id: int, session: SessionDependency) -> DispatchRunRecord:
-    """创建并异步投递基准/受控计算。"""
+    """Fail closed until Gate/Pump have a verified external-engine mapping."""
 
     try:
         return service.create_run(session, plan_id)
@@ -263,7 +310,7 @@ def cancel_run(run_id: int, session: SessionDependency) -> DispatchRunRecord:
 
 @router.post("/runs/{run_id}/retry", response_model=DispatchRunRecord, status_code=202)
 def retry_run(run_id: int, session: SessionDependency) -> DispatchRunRecord:
-    """以原冻结计划创建新的可审计运行，不覆写历史运行。"""
+    """保留历史重试路由，但统一经过当前 fail-closed 运行能力门。"""
 
     run = session.get(DispatchRun, run_id)
     if run is None:

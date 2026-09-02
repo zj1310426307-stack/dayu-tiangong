@@ -216,12 +216,21 @@ class DispatchActionCreate(BaseModel):
         )
         if not valid:
             raise ValueError("structure_type 与 gate_id/pump_id 必须唯一对应")
-        from model.control.constraints import command_matches_structure, validate_command_value
+        from model.control.constraints import (
+            command_matches_structure,
+            validate_command_value,
+            validate_interpolation,
+        )
         if not command_matches_structure(self.structure_type, self.command_type):
             raise ValueError("command_type does not match structure_type")
         value_valid, reason = validate_command_value(self.command_type, self.target_value)
         if not value_valid:
             raise ValueError(reason or "控制目标值无效")
+        interpolation_valid, reason = validate_interpolation(
+            self.command_type, self.interpolation
+        )
+        if not interpolation_valid:
+            raise ValueError(reason or "控制插值无效")
         return self
 
 
@@ -323,6 +332,162 @@ class ValidationReport(BaseModel):
     valid: bool
     errors: list[str]
     warnings: list[str]
+
+
+class DispatchReadinessIssue(BaseModel):
+    """Return one stable execution blocker or non-blocking warning."""
+
+    code: str
+    message: str
+    feature: str | None = None
+    status: str | None = None
+
+
+class DispatchCapabilityFact(BaseModel):
+    """Expose the exact version-bound capability fact used by readiness."""
+
+    engine: str
+    engine_version: str
+    adapter_version: str
+    feature: str
+    status: str
+    reason: str
+    benchmark_ids: list[str]
+    verified_at: str | None = None
+
+
+class DispatchExecutionReadiness(BaseModel):
+    """Separate plan validity, runtime availability, and Solver compatibility."""
+
+    plan_id: int
+    plan_status: PlanStatus
+    planning_valid: bool
+    frozen_snapshot_valid: bool
+    static_preview_allowed: bool
+    hydraulic_runtime_supported: Literal[False]
+    run_allowed: bool
+    evidence_class: Literal["SYNTHETIC_DEVELOPMENT_ONLY"]
+    real_validation_status: Literal["SKIPPED_BY_USER"]
+    engine: str
+    engine_version: str
+    adapter_version: str
+    runtime_available: bool
+    runtime_detail: str
+    required_features: list[str]
+    capabilities: list[DispatchCapabilityFact]
+    blockers: list[DispatchReadinessIssue]
+    warnings: list[DispatchReadinessIssue]
+    frozen_snapshot_hash: str | None
+
+
+class DispatchSyntheticObservationValue(BaseModel):
+    """Declare one finite, explicitly synthetic rule observation."""
+
+    model_config = ConfigDict(extra="forbid")
+    observation_type: Literal[
+        "node_water_level",
+        "section_water_level",
+        "gate_head_difference",
+        "pump_intake_level",
+    ]
+    observation_object_id: int = Field(gt=0)
+    value: FiniteFloat
+
+
+class DispatchSyntheticObservationFrame(BaseModel):
+    """Declare all synthetic observations available at one replay time."""
+
+    model_config = ConfigDict(extra="forbid")
+    time_seconds: FiniteFloat = Field(ge=0)
+    values: list[DispatchSyntheticObservationValue] = Field(
+        default_factory=list, max_length=500
+    )
+
+    @model_validator(mode="after")
+    def reject_duplicate_observations(self) -> "DispatchSyntheticObservationFrame":
+        """Keep one unambiguous value per observation identity and frame."""
+
+        keys = [
+            (item.observation_type, item.observation_object_id)
+            for item in self.values
+        ]
+        if len(keys) != len(set(keys)):
+            raise ValueError("synthetic observation frame contains duplicate identities")
+        return self
+
+
+class DispatchSchedulePreviewRequest(BaseModel):
+    """Request a non-hydraulic replay of one frozen scheduling policy."""
+
+    model_config = ConfigDict(extra="forbid")
+    evidence_class: Literal["SYNTHETIC_DEVELOPMENT_ONLY"]
+    observations: list[DispatchSyntheticObservationFrame] = Field(
+        min_length=2, max_length=2000
+    )
+
+    @model_validator(mode="after")
+    def validate_observation_timeline(self) -> "DispatchSchedulePreviewRequest":
+        """Require a deterministic timeline that starts at zero and never rewinds."""
+
+        times = [item.time_seconds for item in self.observations]
+        if times[0] != 0:
+            raise ValueError("synthetic observation replay must start at 0 seconds")
+        if any(right <= left for left, right in zip(times, times[1:])):
+            raise ValueError("synthetic observation times must be strictly increasing")
+        return self
+
+
+class DispatchReplayTargetRecord(BaseModel):
+    """Return one requested and statically resolved control target."""
+
+    structure_type: Literal["gate", "pump"]
+    structure_id: int
+    command_type: str
+    requested_value: float
+    resolved_value: float | None
+    priority: int
+    source_type: Literal["manual", "rule"]
+    source_id: int | None
+    outcome: Literal["selected", "limited", "rejected"]
+    reason: str | None
+
+
+class DispatchReplayRuleEvent(BaseModel):
+    """Return a synthetic rule trigger or recovery audit event."""
+
+    time_seconds: float
+    event_type: Literal["triggered", "recovered"]
+    rule_id: int | None
+    action_template: dict[str, Any]
+
+
+class DispatchReplayStep(BaseModel):
+    """Return selected targets and rule events for one observation frame."""
+
+    time_seconds: float
+    targets: list[DispatchReplayTargetRecord]
+    conflict_evaluations: int = Field(ge=0)
+    rule_events: list[DispatchReplayRuleEvent]
+
+
+class DispatchSchedulePreview(BaseModel):
+    """Return deterministic synthetic scheduling evidence without hydraulic claims."""
+
+    plan_id: int
+    evidence_class: Literal["SYNTHETIC_DEVELOPMENT_ONLY"]
+    hydraulic_execution_supported: Literal[False]
+    no_hydraulic_feedback: Literal[True]
+    plan_snapshot_hash: str
+    observation_hash: str
+    result_hash: str
+    steps: list[DispatchReplayStep]
+    conflict_evaluations: int = Field(ge=0)
+    rule_trigger_count: int = Field(ge=0)
+    rule_recovery_count: int = Field(ge=0)
+    evaluator_id: str
+    tie_break_policy: str
+    initial_state_basis: str
+    safety_notice: str
 
 
 class DispatchRunRecord(BaseModel):
