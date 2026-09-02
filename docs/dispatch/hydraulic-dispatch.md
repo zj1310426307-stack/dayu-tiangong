@@ -1,7 +1,7 @@
 # 一维水力调度开发边界
 
-更新日期：2026-09-02  
-适用合同：`dayu.dispatch-plan.v2` / `dayu.dispatch-plan.v3`  
+更新日期：2026-09-02
+适用合同：`dayu.dispatch-plan.v2` / `dayu.dispatch-plan.v3`
 当前状态：静态预演可用；水力编译与 v3 冻结按门禁开放；水力数值预演与正式调度运行保持 fail closed
 
 ## 四类能力不得混同

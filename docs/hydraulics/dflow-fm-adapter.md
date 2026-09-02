@@ -1,7 +1,7 @@
 # D-Flow FM Adapter 与外部运行时边界
 
-更新日期：2026-09-02  
-适用版本：`dayu-dflow-fm-adapter-v1` / `DIMRset_2026.02`  
+更新日期：2026-09-02
+适用版本：`dayu-dflow-fm-adapter-v1` / `DIMRset_2026.02`
 当前结论：`DFLOW_RUNTIME_BLOCKED`
 
 ## 当前状态

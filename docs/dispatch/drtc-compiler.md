@@ -1,8 +1,8 @@
 # D-RTC 编译器与闭环控制边界
 
-更新日期：2026-09-02  
-编译器合同：`dayu.drtc-compiler.v1`  
-固定 Runtime 基线：`DIMRset_2026.02`  
+更新日期：2026-09-02
+编译器合同：`dayu.drtc-compiler.v1`
+固定 Runtime 基线：`DIMRset_2026.02`
 当前结论：动态规则未闭合，真实 D-RTC coupling 未验证
 
 ## 权威边界
