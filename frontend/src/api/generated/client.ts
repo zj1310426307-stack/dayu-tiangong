@@ -616,11 +616,34 @@ export interface ComparisonWaterSample {
   "flow_difference": number;
 }
 
+export interface CompiledControlCommand {
+  "time_seconds": number;
+  "structure_type": "gate" | "pump";
+  "structure_id": number;
+  "command_type": string;
+  "requested_value": number;
+  "resolved_value": number;
+  "native_target_value": number;
+  "bmi_variable": string;
+  "source_type": "manual" | "rule";
+  "source_id": number | null;
+  "constraint_outcome": "selected" | "limited" | "rejected";
+  "constraint_reason"?: string | null;
+}
+
 export interface ConstraintConfig {
   "maximum_actions_per_asset"?: number;
   "maximum_pump_starts"?: number;
   "invalid_penalty"?: number;
   "hydraulic_limits"?: HydraulicLimits;
+}
+
+export interface ControlCompileIssue {
+  "code": string;
+  "message": string;
+  "structure_type"?: "gate" | "pump" | null;
+  "structure_id"?: number | null;
+  "source_id"?: number | null;
 }
 
 export interface ConversionCapabilityResponse {
@@ -887,6 +910,8 @@ export interface DispatchPlanRecord {
   "updated_time": string;
   "frozen_time": string | null;
   "frozen_snapshot_hash": string | null;
+  "snapshot_target"?: "static_v2" | "hydraulic_v3";
+  "cloned_from_plan_id"?: number | null;
   "action_count"?: number;
   "rule_count"?: number;
 }
@@ -985,6 +1010,13 @@ export interface DispatchRunRecord {
   "metrics": Record<string, unknown> | null;
   "queue_job_id": string | null;
   "error_message": string | null;
+  "run_mode"?: "legacy" | "hydraulic_preview" | "production";
+  "evidence_class"?: string | null;
+  "engine_id"?: string | null;
+  "control_runtime"?: string | null;
+  "compiled_artifact_hash"?: string | null;
+  "runtime_provenance"?: Record<string, unknown> | null;
+  "result_contract"?: Record<string, unknown> | null;
   "created_time": string;
   "start_time": string | null;
   "end_time": string | null;
@@ -1022,6 +1054,25 @@ export interface DispatchSyntheticObservationValue {
   "observation_type": "node_water_level" | "section_water_level" | "gate_head_difference" | "pump_intake_level";
   "observation_object_id": number;
   "value": number;
+}
+
+export interface DRTCCompileReport {
+  "compiler_version": string;
+  "pinned_runtime_tag"?: "DIMRset_2026.02";
+  "status": "COMPILED" | "UNSUPPORTED";
+  "rules": Array<DRTCRuleCompileRecord>;
+  "artifact_hash": string;
+  "runtime_validated"?: false;
+}
+
+export interface DRTCRuleCompileRecord {
+  "rule_id": number | null;
+  "status": "COMPILED" | "UNSUPPORTED";
+  "source_semantics": Record<string, unknown>;
+  "target_semantics": Record<string, unknown> | null;
+  "compiled_component": string | null;
+  "warnings"?: Array<string>;
+  "unsupported_reason"?: string | null;
 }
 
 export interface ExternalComparisonRequest {
@@ -1427,6 +1478,23 @@ export interface HydraulicChainageInput {
   "point_code"?: string | null;
 }
 
+export interface HydraulicCompileIssue {
+  "stage": "plan" | "hydraulic_model" | "capability" | "asset_mapping" | "gate_mapping" | "pump_mapping" | "manual_control" | "drtc" | "observation" | "runtime";
+  "code": string;
+  "message": string;
+  "field_path"?: string | null;
+  "structure_type"?: "gate" | "pump" | null;
+  "structure_id"?: number | null;
+}
+
+export interface HydraulicControlCompileReport {
+  "compiler_version"?: "dayu.hydraulic-control-compiler.v1";
+  "status": "COMPILED" | "UNSUPPORTED";
+  "commands"?: Array<CompiledControlCommand>;
+  "issues"?: Array<ControlCompileIssue>;
+  "artifact_hash": string;
+}
+
 export interface HydraulicCrossSectionInput {
   "section_code": string;
   "section_name"?: string | null;
@@ -1593,6 +1661,74 @@ export interface HydraulicNodeRecord {
   "node_name": string | null;
   "node_type": string;
   "geometry": Record<string, unknown>;
+}
+
+export interface HydraulicPlanCompileReport {
+  "plan_id": number;
+  "snapshot_target"?: "hydraulic_v3";
+  "target_schema_version"?: "dayu.dispatch-plan.v3";
+  "evidence_class"?: "SYNTHETIC_NUMERICAL_ONLY";
+  "engine_id"?: "d-flow-fm";
+  "engine_version"?: "DIMRset_2026.02";
+  "control_runtime"?: "d-rtc/fbc";
+  "plan_valid": boolean;
+  "hydraulic_model_valid": boolean;
+  "capability_valid": boolean;
+  "structure_mapping_valid": boolean;
+  "manual_control_valid": boolean;
+  "drtc_valid": boolean;
+  "observation_contract_valid": boolean;
+  "ready_to_freeze": boolean;
+  "runtime_available": boolean;
+  "controlled_runtime_accepted": boolean;
+  "ready_to_run": boolean;
+  "runtime_detail": string;
+  "runtime_provenance"?: Record<string, unknown> | null;
+  "capabilities"?: Array<Record<string, unknown>>;
+  "hydraulic_model_snapshot_hash"?: string | null;
+  "manual_control_report"?: HydraulicControlCompileReport | null;
+  "drtc_compile_report"?: DRTCCompileReport | null;
+  "issues"?: Array<HydraulicCompileIssue>;
+  "warnings"?: Array<HydraulicCompileIssue>;
+  "report_hash": string;
+  "real_engineering_validation"?: false;
+  "real_equipment_command"?: false;
+  "plc_scada_connected"?: false;
+}
+
+export interface HydraulicPlanCompileRequest {
+  "initial_actuator_state": Array<InitialActuatorState>;
+  "observation_bindings"?: Array<ObservationBinding>;
+  "observation_sampling_interval_seconds": number;
+  "runtime_mode"?: "external" | "container";
+  "timeout_seconds"?: number;
+  "synthetic_fixture"?: true;
+}
+
+export interface HydraulicPlanFreezeResponse {
+  "plan_id": number;
+  "status"?: "frozen";
+  "schema_version"?: "dayu.dispatch-plan.v3";
+  "snapshot_hash": string;
+  "hydraulic_model_snapshot_hash": string;
+  "control_contract_hash": string;
+  "evidence_class"?: "SYNTHETIC_NUMERICAL_ONLY";
+  "runtime_available": boolean;
+  "real_engineering_validation"?: false;
+  "real_equipment_command"?: false;
+  "plc_scada_connected"?: false;
+}
+
+export interface HydraulicPreviewJobRecord {
+  "job_id": number;
+  "run_id": number;
+  "evidence_class"?: "SYNTHETIC_NUMERICAL_ONLY";
+  "engine"?: "d-flow-fm";
+  "control_runtime"?: "d-rtc/fbc";
+  "status": "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
+  "real_engineering_validation"?: false;
+  "real_equipment_command"?: false;
+  "plc_scada_connected"?: false;
 }
 
 export interface HydraulicProcessingRecord {
@@ -1861,6 +1997,18 @@ export interface ImportResponse {
   "warnings": Array<ImportIssue>;
 }
 
+export interface InitialActuatorState {
+  "structure_type": "gate" | "pump";
+  "structure_id": number;
+  "gate_opening_m"?: number | null;
+  "pump_enabled"?: boolean | null;
+  "running_units"?: number | null;
+  "runtime_seconds"?: number;
+  "stop_seconds"?: number;
+  "control_state"?: Record<string, string | number | boolean>;
+  "evidence": "SOURCE_DATA" | "SYNTHETIC_INITIAL_STATE";
+}
+
 export interface KnowledgeDocumentRecord {
   "id": number;
   "name": string;
@@ -1999,6 +2147,17 @@ export interface ObjectiveWeights {
   "flood_risk"?: number;
   "energy_cost"?: number;
   "operation_cost"?: number;
+}
+
+export interface ObservationBinding {
+  "observation_type": "node_water_level" | "section_water_level" | "gate_head_difference" | "pump_intake_level";
+  "observation_object_id": number;
+  "source_kind": "observation_point" | "cross_section" | "oriented_observation_pair";
+  "source_id"?: string | null;
+  "upstream_source_id"?: string | null;
+  "downstream_source_id"?: string | null;
+  "unit"?: "m";
+  "binding_evidence": "SOURCE_DATA" | "SYNTHETIC_ASSUMPTION";
 }
 
 export interface ObservationRecord {
@@ -2640,6 +2799,8 @@ export interface SimulationTaskRecord {
   "status": "pending" | "queued" | "running" | "cancel_requested" | "cancelled" | "success" | "failed";
   "progress": number;
   "config": Record<string, unknown>;
+  "task_kind"?: "standard_1d" | "controlled_hydraulic_preview";
+  "evidence_class"?: string | null;
   "input_schema_version": string | null;
   "input_snapshot_hash": string | null;
   "engine_version": string | null;
@@ -2936,7 +3097,7 @@ export type ImportResource = 'rivers' | 'cross_sections' | 'gates' | 'pumps';
 export interface ApiErrorDetail {
   code: string;
   message: string;
-  context: Record<string, unknown>;
+  context?: Record<string, unknown>;
 }
 
 export class ApiError extends Error {
@@ -2959,9 +3120,11 @@ function isApiErrorDetail(value: unknown): value is ApiErrorDetail {
   const detail = value as Record<string, unknown>;
   return typeof detail.code === 'string'
     && typeof detail.message === 'string'
-    && typeof detail.context === 'object'
-    && detail.context !== null
-    && !Array.isArray(detail.context);
+    && (detail.context === undefined || (
+      typeof detail.context === 'object'
+      && detail.context !== null
+      && !Array.isArray(detail.context)
+    ));
 }
 
 function decodeApiError(payload: unknown): string | ApiErrorDetail | undefined {
@@ -3273,10 +3436,14 @@ export const getDispatchPlan = (planId: number, baseUrl = '') => requestJson<Dis
 export const updateDispatchPlan = (planId: number, body: DispatchPlanUpdate, baseUrl = '') => requestJson<DispatchPlanRecord>(`/api/v1/dispatch/plans/${planId}`, jsonOptions('PATCH', body), baseUrl);
 export const deleteDispatchPlan = (planId: number, baseUrl = '') => requestJson<void>(`/api/v1/dispatch/plans/${planId}`, { method: 'DELETE' }, baseUrl);
 export const cloneDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchPlanRecord>(`/api/v1/dispatch/plans/${planId}/clone`, { method: 'POST' }, baseUrl);
+export const cloneDispatchPlanForHydraulic = (planId: number, baseUrl = '') => requestJson<DispatchPlanRecord>(`/api/v1/dispatch/plans/${planId}/hydraulic-clone`, { method: 'POST' }, baseUrl);
 export const validateDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchValidationReport>(`/api/v1/dispatch/plans/${planId}/validate`, { method: 'POST' }, baseUrl);
 export const freezeDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchPlanRecord>(`/api/v1/dispatch/plans/${planId}/freeze`, { method: 'POST' }, baseUrl);
 export const getDispatchExecutionReadiness = (planId: number, baseUrl = '') => requestJson<DispatchExecutionReadiness>(`/api/v1/dispatch/plans/${planId}/readiness`, {}, baseUrl);
 export const previewDispatchSchedule = (planId: number, body: DispatchSchedulePreviewRequest, baseUrl = '') => requestJson<DispatchSchedulePreview>(`/api/v1/dispatch/plans/${planId}/schedule-preview`, jsonOptions('POST', body), baseUrl);
+export const compileDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPlanCompileReport>(`/api/v1/dispatch/plans/${planId}/hydraulic-compile-check`, jsonOptions('POST', body), baseUrl);
+export const freezeDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPlanFreezeResponse>(`/api/v1/dispatch/plans/${planId}/hydraulic-freeze`, jsonOptions('POST', body), baseUrl);
+export const previewDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPreviewJobRecord>(`/api/v1/dispatch/plans/${planId}/hydraulic-preview`, jsonOptions('POST', body), baseUrl);
 export const listDispatchActions = (planId: number, baseUrl = '') => requestJson<Array<DispatchActionRecord>>(`/api/v1/dispatch/plans/${planId}/actions`, {}, baseUrl);
 export const createDispatchAction = (planId: number, body: DispatchActionCreate, baseUrl = '') => requestJson<DispatchActionRecord>(`/api/v1/dispatch/plans/${planId}/actions`, jsonOptions('POST', body), baseUrl);
 export const updateDispatchAction = (actionId: number, body: DispatchActionUpdate, baseUrl = '') => requestJson<DispatchActionRecord>(`/api/v1/dispatch/actions/${actionId}`, jsonOptions('PATCH', body), baseUrl);

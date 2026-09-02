@@ -226,7 +226,9 @@ export function HydraulicDataPage() {
       setNetworks(networkRows);
       setJobs(jobRows);
       setCapabilities(capability);
-      setEngineCapabilities(engineRows);
+      setEngineCapabilities(
+        engineRows.filter((item) => item.engine === 'mascaret'),
+      );
       setStructures(structureRows);
       setSelectedNetworkId((current) => (
         current && networkRows.some((item) => item.id === current)

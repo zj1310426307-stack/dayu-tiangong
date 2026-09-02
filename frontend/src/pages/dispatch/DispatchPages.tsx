@@ -35,12 +35,14 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   cancelDispatchRun,
   cloneDispatchPlan,
+  cloneDispatchPlanForHydraulic,
+  compileDispatchHydraulicPlan,
   createDispatchAction,
   createDispatchPlan,
   createDispatchRule,
-  createDispatchRun,
   deleteDispatchAction,
   deleteDispatchRule,
+  freezeDispatchHydraulicPlan,
   freezeDispatchPlan,
   getDispatchExecutionReadiness,
   getDispatchComparison,
@@ -49,6 +51,7 @@ import {
   getDispatchPlan,
   getDispatchRun,
   getDispatchStructures,
+  getHydraulicEngineCapabilities,
   getHydraulicTask,
   getSimulationCases,
   listDispatchActions,
@@ -57,6 +60,7 @@ import {
   listDispatchRuns,
   listGateRecords,
   listPumpRecords,
+  previewDispatchHydraulicPlan,
   previewDispatchSchedule,
   updateDispatchPlan,
   validateDispatchPlan,
@@ -77,12 +81,21 @@ import {
   type PumpRecord,
   type SimulationTaskRecord,
   type DispatchValidationReport,
+  type HydraulicPlanCompileReport,
+  type HydraulicPlanCompileRequest,
+  type HydraulicPreviewJobRecord,
+  type SolverCapabilityRecord,
 } from '../../api/generated/client';
 import { useDatasetVersion } from '../../context/DatasetVersionContext';
 
 const { Paragraph, Text, Title } = Typography;
 const SIMULATION_NOTICE = '仿真方案 / 未下发真实设备 / DEMO DATA 不得作为工程审定成果';
-const STATIC_REPLAY_NOTICE = '合成静态预演 / 无水力反馈 / 不计算 H、Q、能耗或水量平衡';
+const STATIC_REPLAY_NOTICE = '合成静态预演 / 不含水位或流量（H/Q）/ 不计算能耗或水量平衡';
+const HYDRAULIC_DEVELOPMENT_EVIDENCE = [
+  'SYNTHETIC NUMERICAL DEVELOPMENT',
+  'NOT REAL ENGINEERING VALIDATION',
+  'NO REAL EQUIPMENT CONTROL',
+] as const;
 const DISPATCH_WINDOW_HOURS = 24;
 const DISPATCH_MILESTONES_HOURS = [0, 6, 12, 24] as const;
 
@@ -113,6 +126,39 @@ interface StructureCoverage {
   times: number[];
   startHours: number;
   endHours: number;
+}
+
+interface HydraulicAssetRef {
+  kind: StructureKind;
+  id: number;
+}
+
+interface HydraulicInitialStateFormValue {
+  gate_opening_m?: number;
+  pump_enabled?: boolean;
+  running_units?: number;
+  runtime_seconds?: number;
+  stop_seconds?: number;
+}
+
+interface HydraulicObservationFormValue {
+  source_id?: string;
+  upstream_source_id?: string;
+  downstream_source_id?: string;
+}
+
+interface HydraulicContractFormValues {
+  observation_sampling_interval_seconds: number;
+  runtime_mode: 'external' | 'container';
+  timeout_seconds: number;
+  initial_states?: Record<string, HydraulicInitialStateFormValue>;
+  observation_sources?: Record<string, HydraulicObservationFormValue>;
+}
+
+interface HydraulicObservationRequirement {
+  key: string;
+  type: 'node_water_level' | 'section_water_level' | 'gate_head_difference' | 'pump_intake_level';
+  objectId: number;
 }
 
 const STRUCTURE_METRIC_PANELS: StructureMetricPanel[] = [
@@ -161,6 +207,119 @@ function localTime(value: string | null) {
 }
 function errorText(reason: unknown, fallback: string) {
   return reason instanceof Error ? reason.message : fallback;
+}
+
+/** Keep the development evidence boundary visible anywhere Hydraulic Preview is offered. */
+function HydraulicDevelopmentEvidenceBanners() {
+  return (
+    <Space direction="vertical" style={{ width: '100%' }}>
+      {HYDRAULIC_DEVELOPMENT_EVIDENCE.map((notice) => (
+        <Alert key={notice} type="warning" showIcon message={notice} />
+      ))}
+    </Space>
+  );
+}
+
+/** Extract a stable structured error label from the generated API client. */
+function hydraulicError(reason: unknown, fallback: string) {
+  const code = typeof reason === 'object' && reason !== null && 'code' in reason
+    && typeof reason.code === 'string' ? reason.code : 'HYDRAULIC_PREVIEW_BLOCKED';
+  return { code, message: errorText(reason, fallback) };
+}
+
+/** Require a finite form number before creating an explicit synthetic contract. */
+function hydraulicFormNumber(value: number | undefined, label: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`请填写 ${label}`);
+  }
+  return value;
+}
+
+/** Build the exact backend compile request without assuming a closed/stopped actuator state. */
+function buildHydraulicCompileRequest(
+  values: HydraulicContractFormValues,
+  assets: HydraulicAssetRef[],
+  observations: HydraulicObservationRequirement[],
+): HydraulicPlanCompileRequest {
+  const initialState: HydraulicPlanCompileRequest['initial_actuator_state'] = assets.map((asset) => {
+    const state = values.initial_states?.[`${asset.kind}:${asset.id}`];
+    if (!state) throw new Error(`请填写 ${asset.kind} #${asset.id} 的显式初始状态`);
+    if (asset.kind === 'gate') {
+      return {
+        structure_type: 'gate',
+        structure_id: asset.id,
+        gate_opening_m: hydraulicFormNumber(state.gate_opening_m, `gate #${asset.id} 初始开度`),
+        evidence: 'SYNTHETIC_INITIAL_STATE',
+      };
+    }
+    if (typeof state.pump_enabled !== 'boolean') {
+      throw new Error(`请选择 pump #${asset.id} 的初始启停状态`);
+    }
+    const runningUnits = hydraulicFormNumber(state.running_units, `pump #${asset.id} 运行机组数`);
+    const runtimeSeconds = hydraulicFormNumber(state.runtime_seconds, `pump #${asset.id} 已运行时长`);
+    const stopSeconds = hydraulicFormNumber(state.stop_seconds, `pump #${asset.id} 已停机时长`);
+    if (!Number.isInteger(runningUnits) || runningUnits < 0) {
+      throw new Error(`pump #${asset.id} 运行机组数必须是非负整数`);
+    }
+    if (state.pump_enabled !== (runningUnits > 0)) {
+      throw new Error(`pump #${asset.id} 启停状态与运行机组数不一致`);
+    }
+    if ((runningUnits > 0 && stopSeconds > 0) || (runningUnits === 0 && runtimeSeconds > 0)) {
+      throw new Error(`pump #${asset.id} 的运行/停机时钟与初始状态不一致`);
+    }
+    return {
+      structure_type: 'pump',
+      structure_id: asset.id,
+      pump_enabled: state.pump_enabled,
+      running_units: runningUnits,
+      runtime_seconds: runtimeSeconds,
+      stop_seconds: stopSeconds,
+      evidence: 'SYNTHETIC_INITIAL_STATE',
+    };
+  });
+
+  const observationBindings: HydraulicPlanCompileRequest['observation_bindings'] = observations.map((item) => {
+    const source = values.observation_sources?.[item.key];
+    if (!source) throw new Error(`请填写 ${item.type} #${item.objectId} 的精确观测绑定`);
+    if (item.type === 'gate_head_difference') {
+      const upstream = source.upstream_source_id?.trim();
+      const downstream = source.downstream_source_id?.trim();
+      if (!upstream || !downstream || upstream === downstream) {
+        throw new Error(`gate_head_difference #${item.objectId} 需要不同的上下游观测点`);
+      }
+      return {
+        observation_type: item.type,
+        observation_object_id: item.objectId,
+        source_kind: 'oriented_observation_pair',
+        upstream_source_id: upstream,
+        downstream_source_id: downstream,
+        unit: 'm',
+        binding_evidence: 'SYNTHETIC_ASSUMPTION',
+      };
+    }
+    const sourceId = source.source_id?.trim();
+    if (!sourceId) throw new Error(`请填写 ${item.type} #${item.objectId} 的水力源 ID`);
+    return {
+      observation_type: item.type,
+      observation_object_id: item.objectId,
+      source_kind: item.type === 'section_water_level' ? 'cross_section' : 'observation_point',
+      source_id: sourceId,
+      unit: 'm',
+      binding_evidence: 'SYNTHETIC_ASSUMPTION',
+    };
+  });
+
+  return {
+    initial_actuator_state: initialState,
+    observation_bindings: observationBindings,
+    observation_sampling_interval_seconds: hydraulicFormNumber(
+      values.observation_sampling_interval_seconds,
+      '观测采样间隔',
+    ),
+    runtime_mode: values.runtime_mode,
+    timeout_seconds: hydraulicFormNumber(values.timeout_seconds, '超时时间'),
+    synthetic_fixture: true,
+  };
 }
 
 export function DispatchPlanListPage() {
@@ -236,6 +395,7 @@ export function DispatchPlanListPage() {
     { title: '数据版本', dataIndex: 'dataset_version_id', width: 100 },
     { title: '计算方案', dataIndex: 'simulation_case_id', width: 100 },
     { title: '状态', dataIndex: 'status', width: 105, render: stateTag },
+    { title: '快照轨道', dataIndex: 'snapshot_target', width: 125, render: (value) => <Tag>{value}</Tag> },
     { title: '动作', dataIndex: 'action_count', width: 75 },
     { title: '规则', dataIndex: 'rule_count', width: 75 },
     { title: '创建时间', dataIndex: 'created_time', width: 170, render: localTime },
@@ -245,9 +405,10 @@ export function DispatchPlanListPage() {
         <Space size={4} wrap>
           {row.status !== 'archived' && <Button size="small" onClick={() => navigate(`/dispatch/plans/${row.id}?datasetVersionId=${datasetVersionId}`)}>查看/编辑</Button>}
           {row.status === 'draft' && <Button size="small" onClick={() => void operate(row, 'validate')}>校验</Button>}
-          {row.status === 'validated' && <Button size="small" icon={<FileProtectOutlined />} onClick={() => void operate(row, 'freeze')}>冻结</Button>}
+          {row.status === 'validated' && row.snapshot_target === 'static_v2' && <Button size="small" icon={<FileProtectOutlined />} onClick={() => void operate(row, 'freeze')}>冻结</Button>}
+          {row.status === 'validated' && row.snapshot_target === 'hydraulic_v3' && <Button size="small" onClick={() => navigate(`/dispatch/plans/${row.id}?datasetVersionId=${datasetVersionId}`)}>编译检查</Button>}
           <Button size="small" icon={<CopyOutlined />} onClick={() => void operate(row, 'clone')}>克隆</Button>
-          {row.status === 'frozen' && <Button size="small" disabled title="请进入计划查看后端执行就绪状态">水力运行未开放</Button>}
+          {row.status === 'frozen' && <Button size="small" disabled title="生产运行入口未开放">生产运行未开放</Button>}
           {row.status === 'frozen' && <Button size="small" onClick={() => void operate(row, 'archive')}>归档</Button>}
         </Space>
       ),
@@ -314,6 +475,14 @@ export function DispatchPlanEditorPage() {
   const [report, setReport] = useState<DispatchValidationReport>();
   const [readiness, setReadiness] = useState<DispatchExecutionReadiness>();
   const [preview, setPreview] = useState<DispatchSchedulePreview>();
+  const [hydraulicCapabilities, setHydraulicCapabilities] = useState<SolverCapabilityRecord[]>([]);
+  const [hydraulicReport, setHydraulicReport] = useState<HydraulicPlanCompileReport>();
+  const [hydraulicRequest, setHydraulicRequest] = useState<HydraulicPlanCompileRequest>();
+  const [hydraulicJob, setHydraulicJob] = useState<HydraulicPreviewJobRecord>();
+  const [hydraulicIssue, setHydraulicIssue] = useState<{ code: string; message: string }>();
+  const [hydraulicBusy, setHydraulicBusy] = useState(false);
+  const [hydraulicOpen, setHydraulicOpen] = useState(false);
+  const [hydraulicModalAction, setHydraulicModalAction] = useState<'compile' | 'preview'>('compile');
   const [error, setError] = useState('');
   const [actionOpen, setActionOpen] = useState(false);
   const [ruleOpen, setRuleOpen] = useState(false);
@@ -321,6 +490,7 @@ export function DispatchPlanEditorPage() {
   const [actionForm] = Form.useForm<ActionForm>();
   const [ruleForm] = Form.useForm<RuleForm>();
   const [previewForm] = Form.useForm<PreviewFormValues>();
+  const [hydraulicForm] = Form.useForm<HydraulicContractFormValues>();
   const watchedActionType = Form.useWatch('structure_type', actionForm) ?? 'gate';
   const watchedActionCommand = Form.useWatch('command_type', actionForm);
   const watchedRuleType = Form.useWatch('structure_type', ruleForm) ?? 'gate';
@@ -332,14 +502,22 @@ export function DispatchPlanEditorPage() {
       if (datasetVersionId && record.dataset_version_id !== datasetVersionId) {
         throw new Error('计划与当前数据版本不一致，请切换数据版本');
       }
-      const [actionRows, ruleRows, gatePage, pumpPage, readinessValue] = await Promise.all([
+      const [actionRows, ruleRows, gatePage, pumpPage, readinessValue, capabilityRows] = await Promise.all([
         listDispatchActions(id), listDispatchRules(id),
         listGateRecords({ dataset_version_id: record.dataset_version_id, limit: 200 }),
         listPumpRecords({ dataset_version_id: record.dataset_version_id, limit: 200 }),
         getDispatchExecutionReadiness(id),
+        getHydraulicEngineCapabilities().catch((reason) => {
+          setHydraulicIssue(hydraulicError(reason, '能力矩阵加载失败'));
+          return [];
+        }),
       ]);
       setPlan(record); setActions(actionRows); setRules(ruleRows);
-      setGates(gatePage.items); setPumps(pumpPage.items); setReadiness(readinessValue); setError('');
+      setGates(gatePage.items); setPumps(pumpPage.items); setReadiness(readinessValue);
+      setHydraulicCapabilities(capabilityRows.filter(
+        (item) => item.engine === 'd-flow-fm' && item.engine_version === 'DIMRset_2026.02',
+      ));
+      setError('');
     } catch (reason) { setError(errorText(reason, '计划加载失败')); }
   }, [datasetVersionId, id]);
   useEffect(() => { void reload(); }, [reload]);
@@ -365,7 +543,6 @@ export function DispatchPlanEditorPage() {
   };
   const validate = async () => { const value = await validateDispatchPlan(id); setReport(value); await reload(); };
   const freeze = async () => { await freezeDispatchPlan(id); message.success('冻结成功'); await reload(); };
-  const run = async () => { const value = await createDispatchRun(id); navigate(`/dispatch/runs/${value.id}?datasetVersionId=${datasetVersionId}`); };
   const openPreview = () => {
     if (!plan) return;
     previewForm.setFieldsValue({
@@ -373,15 +550,121 @@ export function DispatchPlanEditorPage() {
     });
     setPreviewOpen(true);
   };
+  const hydraulicAssets = useMemo(() => {
+    const unique = new Map<string, HydraulicAssetRef>();
+    actions.forEach((action) => {
+      const assetId = action.structure_type === 'gate' ? action.gate_id : action.pump_id;
+      if (assetId != null) {
+        unique.set(`${action.structure_type}:${assetId}`, { kind: action.structure_type, id: assetId });
+      }
+    });
+    rules.forEach((rule) => {
+      const template = rule.action_template;
+      const kind = template.structure_type;
+      const assetId = template.structure_id;
+      if ((kind === 'gate' || kind === 'pump') && typeof assetId === 'number' && Number.isInteger(assetId) && assetId > 0) {
+        unique.set(`${kind}:${assetId}`, { kind, id: assetId });
+      }
+    });
+    return [...unique.values()].sort((left, right) => left.kind.localeCompare(right.kind) || left.id - right.id);
+  }, [actions, rules]);
+  /** Resolve a display name without changing the legacy numeric actuator identity. */
+  const hydraulicAssetLabel = (asset: HydraulicAssetRef) => {
+    const record = (asset.kind === 'gate' ? gates : pumps).find((item) => item.id === asset.id);
+    return `${record?.name ?? asset.kind} #${asset.id}`;
+  };
   const observationRequirements = useMemo(() => {
-    const unique = new Map<string, { key: string; type: string; objectId: number }>();
+    const unique = new Map<string, HydraulicObservationRequirement>();
     rules.forEach((rule) => {
       if (!rule.enabled || rule.observation_type === 'elapsed_time' || rule.observation_object_id == null) return;
       const key = `${rule.observation_type}:${rule.observation_object_id}`;
       unique.set(key, { key, type: rule.observation_type, objectId: rule.observation_object_id });
     });
-    return [...unique.values()];
+    return [...unique.values()].sort((left, right) => left.type.localeCompare(right.type) || left.objectId - right.objectId);
   }, [rules]);
+
+  useEffect(() => {
+    setHydraulicReport(undefined);
+    setHydraulicRequest(undefined);
+    setHydraulicJob(undefined);
+    setHydraulicIssue(undefined);
+    hydraulicForm.resetFields();
+  }, [hydraulicForm, id]);
+
+  /** Create the only supported static-to-hydraulic lineage transition. */
+  const cloneForHydraulic = async () => {
+    setHydraulicBusy(true);
+    setHydraulicIssue(undefined);
+    try {
+      const clone = await cloneDispatchPlanForHydraulic(id);
+      navigate(`/dispatch/plans/${clone.id}?datasetVersionId=${datasetVersionId}`);
+    } catch (reason) {
+      setHydraulicIssue(hydraulicError(reason, 'Hydraulic Preview 副本创建失败'));
+    } finally {
+      setHydraulicBusy(false);
+    }
+  };
+
+  /** Open the same explicit contract form for compile-check or development preview. */
+  const openHydraulicContract = (action: 'compile' | 'preview') => {
+    setHydraulicModalAction(action);
+    if (!hydraulicForm.getFieldValue('runtime_mode')) {
+      hydraulicForm.setFieldsValue({
+        observation_sampling_interval_seconds: Math.max(1, Math.ceil((plan?.duration_seconds ?? 60) / 120)),
+        runtime_mode: 'container',
+        timeout_seconds: 3600,
+        initial_states: Object.fromEntries(hydraulicAssets.map((asset) => [
+          `${asset.kind}:${asset.id}`,
+          asset.kind === 'pump' ? { runtime_seconds: 0, stop_seconds: 0 } : {},
+        ])),
+      });
+    }
+    setHydraulicOpen(true);
+  };
+
+  /** Call only the generated development endpoints and retain the exact request for freeze. */
+  const submitHydraulicContract = async (values: HydraulicContractFormValues) => {
+    setHydraulicBusy(true);
+    setHydraulicIssue(undefined);
+    try {
+      const request = buildHydraulicCompileRequest(values, hydraulicAssets, observationRequirements);
+      setHydraulicRequest(request);
+      if (hydraulicModalAction === 'compile') {
+        const result = await compileDispatchHydraulicPlan(id, request);
+        setHydraulicReport(result);
+        message[result.ready_to_freeze ? 'success' : 'warning'](
+          result.ready_to_freeze ? '编译检查通过，可冻结 v3 快照' : '编译检查完成，存在精确阻塞项',
+        );
+      } else {
+        const job = await previewDispatchHydraulicPlan(id, request);
+        setHydraulicJob(job);
+        message.success(`Hydraulic Preview 已提交：${job.status}`);
+      }
+      setHydraulicOpen(false);
+    } catch (reason) {
+      const issue = hydraulicError(reason, hydraulicModalAction === 'compile' ? '编译检查失败' : 'Hydraulic Preview 未创建');
+      setHydraulicIssue(issue);
+      message.error(`${issue.code}: ${issue.message}`);
+    } finally {
+      setHydraulicBusy(false);
+    }
+  };
+
+  /** Recompile and freeze through the dedicated v3 route; never create a production run. */
+  const freezeHydraulic = async () => {
+    if (!hydraulicRequest || !hydraulicReport?.ready_to_freeze) return;
+    setHydraulicBusy(true);
+    setHydraulicIssue(undefined);
+    try {
+      const result = await freezeDispatchHydraulicPlan(id, hydraulicRequest);
+      message.success(`Hydraulic v3 已冻结：${result.snapshot_hash}`);
+      await reload();
+    } catch (reason) {
+      setHydraulicIssue(hydraulicError(reason, 'Hydraulic v3 冻结失败'));
+    } finally {
+      setHydraulicBusy(false);
+    }
+  };
   const previewTargets = useMemo(() => preview?.steps.flatMap((step) => step.targets.map((target, index) => ({
     ...target,
     key: `${step.time_seconds}-${target.structure_type}-${target.structure_id}-${target.command_type}-${index}`,
@@ -472,14 +755,20 @@ export function DispatchPlanEditorPage() {
     { title: '事件', dataIndex: 'event_type', width: 110, render: (value) => <Tag color={value === 'triggered' ? 'processing' : 'default'}>{value}</Tag> },
     { title: '动作模板', dataIndex: 'action_template', render: (value) => <code>{JSON.stringify(value)}</code> },
   ];
+  const hydraulicCapabilityColumns: ColumnsType<SolverCapabilityRecord> = [
+    { title: '能力', dataIndex: 'feature', width: 190 },
+    { title: '状态', dataIndex: 'status', width: 150, render: (value) => <Tag color={String(value).startsWith('VERIFIED') ? 'success' : 'warning'}>{value}</Tag> },
+    { title: '精确说明', dataIndex: 'reason' },
+    { title: '基准证据', dataIndex: 'benchmark_ids', width: 220, render: (value: string[]) => value.length ? value.join(', ') : '—' },
+  ];
 
   return (
     <div className="data-page dispatch-page">
       <DispatchHeader
         eyebrow="DISPATCH / PLAN EDITOR"
         title={plan ? `${plan.name} · v${plan.version}` : '调度计划编辑器'}
-        description="人工动作和白名单阈值规则在冻结前可编辑；冻结后仅开放无水力反馈的合成静态预演。"
-        action={<Space wrap><Button onClick={() => navigate(`/dispatch/plans?datasetVersionId=${datasetVersionId}`)}>返回列表</Button>{plan?.status === 'validated' && <Button icon={<FileProtectOutlined />} onClick={() => void freeze()}>冻结</Button>}{plan?.status === 'frozen' && <Button icon={<PlayCircleOutlined />} disabled={!readiness?.static_preview_allowed} title={readiness?.static_preview_allowed ? undefined : '冻结快照完整性门未通过'} onClick={openPreview}>合成静态预演</Button>}{plan?.status === 'frozen' && <Button type="primary" disabled={!readiness?.run_allowed} title={readiness?.run_allowed ? undefined : '后端执行就绪门未通过'} onClick={() => void run()}>水力运行</Button>}</Space>}
+        description="静态预演只回放命令与规则，不含水位/流量；Hydraulic Preview 仅用于合成数值开发。"
+        action={<Space wrap><Button onClick={() => navigate(`/dispatch/plans?datasetVersionId=${datasetVersionId}`)}>返回列表</Button>{plan?.status === 'validated' && plan.snapshot_target === 'static_v2' && <Button icon={<FileProtectOutlined />} onClick={() => void freeze()}>冻结静态快照</Button>}{plan?.status === 'frozen' && plan.snapshot_target === 'static_v2' && <Button icon={<PlayCircleOutlined />} disabled={!readiness?.static_preview_allowed} title={readiness?.static_preview_allowed ? '不含水位或流量结果' : '冻结快照完整性门未通过'} onClick={openPreview}>静态预演（无 H/Q）</Button>}{plan?.status === 'frozen' && <Button type="primary" disabled title="生产运行未授权；Hydraulic Preview 不是生产运行">生产运行未开放</Button>}</Space>}
       />
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}
       {plan && <>
@@ -489,19 +778,19 @@ export function DispatchPlanEditorPage() {
             { key: 'case', label: '计算方案', children: plan.simulation_case_id },
             { key: 'duration', label: '时长', children: `${plan.duration_seconds} s` },
             { key: 'storage', label: '存储级别', children: plan.storage_level },
+            { key: 'snapshot-target', label: '快照轨道', children: <Tag>{plan.snapshot_target}</Tag> },
+            { key: 'clone-source', label: '水力副本来源', children: plan.cloned_from_plan_id ? `#${plan.cloned_from_plan_id}` : '—' },
             { key: 'hash', label: '冻结 SHA-256', children: plan.frozen_snapshot_hash ? <Text copyable>{plan.frozen_snapshot_hash}</Text> : '—' },
             { key: 'time', label: '冻结时间', children: localTime(plan.frozen_time) },
           ]} />
         </Card>
-        {readiness && <Card className="data-card" title="执行就绪状态（后端权威）" extra={<Tag color={readiness.run_allowed ? 'success' : 'error'}>{readiness.run_allowed ? 'RUN ALLOWED' : 'FAIL CLOSED'}</Tag>}>
+        {readiness && plan.snapshot_target === 'static_v2' && <Card className="data-card" title="静态预演就绪状态（后端权威）" extra={<Tag color={readiness.static_preview_allowed ? 'success' : 'error'}>{readiness.static_preview_allowed ? 'STATIC PREVIEW READY' : 'FAIL CLOSED'}</Tag>}>
           <Alert
             showIcon
-            type={readiness.run_allowed ? 'success' : 'warning'}
-            message={readiness.run_allowed
-              ? '水力运行条件已满足'
-              : readiness.static_preview_allowed
-                ? '水力运行未开放；可继续使用合成静态预演'
-                : '水力运行与静态预演均未开放；请先完成计划校验和冻结快照门'}
+            type={readiness.static_preview_allowed ? 'success' : 'warning'}
+            message={readiness.static_preview_allowed
+              ? '静态预演已就绪，但不含水位或流量结果'
+              : '静态预演未开放；请先完成计划校验和冻结快照门'}
             description={STATIC_REPLAY_NOTICE}
           />
           <Descriptions className="dispatch-readiness" column={{ xs: 1, sm: 2, lg: 4 }} items={[
@@ -523,6 +812,119 @@ export function DispatchPlanEditorPage() {
             {readiness.warnings.map((issue, index) => <Alert key={`${issue.code}-${index}`} type="warning" showIcon message={issue.code} description={issue.message} />)}
           </Space>
         </Card>}
+        <Card
+          className="data-card"
+          title="Hydraulic Preview（开发态）"
+          extra={<Space><Tag color="processing">D-Flow FM DIMRset_2026.02</Tag><Tag color="warning">D-RTC / FBC</Tag></Space>}
+        >
+          <HydraulicDevelopmentEvidenceBanners />
+          <Alert
+            className="data-alert"
+            type="info"
+            showIcon
+            message={plan.snapshot_target === 'hydraulic_v3' ? 'Hydraulic v3 独立轨道' : '静态 v2 不会被原地升级'}
+            description={plan.snapshot_target === 'hydraulic_v3'
+              ? '编译检查仅验证冻结契约与开发态运行时；就绪冻结不等于真实工程验证或生产可用。'
+              : '需从已冻结静态计划创建可追溯的 hydraulic_v3 副本，然后重新校验、编译检查和冻结。'}
+          />
+          <Space wrap style={{ marginBottom: 16 }}>
+            {plan.snapshot_target === 'static_v2' && (
+              <Button
+                loading={hydraulicBusy}
+                disabled={plan.status !== 'frozen'}
+                title={plan.status === 'frozen' ? undefined : '先冻结 static_v2 计划'}
+                onClick={() => void cloneForHydraulic()}
+              >
+                创建 Hydraulic Preview 副本
+              </Button>
+            )}
+            {plan.snapshot_target === 'hydraulic_v3' && plan.status === 'draft' && (
+              <Button disabled title="先运行页面下方的计划校验">待计划校验</Button>
+            )}
+            {plan.snapshot_target === 'hydraulic_v3' && plan.status === 'validated' && (
+              <Button loading={hydraulicBusy} onClick={() => openHydraulicContract('compile')}>运行编译检查</Button>
+            )}
+            {plan.snapshot_target === 'hydraulic_v3' && plan.status === 'validated' && (
+              <Button
+                type="primary"
+                icon={<FileProtectOutlined />}
+                loading={hydraulicBusy}
+                disabled={!hydraulicReport?.ready_to_freeze || !hydraulicRequest}
+                title={hydraulicReport?.ready_to_freeze ? undefined : '需先通过同一契约的编译检查'}
+                onClick={() => void freezeHydraulic()}
+              >
+                冻结 Hydraulic v3
+              </Button>
+            )}
+            {plan.snapshot_target === 'hydraulic_v3' && plan.status === 'frozen' && (
+              <Button
+                icon={<PlayCircleOutlined />}
+                loading={hydraulicBusy}
+                onClick={() => openHydraulicContract('preview')}
+              >
+                开发态 Hydraulic Preview
+              </Button>
+            )}
+            <Button type="primary" disabled title="Hydraulic Preview 永不代表生产运行授权">生产运行未开放</Button>
+          </Space>
+
+          <Title level={5}>能力矩阵（固定引擎版本）</Title>
+          {hydraulicCapabilities.length ? (
+            <Table
+              rowKey={(item) => `${item.engine}-${item.engine_version}-${item.feature}`}
+              size="small"
+              pagination={false}
+              dataSource={hydraulicCapabilities}
+              columns={hydraulicCapabilityColumns}
+              scroll={{ x: 900 }}
+            />
+          ) : (
+            <Alert type="error" showIcon message="D-FLOW-CAPABILITY-CATALOG-MISSING" description="未加载固定 DIMRset_2026.02 能力矩阵，Hydraulic Preview 必须 fail closed。" />
+          )}
+
+          {hydraulicReport ? <>
+            <Title level={5}>最近编译检查</Title>
+            <Descriptions className="dispatch-readiness" column={{ xs: 1, sm: 2, lg: 4 }} items={[
+              { key: 'plan', label: '计划契约', children: stateTag(hydraulicReport.plan_valid ? 'valid' : 'invalid') },
+              { key: 'model', label: '水力模型', children: stateTag(hydraulicReport.hydraulic_model_valid ? 'valid' : 'invalid') },
+              { key: 'capability', label: '引擎能力', children: stateTag(hydraulicReport.capability_valid ? 'valid' : 'blocked') },
+              { key: 'mapping', label: '闸泵映射', children: stateTag(hydraulicReport.structure_mapping_valid ? 'valid' : 'invalid') },
+              { key: 'manual', label: '人工控制', children: stateTag(hydraulicReport.manual_control_valid ? 'valid' : 'invalid') },
+              { key: 'drtc', label: 'D-RTC', children: stateTag(hydraulicReport.drtc_valid ? 'valid' : 'invalid') },
+              { key: 'observation', label: '观测契约', children: stateTag(hydraulicReport.observation_contract_valid ? 'valid' : 'invalid') },
+              { key: 'freeze', label: '冻结就绪', children: stateTag(hydraulicReport.ready_to_freeze ? 'ready' : 'blocked') },
+              { key: 'runtime', label: '开发运行时', children: stateTag(hydraulicReport.runtime_available ? 'available' : 'blocked') },
+              { key: 'runtime-acceptance', label: '闭环运行验收', children: stateTag(hydraulicReport.controlled_runtime_accepted ? 'accepted' : 'blocked') },
+              { key: 'run', label: '预演就绪', children: stateTag(hydraulicReport.ready_to_run ? 'ready' : 'blocked') },
+              { key: 'hash', label: '报告 SHA-256', children: <Text copyable>{hydraulicReport.report_hash}</Text> },
+              { key: 'runtime-detail', label: '运行时说明', children: hydraulicReport.runtime_detail },
+            ]} />
+            <Space direction="vertical" style={{ width: '100%' }}>
+              {(hydraulicReport.issues ?? []).map((issue, index) => (
+                <Alert
+                  key={`${issue.stage}-${issue.code}-${issue.field_path ?? ''}-${index}`}
+                  type="error"
+                  showIcon
+                  message={`[${issue.stage}] ${issue.code}`}
+                  description={`${issue.message}${issue.field_path ? ` · ${issue.field_path}` : ''}`}
+                />
+              ))}
+              {(hydraulicReport.warnings ?? []).map((issue, index) => (
+                <Alert
+                  key={`warning-${issue.stage}-${issue.code}-${index}`}
+                  type="warning"
+                  showIcon
+                  message={`[${issue.stage}] ${issue.code}`}
+                  description={`${issue.message}${issue.field_path ? ` · ${issue.field_path}` : ''}`}
+                />
+              ))}
+            </Space>
+          </> : plan.snapshot_target === 'hydraulic_v3' && (
+            <Alert type="info" showIcon message="尚未运行编译检查" description="报告将分开显示冻结就绪、运行时可用性与每一个精确阻塞原因。" />
+          )}
+          {hydraulicIssue && <Alert className="data-alert" type="error" showIcon message={hydraulicIssue.code} description={hydraulicIssue.message} />}
+          {hydraulicJob && <Alert className="data-alert" type="warning" showIcon message={`Hydraulic Preview job #${hydraulicJob.job_id} · ${hydraulicJob.status}`} description={`${hydraulicJob.engine} / ${hydraulicJob.control_runtime} · ${hydraulicJob.evidence_class}`} />}
+        </Card>
         <div className="dispatch-timeline" aria-label="动作时间轴">
           <span>0 s</span>
           <div>{actions.map((item) => <i key={item.id} title={`${item.structure_type} #${item.gate_id ?? item.pump_id} @ ${item.time_seconds}s`} style={{ left: `${Math.min(100, item.time_seconds / plan.duration_seconds * 100)}%` }} />)}</div>
@@ -556,6 +958,116 @@ export function DispatchPlanEditorPage() {
           <Table rowKey="key" size="small" pagination={false} dataSource={previewRuleEvents} columns={previewRuleEventColumns} />
         </Card>}
       </>}
+      <Modal
+        open={hydraulicOpen}
+        title={hydraulicModalAction === 'compile' ? 'Hydraulic v3 编译检查' : '开发态 Hydraulic Preview'}
+        onCancel={() => setHydraulicOpen(false)}
+        onOk={() => hydraulicForm.submit()}
+        confirmLoading={hydraulicBusy}
+        okText={hydraulicModalAction === 'compile' ? '运行编译检查' : '提交开发态预演'}
+        width={900}
+        destroyOnHidden
+      >
+        <HydraulicDevelopmentEvidenceBanners />
+        <Alert
+          className="data-alert"
+          type="warning"
+          showIcon
+          message="所有初态和观测源必须显式填写"
+          description="表单不会假定闸门关闭、泵站停机，也不会根据最近空间位置猜测观测点。"
+        />
+        <Form
+          form={hydraulicForm}
+          layout="vertical"
+          onFinish={(values) => void submitHydraulicContract(values)}
+        >
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item name="observation_sampling_interval_seconds" label="观测采样间隔（s）" rules={[{ required: true }]}>
+                <InputNumber min={0.001} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="runtime_mode" label="开发运行方式" rules={[{ required: true }]}>
+                <Select options={[{ value: 'container', label: 'container' }, { value: 'external', label: 'external' }]} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="timeout_seconds" label="超时（s）" rules={[{ required: true }]}>
+                <InputNumber min={1} max={86400} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Title level={5}>显式执行器初态 <Tag color="warning">SYNTHETIC_INITIAL_STATE</Tag></Title>
+          {hydraulicAssets.length === 0 && <Alert type="error" showIcon message="计划未引用闸门或泵站" />}
+          {hydraulicAssets.map((asset) => {
+            const key = `${asset.kind}:${asset.id}`;
+            return (
+              <Card key={key} size="small" title={hydraulicAssetLabel(asset)} style={{ marginBottom: 12 }}>
+                {asset.kind === 'gate' ? (
+                  <Form.Item name={['initial_states', key, 'gate_opening_m']} label="初始开度（m）" rules={[{ required: true }]}>
+                    <InputNumber min={0} style={{ width: '100%' }} />
+                  </Form.Item>
+                ) : (
+                  <Row gutter={12}>
+                    <Col span={6}>
+                      <Form.Item name={['initial_states', key, 'pump_enabled']} label="初始启停" rules={[{ required: true }]}>
+                        <Select options={[{ value: true, label: '运行' }, { value: false, label: '停机' }]} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={6}>
+                      <Form.Item name={['initial_states', key, 'running_units']} label="运行机组数" rules={[{ required: true }]}>
+                        <InputNumber min={0} precision={0} style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={6}>
+                      <Form.Item name={['initial_states', key, 'runtime_seconds']} label="已运行（s）" rules={[{ required: true }]}>
+                        <InputNumber min={0} style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                    <Col span={6}>
+                      <Form.Item name={['initial_states', key, 'stop_seconds']} label="已停机（s）" rules={[{ required: true }]}>
+                        <InputNumber min={0} style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+                )}
+              </Card>
+            );
+          })}
+
+          <Title level={5}>精确观测绑定 <Tag color="warning">SYNTHETIC_ASSUMPTION</Tag></Title>
+          {observationRequirements.length === 0 ? (
+            <div className="data-empty">当前启用规则不需要水力观测绑定。</div>
+          ) : observationRequirements.map((item) => (
+            <Card key={item.key} size="small" title={`${item.type} #${item.objectId}`} style={{ marginBottom: 12 }}>
+              {item.type === 'gate_head_difference' ? (
+                <Row gutter={12}>
+                  <Col span={12}>
+                    <Form.Item name={['observation_sources', item.key, 'upstream_source_id']} label="上游 observation point ID" rules={[{ required: true }]}>
+                      <Input />
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item name={['observation_sources', item.key, 'downstream_source_id']} label="下游 observation point ID" rules={[{ required: true }]}>
+                      <Input />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              ) : (
+                <Form.Item
+                  name={['observation_sources', item.key, 'source_id']}
+                  label={item.type === 'section_water_level' ? 'cross section ID' : 'observation point ID'}
+                  rules={[{ required: true }]}
+                >
+                  <Input />
+                </Form.Item>
+              )}
+            </Card>
+          ))}
+        </Form>
+      </Modal>
       <Modal open={previewOpen} title="合成静态预演" onCancel={() => setPreviewOpen(false)} onOk={() => previewForm.submit()} width={760} destroyOnHidden>
         <Alert type="warning" showIcon message={STATIC_REPLAY_NOTICE} description="起止值只用于生成合成输入；评估器 v1 明确假定所有闸门初始关闭、泵初始停机且已满足最短停机，t=0 设定值立即生效。预演不会创建仿真任务、调度运行或水力结果。" />
         <Form form={previewForm} layout="vertical" onFinish={(values) => void submitPreview(values)}>
