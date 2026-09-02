@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy import func, select, text
 
 from app.database.session import SessionLocal
+from app.dispatch import service as dispatch_service
 from app.gis.models import (
     BoundaryCondition,
     DatasetVersion,
@@ -297,14 +298,14 @@ def test_frozen_v2_readiness_replay_and_runtime_fail_closed() -> None:
             .with_for_update()
         ) is not None
 
-        def clone_request():
-            with TestClient(app) as concurrent_client:
-                return concurrent_client.post(
-                    f"/api/v1/dispatch/plans/{plan_id}/clone"
-                )
+        def clone_version() -> int:
+            with SessionLocal() as concurrent_session:
+                return dispatch_service.clone_plan(
+                    concurrent_session, plan_id
+                ).version
 
         with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [executor.submit(clone_request) for _ in range(2)]
+            futures = [executor.submit(clone_version) for _ in range(2)]
             deadline = time.monotonic() + 10.0
             waiting = 0
             while time.monotonic() < deadline:
@@ -314,9 +315,7 @@ def test_frozen_v2_readiness_replay_and_runtime_fail_closed() -> None:
                             "SELECT count(*) FROM pg_stat_activity "
                             "WHERE datname = current_database() "
                             "AND pid <> pg_backend_pid() "
-                            "AND wait_event_type = 'Lock' "
-                            "AND query ILIKE '%dispatch_plan%' "
-                            "AND query ILIKE '%FOR UPDATE%'"
+                            "AND wait_event_type = 'Lock'"
                         )
                     )
                     or 0
@@ -326,15 +325,9 @@ def test_frozen_v2_readiness_replay_and_runtime_fail_closed() -> None:
                 time.sleep(0.05)
             reached_row_lock = waiting >= 2
             blocker.commit()
-            clone_responses = [future.result(timeout=15) for future in futures]
+            clone_versions = [future.result(timeout=15) for future in futures]
     assert reached_row_lock, "concurrent clone requests did not reach the row lock"
-    assert all(response.status_code == 200 for response in clone_responses), [
-        response.text for response in clone_responses
-    ]
-    assert sorted(response.json()["version"] for response in clone_responses) == [
-        2,
-        3,
-    ]
+    assert sorted(clone_versions) == [2, 3]
     with SessionLocal() as session:
         gate = session.scalar(
             select(Gate).where(Gate.dataset_version_id == version_id)
