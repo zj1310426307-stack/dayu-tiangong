@@ -160,6 +160,18 @@ def task_engine_provenance() -> dict[str, str]:
     }
 
 
+def controlled_task_engine_provenance() -> dict[str, str]:
+    """Return the D-Flow identity for an isolated controlled preview task."""
+
+    return {
+        "solver_id": DFLOW_FM_SOLVER_ID,
+        "capability_id": DFLOW_FM_CAPABILITY_ID,
+        "runtime_adapter_id": DFLOW_FM_ADAPTER_ID,
+        "result_schema_version": CONTROLLED_HYDRAULIC_RESULT_SCHEMA,
+        "registry_hash": selected_engine_hash(DFLOW_FM_ENGINE_ID),
+    }
+
+
 def engine_registrations() -> tuple[HydraulicEngineRegistration, ...]:
     """Return the immutable multi-engine catalog registrations."""
 

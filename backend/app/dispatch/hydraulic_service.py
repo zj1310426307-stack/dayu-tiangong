@@ -8,7 +8,7 @@ import json
 from math import isclose
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.dispatch.assets import lock_plan_asset_rows
@@ -29,18 +29,40 @@ from app.dispatch.hydraulic_snapshot import (
     build_hydraulic_plan_snapshot,
 )
 from app.dispatch.validator import validate_plan
-from app.gis.models import DatasetVersion, DispatchAction, DispatchPlan, DispatchRule
+from app.gis.models import (
+    DatasetVersion,
+    DispatchAction,
+    DispatchEvent,
+    DispatchPlan,
+    DispatchRule,
+    DispatchRun,
+    HydraulicTaskSectionResult,
+    SimulationTask,
+    StructureResult,
+)
+from app.hydraulic.models import HydraulicCrossSection
 from app.model_engine.hydraulic_1d_service import build_hydraulic_1d_model
 from model.control.compiler import (
     HydraulicControlCompileReport,
     HydraulicControlCompiler,
 )
-from model.control.drtc import DRTCCompileReport, DRTCCompiler
+from model.control.drtc import (
+    DRTCCompileReport,
+    DRTCCompiler,
+    controlled_runtime_accepted,
+)
 from model.control.replay import ReplayAsset
 from model.control.rules import ThresholdRule
 from model.control.schedule import ScheduledAction
 from model.hydraulic_1d.contracts import Hydraulic1DModel
-from model.hydraulic_1d.controlled import DispatchPlanSnapshot
+from model.hydraulic_1d.controlled import (
+    ControlRuntimeSelection,
+    ControlledExecutionSettings,
+    ControlledHydraulic1DRun,
+    ControlledHydraulicResult,
+    DispatchPlanSnapshot,
+    EngineSelection,
+)
 from model.hydraulic_1d.capabilities import (
     CapabilityExecutionPolicy,
     capabilities_for,
@@ -53,15 +75,16 @@ from model.hydraulic_1d.dflow_fm.runtime import create_dflow_runtime
 from model.hydraulic_1d.dflow_fm.structures import DFlowFMStructureMapper
 from model.hydraulic_1d.errors import Hydraulic1DError
 from model.hydraulic_1d.registry import (
+    CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA,
     DFLOW_FM_ENGINE_ID,
     DFLOW_FM_ENGINE_VERSION,
+    DFLOW_FM_SOLVER_ID,
+    DFLOW_FM_UPSTREAM_COMMIT,
+    controlled_task_engine_provenance,
     selected_engine_hash,
 )
 from model.hydraulic_1d.structures import GateHydraulicSpec, PumpHydraulicSpec
 from model.provenance import canonical_json, snapshot_hash
-
-
-DRTC_COUPLED_RUNTIME_ACCEPTED = False
 
 
 class HydraulicDispatchNotFoundError(LookupError):
@@ -569,7 +592,8 @@ def _compile(
                 message=runtime_detail,
             )
         )
-    if not DRTC_COUPLED_RUNTIME_ACCEPTED:
+    runtime_control_accepted = controlled_runtime_accepted()
+    if not runtime_control_accepted:
         warnings.append(
             HydraulicCompileIssue(
                 stage="drtc",
@@ -606,8 +630,8 @@ def _compile(
         "observation_contract_valid": observation_valid,
         "ready_to_freeze": ready_to_freeze,
         "runtime_available": runtime_available,
-        "controlled_runtime_accepted": DRTC_COUPLED_RUNTIME_ACCEPTED,
-        "ready_to_run": (ready_to_freeze and runtime_available and DRTC_COUPLED_RUNTIME_ACCEPTED),
+        "controlled_runtime_accepted": runtime_control_accepted,
+        "ready_to_run": (ready_to_freeze and runtime_available and runtime_control_accepted),
         "runtime_detail": runtime_detail,
         "runtime_provenance": runtime_provenance,
         "capabilities": list(capability_facts),
@@ -909,7 +933,7 @@ def start_hydraulic_preview(
     plan_id: int,
     request: HydraulicPlanCompileRequest,
 ) -> HydraulicPreviewJobRecord:
-    """Preflight the async route and create nothing while runtime/control is blocked."""
+    """Create and enqueue one immutable synthetic controlled D-Flow task."""
 
     plan = session.get(DispatchPlan, plan_id)
     if plan is None:
@@ -932,17 +956,264 @@ def start_hydraulic_preview(
             "preview request does not match the immutable v3 execution contract",
             code="HYDRAULIC_PREVIEW_REQUEST_DRIFT",
         )
-    runtime_available, detail, _ = _runtime_readiness(
+    runtime_available, detail, runtime_provenance = _runtime_readiness(
         request.runtime_mode,
         float(request.timeout_seconds),
     )
     if not runtime_available:
         raise HydraulicDispatchStateError(detail, code="DFLOW_RUNTIME_BLOCKED")
-    raise HydraulicDispatchStateError(
-        "enabled asynchronous execution remains closed until the pinned D-RTC/FBC "
-        "compiler and coupled runtime pass a synthetic acceptance benchmark",
-        code="DRTC_COMPILER_BLOCKED",
+    if not controlled_runtime_accepted():
+        raise HydraulicDispatchStateError(
+            "controlled runtime acceptance registry is missing or drifted",
+            code="DRTC_COMPILER_BLOCKED",
+        )
+    payload = json.loads(envelope.plan_payload_json)
+    hydraulic_model = Hydraulic1DModel.model_validate(
+        payload.get("hydraulic_model_snapshot")
     )
+    selection = EngineSelection.from_current_registry(
+        runtime_mode=request.runtime_mode
+    )
+    control_selection = ControlRuntimeSelection(
+        runtime_version="1.6.1",
+        coupling_runtime_version="2.00",
+        compiler_id="dayu-drtc-fbc-artifact-writer",
+        compiler_version=CONTROL_COMPILER_BUNDLE_VERSION,
+    )
+    controlled_run = ControlledHydraulic1DRun(
+        hydraulic_model=hydraulic_model,
+        hydraulic_model_snapshot_hash=envelope.hydraulic_model_snapshot_hash,
+        dispatch_plan_snapshot=envelope,
+        engine_selection=selection,
+        control_runtime_selection=control_selection,
+        execution_settings=ControlledExecutionSettings(
+            timeout_seconds=float(request.timeout_seconds)
+        ),
+    )
+    frozen_run = controlled_run.model_dump(mode="json")
+    provenance = controlled_task_engine_provenance()
+    task = SimulationTask(
+        case_id=plan.simulation_case_id,
+        dataset_version_id=plan.dataset_version_id,
+        status="queued",
+        progress=0,
+        config={
+            "runtime_mode": request.runtime_mode,
+            "timeout_seconds": float(request.timeout_seconds),
+            "synthetic_fixture": True,
+            "production_mode": False,
+        },
+        task_kind="controlled_hydraulic_preview",
+        evidence_class="SYNTHETIC_NUMERICAL_ONLY",
+        input_schema_version=CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA,
+        input_snapshot=frozen_run,
+        input_snapshot_hash=snapshot_hash(frozen_run),
+        engine_version=DFLOW_FM_ENGINE_VERSION,
+        engine_commit=DFLOW_FM_UPSTREAM_COMMIT,
+        solver_build_id=DFLOW_FM_SOLVER_ID,
+        build_mode="development",
+        build_verified=True,
+        execution_phase="queued",
+        artifact_status="none",
+        queued_time=datetime.now(UTC),
+        delivery_attempt_count=1,
+        last_delivery_time=datetime.now(UTC),
+        **provenance,
+    )
+    session.add(task)
+    session.flush()
+    run = DispatchRun(
+        plan_id=plan.id,
+        controlled_task_id=task.id,
+        status="queued",
+        run_mode="hydraulic_preview",
+        evidence_class="SYNTHETIC_NUMERICAL_ONLY",
+        engine_id=DFLOW_FM_ENGINE_ID,
+        control_runtime="d-rtc/fbc",
+        compiled_artifact_hash=str(payload.get("control_contract_hash") or ""),
+        runtime_provenance=runtime_provenance,
+        result_contract={
+            "schema_version": "dayu.controlled-hydraulic-result.v1",
+            "real_engineering_validation": False,
+            "real_equipment_command": False,
+            "plc_scada_connected": False,
+        },
+    )
+    session.add(run)
+    session.commit()
+    from app.worker.tasks import HYDRAULIC_1D_QUEUE, run_hydraulic_task
+
+    try:
+        queued = run_hydraulic_task.apply_async(
+            args=[task.id], queue=HYDRAULIC_1D_QUEUE
+        )
+    except Exception as exc:
+        task.last_infrastructure_error = "queue broker unavailable; recovery pending"
+        session.commit()
+        raise HydraulicDispatchStateError(
+            "controlled hydraulic task was persisted but queue delivery failed",
+            code="HYDRAULIC_PREVIEW_QUEUE_UNAVAILABLE",
+        ) from exc
+    task.queue_job_id = str(queued.id)
+    run.queue_job_id = str(queued.id)
+    session.commit()
+    return HydraulicPreviewJobRecord(
+        job_id=task.id,
+        run_id=run.id,
+        status="QUEUED",
+    )
+
+
+def persist_controlled_result(
+    session: Session,
+    task: SimulationTask,
+    result: ControlledHydraulicResult,
+) -> None:
+    """Persist H/Q, Gate state, events and evidence for one attempt atomically."""
+
+    if task.task_kind != "controlled_hydraulic_preview":
+        raise ValueError("controlled result cannot be stored on a standard task")
+    if not isinstance(task.input_snapshot, dict):
+        raise ValueError("controlled task snapshot is missing")
+    frozen_run = ControlledHydraulic1DRun.model_validate(task.input_snapshot)
+    if result.run_snapshot_hash != frozen_run.snapshot_hash:
+        raise ValueError("controlled result does not match its frozen run")
+    run = session.scalar(
+        select(DispatchRun).where(DispatchRun.controlled_task_id == task.id)
+    )
+    if run is None:
+        raise ValueError("controlled task has no DispatchRun owner")
+    sections = {
+        str(item.id): item
+        for item in session.scalars(
+            select(HydraulicCrossSection).where(
+                HydraulicCrossSection.dataset_version_id == task.dataset_version_id
+            )
+        ).all()
+    }
+    session.execute(
+        delete(HydraulicTaskSectionResult).where(
+            HydraulicTaskSectionResult.task_id == task.id
+        )
+    )
+    session.execute(delete(StructureResult).where(StructureResult.task_id == task.id))
+    session.execute(delete(DispatchEvent).where(DispatchEvent.run_id == run.id))
+    for record in result.hydraulic_result.records:
+        section = sections.get(record.cross_section_id)
+        if section is None or str(section.branch_id) != record.branch_id:
+            raise ValueError("controlled result Section is absent from the Dataset Version")
+        if isinstance(record.timestamp, datetime):
+            raise ValueError("controlled D-Flow result must use simulation seconds")
+        session.add(
+            HydraulicTaskSectionResult(
+                task_id=task.id,
+                dataset_version_id=task.dataset_version_id,
+                hydraulic_cross_section_id=section.id,
+                section_code=section.section_code,
+                branch_id=section.branch_id,
+                chainage_m=float(record.chainage_m),
+                time_seconds=float(record.timestamp),
+                water_level_m=float(record.water_level_m),
+                depth_m=float(record.depth_m),
+                flow_m3s=float(record.discharge_m3s),
+                velocity_m_s=float(record.velocity_m_s),
+                flow_area_m2=float(record.flow_area_m2),
+                wet_area_m2=record.wet_area_m2,
+                hydraulic_radius_m=record.hydraulic_radius_m,
+                top_width_m=record.top_width_m,
+                froude_number=record.froude_number,
+                control_volume_m3=None,
+            )
+        )
+    for item in result.structure_results:
+        if item.discharge_m3s is None:
+            continue
+        session.add(
+            StructureResult(
+                task_id=task.id,
+                dispatch_run_id=run.id,
+                time_seconds=float(item.time_seconds),
+                structure_type=item.structure_type,
+                structure_id=item.asset_id,
+                requested_value=item.requested_value,
+                actual_value=item.applied_value,
+                flow=float(item.discharge_m3s),
+                upstream_level=item.upstream_water_level_m,
+                downstream_level=item.downstream_water_level_m,
+                head_difference=(
+                    float(item.upstream_water_level_m - item.downstream_water_level_m)
+                    if item.upstream_water_level_m is not None
+                    and item.downstream_water_level_m is not None
+                    else None
+                ),
+                transfer_type="internal_transfer",
+                constraint_flags=[],
+            )
+        )
+    traces = {item.time_seconds: item for item in result.dispatch_trace}
+    for item in result.control_events:
+        trace = traces.get(item.time_seconds)
+        session.add(
+            DispatchEvent(
+                run_id=run.id,
+                time_seconds=float(item.time_seconds),
+                source_type=(trace.source_type if trace else "safety"),
+                source_id=(trace.source_id if trace else None),
+                structure_type=str(item.structure_type),
+                structure_id=int(item.asset_id),
+                requested_command=(
+                    {
+                        "command_type": trace.command_type,
+                        "requested_value": trace.requested_value,
+                        "resolved_value": trace.resolved_value,
+                    }
+                    if trace
+                    else {}
+                ),
+                applied_command=(
+                    {"applied_value": trace.applied_value, "unit": trace.unit}
+                    if trace
+                    else None
+                ),
+                outcome=item.outcome,
+                reason=item.reason_code,
+            )
+        )
+    task.status = "success"
+    task.progress = 100
+    task.execution_phase = "complete"
+    task.error_message = None
+    task.end_time = datetime.now(UTC)
+    task.heartbeat_time = task.end_time
+    task.result_path = f"database://controlled-hydraulic-result/{task.id}"
+    task.diagnostics = {
+        **result.hydraulic_result.diagnostics,
+        "controlled_result_hash": result.result_hash,
+        "dispatch_trace_count": len(result.dispatch_trace),
+        "structure_result_count": len(result.structure_results),
+        "evidence_class": result.evidence_class,
+        "real_engineering_validation": False,
+        "real_equipment_command": False,
+        "plc_scada_connected": False,
+    }
+    run.status = "success"
+    run.progress = 100
+    run.end_time = task.end_time
+    run.runtime_provenance = {
+        "components": [item.model_dump(mode="json") for item in result.runtime_provenance]
+    }
+    run.result_contract = {
+        "schema_version": result.schema_version,
+        "result_hash": result.result_hash,
+        "hydraulic_record_count": len(result.hydraulic_result.records),
+        "structure_result_count": len(result.structure_results),
+        "control_event_count": len(result.control_events),
+        "evidence_class": result.evidence_class,
+        "real_engineering_validation": False,
+        "real_equipment_command": False,
+        "plc_scada_connected": False,
+    }
+    session.commit()
 
 
 __all__ = [
@@ -951,5 +1222,6 @@ __all__ = [
     "compile_hydraulic_plan",
     "freeze_hydraulic_plan",
     "hydraulic_snapshot_integrity",
+    "persist_controlled_result",
     "start_hydraulic_preview",
 ]

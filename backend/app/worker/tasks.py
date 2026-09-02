@@ -1,8 +1,10 @@
-"""Celery execution boundary for the external Standard 1D engine."""
+"""Celery execution boundary for registered standard and controlled 1D routes."""
 
 from __future__ import annotations
 
 import socket
+from collections.abc import Mapping
+from hmac import compare_digest
 from typing import Any
 
 from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
@@ -25,10 +27,12 @@ from app.worker.lifecycle import (
 )
 from model.build_identity import BuildIdentityError, assert_runtime_build_matches
 from model.hydraulic_1d.engine import Hydraulic1DExecutionContext
+from model.hydraulic_1d.controlled import ControlledHydraulic1DRun
 from model.hydraulic_1d.errors import Hydraulic1DCancelled, Hydraulic1DError
 from model.hydraulic_1d.execution_lease import hydraulic_1d_attempt_job_id
 from model.hydraulic_1d.factory import create_hydraulic_1d_engine
-from model.hydraulic_1d.registry import MASCARET_SOLVER_ID
+from model.hydraulic_1d.registry import DFLOW_FM_ENGINE_ID
+from model.provenance import snapshot_hash
 
 
 HYDRAULIC_1D_QUEUE = "hydraulic-1d"
@@ -63,9 +67,9 @@ def _finish(
     max_retries=None,
 )
 def run_hydraulic_task(self, task_id: int) -> dict[str, str | int]:
-    """Validate, execute MASCARET, parse, and atomically persist unified results."""
+    """Execute the frozen registered route and atomically persist unified results."""
 
-    worker_id = f"{socket.gethostname()}:{self.request.id or 'eager'}:{MASCARET_SOLVER_ID}"
+    worker_id = f"{socket.gethostname()}:{self.request.id or 'eager'}:hydraulic-1d"
     with SessionLocal() as session:
         try:
             task = claim_task(session, task_id, worker_id)
@@ -95,6 +99,48 @@ def run_hydraulic_task(self, task_id: int) -> dict[str, str | int]:
             )
 
         try:
+            if task.task_kind == "controlled_hydraulic_preview":
+                if not isinstance(task.input_snapshot, Mapping) or not isinstance(
+                    task.input_snapshot_hash, str
+                ):
+                    raise ValueError("controlled task snapshot or digest is missing")
+                observed_hash = snapshot_hash(task.input_snapshot)
+                if not compare_digest(observed_hash, task.input_snapshot_hash):
+                    raise ValueError("controlled task snapshot digest mismatch")
+                run = ControlledHydraulic1DRun.model_validate(task.input_snapshot)
+                engine = create_hydraulic_1d_engine(DFLOW_FM_ENGINE_ID)
+                run_controlled = getattr(engine, "run_controlled", None)
+                if run_controlled is None:
+                    raise ValueError("selected D-Flow engine lacks controlled execution")
+                result = run_controlled(
+                    run,
+                    Hydraulic1DExecutionContext(
+                        job_id=hydraulic_1d_attempt_job_id(
+                            task_id=task_id,
+                            execution_attempt_count=task.execution_attempt_count,
+                            execution_token=execution_token,
+                        ),
+                        cancel_check=cancelled,
+                        progress_callback=progress,
+                    ),
+                )
+                task = lock_attempt_for_finalization(
+                    session,
+                    task_id,
+                    execution_token=execution_token,
+                )
+                task.execution_phase = "persisting"
+                session.flush()
+                from app.dispatch.hydraulic_service import persist_controlled_result
+
+                persist_result_with_attempt_cas(
+                    session,
+                    task,
+                    result,
+                    execution_token=execution_token,
+                    persist=persist_controlled_result,
+                )
+                return {"task_id": task_id, "status": "success"}
             executed_build_identity = assert_runtime_build_matches(
                 expected_engine_version=task.engine_version,
                 expected_engine_commit=task.engine_commit,

@@ -1062,7 +1062,7 @@ export interface DRTCCompileReport {
   "status": "COMPILED" | "UNSUPPORTED";
   "rules": Array<DRTCRuleCompileRecord>;
   "artifact_hash": string;
-  "runtime_validated"?: false;
+  "runtime_validated": boolean;
 }
 
 export interface DRTCRuleCompileRecord {

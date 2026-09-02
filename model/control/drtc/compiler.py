@@ -1,19 +1,20 @@
-"""Fail-closed compiler for Dayu rules whose D-RTC equivalence is unproven."""
+"""Fail-closed compiler for the runtime-verified minimal D-RTC Gate subset."""
 
 from __future__ import annotations
 
 from collections import Counter
 
+from model.control.drtc.acceptance import controlled_runtime_accepted
 from model.control.drtc.contracts import DRTCCompileReport, DRTCRuleCompileRecord
 from model.control.rules import ThresholdRule
 from model.provenance import snapshot_hash
 
 
-DRTC_COMPILER_VERSION = "dayu.drtc-compiler.v1"
+DRTC_COMPILER_VERSION = "dayu.drtc-compiler.v2"
 
 
 class DRTCCompiler:
-    """Audit a rule set without approximating priority, hold, or inactive semantics."""
+    """Compile only the single-Gate threshold state machine proven by DRTC-S01."""
 
     def compile(
         self,
@@ -21,7 +22,7 @@ class DRTCCompiler:
         *,
         manual_actuators: tuple[tuple[str, int], ...] = (),
     ) -> DRTCCompileReport:
-        """Return detailed blockers until a pinned FBC runtime proves equivalence."""
+        """Return per-rule support and preserve every unverified feature as blocked."""
 
         actuator_counts = Counter(
             (
@@ -32,8 +33,9 @@ class DRTCCompiler:
             if rule.enabled
         )
         manual = set(manual_actuators)
+        runtime_validated = controlled_runtime_accepted()
         records: list[DRTCRuleCompileRecord] = []
-        for rule in rules:
+        for index, rule in enumerate(rules):
             source = {
                 "observation_type": rule.observation_type,
                 "observation_object_id": rule.observation_object_id,
@@ -64,6 +66,23 @@ class DRTCCompiler:
                 )
                 continue
             reasons: list[str] = []
+            structure_type = str(rule.action_template["structure_type"])
+            command_type = str(rule.action_template["command_type"])
+            if not runtime_validated:
+                reasons.append(
+                    "source-controlled DIMR/FBC acceptance registry is missing or drifted"
+                )
+            if structure_type != "gate" or command_type != "gate_opening_m":
+                reasons.append(
+                    "only the runtime-verified Gate opening target is supported"
+                )
+            if rule.observation_type not in {
+                "node_water_level",
+                "section_water_level",
+            }:
+                reasons.append(
+                    "only one exact scalar node/section water-level observation is verified"
+                )
             if rule.minimum_hold_seconds > 0:
                 reasons.append(
                     "minimum_hold_seconds has no runtime-verified exact mapping"
@@ -82,25 +101,47 @@ class DRTCCompiler:
                 reasons.append(
                     "manual/rule fallback requires unverified merger tie-break semantics"
                 )
-            # Even the syntactically small subset remains blocked: Dayu emits no
-            # target while inactive, whereas an FBC output series needs an exact
-            # default/fallback.  The pinned runtime and a benchmark must prove
-            # that state machine before XML is emitted.
-            reasons.append(
-                "Dayu inactive-rule state retention is not yet proven equivalent to FBC output"
-            )
+            if reasons:
+                records.append(
+                    DRTCRuleCompileRecord(
+                        rule_id=rule.id,
+                        status="UNSUPPORTED",
+                        source_semantics=source,
+                        target_semantics={
+                            "verified_candidate": "FBC standard trigger and two constant rules",
+                            "xsd": "rtcToolsConfig.xsd@DIMRset_2026.02",
+                        },
+                        compiled_component=None,
+                        warnings=(),
+                        unsupported_reason="; ".join(reasons),
+                    )
+                )
+                continue
+            component_id = f"dayu_gate_rule_{rule.id or index + 1}"
             records.append(
                 DRTCRuleCompileRecord(
                     rule_id=rule.id,
-                    status="UNSUPPORTED",
-                    source_semantics=source,
-                    target_semantics={
-                        "candidate": "standard/deadBand trigger plus controlled output",
-                        "xsd": "rtcToolsConfig.xsd@DIMRset_2026.02",
+                    status="COMPILED",
+                    source_semantics={
+                        **source,
+                        "inactive_semantics": (
+                            "explicit_frozen_initial_actuator_state_fallback"
+                        ),
                     },
-                    compiled_component=None,
-                    warnings=(),
-                    unsupported_reason="; ".join(reasons),
+                    target_semantics={
+                        "operation": "FBC standard trigger selects true/fallback constant rule",
+                        "operator": rule.operator,
+                        "threshold": rule.threshold,
+                        "target_value": rule.action_template["target_value"],
+                        "fallback_source": "frozen initial actuator state",
+                        "xsd": "rtcToolsConfig.xsd@DIMRset_2026.02",
+                        "acceptance_case": "DRTC-S01",
+                    },
+                    compiled_component=component_id,
+                    warnings=(
+                        "inactive output is the explicit frozen initial state, not implicit retention",
+                    ),
+                    unsupported_reason=None,
                 )
             )
         status = (
@@ -113,6 +154,6 @@ class DRTCCompiler:
             "pinned_runtime_tag": "DIMRset_2026.02",
             "status": status,
             "rules": [item.model_dump(mode="json") for item in records],
-            "runtime_validated": False,
+            "runtime_validated": runtime_validated,
         }
         return DRTCCompileReport(**payload, artifact_hash=snapshot_hash(payload))

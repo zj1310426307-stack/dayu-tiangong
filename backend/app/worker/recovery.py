@@ -12,6 +12,13 @@ from app.gis.models import SimulationTask
 from app.worker.celery_app import celery_app
 from app.worker.lifecycle import recover_stale_tasks
 from model.hydraulic_1d.contracts import HYDRAULIC_1D_INPUT_SCHEMA
+from model.hydraulic_1d.registry import CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA
+
+
+ACTIVE_INPUT_SCHEMAS = {
+    HYDRAULIC_1D_INPUT_SCHEMA,
+    CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA,
+}
 
 
 Delivery = Callable[[SimulationTask], object]
@@ -31,7 +38,7 @@ def _deliver(task: SimulationTask) -> object:
 
     from app.worker.tasks import HYDRAULIC_1D_QUEUE, run_hydraulic_task
 
-    if task.input_schema_version != HYDRAULIC_1D_INPUT_SCHEMA:
+    if task.input_schema_version not in ACTIVE_INPUT_SCHEMAS:
         raise ValueError("LEGACY_ENGINE_RETIRED")
     return run_hydraulic_task.apply_async(args=[task.id], queue=HYDRAULIC_1D_QUEUE)
 
@@ -90,7 +97,7 @@ def redeliver_stale_queued_tasks(
                 if candidate.last_delivery_time is not None
                 else SimulationTask.last_delivery_time.is_(None)
             )
-            if candidate.input_schema_version != HYDRAULIC_1D_INPUT_SCHEMA:
+            if candidate.input_schema_version not in ACTIVE_INPUT_SCHEMAS:
                 retired = session.execute(
                     update(SimulationTask)
                     .where(

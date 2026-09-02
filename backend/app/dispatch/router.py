@@ -417,6 +417,17 @@ def retry_run(run_id: int, session: SessionDependency) -> DispatchRunRecord:
         raise HTTPException(status_code=404, detail="dispatch run does not exist")
     if run.status not in {"failed", "cancelled"}:
         raise HTTPException(status_code=409, detail="only failed or cancelled runs can be retried")
+    if run.run_mode == "hydraulic_preview":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "HYDRAULIC_PREVIEW_RETRY_REQUIRES_FROZEN_CONTRACT",
+                "message": (
+                    "re-run the frozen Hydraulic Preview with its explicit runtime "
+                    "contract; legacy dispatch retry is not a valid controlled route"
+                ),
+            },
+        )
     try:
         return service.create_run(session, run.plan_id)
     except (

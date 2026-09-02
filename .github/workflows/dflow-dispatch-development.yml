@@ -40,6 +40,7 @@ jobs:
           tests/hydraulic_1d/test_multi_engine_registry.py
           tests/hydraulic_1d/test_controlled_contract.py
           tests/hydraulic_1d/test_controlled_dispatch_contract.py
+          tests/hydraulic_1d/test_drtc_artifacts.py
           tests/hydraulic_1d/test_dispatch_v3_snapshot.py
           backend/tests/test_dispatch_hydraulic_api_contract.py
           backend/tests/test_dispatch_hydraulic_assets.py
@@ -50,3 +51,10 @@ jobs:
           available,reason=engine.availability();
           assert not available;
           assert reason.startswith('DFLOW_RUNTIME_BLOCKED')"
+      - name: Verify source-controlled controlled-runtime acceptance
+        run: >-
+          python -c "from model.control.drtc import controlled_runtime_acceptance;
+          accepted=controlled_runtime_acceptance();
+          assert accepted.container_image_digest ==
+          'sha256:e53a7c22cdce6a63f39357006ba73f2254ace24979c1f374ba111ee52d5b12b9';
+          assert accepted.real_engineering_validation is False"

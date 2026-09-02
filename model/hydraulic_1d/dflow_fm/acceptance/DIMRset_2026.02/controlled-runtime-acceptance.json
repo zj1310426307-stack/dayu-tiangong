@@ -1,0 +1,79 @@
+{
+  "schema_version": "dayu.controlled-runtime-acceptance.v1",
+  "engine_id": "d-flow-fm",
+  "engine_version": "DIMRset_2026.02",
+  "runtime_manifest_sha256": "52e12a2ea2078a5d01373604bda90781b5c77e7b817297489eb6fd8c030699c8",
+  "container_image_digest": "sha256:e53a7c22cdce6a63f39357006ba73f2254ace24979c1f374ba111ee52d5b12b9",
+  "fbc_version": "1.6.1",
+  "compiler_version": "dayu.drtc-compiler.v2",
+  "supported_rule_subset": [
+    "one enabled Gate rule",
+    "one actuator",
+    "operators > >= < <=",
+    "water-level threshold",
+    "zero hysteresis",
+    "zero minimum hold",
+    "zero cooldown",
+    "explicit frozen-initial-state fallback"
+  ],
+  "unsupported_features": [
+    "Pump dynamic control",
+    "hysteresis greater than zero",
+    "minimum hold greater than zero",
+    "cooldown greater than zero",
+    "multiple rules for one actuator",
+    "manual and rule conflict",
+    "priority or tie-break arbitration"
+  ],
+  "official_cases": [
+    {
+      "case_id": "OFFICIAL-DFLOW-01",
+      "status": "PASS",
+      "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
+      "artifact_sha256": "16acd845e96fbff3d2dcf02cfb09ea8a0f8db04ab742ba4307acf3bbe7f35884"
+    },
+    {
+      "case_id": "OFFICIAL-DFLOW-FBC-10",
+      "status": "PASS",
+      "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
+      "artifact_sha256": "c3e24c736f0f9c632369837013e2bc9631699ac82bd9db1c345514eac38f708f"
+    }
+  ],
+  "dayu_cases": [
+    {
+      "case_id": "DF01",
+      "status": "PASS",
+      "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
+      "artifact_sha256": "cdaba3685dff49dd3be9050567a09deb1894843b78c9ceb1fcb68e942db5d2cb"
+    },
+    {
+      "case_id": "DRTC-S01",
+      "status": "PASS",
+      "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
+      "artifact_sha256": "35ebad8dc86b0e6cec0566901a005eabd8f736361ac4fe315ba4f8667a12beee"
+    },
+    {
+      "case_id": "G01",
+      "status": "PASS",
+      "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
+      "artifact_sha256": "3f689e1b1142743dced44827aca667172a8e2358fa930e014ebf920f4d1ebe86"
+    },
+    {
+      "case_id": "G02",
+      "status": "PASS",
+      "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
+      "artifact_sha256": "96163cbd6ea065719428e213d7b57dc35eaee21322e454bdf4e3fb71bd401c4e"
+    },
+    {
+      "case_id": "G03",
+      "status": "PASS",
+      "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
+      "artifact_sha256": "47bacbe3c70d5c83ae784f2b906616d74d226198525b86f222774dba12270f63"
+    }
+  ],
+  "verification_date": "2026-09-02",
+  "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
+  "real_engineering_validation": false,
+  "real_equipment_command": false,
+  "plc_scada_connected": false
+}

@@ -283,18 +283,17 @@ def test_typed_hydrolib_case_and_dimr_roundtrip(tmp_path: Path) -> None:
     from hydrolib.core.dflowfm.crosssection.models import CrossDefModel, CrossLocModel
     from hydrolib.core.dflowfm.friction.models import FrictionModel
     from hydrolib.core.dflowfm.mdu.models import FMModel
-    from hydrolib.core.dflowfm.net.models import NetworkModel
     from hydrolib.core.dimr.models import DIMR, Start
 
-    dimr = DIMR(prepared.dimr_config_file)
+    dimr = DIMR(prepared.dimr_config_file, recurse=False)
     assert len(dimr.component) == 1
     assert dimr.component[0].library == "dflowfm"
-    assert dimr.component[0].workingDir == Path("../input")
+    assert dimr.component[0].workingDir == Path("input")
     assert dimr.component[0].inputFile == Path("dayu.mdu")
     assert isinstance(dimr.control[0], Start)
     assert dimr.control[0].name == "dflowfm"
 
-    native = FMModel(prepared.case_file)
+    native = FMModel(prepared.case_file, recurse=False)
     assert native.time.tunit == "S"
     assert native.time.dtmax == pytest.approx(10.0)
     assert native.time.tstop == pytest.approx(600.0)
@@ -303,7 +302,7 @@ def test_typed_hydrolib_case_and_dimr_roundtrip(tmp_path: Path) -> None:
     assert native.output.hisinterval == pytest.approx([60.0, 0.0, 600.0])
     assert native.output.mapinterval == pytest.approx([0.0])
 
-    network = NetworkModel(prepared.network_file).network._mesh1d
+    network = prepared.native_network_model._mesh1d
     assert list(network.network1d_branch_id) == ["branch-1"]
     assert set(network.network1d_node_id) == {"node-up", "node-down"}
     assert any(
@@ -345,7 +344,7 @@ def test_typed_hydrolib_case_and_dimr_roundtrip(tmp_path: Path) -> None:
     assert manifest["native_engine_version"] == "1.2.184"
     assert manifest["top_level_runtime"] == {
         "component": "dflowfm",
-        "component_working_directory": "../input",
+        "component_working_directory": "input",
         "config": "control/dimr_config.xml",
         "direct_dflowfm_launch_allowed": False,
         "launcher": "dimr",
@@ -359,6 +358,24 @@ def test_typed_hydrolib_case_and_dimr_roundtrip(tmp_path: Path) -> None:
         "input/dayu.mdu",
         "input/roughness.ini",
     }
+
+
+@pytest.mark.skipif(not HYDROLIB_AVAILABLE, reason=HYDROLIB_SKIP_REASON)
+def test_typed_case_supports_unicode_engineering_workspace(tmp_path: Path) -> None:
+    """Keep native NetCDF I/O inside a Chinese-named project directory."""
+
+    job_workspace = DFlowJobWorkspace.create(
+        tmp_path / "大禹天工" / "验证记录",
+        simulation_id="df01",
+        job_id="unicode-path",
+    )
+
+    prepared = DFlowFMModelBuilder().build(dflow_model(), job_workspace)
+
+    assert prepared.network_file.is_file()
+    assert prepared.network_file.stat().st_size > 0
+    assert prepared.case_file.is_file()
+    assert "netfile" in prepared.case_file.read_text(encoding="utf-8").lower()
 
 
 @pytest.mark.skipif(not HYDROLIB_AVAILABLE, reason=HYDROLIB_SKIP_REASON)
@@ -391,7 +408,6 @@ def test_builder_delegates_gate_mapping_and_localizes_chainage(tmp_path: Path) -
         gate_specs=(_vertical_gate(),),
     )
 
-    from hydrolib.core.dflowfm.net.models import NetworkModel
     from hydrolib.core.dflowfm.structure.models import StructureModel
 
     assert prepared.structure_file is not None
@@ -401,7 +417,7 @@ def test_builder_delegates_gate_mapping_and_localizes_chainage(tmp_path: Path) -
     assert native[0].id == "gate-1"
     assert native[0].branchid == "branch-1"
     assert native[0].chainage == pytest.approx(400.0)
-    mesh = NetworkModel(prepared.network_file).network._mesh1d
+    mesh = prepared.native_network_model._mesh1d
     assert any(
         value == pytest.approx(400.0) for value in mesh.mesh1d_node_branch_offset
     )

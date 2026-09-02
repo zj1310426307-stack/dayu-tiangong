@@ -29,4 +29,4 @@ class DRTCCompileReport(BaseModel):
     status: Literal["COMPILED", "UNSUPPORTED"]
     rules: tuple[DRTCRuleCompileRecord, ...]
     artifact_hash: str
-    runtime_validated: Literal[False] = False
+    runtime_validated: bool

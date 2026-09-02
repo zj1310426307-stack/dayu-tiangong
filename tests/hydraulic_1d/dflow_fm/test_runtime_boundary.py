@@ -374,7 +374,7 @@ def test_container_matching_self_declared_metadata_remains_blocked(
         )
 
     assert available is False
-    assert "container image digest acceptance allowlist is empty" in detail
+    assert "digest is absent" in detail
     assert (verified, verified_detail, metadata) == (False, detail, None)
     assert raised.value.code == DFLOW_RUNTIME_BLOCKED
 
