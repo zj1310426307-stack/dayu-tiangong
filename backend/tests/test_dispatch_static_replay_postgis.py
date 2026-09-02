@@ -297,9 +297,14 @@ def test_frozen_v2_readiness_replay_and_runtime_fail_closed() -> None:
             .where(DispatchPlan.id == plan_id)
             .with_for_update()
         ) is not None
+        clone_application_name = f"dispatch-clone-{uuid4().hex}"
 
         def clone_version() -> int:
             with SessionLocal() as concurrent_session:
+                concurrent_session.execute(
+                    text("SELECT set_config('application_name', :name, true)"),
+                    {"name": clone_application_name},
+                )
                 return dispatch_service.clone_plan(
                     concurrent_session, plan_id
                 ).version
@@ -315,18 +320,24 @@ def test_frozen_v2_readiness_replay_and_runtime_fail_closed() -> None:
                             "SELECT count(*) FROM pg_stat_activity "
                             "WHERE datname = current_database() "
                             "AND pid <> pg_backend_pid() "
-                            "AND wait_event_type = 'Lock'"
-                        )
+                            "AND application_name = :name "
+                            "AND state = 'active' "
+                            "AND query ILIKE '%dispatch_plan%' "
+                            "AND query ILIKE '%FOR UPDATE%'"
+                        ),
+                        {"name": clone_application_name},
                     )
                     or 0
                 )
                 if waiting >= 2:
                     break
                 time.sleep(0.05)
-            reached_row_lock = waiting >= 2
+            concurrent_lock_queries_visible = waiting >= 2
             blocker.commit()
             clone_versions = [future.result(timeout=15) for future in futures]
-    assert reached_row_lock, "concurrent clone requests did not reach the row lock"
+    assert concurrent_lock_queries_visible, (
+        "concurrent clone FOR UPDATE statements were not simultaneously visible"
+    )
     assert sorted(clone_versions) == [2, 3]
     with SessionLocal() as session:
         gate = session.scalar(
