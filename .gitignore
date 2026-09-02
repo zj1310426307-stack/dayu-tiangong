@@ -42,6 +42,17 @@ backend/storage/conversions/
 backend/storage/hydraulic-evidence/
 backend/storage/hydraulic-workspaces/
 
+# D-Flow FM / DIMR / D-RTC 本地运行产物。Native 扩展名不做全局忽略，
+# 以便 tests/fixtures 中经审查的 .mdu/.xml/.ini/.nc 证据仍可入库。
+backend/storage/hydraulic-workspaces/dflow-fm/
+backend/storage/dflow-fm/
+.dflow-runtime/
+dflow-runtime/
+dflow-workspaces/
+**/dflow-container.cid
+**/dimr.stdout.log
+**/dimr.stderr.log
+
 # 本地环境与编辑器文件
 .env
 .env.*

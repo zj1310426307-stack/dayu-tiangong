@@ -1,0 +1,25 @@
+# D-Flow FM adapter-only Python dependencies.
+# Install together with requirements.txt. This file does not provide DIMR,
+# dflowfm, or FBC/D-RTC binaries and therefore cannot make the runtime available.
+
+# Typed D-HYDRO input writers pinned by the adapter contract. Official PyPI
+# hydrolib_core-1.0.1 wheel SHA-256:
+# 15e9bb37c9d87922d2199f5142c471962fb1e457d1f553eb23a15574181e901f
+hydrolib-core==1.0.1
+
+# Direct HYDROLIB-core 1.0.1 runtime requirements, fixed to the reviewed
+# Python 3.11-compatible set used by this repository.
+lxml==6.0.1
+meshkernel==8.2.1
+netCDF4==1.7.2
+numpy==2.0.0
+pandas==2.2.2
+pydantic==2.11.7
+pydantic-settings==2.11.0
+PyYAML==6.0.3
+strenum==0.4.15
+tqdm==4.67.1
+
+# Dayu's strict D-Flow history-result reader imports xarray directly; it is not
+# supplied by HYDROLIB-core itself.
+xarray==2024.7.0

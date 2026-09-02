@@ -75,3 +75,81 @@ engines:
         status: UNVERIFIED
         benchmark_ids: []
         reason: Official source support exists, but Dayu geometry, liaison, and runtime benchmarks are not complete.
+  - engine: d-flow-fm
+    engine_version: DIMRset_2026.02
+    adapter_version: dayu-dflow-fm-adapter-v1
+    upstream_tag: DIMRset_2026.02
+    upstream_commit: 5a4649830b1e5072caf019fb4850bbdefd9ad431
+    capabilities:
+      - feature: UNSTEADY_1D
+        status: EXPERIMENTAL
+        benchmark_ids: []
+        reason: The typed HYDROLIB-core base-1D adapter is implemented; external runtime and numerical benchmark evidence remain unavailable.
+      - feature: STEADY_1D
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: No Dayu steady-flow mapping or runtime benchmark is accepted yet.
+      - feature: BRANCHED_NETWORK
+        status: EXPERIMENTAL
+        benchmark_ids: []
+        reason: Explicit projected nodes, directed branches, mesh, and cross-section locations are mapped, without external-runtime acceptance evidence.
+      - feature: LATERAL_INFLOW
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: Lateral inflow mapping has not passed an external-runtime benchmark.
+      - feature: COMBINED_BOUNDARIES
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: Combined boundary semantics have not passed an external-runtime benchmark.
+      - feature: WEIR
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: No Dayu-to-D-Flow FM weir mapping has passed a controlled benchmark.
+      - feature: CULVERT
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: The earlier serialization spike is not accepted runtime evidence.
+      - feature: BRIDGE
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: The earlier serialization spike is not accepted runtime evidence.
+      - feature: GATE
+        status: EXPERIMENTAL
+        benchmark_ids: []
+        reason: Explicit vertical-underflow Orifice and complete GeneralStructure mappings are typed and fail closed on missing engineering data; no runtime benchmark is accepted.
+      - feature: SLUICE
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: Sluice semantics and native mapping are not implemented in 06A.
+      - feature: PUMP
+        status: EXPERIMENTAL
+        benchmark_ids: []
+        reason: Inline aggregate-capacity Pump mapping with an explicit D-Flow head/reduction curve is typed; unit-count semantics and external runtime remain unverified.
+      - feature: ORIFICE
+        status: EXPERIMENTAL
+        benchmark_ids: []
+        reason: The audited vertical-underflow Gate subset maps to Orifice, but no controlled external-runtime benchmark has passed.
+      - feature: DAM
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: Dam and breach semantics are not part of the 06A adapter contract.
+      - feature: STORAGE_LINK
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: Storage linkage semantics are not part of the 06A adapter contract.
+      - feature: COMPOUND
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: Compound structures require a future explicit mapping and benchmark.
+      - feature: CASIER
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: No Dayu storage-area mapping has passed a controlled benchmark.
+      - feature: DYNAMIC_CONTROL
+        status: EXPERIMENTAL
+        benchmark_ids: []
+        reason: Manual schedules compile to exact audited BMI targets with explicit initial state; coupled runtime execution remains blocked.
+      - feature: D_RTC
+        status: UNVERIFIED
+        benchmark_ids: []
+        reason: DIMR/FBC identities are pinned, but exact inactive-state, hysteresis, hold, cooldown, priority, and conflict semantics have no accepted runtime proof.

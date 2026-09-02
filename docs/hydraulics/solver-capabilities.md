@@ -32,13 +32,16 @@ Adapter：`dayu-mascaret-adapter-v2`
 
 每个 VERIFIED 行都能追溯到 source-controlled benchmark ID。状态不是“MASCARET 永久支持某功能”的布尔声明，未来 engine/adapter 版本必须新增或更新独立矩阵。
 
-## D-Flow FM / HYDROLIB-core Spike
+## D-Flow FM / HYDROLIB-core 开发适配器
 
-本阶段仅做结构序列化能力验证，没有接入第二套生产 Solver：
+当前已建立 `dayu-dflow-fm-adapter-v1` 的开发期合同：Solver-neutral 1D 模型严格校验、HYDROLIB-core `1.0.1` 类型化 Network/MDU/INI/BC/DIMR 生成、Gate/Pump 受限映射、HIS NetCDF 结果解析、Job Workspace 隔离及 DIMR CLI/Container 运行边界。官方源固定为 `DIMRset_2026.02` / `5a4649830b1e5072caf019fb4850bbdefd9ad431`。
 
-- 使用官方 HYDROLIB-core `1.0.1`，实际创建并读回 Bridge、Culvert、Pump 的 `structures.ini`；三类 round trip 均通过，文件 SHA-256 为 `906d2eca9a2fddb4567a2816eeac34049b1c9bbc5fefc4e50491da6a94b96aac`。
-- Spike 没有安装到生产 requirements。因研究环境缺少 NetCDF wheel，只为结构模块导入提供会在任何 Dataset 构造时立即失败的显式 stub；所以证据只覆盖结构序列化，不覆盖 Network、数值 Runtime 或结果。
-- 官方结构模型使用 `branchId + chainage`，与 Dayu 的 Solver-neutral 位置合同具有可适配性；但参数语义、单位、网格、边界、运行时身份、结果映射和数值 benchmark 尚未完成。
+这些合同仍只是开发证据：
+
+- 早期 Bridge/Culvert/Pump `structures.ini` spike 仍只证明序列化，不是 runtime 或数值证据；
+- 新 Adapter 会生成并重读 native case，但尚无官方 D-Flow/D-RTC case 和 Dayu benchmark 通过已审查 runtime；
+- 本机/仓库无满足 provenance 合同的 `dflowfm` / `dimr` / `fbc` 二进制或不可变镜像，因此当前为 `DFLOW_RUNTIME_BLOCKED`；
+- D-Flow FM 登记仍 `production_eligible=false`；`UNSTEADY_1D`、`BRANCHED_NETWORK`、`GATE`、`PUMP`、`ORIFICE`、`DYNAMIC_CONTROL` 为 `EXPERIMENTAL`，`D_RTC` 与其余未验证能力为 `UNVERIFIED`，没有任何 `VERIFIED_NATIVE` 或 `VERIFIED_EQUIVALENT`，不影响 MASCARET 现有验证矩阵。
 
 官方资料：
 
@@ -47,9 +50,9 @@ Adapter：`dayu-mascaret-adapter-v2`
 - [Deltares Delft3D repository](https://github.com/Deltares/Delft3D)
 - [D-Flow FM Technical Reference Manual](https://content.oss.deltares.nl/delft3d/D-Flow_FM_Technical_Reference_Manual.pdf)
 
-HYDROLIB-core `1.0.1` 的包元数据为 MIT；Delft3D 仓库各组件使用 AGPL/GPL/LGPL 等不同许可证，不能概括成一个统一许可证。MASCARET 仍按 GPL-3.0-only 的外部部署/分发边界审查。以上仅记录事实，不构成法律意见。
+HYDROLIB-core `1.0.1` 的包元数据为 MIT；Delft3D 仓库各组件使用 AGPL/GPL/LGPL 等不同许可证，不能概括成一个统一许可证。任何 runtime 镜像分发前必须完成逐组件清单和人工许可证审查。MASCARET 仍按 GPL-3.0-only 的外部部署/分发边界审查。以上仅记录事实，不构成法律意见。
 
-决策：`ADOPT_LATER`。若 Bridge、Culvert、Pump 成为真实工程 blocker，建议下一阶段 `HYDRO-1D-DFLOW-04` 建立独立 `DFlowFMEngine` Adapter、运行时 provenance 和真实数值验收；在此之前 registry 不声明 D-Flow FM 可用，MASCARET 的 Gate/Pump 状态也不改变。
+详细 Adapter、Runtime、依赖和 blocked 判据见 [`dflow-fm-adapter.md`](./dflow-fm-adapter.md)；D-RTC 编译语义见 [`../dispatch/drtc-compiler.md`](../dispatch/drtc-compiler.md)。
 
 ## 运行来源
 
