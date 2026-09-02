@@ -45,6 +45,7 @@ from model.hydraulic_1d.registry import (
     DEFAULT_HYDRAULIC_1D_ENGINE_VERSION,
     MASCARET_ADAPTER_ID,
 )
+from model.hydraulic_1d.controlled import DispatchPlanSnapshot
 from model.provenance import snapshot_hash
 
 
@@ -175,6 +176,10 @@ def freeze_plan(session: Session, plan_id: int) -> DispatchPlanRecord:
     plan = _locked_plan(session, plan_id)
     if plan.status != "validated":
         raise DispatchStateError("only a validated plan can be frozen")
+    if plan.snapshot_target != "static_v2":
+        raise DispatchStateError(
+            "hydraulic_v3 plans must use the dedicated compile and hydraulic-freeze route"
+        )
     # Child mutations serialize on the plan row.  Asset services use their own
     # rows, so lock all referenced legacy/unified assets before the validation
     # and snapshot reads to remove that cross-domain TOCTOU window.
@@ -195,8 +200,13 @@ def freeze_plan(session: Session, plan_id: int) -> DispatchPlanRecord:
     return _plan_record(session, plan)
 
 
-def clone_plan(session: Session, plan_id: int) -> DispatchPlanRecord:
-    """复制计划及动作规则为递增版本的可编辑草稿。"""
+def _clone_plan(
+    session: Session,
+    plan_id: int,
+    *,
+    snapshot_target: str,
+) -> DispatchPlanRecord:
+    """Copy one immutable lineage into a new editable plan version."""
 
     source_name = session.scalar(
         select(DispatchPlan.name).where(DispatchPlan.id == plan_id)
@@ -218,6 +228,37 @@ def clone_plan(session: Session, plan_id: int) -> DispatchPlanRecord:
     source = next((item for item in locked_versions if item.id == plan_id), None)
     if source is None:
         raise DispatchNotFoundError("dispatch plan does not exist")
+    if snapshot_target == "hydraulic_v3":
+        if source.status != "frozen":
+            raise DispatchStateError(
+                "hydraulic v3 must be cloned from a frozen dispatch plan"
+            )
+        if not isinstance(source.frozen_snapshot, dict) or source.frozen_snapshot.get(
+            "schema_version"
+        ) not in {"dayu.dispatch-plan.v2", "dayu.dispatch-plan.v3"}:
+            raise DispatchStateError("source dispatch snapshot is missing or unsupported")
+        source_schema = source.frozen_snapshot["schema_version"]
+        if source_schema == "dayu.dispatch-plan.v3":
+            try:
+                DispatchPlanSnapshot.model_validate(source.frozen_snapshot)
+            except ValueError as exc:
+                raise DispatchStateError(
+                    f"source hydraulic snapshot contract is invalid: {exc}"
+                ) from exc
+        observed_hash = (
+            snapshot_hash(source.frozen_snapshot)
+            if source_schema == "dayu.dispatch-plan.v2"
+            else snapshot_hash({
+                key: value
+                for key, value in source.frozen_snapshot.items()
+                if key != "snapshot_hash"
+            })
+        )
+        if observed_hash != source.frozen_snapshot_hash or (
+            source_schema == "dayu.dispatch-plan.v3"
+            and source.frozen_snapshot.get("snapshot_hash") != observed_hash
+        ):
+            raise DispatchStateError("source dispatch snapshot hash mismatch")
     # READ COMMITTED takes one snapshot per statement.  A concurrent clone can
     # have inserted a new version while this FOR UPDATE statement waited on an
     # older row, so allocate from a fresh statement snapshot after the stable
@@ -235,6 +276,8 @@ def clone_plan(session: Session, plan_id: int) -> DispatchPlanRecord:
         name=source.name,
         version=int(maximum) + 1,
         status="draft",
+        snapshot_target=snapshot_target,
+        cloned_from_plan_id=(source.id if snapshot_target == "hydraulic_v3" else None),
         description=source.description,
         duration_seconds=source.duration_seconds,
         evaluation_config=source.evaluation_config,
@@ -256,6 +299,20 @@ def clone_plan(session: Session, plan_id: int) -> DispatchPlanRecord:
     session.commit()
     session.refresh(clone)
     return _plan_record(session, clone)
+
+
+def clone_plan(session: Session, plan_id: int) -> DispatchPlanRecord:
+    """复制计划及动作规则为递增版本的 v2 可编辑草稿。"""
+
+    return _clone_plan(session, plan_id, snapshot_target="static_v2")
+
+
+def clone_plan_for_hydraulic(
+    session: Session, plan_id: int
+) -> DispatchPlanRecord:
+    """Create the only legal v2-to-v3 transition: an explicit immutable clone."""
+
+    return _clone_plan(session, plan_id, snapshot_target="hydraulic_v3")
 
 
 def _editable_plan(session: Session, plan_id: int) -> DispatchPlan:

@@ -183,6 +183,8 @@ class DispatchPlanRecord(BaseModel):
     updated_time: datetime
     frozen_time: datetime | None
     frozen_snapshot_hash: str | None
+    snapshot_target: Literal["static_v2", "hydraulic_v3"] = "static_v2"
+    cloned_from_plan_id: int | None = None
     action_count: int = 0
     rule_count: int = 0
 
@@ -503,6 +505,13 @@ class DispatchRunRecord(BaseModel):
     metrics: dict[str, Any] | None
     queue_job_id: str | None
     error_message: str | None
+    run_mode: Literal["legacy", "hydraulic_preview", "production"] = "legacy"
+    evidence_class: str | None = None
+    engine_id: str | None = None
+    control_runtime: str | None = None
+    compiled_artifact_hash: str | None = None
+    runtime_provenance: dict[str, Any] | None = None
+    result_contract: dict[str, Any] | None = None
     created_time: datetime
     start_time: datetime | None
     end_time: datetime | None

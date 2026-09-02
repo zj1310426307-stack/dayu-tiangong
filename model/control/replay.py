@@ -67,15 +67,20 @@ def _advance_state(state: _ActuatorState, elapsed_seconds: float) -> None:
 
 
 def _initial_state(asset: ReplayAsset) -> _ActuatorState:
-    """Create the explicit synthetic initial state frozen by evaluator v1."""
+    """Create the frozen actuator state; v2 retains its closed/stopped defaults."""
 
     return _ActuatorState(
         gate_opening_m=float(asset.constraints.get("initial_opening_m", 0.0)),
         running_units=int(asset.constraints.get("initial_running_units", 0)),
+        runtime_seconds=float(asset.constraints.get("initial_runtime_seconds", 0.0)),
         stop_seconds=(
-            math.inf
-            if bool(asset.constraints.get("initial_stop_constraint_satisfied", True))
-            else 0.0
+            float(asset.constraints["initial_stop_seconds"])
+            if "initial_stop_seconds" in asset.constraints
+            else (
+                math.inf
+                if bool(asset.constraints.get("initial_stop_constraint_satisfied", True))
+                else 0.0
+            )
         ),
     )
 

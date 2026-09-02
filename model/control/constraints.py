@@ -81,6 +81,15 @@ def validate_target_against_asset(
         rate_limit = float(constraints.get("opening_rate_limit_m_per_s", 0.0))
         minimum_hold = float(constraints.get("minimum_hold_seconds", 0.0))
         initial_opening = float(constraints.get("initial_opening_m", 0.0))
+        explicit_initial_state = constraints.get("initial_state_explicit", False) is True
+        initial_state_valid = (
+            (
+                math.isclose(initial_opening, 0.0, rel_tol=0.0, abs_tol=1.0e-12)
+                or minimum <= initial_opening <= maximum
+            )
+            if explicit_initial_state
+            else math.isclose(initial_opening, 0.0, rel_tol=0.0, abs_tol=1.0e-12)
+        )
         if (
             not all(
                 math.isfinite(value)
@@ -99,7 +108,7 @@ def validate_target_against_asset(
             or maximum > height
             or rate_limit < 0
             or minimum_hold < 0
-            or not math.isclose(initial_opening, 0.0, rel_tol=0.0, abs_tol=1.0e-12)
+            or not initial_state_valid
         ):
             return False, "gate_constraint_configuration_invalid"
         opening = (
@@ -126,6 +135,23 @@ def validate_target_against_asset(
     initial_stop_satisfied = constraints.get(
         "initial_stop_constraint_satisfied", False
     )
+    explicit_initial_state = constraints.get("initial_state_explicit", False) is True
+    if explicit_initial_state:
+        initial_runtime = float(constraints.get("initial_runtime_seconds", 0.0))
+        initial_stop = float(constraints.get("initial_stop_seconds", 0.0))
+        initial_state_valid = (
+            0 <= initial_running_units <= maximum_units
+            and math.isfinite(initial_runtime)
+            and initial_runtime >= 0
+            and math.isfinite(initial_stop)
+            and initial_stop >= 0
+            and not (initial_running_units > 0 and initial_stop > 0)
+            and not (initial_running_units == 0 and initial_runtime > 0)
+        )
+    else:
+        initial_state_valid = (
+            initial_running_units == 0 and initial_stop_satisfied is True
+        )
     if (
         not all(
             math.isfinite(value)
@@ -139,8 +165,7 @@ def validate_target_against_asset(
         or minimum_run < 0
         or minimum_stop < 0
         or maximum_starts < 0
-        or initial_running_units != 0
-        or initial_stop_satisfied is not True
+        or not initial_state_valid
     ):
         return False, "pump_constraint_configuration_invalid"
     if target.command_type == "pump_unit_count":
