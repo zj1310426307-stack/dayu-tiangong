@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+import json
+
 import pytest
 
 from model.control.compiler import (
@@ -9,7 +12,8 @@ from model.control.compiler import (
     HydraulicControlCompiler,
     InitialActuatorState,
 )
-from model.control.drtc import DRTCCompiler
+from model.control.drtc import DRTCCompiler, controlled_runtime_acceptance
+from model.control.drtc import acceptance as acceptance_module
 from model.control.observation_bridge import (
     HydraulicObservationAdapter,
     ObservationBinding,
@@ -239,12 +243,51 @@ def _rule(*, enabled: bool) -> ThresholdRule:
     )
 
 
-def test_drtc_compiler_omits_disabled_rules_but_blocks_unproven_dynamic_rules() -> None:
+def test_drtc_compiler_omits_disabled_rules_and_compiles_verified_gate_subset() -> None:
     disabled = DRTCCompiler().compile((_rule(enabled=False),))
     enabled = DRTCCompiler().compile((_rule(enabled=True),))
 
     assert disabled.status == "COMPILED"
     assert disabled.rules[0].compiled_component is None
-    assert disabled.runtime_validated is False
-    assert enabled.status == "UNSUPPORTED"
-    assert "inactive-rule state retention" in enabled.rules[0].unsupported_reason
+    assert disabled.runtime_validated is True
+    assert enabled.status == "COMPILED"
+    assert enabled.runtime_validated is True
+    assert enabled.rules[0].compiled_component == "dayu_gate_rule_21"
+    assert enabled.rules[0].target_semantics["fallback_source"] == (
+        "frozen initial actuator state"
+    )
+
+
+def test_controlled_acceptance_is_hash_bound_and_not_a_boolean_override(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    accepted = controlled_runtime_acceptance()
+    assert accepted.real_engineering_validation is False
+    assert accepted.plc_scada_connected is False
+    drifted = json.loads(
+        acceptance_module.CONTROLLED_RUNTIME_ACCEPTANCE_FILE.read_text(
+            encoding="utf-8"
+        )
+    )
+    drifted["runtime_manifest_sha256"] = "0" * 64
+    candidate = tmp_path / "controlled-runtime-acceptance.json"
+    candidate.write_text(json.dumps(drifted), encoding="utf-8")
+    monkeypatch.setattr(
+        acceptance_module,
+        "CONTROLLED_RUNTIME_ACCEPTANCE_FILE",
+        candidate,
+    )
+    with pytest.raises(ValueError, match="manifest hash"):
+        acceptance_module.controlled_runtime_acceptance()
+    assert acceptance_module.controlled_runtime_accepted() is False
+
+
+def test_drtc_compiler_keeps_priority_and_hysteresis_fail_closed() -> None:
+    first = _rule(enabled=True)
+    second = replace(first, id=22, hysteresis=0.1, priority=20)
+    report = DRTCCompiler().compile((first, second))
+    assert report.status == "UNSUPPORTED"
+    reasons = " ".join(item.unsupported_reason or "" for item in report.rules)
+    assert "priority semantics" in reasons
+    assert "deadBand state equivalence" in reasons

@@ -591,6 +591,34 @@ export function DispatchPlanEditorPage() {
     hydraulicForm.resetFields();
   }, [hydraulicForm, id]);
 
+  useEffect(() => {
+    if (!hydraulicJob || ['COMPLETED', 'FAILED', 'CANCELLED'].includes(hydraulicJob.status)) return undefined;
+    const refresh = async () => {
+      try {
+        const task = await getHydraulicTask(hydraulicJob.job_id);
+        const nextStatus: HydraulicPreviewJobRecord['status'] = task.status === 'success'
+          ? 'COMPLETED'
+          : task.status === 'failed'
+            ? 'FAILED'
+            : task.status === 'cancelled'
+              ? 'CANCELLED'
+              : task.status === 'running' || task.status === 'cancel_requested'
+                ? 'RUNNING'
+                : 'QUEUED';
+        setHydraulicJob((current) => (
+          current && current.status !== nextStatus
+            ? { ...current, status: nextStatus }
+            : current
+        ));
+      } catch (reason) {
+        setHydraulicIssue(hydraulicError(reason, 'Hydraulic Preview 状态读取失败'));
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 3000);
+    return () => window.clearInterval(timer);
+  }, [hydraulicJob]);
+
   /** Create the only supported static-to-hydraulic lineage transition. */
   const cloneForHydraulic = async () => {
     setHydraulicBusy(true);
@@ -860,6 +888,8 @@ export function DispatchPlanEditorPage() {
               <Button
                 icon={<PlayCircleOutlined />}
                 loading={hydraulicBusy}
+                disabled={hydraulicReport !== undefined && !hydraulicReport.ready_to_run}
+                title={hydraulicReport !== undefined && !hydraulicReport.ready_to_run ? '当前规则或运行时门禁未通过' : undefined}
                 onClick={() => openHydraulicContract('preview')}
               >
                 开发态 Hydraulic Preview
@@ -919,11 +949,22 @@ export function DispatchPlanEditorPage() {
                 />
               ))}
             </Space>
+            <Title level={5}>Rule Compatibility</Title>
+            <Alert type="warning" showIcon message="Multi-rule priority: Not verified" description="多规则优先级、同一执行器冲突与人工/规则合并仍保持 fail closed。" />
+            {(hydraulicReport.drtc_compile_report?.rules ?? []).map((rule, index) => (
+              <Alert
+                key={`rule-compatibility-${rule.rule_id ?? index}`}
+                type={rule.status === 'COMPILED' ? 'success' : 'error'}
+                showIcon
+                message={`Rule #${rule.rule_id ?? index + 1}: ${rule.status}`}
+                description={(rule.unsupported_reason ?? (rule.warnings ?? []).join('；')) || '已进入固定 D-RTC 最小子集'}
+              />
+            ))}
           </> : plan.snapshot_target === 'hydraulic_v3' && (
             <Alert type="info" showIcon message="尚未运行编译检查" description="报告将分开显示冻结就绪、运行时可用性与每一个精确阻塞原因。" />
           )}
           {hydraulicIssue && <Alert className="data-alert" type="error" showIcon message={hydraulicIssue.code} description={hydraulicIssue.message} />}
-          {hydraulicJob && <Alert className="data-alert" type="warning" showIcon message={`Hydraulic Preview job #${hydraulicJob.job_id} · ${hydraulicJob.status}`} description={`${hydraulicJob.engine} / ${hydraulicJob.control_runtime} · ${hydraulicJob.evidence_class}`} />}
+          {hydraulicJob && <Alert className="data-alert" type={hydraulicJob.status === 'COMPLETED' ? 'success' : hydraulicJob.status === 'FAILED' ? 'error' : 'warning'} showIcon message={`Hydraulic Preview job #${hydraulicJob.job_id} · ${hydraulicJob.status}`} description={`${hydraulicJob.engine} / ${hydraulicJob.control_runtime} · ${hydraulicJob.evidence_class}`} action={<Button size="small" onClick={() => navigate(`/dispatch/runs/${hydraulicJob.run_id}?datasetVersionId=${datasetVersionId}`)}>查看 H/Q、闸门与审计结果</Button>} />}
         </Card>
         <div className="dispatch-timeline" aria-label="动作时间轴">
           <span>0 s</span>

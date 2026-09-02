@@ -2,14 +2,14 @@
 
 更新日期：2026-09-02
 适用合同：`dayu.dispatch-plan.v2` / `dayu.dispatch-plan.v3`
-当前状态：静态预演可用；水力编译与 v3 冻结按门禁开放；水力数值预演与正式调度运行保持 fail closed
+当前状态：静态预演保持原样；单 Gate 合成水力预演已通过 reviewed Runtime 解锁；正式调度与生产能力保持 fail closed
 
 ## 四类能力不得混同
 
 | 层级 | 用途与证据 | 可输出内容 | 当前实现状态 | 不得宣称 |
 |---|---|---|---|---|
 | **Static Preview** | 对冻结 `static_v2` 调度策略使用显式合成观测做确定性回放；证据级别为 `SYNTHETIC_DEVELOPMENT_ONLY` | 命令请求值、约束后值、选择/限制/拒绝结果、规则事件和冲突裁决 | `POST /api/v1/dispatch/plans/{plan_id}/schedule-preview` 可用；只读冻结快照，不创建任务或运行记录 | 水位 H、流量 Q、实际闸泵状态、能耗、水量平衡或 Solver 结果 |
-| **Synthetic Hydraulic Preview** | 面向 D-Flow FM + DIMR + FBC/D-RTC 的合成数值开发轨道；目标证据级别为 `SYNTHETIC_NUMERICAL_ONLY` | 只有经固定外部 Runtime 实际计算并通过严格解析后，未来才可输出 H/Q、设施水力量与 control trace | 当前只完成编译检查和不可变 v3 冻结；`hydraulic-preview` 没有成功执行分支，必然 fail closed | 真实工程验证、生产可用、现场控制或实际设备命令 |
+| **Synthetic Hydraulic Preview** | 面向 D-Flow FM + DIMR + FBC/D-RTC 的合成数值开发轨道；证据级别为 `SYNTHETIC_NUMERICAL_ONLY` | 固定外部 Runtime 实际计算的 H/Q、Gate 状态/流量、水头差、control trace 与质量平衡 | 单 Gate schedule 或单水位阈值规则可创建异步任务；多规则与 Pump 动态控制 fail closed | 真实工程验证、生产可用、现场控制或实际设备命令 |
 | **Real Engineering Validation** | 基于可追溯实际河网、闸泵、边界与实测资料，完成 QA、率定、独立验证和交叉验证 | 经审查的率定/验证指标、偏差、不确定性、守恒证据和完整运行 provenance | 本阶段未执行；当前 v3 响应明确固定 `real_engineering_validation=false` | “类型化文件生成通过”或“合成 benchmark 通过”即真实工程验证 |
 | **Real Equipment Control** | 向 PLC/SCADA/现场设备下发命令的独立安全系统，需要设备授权、联锁、人工接管、回执和审计 | 只能是经授权控制系统中已确认、可追溯的命令与回执 | 不在本仓库当前调度预演范围；`real_equipment_command=false` 且 `plc_scada_connected=false` | 任何预演、数值模拟或工程验证自动授予设备控制权 |
 
@@ -35,7 +35,7 @@ hydraulic_v3 draft -- POST .../validate --> hydraulic_v3 validated
                                                |
                                                | POST .../hydraulic-preview
                                                v
-                                      当前 409 fail closed
+                               异步 queued/running/success
 ```
 
 `hydraulic-clone` 是唯一支持的 v3 迁移入口：
@@ -55,8 +55,8 @@ hydraulic_v3 draft -- POST .../validate --> hydraulic_v3 validated
 - `ready_to_freeze` 只表示不可变静态/编译语义齐全，**不把 Runtime availability 作为冻结前提**；
 - `runtime_available` 单独表示所选外部运行边界及完整 provenance 通过；
 - `controlled_runtime_accepted` 单独表示经验收的 D-RTC/FBC 耦合运行时，不能由工件存在、静态编译或 Runtime readiness 推导；
-- `ready_to_run = ready_to_freeze && runtime_available && controlled_runtime_accepted`，但它仍不是生产授权，也不覆盖当前预演启动端点的额外 fail-closed 门。当前 `runtime_available=false` 且 `controlled_runtime_accepted=false`，因此后两项都不能促成 `ready_to_run=true`；
-- 当前任一 enabled dynamic Rule 都会以 `DRTC_RULE_SEMANTICS_UNSUPPORTED` 阻断冻结；只有无 enabled Rule 的 manual-only 合同才可能在静态门齐全时冻结；
+- `ready_to_run = ready_to_freeze && runtime_available && controlled_runtime_accepted`，但它仍不是生产授权；
+- 一个 Gate `gate_opening_m` + 一个 scalar water-level threshold Rule，或单 Gate manual schedule，可以进入运行；多规则 priority、manual+rule、hysteresis/hold/cooldown 与 Pump 动态控制精确阻断；
 - D-Flow FM 当前 `UNSTEADY_1D`、`BRANCHED_NETWORK`、`GATE`、`PUMP`、`ORIFICE`、`DYNAMIC_CONTROL` 是 `EXPERIMENTAL`，`D_RTC` 是 `UNVERIFIED`，没有任何 `VERIFIED_*` 能力。`EXPERIMENTAL` 只可按明确的合成开发策略进入编译路径，不可进入生产。
 
 该路由是只读检查：不修改计划，不创建 `SimulationTask`、`DispatchRun`、Workspace 或 native 运行文件。报告使用自身 `report_hash` 固定当次诊断内容。
@@ -71,7 +71,7 @@ Observation contract 不只检查字段类型：每个 source 必须存在于 Ad
 
 Runtime unavailable 可以与静态合同已冻结同时存在：这是可审计的状态分离，不代表已能运行。
 
-## Hydraulic Preview 当前 fail-closed API
+## Hydraulic Preview 异步 API
 
 `POST /api/v1/dispatch/plans/{plan_id}/hydraulic-preview` 是隔离的开发端点，不是正式 `/runs` 的别名。当前服务依次检查：
 
@@ -80,9 +80,9 @@ Runtime unavailable 可以与静态合同已冻结同时存在：这是可审计
 3. 本次请求与冻结的初态、Observation contract、Runtime mode 和 timeout 逐项相同，且 timeout 与 Worker 当前 Runtime 配置精确匹配；
 4. 外部 Runtime 可用且 provenance 完整。
 
-当前运行时缺失时，路由返回 HTTP 409，机器可读 `detail.code=DFLOW_RUNTIME_BLOCKED`。即使未来 Runtime readiness 通过，在固定 D-RTC/FBC 编译器和耦合 Runtime 通过合成验收 benchmark 之前，该路由仍以 HTTP 409 和 `DRTC_COMPILER_BLOCKED` 关闭。
+运行时缺失时仍返回 HTTP 409 `DFLOW_RUNTIME_BLOCKED`；registry 漂移时返回 `DRTC_COMPILER_BLOCKED`。门禁通过后创建不可变 `controlled_hydraulic_preview` 任务与 `hydraulic_preview` 运行记录，交给现有 Celery `hydraulic-1d` 队列。Worker 用执行 lease/CAS 处理 heartbeat、取消、超时、重投和孤儿恢复；成功时原子持久化 H/Q、Gate requested/resolved/applied、结构物流量/水头差、控制事件、四组件 provenance 与质量平衡。
 
-因此当前不存在成功创建 `HydraulicPreviewJobRecord` 的业务分支，也不创建任务、运行、事件或结果记录。任何失败都不得降级到 MASCARET、静态 replay 或 Python 自制水力方程。
+前端轮询任务状态并链接到运行详情；规则兼容逐条展示，且固定显示 `Multi-rule priority: Not verified`。任何失败都不得降级到 MASCARET、静态 replay 或 Python 自制水力方程。
 
 ## 正式 Dispatch `/runs` 继续关闭
 

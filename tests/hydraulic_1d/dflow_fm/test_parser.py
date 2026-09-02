@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -119,13 +120,13 @@ def _dataset() -> xr.Dataset:
     return xr.Dataset(
         data_vars={
             # Deliberately use different location orders to prove ID-based mapping.
-            "station_name": (("stations",), np.asarray(["section-b", "section-a"])),
+            "station_name": (("station",), np.asarray(["section-b", "section-a"])),
             "cross_section_name": (
                 ("cross_section",),
                 np.asarray(["section-a", "section-b"]),
             ),
             "waterlevel": (
-                ("time", "stations"),
+                ("time", "station"),
                 water_level,
                 {"units": "m"},
             ),
@@ -149,7 +150,7 @@ def _dataset() -> xr.Dataset:
             "time": (
                 ("time",),
                 times,
-                {"units": "seconds since 2020-01-01 00:00:00"},
+                {"units": "seconds since 2020-01-01 00:00:00 +00:00"},
             )
         },
         attrs={"source": "synthetic audited D-Flow contract"},
@@ -161,6 +162,37 @@ def _prepared(result_file: Path) -> SimpleNamespace:
         result_file=result_file,
         manifest_file=result_file.parent / "dayu-dflow-fm-manifest.json",
     )
+
+
+def _write_netcdf_fixture_unicode_safe(dataset: xr.Dataset, destination: Path) -> None:
+    """Write a real fixture through the same ASCII-only native path constraint."""
+
+    from netCDF4 import Dataset
+
+    relative_directory = Path("outputs") / "dflow-native-io" / uuid4().hex
+    absolute_directory = Path.cwd() / relative_directory
+    absolute_directory.mkdir(parents=True, exist_ok=False)
+    relative_file = relative_directory / "fixture.nc"
+    absolute_file = Path.cwd() / relative_file
+    try:
+        with Dataset(relative_file, mode="w") as target:
+            for name, size in dataset.sizes.items():
+                target.createDimension(name, int(size))
+            for name, source in dataset.variables.items():
+                values = source.values
+                datatype = str if values.dtype.kind in {"U", "O"} else values.dtype
+                variable = target.createVariable(name, datatype, source.dims)
+                variable[:] = values.astype(object) if datatype is str else values
+                for key, value in source.attrs.items():
+                    variable.setncattr(key, value)
+            for key, value in dataset.attrs.items():
+                target.setncattr(key, value)
+        absolute_file.replace(destination)
+    finally:
+        if absolute_file.exists():
+            absolute_file.unlink()
+        if absolute_directory.exists():
+            absolute_directory.rmdir()
 
 
 def test_parse_dataset_maps_exact_ids_and_returns_unified_rows(tmp_path: Path) -> None:
@@ -189,7 +221,7 @@ def test_parse_dataset_maps_exact_ids_and_returns_unified_rows(tmp_path: Path) -
 
 def test_real_xarray_netcdf_open_contract(tmp_path: Path) -> None:
     result_file = tmp_path / "dayu_his.nc"
-    _dataset().to_netcdf(result_file, engine="netcdf4")
+    _write_netcdf_fixture_unicode_safe(_dataset(), result_file)
 
     result = DFlowFMResultParser().parse(
         _model(),
@@ -228,7 +260,7 @@ def test_parse_dataset_fails_closed(
             time=(
                 ("time",),
                 np.asarray([0.0, 30.0, 120.0]),
-                {"units": "seconds since 2020-01-01 00:00:00"},
+                {"units": "seconds since 2020-01-01 00:00:00 +00:00"},
             )
         )
     elif mutation == "non-finite":
@@ -239,11 +271,11 @@ def test_parse_dataset_fails_closed(
         water_level = dataset["waterlevel"].values
         dataset = dataset.drop_vars(("station_name", "waterlevel"))
         dataset["station_name"] = (
-            ("stations",),
+            ("station",),
             np.asarray(["section-b", "section-a", "not-a-dayu-section"]),
         )
         dataset["waterlevel"] = (
-            ("time", "stations"),
+            ("time", "station"),
             np.column_stack((water_level, water_level[:, 0])),
             {"units": "m"},
         )

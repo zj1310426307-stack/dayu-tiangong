@@ -70,6 +70,52 @@ def _new_file_model(model: Any, filepath: Path) -> Any:
     return model
 
 
+def _save_network_unicode_safe(
+    network_model: Any,
+    destination: Path,
+    *,
+    owner_token: str,
+) -> Any:
+    """Round-trip NetCDF through an ASCII relative path, then move it atomically.
+
+    The Windows netCDF/HDF5 binary used by HYDROLIB-core 1.0.1 cannot create a
+    file when its native path contains non-ASCII characters. Dayu project paths
+    legitimately contain Chinese characters, so the writer receives a unique
+    ASCII-only *relative* staging path below the current repository checkout.
+    Python then moves the completed file to the owned job directory. This avoids
+    a process-wide ``chdir`` and remains safe when two jobs build concurrently.
+    """
+
+    repository_root = Path(__file__).resolve().parents[3]
+    current_directory = Path.cwd().resolve()
+    if not current_directory.is_relative_to(repository_root):
+        raise Hydraulic1DValidationError(
+            "DFLOW_NATIVE_IO_PATH_UNAVAILABLE",
+            "D-Flow case generation must run from inside the Dayu repository",
+            field_path="workspace",
+        )
+    relative_directory = Path("outputs") / "dflow-native-io" / owner_token
+    if not all(part.isascii() for part in relative_directory.parts):
+        raise AssertionError("native NetCDF staging path must remain ASCII-only")
+    absolute_directory = current_directory / relative_directory
+    absolute_directory.mkdir(parents=True, exist_ok=False)
+    staged_relative = relative_directory / NETWORK_FILENAME
+    staged_absolute = current_directory / staged_relative
+    try:
+        network_model.network.to_file(staged_relative)
+        # Exercise the same official reader while the library still sees only
+        # an ASCII relative path. A write-only workaround would not close the
+        # HYDROLIB network round-trip gate.
+        reloaded_network = network_model.network.__class__.from_file(staged_relative)
+        staged_absolute.replace(destination)
+        return reloaded_network
+    finally:
+        if staged_absolute.exists():
+            staged_absolute.unlink()
+        if absolute_directory.exists():
+            absolute_directory.rmdir()
+
+
 @dataclass(frozen=True, slots=True)
 class DFlowFMPreparedCase:
     """Identify the typed source artifacts and expected D-Flow history result."""
@@ -90,6 +136,7 @@ class DFlowFMPreparedCase:
     manifest_file: Path
     result_file: Path
     native_model: Any
+    native_network_model: Any
     native_dimr_model: Any
 
 
@@ -884,10 +931,40 @@ class DFlowFMModelBuilder:
             ),
             paths["case"],
         )
-        del forcing  # owned recursively by the Boundary models
         try:
-            native_model.save(recurse=True)
-            reloaded = types.fm_model(paths["case"])
+            reloaded_network = _save_network_unicode_safe(
+                network_model,
+                paths["network"],
+                owner_token=job_workspace.owner_token,
+            )
+            network_model.filepath = Path(NETWORK_FILENAME)
+
+            # Save every remaining typed child explicitly. Their INI/XML
+            # writers use Python's Unicode-aware filesystem boundary; resetting
+            # each filepath to its case-local name preserves portable references
+            # in the MDU instead of leaking host absolute paths into /work.
+            for child, destination, local_name in (
+                (cross_def, paths["cross_def"], CROSS_DEF_FILENAME),
+                (cross_loc, paths["cross_loc"], CROSS_LOC_FILENAME),
+                (roughness, paths["roughness"], ROUGHNESS_FILENAME),
+                (forcing, paths["forcing"], FORCING_FILENAME),
+                (observations, paths["observations"], OBSERVATION_FILENAME),
+                (
+                    observation_cross_sections,
+                    paths["observation_cross_sections"],
+                    OBSERVATION_CROSS_SECTION_FILENAME,
+                ),
+            ):
+                child.save(destination, recurse=False)
+                child.filepath = Path(local_name)
+            if structures is not None:
+                structures.save(paths["structures"], recurse=False)
+                structures.filepath = Path(STRUCTURE_FILENAME)
+            external_forcing.save(paths["external_forcing"], recurse=False)
+            external_forcing.filepath = Path(EXTERNAL_FORCING_FILENAME)
+
+            native_model.save(paths["case"], recurse=False)
+            reloaded = types.fm_model(paths["case"], recurse=False)
             native_dimr = _new_file_model(
                 types.dimr(
                     documentation=types.dimr_documentation(
@@ -905,7 +982,10 @@ class DFlowFMModelBuilder:
                     component=[
                         types.fm_component(
                             name="dflowfm",
-                            workingDir=Path("../input"),
+                            # DIMR is launched from the owned job root while the
+                            # config itself lives in control/. workingDir is
+                            # therefore relative to the process cwd, not to XML.
+                            workingDir=Path("input"),
                             inputFile=Path(CASE_FILENAME),
                             process=1,
                             model=reloaded,
@@ -915,7 +995,7 @@ class DFlowFMModelBuilder:
                 paths["dimr"],
             )
             native_dimr.save()
-            reloaded_dimr = types.dimr(paths["dimr"])
+            reloaded_dimr = types.dimr(paths["dimr"], recurse=False)
         except Exception as exc:
             raise Hydraulic1DValidationError(
                 "DFLOW_NATIVE_MODEL_INVALID",
@@ -950,6 +1030,7 @@ class DFlowFMModelBuilder:
             manifest_file=paths["manifest"],
             result_file=paths["result"],
             native_model=reloaded,
+            native_network_model=reloaded_network,
             native_dimr_model=reloaded_dimr,
         )
 
@@ -1386,7 +1467,7 @@ class DFlowFMModelBuilder:
                 "launcher": "dimr",
                 "config": f"control/{DIMR_FILENAME}",
                 "component": "dflowfm",
-                "component_working_directory": "../input",
+                "component_working_directory": "input",
                 "direct_dflowfm_launch_allowed": False,
             },
             "result_contract": {

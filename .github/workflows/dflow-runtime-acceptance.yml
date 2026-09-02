@@ -1,0 +1,43 @@
+name: Reviewed D-Flow Runtime Acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: backend:.
+  DFLOW_RUNTIME: container
+  DFLOW_CONTAINER_IMAGE: dayu-dflow-runtime@sha256:e53a7c22cdce6a63f39357006ba73f2254ace24979c1f374ba111ee52d5b12b9
+  DFLOW_PROVENANCE_FILE: model/hydraulic_1d/dflow_fm/acceptance/DIMRset_2026.02/runtime-provenance.json
+  DFLOW_TIMEOUT: "300"
+
+jobs:
+  native-controlled-gate:
+    name: Native DIMR + D-Flow FM + FBC gate
+    runs-on: [self-hosted, linux, x64, dflow-runtime]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dflow.txt
+      - name: Install pinned adapter dependencies
+        run: python -m pip install -r backend/requirements.txt -r backend/requirements-dflow.txt
+      - name: Require the reviewed local digest
+        run: docker image inspect "$DFLOW_CONTAINER_IMAGE"
+      - name: Run DRTC-S01, G02 and G03
+        run: |
+          python -m tools.run_dflow_gate_acceptance --case DRTC-S01 --workspace-root "$RUNNER_TEMP/dayu-dflow" --job-id drtc-s01
+          python -m tools.run_dflow_gate_acceptance --case G02 --workspace-root "$RUNNER_TEMP/dayu-dflow" --job-id g02
+          python -m tools.run_dflow_gate_acceptance --case G03 --workspace-root "$RUNNER_TEMP/dayu-dflow" --job-id g03
+      - name: Run public controlled engine and lifecycle cleanup
+        run: |
+          python -m tools.run_controlled_engine_acceptance --workspace-root "$RUNNER_TEMP/dayu-public" --job-id public-g03
+          python -m tools.run_controlled_engine_acceptance --workspace-root "$RUNNER_TEMP/dayu-cancel" --job-id cancel --cancel-after-seconds 0.25
+          python -m tools.run_controlled_engine_acceptance --workspace-root "$RUNNER_TEMP/dayu-timeout" --job-id timeout --timeout-seconds 0.05
+          python -m tools.run_dflow_orphan_recovery_acceptance --workspace-root "$RUNNER_TEMP/dayu-orphan" --job-id orphan

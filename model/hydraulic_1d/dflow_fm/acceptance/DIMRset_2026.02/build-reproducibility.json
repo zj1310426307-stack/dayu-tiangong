@@ -1,0 +1,29 @@
+{
+  "schema_version": "dayu.dflow-build-reproducibility.v1",
+  "classification": "NON_BIT_REPRODUCIBLE",
+  "source_manifest_sha256": "ef75c32e6f5f7715cb495c9280a2c628c2192fd4f3c914a2a8a7901d37607fd2",
+  "build_recipe_sha256": "c1731b77def24af39b443603af189e708d01537a5de2c0cbdd8e71fb64a3bf99",
+  "build_type": "Release",
+  "configuration": "fm-suite",
+  "compiler": {
+    "fortran": "IntelLLVM ifx 2024.2.1 via mpiifx",
+    "c": "IntelLLVM 2024.2.1 via mpiicx",
+    "cxx": "GNU 14.2.1 via mpicxx"
+  },
+  "dependency_image_digest": "sha256:61045221025471fa75e37305b0d607861e63fae6f3bba8af2b36096bffda52ca",
+  "build_a": {
+    "image_digest": "sha256:948707c51d2fac58cee2d4a607ca70d16a257e741ffa7c83dd52859549622463",
+    "dimr_sha256": "d2154c535497910aef8fdcf7978ba67e571f8bbac904dd16a4b4827f39ee9207",
+    "dflowfm_executable_sha256": "a960128bf1ea0b40fb71fad07bad792288d84d667e83abd776af677124ec8640",
+    "dflowfm_library_sha256": "9fd2ad64ac089bd1b10e806f53712b289ea0a276c82d02300bddb4f5bb420445",
+    "fbc_library_sha256": "e7590c4597f1234b98c99eab10f5a776508815d6f2c86e4c8c1ee3f865c17647"
+  },
+  "build_b": {
+    "image_digest": "sha256:fe736ecb93fff6e89998484c76bede4ca4df74cab9932ce5d47fa061aa1aef77",
+    "dimr_sha256": "5dffe722c5fb481b939a55a6d2efe2b1ba5f906c2d6b5729c6610fd2d697414a",
+    "dflowfm_executable_sha256": "6010367fd2574c722d9e1a64181290f954e7cb5fd20c19cf559c38991f06ac45",
+    "dflowfm_library_sha256": "858dbfb92e4bf05f71fc7fb70e9adee8628e57a3a64377a3408abc62cf12b129",
+    "fbc_library_sha256": "bafbe9022a7c41a3cf6be22f2907d0325987551a0eb712ce00479cbc69ae8d60"
+  },
+  "explanation": "The pinned sources embed build timestamps in DIMR, D-Flow FM and FBC binaries. Build A and Build B used distinct solver build caches; source identity, recipe, compiler family and official functional cases are the trust basis."
+}

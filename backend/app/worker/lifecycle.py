@@ -16,7 +16,11 @@ from model.hydraulic_1d.execution_lease import (
     hydraulic_1d_attempt_job_id,
     recover_configured_hydraulic_1d_attempt,
 )
-from model.hydraulic_1d.registry import task_engine_provenance
+from model.hydraulic_1d.registry import (
+    CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA,
+    controlled_task_engine_provenance,
+    task_engine_provenance,
+)
 
 
 MAX_INFRASTRUCTURE_RETRIES = 2
@@ -140,18 +144,27 @@ def _reject_bad_route(
 
 
 def claim_task(session: Session, task_id: int, worker_id: str) -> SimulationTask:
-    """Claim exactly one registered Standard 1D task and issue an execution token."""
+    """Claim one exact registered 1D route and issue an execution token."""
 
     observed = session.get(SimulationTask, task_id)
     if observed is None or observed.status != "queued":
         raise DuplicateClaimError("task is not queued or was already claimed")
-    if observed.input_schema_version != HYDRAULIC_1D_INPUT_SCHEMA:
+    expected_schema = (
+        CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA
+        if observed.task_kind == "controlled_hydraulic_preview"
+        else HYDRAULIC_1D_INPUT_SCHEMA
+    )
+    if observed.input_schema_version != expected_schema:
         _reject_bad_route(
             session,
             observed,
             "LEGACY_ENGINE_RETIRED: historical custom-solver tasks cannot execute",
         )
-    expected = task_engine_provenance()
+    expected = (
+        controlled_task_engine_provenance()
+        if observed.task_kind == "controlled_hydraulic_preview"
+        else task_engine_provenance()
+    )
     route_fields = tuple(expected)
     mismatches = [
         f"{field}: task={getattr(observed, field)!r}, registered={expected[field]!r}"
@@ -162,14 +175,14 @@ def claim_task(session: Session, task_id: int, worker_id: str) -> SimulationTask
         _reject_bad_route(
             session,
             observed,
-            "STANDARD_1D_ROUTE_MISMATCH: " + "; ".join(mismatches),
+            "HYDRAULIC_1D_ROUTE_MISMATCH: " + "; ".join(mismatches),
         )
     result = session.execute(
         update(SimulationTask)
         .where(
             SimulationTask.id == task_id,
             SimulationTask.status == "queued",
-            SimulationTask.input_schema_version == HYDRAULIC_1D_INPUT_SCHEMA,
+            SimulationTask.input_schema_version == expected_schema,
             *(getattr(SimulationTask, field) == expected[field] for field in route_fields),
         )
         .values(**_claim_values(worker_id))
@@ -503,6 +516,7 @@ def recover_stale_tasks(session: Session, stale_seconds: int = 120) -> list[int]
             SimulationTask.input_schema_version,
             SimulationTask.execution_attempt_count,
             SimulationTask.execution_phase,
+            SimulationTask.task_kind,
         ).where(
             SimulationTask.status.in_(("running", "cancel_requested")),
             SimulationTask.heartbeat_time < cutoff,
@@ -530,7 +544,10 @@ def recover_stale_tasks(session: Session, stale_seconds: int = 120) -> list[int]
         if locked is None:
             session.rollback()
             continue
-        current_schema = locked.input_schema_version == HYDRAULIC_1D_INPUT_SCHEMA
+        current_schema = locked.input_schema_version in {
+            HYDRAULIC_1D_INPUT_SCHEMA,
+            CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA,
+        }
         recovery = Hydraulic1DAttemptRecoveryOutcome(
             True,
             "legacy task has no MASCARET runtime",
@@ -544,16 +561,27 @@ def recover_stale_tasks(session: Session, stale_seconds: int = 120) -> list[int]
                 )
             else:
                 try:
-                    recovery = recover_configured_hydraulic_1d_attempt(
-                        job_id=hydraulic_1d_attempt_job_id(
-                            task_id=locked.id,
-                            execution_attempt_count=locked.execution_attempt_count,
-                            execution_token=token,
-                        ),
-                        allow_missing=(
-                            locked.execution_phase in _MISSING_WORKSPACE_SAFE_PHASES
-                        ),
+                    job_id = hydraulic_1d_attempt_job_id(
+                        task_id=locked.id,
+                        execution_attempt_count=locked.execution_attempt_count,
+                        execution_token=token,
                     )
+                    allow_missing = (
+                        locked.execution_phase in _MISSING_WORKSPACE_SAFE_PHASES
+                    )
+                    if getattr(locked, "task_kind", "standard_1d") == (
+                        "controlled_hydraulic_preview"
+                    ):
+                        recovery = recover_configured_hydraulic_1d_attempt(
+                            job_id=job_id,
+                            allow_missing=allow_missing,
+                            task_kind="controlled_hydraulic_preview",
+                        )
+                    else:
+                        recovery = recover_configured_hydraulic_1d_attempt(
+                            job_id=job_id,
+                            allow_missing=allow_missing,
+                        )
                 except Exception as exc:
                     recovery = Hydraulic1DAttemptRecoveryOutcome(
                         False,

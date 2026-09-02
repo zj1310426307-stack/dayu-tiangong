@@ -2,17 +2,17 @@
 
 更新日期：2026-09-02
 适用版本：`dayu-dflow-fm-adapter-v1` / `DIMRset_2026.02`
-当前结论：`DFLOW_RUNTIME_BLOCKED`
+当前结论：reviewed Container Runtime 已通过合成开发验收；CLI 与生产能力继续关闭
 
 ## 当前状态
 
 仓库已经具备 D-Flow FM 的开发期边界：多引擎登记、Solver-neutral 模型校验、HYDROLIB-core 类型化文件生成、Gate/Pump 严格子集映射、HIS NetCDF 结果解析、隔离 Workspace、CLI/Container 进程监督及完整 Runtime provenance 合同。
 
-这些能力不等于真实数值运行已经闭合。目前仓库中没有经审查的 `dflowfm`、`dimr`、`fbc` 二进制或不可变运行时镜像，也没有通过官方 D-Flow FM 基础 case、官方 D-RTC coupling case 或 Dayu 闸泵闭环 benchmark。D-Flow 登记项保持 `production_eligible=false`。当前 `UNSTEADY_1D`、`BRANCHED_NETWORK`、`GATE`、`PUMP`、`ORIFICE`、`DYNAMIC_CONTROL` 是 `EXPERIMENTAL`，`D_RTC` 及其余未验证能力是 `UNVERIFIED`，没有任何 `VERIFIED_*` 能力。不得把类型化序列化、mock 进程测试或静态编译报告描述为真实水力验证。
+固定官方源码构建出的 reviewed Container Runtime 已由 digest `sha256:e53a7c22cdce6a63f39357006ba73f2254ace24979c1f374ba111ee52d5b12b9` 锁定，并通过官方 D-Flow、官方 D-Flow+FBC、DF01、DRTC-S01、G01、G02 与 G03。证据仍是 `SYNTHETIC_NUMERICAL_ONLY`，D-Flow 登记项保持 `production_eligible=false`，不得描述为真实工程或生产水力验证。Pump native mapping 仍是 `PUMP_NATIVE_CONTROL_LIMITED`，P03 为 `BLOCKED_BY_NATIVE_CONTROL_SEMANTICS`。
 
-`DFlowFMEngine.run()` 已将普通 DF01 形态的无活动结构基础 1D 路径正式串联：验证模型与开发能力门，创建隔离 Job Workspace，在该 Workspace 中 build 类型化 native case，仅由 DIMR 启动外部 Runtime，再解析 HIS NetCDF 为统一 H/Q 结果并写入运行诊断。它对带活动结构但没有显式 Gate/Pump spec 的普通 run 会拒绝推断。当前这条 DF01 编排因官方 Runtime 与完整 provenance 缺失而在执行前以 `DFLOW_RUNTIME_BLOCKED` 终止，尚无真实数值运行证据。
+`DFlowFMEngine.run()` 的 DF01 路径已通过真实 DIMR/D-Flow 运行。它对带活动结构但没有显式 Gate/Pump spec 的普通 run 继续拒绝推断。
 
-Controlled path 与上述普通 DF01 path 保持独立。`validate_controlled_model()`、`compile_control()`、`run_controlled()` 和 `parse_controlled_results()` 均在没有经验收 D-RTC/FBC artifact compiler 时以 `DRTC_COMPILER_BLOCKED` fail closed，不会用 Python 逐时步耦合器代替官方 DIMR/FBC。
+Controlled path 与普通 DF01 path 保持独立。`validate_controlled_model()`、`compile_control()`、`run_controlled()` 和 `parse_controlled_results()` 已开放单 Gate schedule/threshold 子集；所有身份与 registry 检查 fail closed，且不会用 Python 逐时步耦合器代替官方 DIMR/FBC。
 
 ## 固定源码与 Python 包
 
@@ -122,9 +122,9 @@ simulation/job ID 使用严格单路径段；重复 Job、marker 不匹配、sym
 
 D-Flow FM、DIMR 与 FBC 必须共享已审计 suite tag、commit 和 source manifest，并分别精确报告原生版本 `1.2.184`、`2.00`、`1.6.1`；四组件必须同平台/架构。CLI 必须同时提供 DIMR、D-Flow FM、FBC 与 HYDROLIB-core 四个显式工件，并对四者重新计算 SHA-256 与 provenance 比对。Container 还会检查本地 digest、OCI `source/version/revision` 标签及完整 provenance 的 canonical SHA-256 标签，且以 `--pull never` 禁止隐式拉取。任一证据缺失或不一致，readiness 必须返回 `DFLOW_RUNTIME_BLOCKED`。
 
-上述路径和 hash 校验只是必要条件，不会自动建立运行时信任。CLI 尚无经验收的“已核验工件→实际装载模块”路径绑定与签名信任根；Container 也尚无源码内受审的 digest/签名策略。在这些证据闭环和数值验收完成前，两种模式都必须 fail closed，`runtime_available=false`，不得因为文件存在、hash 匹配或本地有同名镜像而解锁。
+上述路径和 hash 校验只是必要条件；Container 还必须命中源码内唯一 reviewed digest，并由 acceptance registry 绑定完整 benchmark 集。不存在环境变量跳过 provenance/acceptance。CLI 尚无经验收的“已核验工件→实际装载模块”路径绑定，继续 `BLOCKED / UNVERIFIED`。
 
-当前确定性 blocked 原因是：仓库和本机没有满足上述身份合同、并通过官方及 Dayu 数值验收的运行时。`backend/requirements-dflow.txt`、HYDROLIB 序列化通过或 Container/DIMR mock 测试都不能解除该状态。
+两次独立官方源码构建由于上游二进制嵌入构建时间而不具备 bit-for-bit 一致性，明确分类为 `NON_BIT_REPRODUCIBLE`。信任基础是同一 source manifest、固定 recipe/compiler/dependency 基线、每次构建独立哈希及官方功能 case；未修改上游源码，也未用第三方 Solver 二进制替代。
 
 ## 许可证与分发边界
 

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 from math import isclose, isfinite
+from pathlib import Path
+from shutil import copyfile
 from typing import Any, Iterable, Mapping, Sequence
 
 from model.hydraulic_1d.contracts import (
@@ -16,13 +19,46 @@ from model.hydraulic_1d.dflow_fm.adapter import (
     DFLOW_ENGINE_ID,
     DFLOW_ENGINE_VERSION,
     DFLOW_NATIVE_VERSION,
-    DFLOW_TIME_UNIT,
     DFlowFMPreparedCase,
 )
 from model.hydraulic_1d.errors import (
     Hydraulic1DResultError,
     Hydraulic1DRuntimeUnavailable,
 )
+
+
+DFLOW_HISTORY_TIME_UNIT = "seconds since 2020-01-01 00:00:00 +00:00"
+
+
+@dataclass(frozen=True, slots=True)
+class DFlowFMGateSample:
+    """One exact Orifice/Gate history record from D-Flow FM 2026.02."""
+
+    time_seconds: float
+    structure_id: str
+    discharge_m3s: float | None
+    crest_level_m: float
+    crest_width_m: float
+    gate_lower_edge_level_m: float
+    actual_opening_m: float
+    upstream_water_level_m: float
+    downstream_water_level_m: float
+    head_difference_m: float
+    flow_area_m2: float | None
+    velocity_mps: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class DFlowFMMassBalance:
+    """Global cumulative balance plus separately reported internal Gate transfer."""
+
+    inflow_m3: float
+    outflow_m3: float
+    storage_change_m3: float
+    structure_transfer_m3: float
+    residual_m3: float
+    relative_residual: float
+    native_max_abs_volume_error_m3: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,8 +72,8 @@ class DFlowFMResultMapping:
 
     time_dimension: str = "time"
     time_variable: str = "time"
-    expected_time_unit: str = DFLOW_TIME_UNIT
-    station_dimension: str = "stations"
+    expected_time_unit: str = DFLOW_HISTORY_TIME_UNIT
+    station_dimension: str = "station"
     station_id_variable: str = "station_name"
     water_level_variable: str = "waterlevel"
     water_level_unit: str = "m"
@@ -49,6 +85,64 @@ class DFlowFMResultMapping:
     flow_area_unit: str = "m2"
     velocity_variable: str = "cross_section_velocity"
     velocity_unit: str = "m s-1"
+
+
+class _MaterializedNetCDFVariable:
+    """Expose one netCDF4 variable through the strict parser's tiny interface."""
+
+    def __init__(self, variable: Any) -> None:
+        self.dims = tuple(variable.dimensions)
+        self.shape = tuple(variable.shape)
+        self.attrs = {
+            name: variable.getncattr(name) for name in variable.ncattrs()
+        }
+        self.values = variable[:]
+
+
+class _MaterializedNetCDFDataset:
+    """Detach required data from a native Dataset before closing the file."""
+
+    def __init__(self, dataset: Any) -> None:
+        self.variables = {
+            name: _MaterializedNetCDFVariable(variable)
+            for name, variable in dataset.variables.items()
+        }
+        self.attrs = {name: dataset.getncattr(name) for name in dataset.ncattrs()}
+
+
+def _open_unicode_windows_netcdf(result_file: Path, owner_token: str) -> Any:
+    """Read a Unicode-path HIS file via a unique ASCII relative staging name."""
+
+    try:
+        from netCDF4 import Dataset
+    except ImportError as exc:
+        raise Hydraulic1DRuntimeUnavailable(
+            "netCDF4 is required to parse D-Flow NetCDF results on Windows",
+            code="DFLOW_RESULT_READER_NOT_AVAILABLE",
+        ) from exc
+    repository_root = Path(__file__).resolve().parents[3]
+    current_directory = Path.cwd().resolve()
+    if not current_directory.is_relative_to(repository_root):
+        raise Hydraulic1DResultError(
+            "D-Flow result parsing must run from inside the Dayu repository",
+            code="DFLOW_RESULT_PATH_UNAVAILABLE",
+        )
+    relative_directory = (
+        Path("outputs") / "dflow-native-io" / f"{owner_token}-result"
+    )
+    absolute_directory = current_directory / relative_directory
+    absolute_directory.mkdir(parents=True, exist_ok=False)
+    staged_relative = relative_directory / result_file.name
+    staged_absolute = current_directory / staged_relative
+    try:
+        copyfile(result_file, staged_absolute)
+        with Dataset(staged_relative, mode="r") as dataset:
+            return _MaterializedNetCDFDataset(dataset)
+    finally:
+        if staged_absolute.exists():
+            staged_absolute.unlink()
+        if absolute_directory.exists():
+            absolute_directory.rmdir()
 
 
 class DFlowFMResultParser:
@@ -72,6 +166,25 @@ class DFlowFMResultParser:
                 f"D-Flow history result is missing: {result_file.name}",
                 code="DFLOW_RESULT_MISSING",
             )
+        if any(not character.isascii() for character in str(result_file)):
+            owner_token = sha256(
+                str(result_file.resolve()).encode("utf-8")
+            ).hexdigest()
+            try:
+                dataset = _open_unicode_windows_netcdf(result_file, owner_token)
+                return self.parse_dataset(
+                    model,
+                    prepared,
+                    dataset,
+                    runtime_seconds=runtime_seconds,
+                )
+            except (Hydraulic1DResultError, Hydraulic1DRuntimeUnavailable):
+                raise
+            except Exception as exc:
+                raise Hydraulic1DResultError(
+                    f"cannot open D-Flow history NetCDF: {exc}",
+                    code="DFLOW_RESULT_CORRUPT",
+                ) from exc
         try:
             if result_file.stat().st_size <= 0:
                 raise Hydraulic1DResultError(
@@ -359,6 +472,220 @@ class DFlowFMResultParser:
             artifacts=(),
         )
 
+    def parse_gate_and_mass_balance(
+        self,
+        prepared: DFlowFMPreparedCase,
+        *,
+        expected_structure_id: str,
+    ) -> tuple[tuple[DFlowFMGateSample, ...], DFlowFMMassBalance]:
+        """Parse only the exact 2026.02 Orifice and balance variables.
+
+        D-Flow emits an undefined discharge at the initialization sample.  It is
+        represented as ``None`` only at ``t=0``; every active sample must be
+        finite.  No similarly named variable fallback is permitted.
+        """
+
+        result_file = prepared.result_file
+        if not result_file.is_file():
+            raise Hydraulic1DResultError(
+                f"D-Flow history result is missing: {result_file.name}",
+                code="DFLOW_RESULT_MISSING",
+            )
+        owner_token = sha256(str(result_file.resolve()).encode("utf-8")).hexdigest()
+        try:
+            if any(not character.isascii() for character in str(result_file)):
+                dataset = _open_unicode_windows_netcdf(result_file, owner_token)
+            else:
+                from netCDF4 import Dataset
+
+                with Dataset(result_file, mode="r") as source:
+                    dataset = _MaterializedNetCDFDataset(source)
+            return self.parse_gate_and_mass_balance_dataset(
+                dataset,
+                expected_structure_id=expected_structure_id,
+            )
+        except Hydraulic1DResultError:
+            raise
+        except Exception as exc:
+            raise Hydraulic1DResultError(
+                f"cannot parse D-Flow Gate history: {exc}",
+                code="DFLOW_RESULT_CORRUPT",
+            ) from exc
+
+    def parse_gate_and_mass_balance_dataset(
+        self,
+        dataset: Any,
+        *,
+        expected_structure_id: str,
+    ) -> tuple[tuple[DFlowFMGateSample, ...], DFlowFMMassBalance]:
+        """Parse a materialized or test dataset under the exact native schema."""
+
+        variables = self._variables(dataset)
+        units = {
+            "orifice_discharge": "m3 s-1",
+            "orifice_crest_level": "m",
+            "orifice_crest_width": "m",
+            "orifice_gate_lower_edge_level": "m",
+            "orifice_gate_opening_height": "m",
+            "orifice_s1up": "m",
+            "orifice_s1dn": "m",
+            "orifice_head": "m",
+            "orifice_flow_area": "m2",
+            "orifice_velocity": "m s-1",
+            "water_balance_storage": "m3",
+            "water_balance_volume_error": "m3",
+            "water_balance_boundaries_in": "m3",
+            "water_balance_boundaries_out": "m3",
+        }
+        required = {"time", "orifice_name", *units}
+        missing = sorted(required.difference(variables))
+        if missing:
+            raise Hydraulic1DResultError(
+                "D-Flow Gate result lacks required variables: " + ", ".join(missing),
+                code="DFLOW_RESULT_SCHEMA_MISMATCH",
+            )
+        time = self._finite_vector(variables["time"], name="time")
+        self._require_dims(variables["time"], ("time",), name="time")
+        self._require_unit(
+            variables["time"],
+            DFLOW_HISTORY_TIME_UNIT,
+            name="time",
+        )
+        ids = self._ids(
+            variables["orifice_name"],
+            dimension="orifice",
+            name="orifice_name",
+        )
+        if ids != (expected_structure_id,):
+            raise Hydraulic1DResultError(
+                "D-Flow Gate structure identity does not match the frozen model",
+                code="DFLOW_RESULT_IDENTITY_MISMATCH",
+            )
+        values: dict[str, Any] = {}
+        for name, expected_unit in units.items():
+            variable = variables[name]
+            self._require_unit(variable, expected_unit, name=name)
+            if name.startswith("orifice_"):
+                self._require_dims(variable, ("time", "orifice"), name=name)
+                self._require_matrix(
+                    variable,
+                    "time",
+                    "orifice",
+                    len(time),
+                    1,
+                    name=name,
+                )
+                values[name] = variable
+            else:
+                self._require_dims(variable, ("time",), name=name)
+                values[name] = self._finite_vector(variable, name=name)
+
+        samples: list[DFlowFMGateSample] = []
+        for index, current_time in enumerate(time):
+            raw_discharge = values["orifice_discharge"].values[index, 0]
+            if bool(getattr(raw_discharge, "mask", False)):
+                discharge_raw = float("nan")
+            else:
+                try:
+                    discharge_raw = float(raw_discharge)
+                except (TypeError, ValueError) as exc:
+                    raise Hydraulic1DResultError(
+                        "D-Flow Gate discharge contains a non-numeric value",
+                        code="DFLOW_RESULT_CORRUPT",
+                    ) from exc
+            if not isfinite(discharge_raw):
+                if index == 0 and isclose(current_time, 0.0, abs_tol=1e-12):
+                    discharge_raw = None
+                else:
+                    raise Hydraulic1DResultError(
+                        "active D-Flow Gate discharge is non-finite",
+                        code="DFLOW_RESULT_NONFINITE",
+                    )
+            sample_values: dict[str, float | None] = {}
+            for name in units:
+                if not name.startswith("orifice_") or name == "orifice_discharge":
+                    continue
+                raw_value = values[name].values[index, 0]
+                if bool(getattr(raw_value, "mask", False)):
+                    number = float("nan")
+                else:
+                    try:
+                        number = float(raw_value)
+                    except (TypeError, ValueError) as exc:
+                        raise Hydraulic1DResultError(
+                            f"D-Flow variable {name!r} contains a non-numeric value",
+                            code="DFLOW_RESULT_CORRUPT",
+                        ) from exc
+                if isfinite(number):
+                    sample_values[name] = number
+                elif (
+                    index == 0
+                    and isclose(current_time, 0.0, abs_tol=1e-12)
+                    and name in {"orifice_flow_area", "orifice_velocity"}
+                ):
+                    sample_values[name] = None
+                else:
+                    raise Hydraulic1DResultError(
+                        f"D-Flow variable {name!r} is non-finite during active simulation",
+                        code="DFLOW_RESULT_NONFINITE",
+                    )
+            samples.append(
+                DFlowFMGateSample(
+                    time_seconds=current_time,
+                    structure_id=expected_structure_id,
+                    discharge_m3s=discharge_raw,
+                    crest_level_m=float(sample_values["orifice_crest_level"]),
+                    crest_width_m=float(sample_values["orifice_crest_width"]),
+                    gate_lower_edge_level_m=sample_values[
+                        "orifice_gate_lower_edge_level"
+                    ],
+                    actual_opening_m=float(sample_values["orifice_gate_opening_height"]),
+                    upstream_water_level_m=float(sample_values["orifice_s1up"]),
+                    downstream_water_level_m=float(sample_values["orifice_s1dn"]),
+                    head_difference_m=float(sample_values["orifice_head"]),
+                    flow_area_m2=sample_values["orifice_flow_area"],
+                    velocity_mps=sample_values["orifice_velocity"],
+                )
+            )
+        if len(samples) < 2:
+            raise Hydraulic1DResultError(
+                "D-Flow Gate result requires at least two time samples",
+                code="DFLOW_RESULT_SCHEMA_MISMATCH",
+            )
+        transfer = 0.0
+        for previous, current in zip(samples, samples[1:], strict=False):
+            q0 = previous.discharge_m3s
+            q1 = current.discharge_m3s
+            if q1 is None:
+                raise Hydraulic1DResultError(
+                    "active D-Flow Gate discharge is undefined",
+                    code="DFLOW_RESULT_NONFINITE",
+                )
+            if q0 is None:
+                q0 = 0.0
+            transfer += 0.5 * (q0 + q1) * (
+                current.time_seconds - previous.time_seconds
+            )
+        inflow = values["water_balance_boundaries_in"]  # type: ignore[assignment]
+        outflow = values["water_balance_boundaries_out"]  # type: ignore[assignment]
+        storage = values["water_balance_storage"]  # type: ignore[assignment]
+        errors = values["water_balance_volume_error"]  # type: ignore[assignment]
+        inflow_delta = float(inflow[-1] - inflow[0])
+        outflow_delta = float(outflow[-1] - outflow[0])
+        storage_delta = float(storage[-1] - storage[0])
+        residual = float(errors[-1] - errors[0])
+        denominator = max(abs(inflow_delta), abs(outflow_delta), abs(storage_delta), 1.0)
+        balance = DFlowFMMassBalance(
+            inflow_m3=inflow_delta,
+            outflow_m3=outflow_delta,
+            storage_change_m3=storage_delta,
+            structure_transfer_m3=transfer,
+            residual_m3=residual,
+            relative_residual=abs(residual) / denominator,
+            native_max_abs_volume_error_m3=max(abs(float(value)) for value in errors),
+        )
+        return tuple(samples), balance
+
     @staticmethod
     def _variables(dataset: Any) -> Mapping[str, Any]:
         variables = getattr(dataset, "variables", None)
@@ -493,6 +820,14 @@ class DFlowFMResultParser:
         converted = cls._to_python(value)
         if not isinstance(converted, list):
             return converted
+        if None in converted:
+            first_padding = converted.index(None)
+            if any(item is not None for item in converted[first_padding:]):
+                raise Hydraulic1DResultError(
+                    "D-Flow identifier character matrix has non-trailing padding",
+                    code="DFLOW_RESULT_LOCATION_INVALID",
+                )
+            converted = converted[:first_padding]
         if all(isinstance(item, bytes) for item in converted):
             return b"".join(converted)
         if all(isinstance(item, str) for item in converted):

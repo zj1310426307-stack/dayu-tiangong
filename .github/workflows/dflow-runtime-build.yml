@@ -1,0 +1,36 @@
+name: D-Flow Runtime Source Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-build:
+    name: Pinned official fm-suite source build
+    runs-on: [self-hosted, linux, x64, dflow-builder]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: dayu
+      - name: Checkout locked official source
+        uses: actions/checkout@v7
+        with:
+          repository: Deltares/Delft3D
+          ref: 5a4649830b1e5072caf019fb4850bbdefd9ad431
+          path: upstream
+      - name: Verify source identity
+        working-directory: upstream
+        run: |
+          test "$(git rev-parse HEAD)" = "5a4649830b1e5072caf019fb4850bbdefd9ad431"
+          test "$(git describe --tags --exact-match)" = "DIMRset_2026.02"
+      - name: Build independent official-source images
+        run: |
+          docker build --build-arg BUILD_INSTANCE=A -f dayu/docker/dflow-build.Dockerfile -t dayu-dflow-official:build-a upstream
+          docker build --build-arg BUILD_INSTANCE=B -f dayu/docker/dflow-build.Dockerfile -t dayu-dflow-official:build-b upstream
+      - name: Report non-bit-reproducible digests for review
+        run: |
+          docker image inspect dayu-dflow-official:build-a --format '{{.Id}}'
+          docker image inspect dayu-dflow-official:build-b --format '{{.Id}}'
+          python -m json.tool dayu/model/hydraulic_1d/dflow_fm/acceptance/DIMRset_2026.02/build-reproducibility.json

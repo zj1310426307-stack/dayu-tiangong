@@ -1,0 +1,43 @@
+{
+  "schema_version": "dayu.dflow-runtime-provenance.v1",
+  "dflowfm": {
+    "version": "1.2.184",
+    "upstream_tag": "DIMRset_2026.02",
+    "upstream_commit": "5a4649830b1e5072caf019fb4850bbdefd9ad431",
+    "binary_sha256": "9fd2ad64ac089bd1b10e806f53712b289ea0a276c82d02300bddb4f5bb420445",
+    "source_manifest": "ef75c32e6f5f7715cb495c9280a2c628c2192fd4f3c914a2a8a7901d37607fd2",
+    "platform": "linux",
+    "architecture": "x86_64",
+    "build_timestamp": "2026-09-02T09:11:58.102914598Z"
+  },
+  "dimr": {
+    "version": "2.00",
+    "upstream_tag": "DIMRset_2026.02",
+    "upstream_commit": "5a4649830b1e5072caf019fb4850bbdefd9ad431",
+    "binary_sha256": "d2154c535497910aef8fdcf7978ba67e571f8bbac904dd16a4b4827f39ee9207",
+    "source_manifest": "ef75c32e6f5f7715cb495c9280a2c628c2192fd4f3c914a2a8a7901d37607fd2",
+    "platform": "linux",
+    "architecture": "x86_64",
+    "build_timestamp": "2026-09-02T09:11:58.102914598Z"
+  },
+  "fbc": {
+    "version": "1.6.1",
+    "upstream_tag": "DIMRset_2026.02",
+    "upstream_commit": "5a4649830b1e5072caf019fb4850bbdefd9ad431",
+    "binary_sha256": "e7590c4597f1234b98c99eab10f5a776508815d6f2c86e4c8c1ee3f865c17647",
+    "source_manifest": "ef75c32e6f5f7715cb495c9280a2c628c2192fd4f3c914a2a8a7901d37607fd2",
+    "platform": "linux",
+    "architecture": "x86_64",
+    "build_timestamp": "2026-09-02T09:11:58.102914598Z"
+  },
+  "hydrolib_core": {
+    "version": "1.0.1",
+    "upstream_tag": "1.0.1",
+    "upstream_commit": "878d526ed028308e8778d6227a559de6ce49d297",
+    "binary_sha256": "15e9bb37c9d87922d2199f5142c471962fb1e457d1f553eb23a15574181e901f",
+    "source_manifest": "d460a4e7acf893fe4060c651b4f1b943f51c81bc793bade6a96dad5f0e3bfd3d",
+    "platform": "linux",
+    "architecture": "x86_64",
+    "build_timestamp": "2016-01-01T00:00:00Z"
+  }
+}

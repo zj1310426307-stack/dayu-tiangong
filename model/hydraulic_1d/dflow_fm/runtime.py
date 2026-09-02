@@ -33,6 +33,7 @@ from model.hydraulic_1d.dflow_fm.provenance import (
 )
 from model.hydraulic_1d.dflow_fm.workspace import DFlowJobWorkspace
 from model.hydraulic_1d.errors import (
+    Hydraulic1DCancelled,
     Hydraulic1DExecutionError,
     Hydraulic1DRuntimeUnavailable,
 )
@@ -43,11 +44,17 @@ CONTAINER_PROVENANCE_LABEL = "io.dayu-tiangong.dflow.provenance-sha256"
 CONTAINER_CID_FILENAME = "dflow-container.cid"
 
 # Deployment input and provenance manifests are diagnostic evidence, not trust
-# roots.  These source-controlled acceptance sets deliberately remain empty until
-# the corresponding binding reviews are completed and committed with the code.
-# They cannot be populated through environment variables or a runtime manifest.
+# roots. These source-controlled acceptance sets can only be changed by review;
+# they cannot be populated through environment variables or a runtime manifest.
 _ACCEPTED_CLI_BINDING_MANIFESTS: frozenset[str] = frozenset()
-_ACCEPTED_CONTAINER_IMAGE_DIGESTS: frozenset[str] = frozenset()
+_ACCEPTED_CONTAINER_IMAGE_DIGESTS: frozenset[str] = frozenset(
+    {
+        # DIMRset_2026.02, built from Deltares/Delft3D@5a464983 and verified
+        # against the official D-Flow FM and DIMR/FBC examples. Detailed source,
+        # build, component and reproducibility evidence lives in acceptance/.
+        "sha256:e53a7c22cdce6a63f39357006ba73f2254ace24979c1f374ba111ee52d5b12b9",
+    }
+)
 
 
 def _blocked(detail: str) -> str:
@@ -346,7 +353,7 @@ class _ProcessDFlowRuntime(DFlowRuntime):
             try:
                 while process.poll() is None:
                     if cancel_check is not None and cancel_check():
-                        raise Hydraulic1DExecutionError(
+                        raise Hydraulic1DCancelled(
                             "D-Flow/D-RTC execution cancelled",
                             code="DFLOW_CANCELLED",
                         )
@@ -613,8 +620,8 @@ class ContainerDFlowRuntime(_ProcessDFlowRuntime):
             return (
                 False,
                 _blocked(
-                    "source-controlled container image digest acceptance allowlist "
-                    "is empty; no reviewed digest/signature trust root is committed"
+                    "container image digest is absent from the source-controlled "
+                    "reviewed acceptance allowlist"
                 ),
                 None,
             )

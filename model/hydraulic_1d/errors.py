@@ -54,10 +54,10 @@ class Hydraulic1DExecutionError(Hydraulic1DError):
 class Hydraulic1DCancelled(Hydraulic1DExecutionError):
     """Report cooperative cancellation after the external process is terminated."""
 
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, *, code: str = "MASCARET_CANCELLED") -> None:
         """Distinguish a confirmed cooperative cancellation from a process failure."""
 
-        super().__init__(message, code="MASCARET_CANCELLED")
+        super().__init__(message, code=code)
 
 
 class Hydraulic1DTimeout(Hydraulic1DExecutionError):

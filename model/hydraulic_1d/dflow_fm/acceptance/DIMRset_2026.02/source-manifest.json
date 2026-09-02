@@ -1,0 +1,15 @@
+{
+  "schema_version": "dayu.dflow-source-manifest.v1",
+  "upstream_repository": "https://github.com/Deltares/Delft3D",
+  "upstream_tag": "DIMRset_2026.02",
+  "upstream_commit": "5a4649830b1e5072caf019fb4850bbdefd9ad431",
+  "upstream_tree": "fff877a3c734fe3233b016729861b822a7bc279c",
+  "git_ls_tree_sha256": "ef75c32e6f5f7715cb495c9280a2c628c2192fd4f3c914a2a8a7901d37607fd2",
+  "file_count": 30673,
+  "reviewed_recipe_blobs": {
+    "doc/delft3d.Dockerfile": "945224cc343da35fcce7d6832ffa8ea9583b6146",
+    "ci/dockerfiles/linux/buildtools.Dockerfile": "d930330149ab073ce126d9bc821ad5b8b610bc4e",
+    "ci/dockerfiles/linux/third-party-libs.Dockerfile": "d659c122e0652877567c7155ea3f4af733c705b3",
+    "build.sh": "3b1343e16f6c8d82a86a2c5ca59cc8db32d67af9"
+  }
+}
