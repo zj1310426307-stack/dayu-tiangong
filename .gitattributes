@@ -1,0 +1,3 @@
+# Acceptance manifests are byte-hashed trust roots. Preserve identical bytes
+# on Linux and Windows checkouts regardless of the runner's autocrlf setting.
+/model/hydraulic_1d/dflow_fm/acceptance/** text eol=lf
