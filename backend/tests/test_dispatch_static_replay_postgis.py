@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import os
+from queue import Queue
 import time
 from uuid import uuid4
 
@@ -297,47 +298,47 @@ def test_frozen_v2_readiness_replay_and_runtime_fail_closed() -> None:
             .where(DispatchPlan.id == plan_id)
             .with_for_update()
         ) is not None
-        clone_application_name = f"dispatch-clone-{uuid4().hex}"
+        clone_pids: Queue[int] = Queue()
 
         def clone_version() -> int:
             with SessionLocal() as concurrent_session:
-                concurrent_session.execute(
-                    text("SELECT set_config('application_name', :name, true)"),
-                    {"name": clone_application_name},
-                )
+                pid = concurrent_session.scalar(text("SELECT pg_backend_pid()"))
+                assert pid is not None
+                clone_pids.put(int(pid))
                 return dispatch_service.clone_plan(
                     concurrent_session, plan_id
                 ).version
 
         with ThreadPoolExecutor(max_workers=2) as executor:
             futures = [executor.submit(clone_version) for _ in range(2)]
-            deadline = time.monotonic() + 10.0
-            waiting = 0
-            while time.monotonic() < deadline:
-                waiting = int(
-                    blocker.scalar(
-                        text(
-                            "SELECT count(*) FROM pg_stat_activity "
-                            "WHERE datname = current_database() "
-                            "AND pid <> pg_backend_pid() "
-                            "AND application_name = :name "
-                            "AND state = 'active' "
-                            "AND query ILIKE '%dispatch_plan%' "
-                            "AND query ILIKE '%FOR UPDATE%'"
-                        ),
-                        {"name": clone_application_name},
+            try:
+                worker_pids = [clone_pids.get(timeout=10) for _ in futures]
+                deadline = time.monotonic() + 10.0
+                waiting = 0
+                while time.monotonic() < deadline:
+                    # pg_blocking_pids reads the live lock manager rather than
+                    # the transaction-cached pg_stat_activity snapshot.
+                    waiting = sum(
+                        int(
+                            blocker.scalar(
+                                text(
+                                    "SELECT cardinality(pg_blocking_pids(:pid))"
+                                ),
+                                {"pid": pid},
+                            )
+                            or 0
+                        )
+                        > 0
+                        for pid in worker_pids
                     )
-                    or 0
-                )
-                if waiting >= 2:
-                    break
-                time.sleep(0.05)
-            concurrent_lock_queries_visible = waiting >= 2
-            blocker.commit()
+                    if waiting == 2:
+                        break
+                    time.sleep(0.05)
+                both_clones_blocked = waiting == 2
+            finally:
+                blocker.commit()
             clone_versions = [future.result(timeout=15) for future in futures]
-    assert concurrent_lock_queries_visible, (
-        "concurrent clone FOR UPDATE statements were not simultaneously visible"
-    )
+    assert both_clones_blocked, "both clone sessions did not reach a row-lock wait"
     assert sorted(clone_versions) == [2, 3]
     with SessionLocal() as session:
         gate = session.scalar(
