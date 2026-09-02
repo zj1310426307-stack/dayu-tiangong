@@ -1,5 +1,51 @@
 /* 本文件由 npm run openapi:update 自动生成，请勿手工修改。 */
 
+export interface AcceptanceCriteria {
+  "maximum_water_level_rmse"?: number | null;
+  "maximum_discharge_rmse"?: number | null;
+  "maximum_peak_relative_error"?: number | null;
+  "maximum_peak_time_error_seconds"?: number | null;
+  "minimum_nse"?: number | null;
+  "minimum_r_squared"?: number | null;
+  "minimum_observation_coverage"?: number;
+  "maximum_mass_balance_relative_error"?: number | null;
+}
+
+export interface AcceptanceEvaluation {
+  "criteria_passed": boolean;
+  "model_state": "DRAFT" | "QA_PASSED" | "CALIBRATED" | "VALIDATED" | "PRODUCTION_APPROVED";
+  "checks": Array<Record<string, unknown>>;
+  "professional_approval_required"?: boolean;
+}
+
+export interface AcceptanceEvaluationRequest {
+  "metrics": Array<HydraulicMetrics>;
+  "criteria": AcceptanceCriteria;
+  "independence": ValidationIndependenceResult;
+  "mass_balance_relative_error"?: number | null;
+}
+
+export interface AcceptanceManifest {
+  "schema_version"?: "dayu-production-acceptance-v1";
+  "generated_at"?: string;
+  "manifest_hash": string;
+  "evidence": Record<string, unknown>;
+}
+
+export interface AcceptanceManifestRequest {
+  "project": string;
+  "model_version": string;
+  "qa": Record<string, unknown>;
+  "engine": Record<string, unknown>;
+  "runtime": Record<string, unknown>;
+  "calibration"?: Record<string, unknown> | null;
+  "validation"?: Record<string, unknown> | null;
+  "comparison"?: Record<string, unknown> | null;
+  "run": Record<string, unknown>;
+  "metrics": Record<string, unknown>;
+  "result_hashes": Record<string, string>;
+}
+
 export interface AIChatRequest {
   "question": string;
   "user"?: string;
@@ -123,11 +169,45 @@ export interface app__dispatch__schemas__ValidationReport {
   "warnings": Array<string>;
 }
 
+export interface app__gis_governance__schemas__ValidationRunRecord {
+  "id": number;
+  "batch_id": number;
+  "ruleset_version": string;
+  "status": "running" | "passed" | "failed";
+  "staging_content_hash": string;
+  "started_at": string;
+  "finished_at"?: string | null;
+  "summary_json": Record<string, unknown>;
+}
+
+export interface app__hydraulic__production__records__ValidationRunRecord {
+  "id": number;
+  "validation_code": string;
+  "production_run_id": number;
+  "dataset_version_id": number;
+  "case_id": number;
+  "calibration_run_id": number | null;
+  "status": string;
+  "created_at": string;
+}
+
 export interface app__validation__schemas__ValidationReport {
   "dataset_version_id": number;
   "checked_time": string;
   "summary": ValidationSummary;
   "items": Array<ValidationItem>;
+}
+
+export interface AuditEventRecord {
+  "id": number;
+  "dataset_version_id": number;
+  "action": "IMPORT" | "RUN_CREATION" | "QA_OVERRIDE" | "PARAMETER_PROMOTION" | "CALIBRATION_ACCEPTANCE" | "VALIDATION_ACCEPTANCE" | "PRODUCTION_APPROVAL" | "EXPORT";
+  "actor": string;
+  "entity_type": string;
+  "entity_id": string;
+  "content_hash": string;
+  "details_json": Record<string, unknown>;
+  "created_at": string;
 }
 
 export interface BatchCreate {
@@ -214,10 +294,25 @@ export interface Body_import_excel_api_v1_import_excel_post {
   "file": string;
 }
 
+export interface Body_import_external_result_api_v1_hydraulic_production_external_results_import_post {
+  "file": string;
+  "options_json": string;
+  "dataset_version_id": number;
+  "result_code": string;
+  "actor": string;
+}
+
 export interface Body_import_geojson_api_v1_import_geojson_post {
   "resource": "rivers" | "cross_sections" | "gates" | "pumps";
   "dataset_version_id": number;
   "file": string;
+}
+
+export interface Body_import_observation_api_v1_hydraulic_production_observations_import_post {
+  "file": string;
+  "options_json": string;
+  "dataset_version_id": number;
+  "actor": string;
 }
 
 export interface Body_import_to_postgis_api_v1_dgis_conversions_postgis_post {
@@ -231,6 +326,11 @@ export interface Body_import_to_postgis_api_v1_dgis_conversions_postgis_post {
 
 export interface Body_inspect_file_api_v1_dgis_conversions_inspect_post {
   "file": string;
+}
+
+export interface Body_preview_external_result_api_v1_hydraulic_production_external_results_preview_post {
+  "file": string;
+  "options_json": string;
 }
 
 export interface Body_preview_import_api_v1_hydraulic_imports_preview_post {
@@ -249,6 +349,11 @@ export interface Body_preview_import_api_v1_hydraulic_imports_preview_post {
   "z_field"?: string | null;
   "vertical_unit"?: string;
   "zone_prefix_mode"?: string;
+}
+
+export interface Body_preview_time_series_api_v1_hydraulic_production_time_series_preview_post {
+  "file": string;
+  "options_json": string;
 }
 
 export interface Body_upload_document_api_v1_ai_knowledge_documents_post {
@@ -311,6 +416,88 @@ export interface BufferAnalysisResponse {
   "buffer_geometry": Record<string, unknown>;
   "impacted": Array<SpatialFeature>;
   "distance_basis"?: "PostGIS geography metres";
+}
+
+export interface CalibrationCandidate {
+  "candidate_id": string;
+  "overrides": Record<string, number>;
+  "metrics"?: Array<HydraulicMetrics>;
+  "task_id"?: number | null;
+  "status"?: "planned" | "queued" | "running" | "completed" | "failed" | "cancelled";
+  "objective_score"?: number | null;
+  "rank"?: number | null;
+  "qualified"?: boolean;
+}
+
+export interface CalibrationObjective {
+  "mode": "water-level-focused" | "discharge-focused" | "multi-metric";
+  "weights": Record<string, number>;
+}
+
+export interface CalibrationParameter {
+  "group_id": string;
+  "parameter"?: "manning_n";
+  "target_ids": Array<string>;
+  "values": Array<number>;
+}
+
+export interface CalibrationPromotionRequest {
+  "candidate_id": string;
+  "accepted_by": string;
+  "acceptance_reason": string;
+  "acceptance_criteria": AcceptanceCriteria;
+}
+
+export interface CalibrationPromotionResponse {
+  "calibration": CalibrationRunRecord;
+  "production_run": ProductionRunRecord;
+}
+
+export interface CalibrationRankingRequest {
+  "candidates": Array<CalibrationCandidate>;
+  "objective": CalibrationObjective;
+}
+
+export interface CalibrationRunCommitRequest {
+  "run_code": string;
+  "calibration_run_id"?: number | null;
+  "production_run_id": number;
+  "dataset_version_id": number;
+  "case_id": number;
+  "actor": string;
+  "dataset": DatasetWindow;
+  "sweep": ParameterSweepRequest;
+  "objective": CalibrationObjective;
+  "metric_evidence": Array<MetricEvidenceRequest>;
+  "candidates": Array<CalibrationCandidate>;
+}
+
+export interface CalibrationRunRecord {
+  "id": number;
+  "run_code": string;
+  "production_run_id": number;
+  "dataset_version_id": number;
+  "case_id": number;
+  "status": string;
+  "selected_candidate_id": string | null;
+  "accepted_by": string | null;
+  "accepted_at": string | null;
+  "created_at": string;
+}
+
+export interface CalibrationSweepCreateRequest {
+  "run_code": string;
+  "production_run_id": number;
+  "actor": string;
+  "dataset": DatasetWindow;
+  "sweep": ParameterSweepRequest;
+  "objective": CalibrationObjective;
+  "metric_evidence": Array<MetricEvidenceRequest>;
+}
+
+export interface CalibrationSweepRunResponse {
+  "run": CalibrationRunRecord;
+  "candidates": Array<CalibrationCandidate>;
 }
 
 export interface CatalogBasemap {
@@ -550,6 +737,16 @@ export interface DatasetVersionUpdate {
   "description"?: string | null;
 }
 
+export interface DatasetWindow {
+  "dataset_id": string;
+  "event_id": string;
+  "station_ids": Array<string>;
+  "start_time": string;
+  "end_time": string;
+  "role": "calibration" | "validation";
+  "holdout_type": "independent_event" | "temporal_holdout" | "same_data";
+}
+
 export interface DGISCatalogResponse {
   "components": Array<DGISComponent>;
   "simulation_layers": Array<SimulationLayerRecord>;
@@ -724,6 +921,55 @@ export interface DispatchRunRecord {
   "created_time": string;
   "start_time": string | null;
   "end_time": string | null;
+}
+
+export interface ExternalComparisonRequest {
+  "dayu_series": Array<ProductionSeries>;
+  "external_series": Array<ProductionSeries>;
+  "alignment": TimeAlignmentOptions;
+}
+
+export interface ExternalComparisonResult {
+  "metrics": Array<HydraulicMetrics>;
+  "longitudinal": Array<Record<string, unknown>>;
+  "time_series": Array<Record<string, unknown>>;
+  "reference_not_ground_truth"?: boolean;
+}
+
+export interface ExternalResultPoint {
+  "external_branch": string;
+  "branch_id": string;
+  "external_chainage": number;
+  "chainage_m": number;
+  "time_seconds": number;
+  "timestamp"?: string | null;
+  "water_level_m"?: number | null;
+  "discharge_m3s"?: number | null;
+  "velocity_m_s"?: number | null;
+}
+
+export interface ExternalResultPreview {
+  "source_filename": string;
+  "source_sha256": string;
+  "row_count": number;
+  "branch_count": number;
+  "variables": Array<"water_level" | "discharge" | "velocity">;
+  "issues": Array<QAIssue>;
+  "points": Array<ExternalResultPoint>;
+  "provenance": Record<string, unknown>;
+}
+
+export interface ExternalResultRecord {
+  "id": number;
+  "dataset_version_id": number;
+  "result_code": string;
+  "external_model_name": string;
+  "external_model_version": string;
+  "scenario": string;
+  "vertical_datum": string;
+  "source_filename": string;
+  "source_sha256": string;
+  "imported_at": string;
 }
 
 export interface FeatureStateCollection {
@@ -1171,6 +1417,48 @@ export interface HydraulicLocateRequest {
   "actor"?: string | null;
 }
 
+export interface HydraulicMetrics {
+  "variable": "water_level" | "discharge" | "velocity";
+  "unit": string;
+  "alignment_method": string;
+  "valid_sample_count": number;
+  "observed_sample_count": number;
+  "coverage_ratio": number;
+  "sufficient_samples": boolean;
+  "mae"?: number | null;
+  "rmse"?: number | null;
+  "bias"?: number | null;
+  "nse"?: number | null;
+  "r_squared"?: number | null;
+  "peak_value_error"?: number | null;
+  "peak_relative_error"?: number | null;
+  "peak_time_error_seconds"?: number | null;
+}
+
+export interface HydraulicModelQARequest {
+  "engineering_crs": string;
+  "horizontal_unit": string;
+  "vertical_datum": string;
+  "simulation_duration_seconds": number;
+  "branches": Array<ProductionBranch>;
+  "cross_sections": Array<ProductionCrossSection>;
+  "boundaries": Array<ProductionBoundary>;
+  "observations"?: Array<ProductionSeries>;
+  "structures"?: Array<ProductionStructure>;
+  "thresholds"?: QAThresholds;
+}
+
+export interface HydraulicModelQAResult {
+  "ruleset_version": string;
+  "error_count": number;
+  "warning_count": number;
+  "info_count": number;
+  "run_allowed": boolean;
+  "issues": Array<QAIssue>;
+  "spacing_statistics"?: Record<string, number | null>;
+  "thalweg_profile"?: Array<Record<string, number | string>>;
+}
+
 export interface HydraulicNetworkGraphRecord {
   "network_id": number;
   "nodes": Array<Record<string, unknown>>;
@@ -1248,6 +1536,23 @@ export interface HydraulicReachRecord {
   "downstream_node_id": number;
   "length_m": number;
   "geometry": Record<string, unknown>;
+}
+
+export interface HydraulicResultPoint {
+  "scenario_id": string;
+  "branch_id": string;
+  "cross_section_id": string;
+  "chainage_m": number;
+  "time_seconds": number;
+  "water_level_m": number;
+  "discharge_m3s": number;
+  "velocity_m_s": number;
+  "depth_m"?: number | null;
+  "flow_area_m2"?: number | null;
+  "bed_elevation_m"?: number | null;
+  "left_bank_elevation_m"?: number | null;
+  "right_bank_elevation_m"?: number | null;
+  "geometry"?: Record<string, unknown> | null;
 }
 
 export interface HydraulicRoughnessZoneInput {
@@ -1515,6 +1820,19 @@ export interface LocationSearchResponse {
   "demo_data"?: true;
 }
 
+export interface MetricEvaluationRequest {
+  "observed": ProductionSeries;
+  "simulated": ProductionSeries;
+  "alignment"?: TimeAlignmentOptions;
+}
+
+export interface MetricEvidenceRequest {
+  "observation_series_id": number;
+  "cross_section_id": number;
+  "maximum_chainage_distance_m": number;
+  "alignment"?: TimeAlignmentOptions;
+}
+
 export interface ModelParameterCreate {
   "dataset_version_id": number;
   "parameter_type": string;
@@ -1580,6 +1898,21 @@ export interface ObjectiveWeights {
   "flood_risk"?: number;
   "energy_cost"?: number;
   "operation_cost"?: number;
+}
+
+export interface ObservationRecord {
+  "id": number;
+  "dataset_version_id": number;
+  "series_code": string;
+  "station_id": string;
+  "branch_id": number;
+  "chainage_m": number;
+  "variable": string;
+  "unit": string;
+  "vertical_datum": string;
+  "source_filename": string;
+  "source_sha256": string;
+  "imported_at": string;
 }
 
 export interface OptimizationCandidateRecord {
@@ -1659,6 +1992,17 @@ export interface PaginationMeta {
   "crs"?: "EPSG:4490";
 }
 
+export interface ParameterSweepPlan {
+  "total_candidates": number;
+  "max_runs": number;
+  "candidates": Array<CalibrationCandidate>;
+}
+
+export interface ParameterSweepRequest {
+  "parameters": Array<CalibrationParameter>;
+  "max_runs"?: number;
+}
+
 export interface ParetoCandidateRecord {
   "id": number;
   "task_id": number;
@@ -1681,6 +2025,108 @@ export interface ParetoCandidateRecord {
 export interface PointGeometry {
   "type"?: "Point";
   "coordinates": Array<unknown>;
+}
+
+export interface ProductionApprovalRequest {
+  "approved_by": string;
+  "approval_reason": string;
+}
+
+export interface ProductionBoundary {
+  "boundary_id": string;
+  "branch_id": string;
+  "location": "upstream" | "downstream" | "lateral";
+  "chainage_m"?: number | null;
+  "series": ProductionSeries;
+}
+
+export interface ProductionBranch {
+  "branch_id": string;
+  "start_chainage_m": number;
+  "end_chainage_m": number;
+  "direction_confirmed": boolean;
+  "centerline": Array<Array<unknown>>;
+  "upstream_node_id"?: string | null;
+  "downstream_node_id"?: string | null;
+}
+
+export interface ProductionCapabilityResponse {
+  "framework_version"?: "hydro-1d-production-04-v1";
+  "engineering_import": Array<string>;
+  "model_qa": boolean;
+  "calibration": Array<string>;
+  "validation": Array<string>;
+  "external_comparison": Array<string>;
+  "result_products": Array<string>;
+  "real_project_status"?: "DATA_NOT_AVAILABLE";
+  "real_project_reason": string;
+}
+
+export interface ProductionCrossSection {
+  "section_id": string;
+  "branch_id": string;
+  "chainage_m": number;
+  "offsets_m": Array<number>;
+  "elevations_m": Array<number>;
+  "vertical_datum": string;
+  "orientation_confirmed": boolean;
+  "axis"?: Array<Array<unknown>>;
+  "location"?: Array<unknown> | null;
+}
+
+export interface ProductionRunRecord {
+  "id": number;
+  "run_code": string;
+  "dataset_version_id": number;
+  "case_id": number;
+  "task_id": number | null;
+  "qa_run_code": string;
+  "model_state": string;
+  "input_snapshot_hash": string;
+  "mass_balance_relative_error": number | null;
+  "approved_by": string | null;
+  "approved_at": string | null;
+  "created_at": string;
+}
+
+export interface ProductionSeries {
+  "series_id": string;
+  "variable": "water_level" | "discharge" | "velocity";
+  "unit": "m" | "m3/s" | "m/s";
+  "samples": Array<ProductionSeriesPoint>;
+  "source": string;
+  "branch_id"?: string | null;
+  "chainage_m"?: number | null;
+  "station_id"?: string | null;
+  "vertical_datum"?: string;
+  "time_basis"?: "relative" | "absolute";
+  "timezone"?: string | null;
+}
+
+export interface ProductionSeriesPoint {
+  "time_seconds": number;
+  "value"?: number | null;
+  "quality_flag"?: "GOOD" | "SUSPECT" | "MISSING" | "REJECTED";
+  "timestamp"?: string | null;
+}
+
+export interface ProductionStructure {
+  "structure_id": string;
+  "structure_type": "weir" | "culvert" | "bridge" | "gate" | "sluice" | "pump" | "orifice" | "dam";
+  "branch_id": string;
+  "chainage_m": number;
+  "vertical_datum": string;
+  "capability_status": "VERIFIED_NATIVE" | "VERIFIED_EQUIVALENT" | "UNVERIFIED" | "UNSUPPORTED";
+  "status"?: "draft" | "active" | "inactive" | "retired";
+  "location"?: Array<unknown> | null;
+}
+
+export interface ProductionTaskCreateRequest {
+  "run_code": string;
+  "qa_run_code": string;
+  "actor": string;
+  "task": SimulationTaskCreate;
+  "qa": HydraulicModelQARequest;
 }
 
 export interface PromotedVersionRecord {
@@ -1812,6 +2258,26 @@ export interface PumpUpdate {
   "geometry"?: Record<string, unknown> | null;
 }
 
+export interface QAIssue {
+  "code": string;
+  "severity": "ERROR" | "WARNING" | "INFO";
+  "category": "Network" | "CrossSection" | "Boundary" | "Structure" | "Observation" | "CRS";
+  "entity_type": string;
+  "entity_id"?: string | null;
+  "message": string;
+  "suggestion"?: string | null;
+  "location"?: Record<string, unknown> | null;
+  "context"?: Record<string, unknown>;
+}
+
+export interface QAThresholds {
+  "maximum_projection_distance_m"?: number;
+  "minimum_section_spacing_m"?: number;
+  "maximum_section_spacing_m"?: number;
+  "maximum_bed_jump_m"?: number;
+  "maximum_reverse_bed_slope"?: number;
+}
+
 export interface RecommendationResponse {
   "task_id": number;
   "candidate": ParetoCandidateRecord | null;
@@ -1833,6 +2299,47 @@ export interface ReportGenerateResponse {
   "execution_authorized"?: false;
   "notice": string;
   "created_time": string;
+}
+
+export interface ResultProductBundle {
+  "max_envelope": Array<Record<string, unknown>>;
+  "longitudinal_profile": Array<Record<string, unknown>>;
+  "scenario_difference": Array<Record<string, unknown>>;
+  "maximum_afflux": Record<string, unknown> | null;
+  "afflux_reaches": Array<Record<string, unknown>>;
+  "key_section_table": Array<Record<string, unknown>>;
+  "calibration_table": Array<Record<string, unknown>>;
+  "validation_table": Array<Record<string, unknown>>;
+  "external_comparison_table": Array<Record<string, unknown>>;
+  "geojson": Record<string, unknown>;
+}
+
+export interface ResultProductCommitRequest {
+  "production_run_id": number;
+  "product_code": string;
+  "actor": string;
+  "request": ResultProductRequest;
+}
+
+export interface ResultProductRecord {
+  "id": number;
+  "product_code": string;
+  "production_run_id": number;
+  "schema_version": string;
+  "product_hash": string;
+  "generated_at": string;
+}
+
+export interface ResultProductRequest {
+  "project_id": string;
+  "model_version": string;
+  "baseline_scenario_id"?: string | null;
+  "project_scenario_id": string;
+  "afflux_threshold_m"?: number;
+  "points": Array<HydraulicResultPoint>;
+  "calibration_table"?: Array<Record<string, unknown>>;
+  "validation_table"?: Array<Record<string, unknown>>;
+  "external_comparison_table"?: Array<Record<string, unknown>>;
 }
 
 export interface ResultSectionOption {
@@ -1938,6 +2445,12 @@ export interface RiverUpdate {
   "geometry"?: Record<string, unknown> | null;
 }
 
+export interface RoughnessOverride {
+  "group_id": string;
+  "cross_section_ids": Array<number>;
+  "manning_n": number;
+}
+
 export interface SimulationCaseCreate {
   "name": string;
   "description"?: string | null;
@@ -2016,6 +2529,7 @@ export interface SimulationTaskCreate {
   "engine"?: "mascaret";
   "input_schema_version"?: "dayu.hydraulic-1d.input.v1";
   "storage_level"?: "full";
+  "roughness_overrides"?: Array<RoughnessOverride>;
 }
 
 export interface SimulationTaskRecord {
@@ -2143,6 +2657,22 @@ export interface ThreeDTilesAsset {
   "demo_data"?: true;
 }
 
+export interface TimeAlignmentOptions {
+  "method"?: "exact" | "interpolation" | "nearest-with-tolerance";
+  "tolerance_seconds"?: number;
+  "minimum_valid_samples"?: number;
+  "minimum_coverage_ratio"?: number;
+}
+
+export interface TimeSeriesImportPreview {
+  "source_filename": string;
+  "source_sha256": string;
+  "row_count": number;
+  "issues": Array<QAIssue>;
+  "series": ProductionSeries;
+  "provenance": Record<string, unknown>;
+}
+
 export interface TopologyGenerateRequest {
   "dataset_version_id": number;
   "tolerance"?: number;
@@ -2170,6 +2700,17 @@ export interface ValidationError {
   "loc": Array<string | number>;
   "msg": string;
   "type": string;
+}
+
+export interface ValidationIndependenceRequest {
+  "calibration": DatasetWindow;
+  "validation": DatasetWindow;
+}
+
+export interface ValidationIndependenceResult {
+  "independent": boolean;
+  "temporal_holdout": boolean;
+  "issues": Array<QAIssue>;
 }
 
 export interface ValidationIssueRecord {
@@ -2201,15 +2742,18 @@ export interface ValidationRequest {
   "dataset_version_id": number;
 }
 
-export interface ValidationRunRecord {
-  "id": number;
-  "batch_id": number;
-  "ruleset_version": string;
-  "status": "running" | "passed" | "failed";
-  "staging_content_hash": string;
-  "started_at": string;
-  "finished_at"?: string | null;
-  "summary_json": Record<string, unknown>;
+export interface ValidationRunCommitRequest {
+  "validation_code": string;
+  "production_run_id": number;
+  "dataset_version_id": number;
+  "case_id": number;
+  "calibration_run_id"?: number | null;
+  "actor": string;
+  "calibration_dataset": DatasetWindow;
+  "validation_dataset": DatasetWindow;
+  "criteria": AcceptanceCriteria;
+  "metric_evidence": Array<MetricEvidenceRequest>;
+  "mass_balance_relative_error"?: number | null;
 }
 
 export interface ValidationSummary {
@@ -2221,6 +2765,41 @@ export interface ValidationSummary {
 
 export type ValidationReport = app__validation__schemas__ValidationReport;
 export type DispatchValidationReport = app__dispatch__schemas__ValidationReport;
+export type ValidationRunRecord = app__gis_governance__schemas__ValidationRunRecord;
+export type ProductionValidationRunRecord = app__hydraulic__production__records__ValidationRunRecord;
+export interface TimeSeriesImportOptions {
+  series_kind: 'boundary' | 'observation';
+  series_id: string;
+  variable: 'water_level' | 'discharge';
+  unit: 'm' | 'm3/s';
+  source: string;
+  branch_id: string;
+  chainage_m: number;
+  station_id?: string | null;
+  vertical_datum?: string;
+  time_basis: 'relative' | 'absolute';
+  timezone?: string | null;
+  column_mapping: { time: string; value: string; quality_flag?: string | null };
+  sheet_name?: string | null;
+}
+export interface ExternalResultImportOptions {
+  external_model_name: string;
+  external_model_version?: string;
+  scenario: string;
+  vertical_datum: string;
+  time_basis: 'relative' | 'absolute';
+  timezone?: string | null;
+  column_mapping: {
+    branch: string; chainage: string; time: string;
+    water_level?: string | null; discharge?: string | null; velocity?: string | null;
+  };
+  branch_mappings: Array<{
+    external_branch: string; dayu_branch: string; chainage_scale?: number;
+    chainage_offset_m?: number; direction?: 'same' | 'reverse';
+    external_origin_m?: number; dayu_reference_end_m?: number | null;
+  }>;
+  sheet_name?: string | null;
+}
 export interface GISListQuery { dataset_version_id: number; bbox?: string; limit?: number; offset?: number; }
 export interface GISFeatureInfoQuery { dataset_version_id: number; layer_key: string; bbox: string; width: number; height: number; x: number; y: number; }
 export interface GISInteractionQuery { dataset_version_id: number; time_seconds?: number; task_id?: number; dispatch_run_id?: number; }
@@ -2514,6 +3093,62 @@ export async function previewHydraulicImport(datasetVersionId: number, options: 
   });
   body.set('file', file);
   return requestJson<HydraulicImportPreview>('/api/v1/hydraulic/imports/preview', { method: 'POST', body }, baseUrl);
+}
+
+export const getProductionCapabilities = (baseUrl = '') => requestJson<ProductionCapabilityResponse>('/api/v1/hydraulic/production/capabilities', {}, baseUrl);
+export const createProductionRun = (body: ProductionTaskCreateRequest, baseUrl = '') => requestJson<ProductionRunRecord>('/api/v1/hydraulic/production/runs', jsonOptions('POST', body), baseUrl);
+export const listProductionRuns = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<ProductionRunRecord>>(`/api/v1/hydraulic/production/runs${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
+export const listProductionAudit = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<AuditEventRecord>>(`/api/v1/hydraulic/production/audit${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
+export const approveProductionRun = (runId: number, body: ProductionApprovalRequest, baseUrl = '') => requestJson<ProductionRunRecord>(`/api/v1/hydraulic/production/runs/${runId}/approve`, jsonOptions('POST', body), baseUrl);
+export const evaluateProductionQA = (body: HydraulicModelQARequest, baseUrl = '') => requestJson<HydraulicModelQAResult>('/api/v1/hydraulic/production/qa/evaluate', jsonOptions('POST', body), baseUrl);
+export const evaluateProductionMetrics = (body: MetricEvaluationRequest, baseUrl = '') => requestJson<HydraulicMetrics>('/api/v1/hydraulic/production/metrics/evaluate', jsonOptions('POST', body), baseUrl);
+export const planProductionCalibration = (body: ParameterSweepRequest, baseUrl = '') => requestJson<ParameterSweepPlan>('/api/v1/hydraulic/production/calibration/sweeps/plan', jsonOptions('POST', body), baseUrl);
+export const createProductionCalibrationSweep = (body: CalibrationSweepCreateRequest, baseUrl = '') => requestJson<CalibrationSweepRunResponse>('/api/v1/hydraulic/production/calibration/sweeps/create', jsonOptions('POST', body), baseUrl);
+export const commitProductionCalibrationRun = (body: CalibrationRunCommitRequest, baseUrl = '') => requestJson<CalibrationRunRecord>('/api/v1/hydraulic/production/calibration/runs', jsonOptions('POST', body), baseUrl);
+export const rankProductionCalibration = (body: CalibrationRankingRequest, baseUrl = '') => requestJson<Array<CalibrationCandidate>>('/api/v1/hydraulic/production/calibration/candidates/rank', jsonOptions('POST', body), baseUrl);
+export const promoteProductionCalibration = (calibrationRunId: number, body: CalibrationPromotionRequest, baseUrl = '') => requestJson<CalibrationPromotionResponse>(`/api/v1/hydraulic/production/calibration/runs/${calibrationRunId}/accept`, jsonOptions('POST', body), baseUrl);
+export const evaluateProductionIndependence = (body: ValidationIndependenceRequest, baseUrl = '') => requestJson<ValidationIndependenceResult>('/api/v1/hydraulic/production/validation/independence', jsonOptions('POST', body), baseUrl);
+export const evaluateProductionAcceptance = (body: AcceptanceEvaluationRequest, baseUrl = '') => requestJson<AcceptanceEvaluation>('/api/v1/hydraulic/production/validation/acceptance', jsonOptions('POST', body), baseUrl);
+export const commitProductionValidationRun = (body: ValidationRunCommitRequest, baseUrl = '') => requestJson<ProductionValidationRunRecord>('/api/v1/hydraulic/production/validation/runs', jsonOptions('POST', body), baseUrl);
+export const compareProductionExternal = (body: ExternalComparisonRequest, baseUrl = '') => requestJson<ExternalComparisonResult>('/api/v1/hydraulic/production/external-results/compare', jsonOptions('POST', body), baseUrl);
+export const generateProductionProducts = (body: ResultProductRequest, baseUrl = '') => requestJson<ResultProductBundle>('/api/v1/hydraulic/production/products/generate', jsonOptions('POST', body), baseUrl);
+export const commitProductionProduct = (body: ResultProductCommitRequest, baseUrl = '') => requestJson<ResultProductRecord>('/api/v1/hydraulic/production/products/commit', jsonOptions('POST', body), baseUrl);
+export const exportProductionProductsCsv = (body: ResultProductRequest, baseUrl = '') => requestBlob('/api/v1/hydraulic/production/products/export.csv', jsonOptions('POST', body), baseUrl);
+export const exportProductionProductsXlsx = (body: ResultProductRequest, baseUrl = '') => requestBlob('/api/v1/hydraulic/production/products/export.xlsx', jsonOptions('POST', body), baseUrl);
+export const exportProductionProductsGeojson = (body: ResultProductRequest, baseUrl = '') => requestBlob('/api/v1/hydraulic/production/products/export.geojson', jsonOptions('POST', body), baseUrl);
+export const buildProductionAcceptanceManifest = (body: AcceptanceManifestRequest, baseUrl = '') => requestJson<AcceptanceManifest>('/api/v1/hydraulic/production/acceptance-manifest', jsonOptions('POST', body), baseUrl);
+
+export async function previewProductionSeries(options: TimeSeriesImportOptions, file: File, baseUrl = ''): Promise<TimeSeriesImportPreview> {
+  const body = new FormData();
+  body.set('options_json', JSON.stringify(options));
+  body.set('file', file);
+  return requestJson<TimeSeriesImportPreview>('/api/v1/hydraulic/production/time-series/preview', { method: 'POST', body }, baseUrl);
+}
+
+export async function importProductionObservation(datasetVersionId: number, actor: string, options: TimeSeriesImportOptions, file: File, baseUrl = ''): Promise<ObservationRecord> {
+  const body = new FormData();
+  body.set('dataset_version_id', String(datasetVersionId));
+  body.set('actor', actor);
+  body.set('options_json', JSON.stringify(options));
+  body.set('file', file);
+  return requestJson<ObservationRecord>('/api/v1/hydraulic/production/observations/import', { method: 'POST', body }, baseUrl);
+}
+
+export async function previewProductionExternal(options: ExternalResultImportOptions, file: File, baseUrl = ''): Promise<ExternalResultPreview> {
+  const body = new FormData();
+  body.set('options_json', JSON.stringify(options));
+  body.set('file', file);
+  return requestJson<ExternalResultPreview>('/api/v1/hydraulic/production/external-results/preview', { method: 'POST', body }, baseUrl);
+}
+
+export async function importProductionExternal(datasetVersionId: number, resultCode: string, actor: string, options: ExternalResultImportOptions, file: File, baseUrl = ''): Promise<ExternalResultRecord> {
+  const body = new FormData();
+  body.set('dataset_version_id', String(datasetVersionId));
+  body.set('result_code', resultCode);
+  body.set('actor', actor);
+  body.set('options_json', JSON.stringify(options));
+  body.set('file', file);
+  return requestJson<ExternalResultRecord>('/api/v1/hydraulic/production/external-results/import', { method: 'POST', body }, baseUrl);
 }
 
 export const createHydraulicTask = (body: SimulationTaskCreate, baseUrl = '') => requestJson<SimulationTaskRecord>('/api/v1/model/tasks', jsonOptions('POST', body), baseUrl);

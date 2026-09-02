@@ -152,6 +152,43 @@ jobs:
           assert missing == 0
           assert floating == 0
           PY
+      - name: Verify Production-04 persistence
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, inspect
+
+          inspector = inspect(create_engine(os.environ["DATABASE_URL"]))
+          expected = {
+              "import_mapping_profile", "observation_series", "external_result",
+              "production_run", "calibration_run", "model_validation_assessment",
+              "result_product", "production_audit_event",
+          }
+          assert expected <= set(inspector.get_table_names(schema="hydraulic"))
+          observations = {
+              item["name"]
+              for item in inspector.get_columns("observation_series", schema="hydraulic")
+          }
+          runs = {
+              item["name"]
+              for item in inspector.get_columns("production_run", schema="hydraulic")
+          }
+          calibrations = {
+              item["name"]
+              for item in inspector.get_columns("calibration_run", schema="hydraulic")
+          }
+          validations = {
+              item["name"]
+              for item in inspector.get_columns(
+                  "model_validation_assessment", schema="hydraulic"
+              )
+          }
+          assert {"source_sha256", "samples_json", "vertical_datum", "time_basis"} <= observations
+          assert {"input_snapshot_hash", "input_snapshot_json", "engine_provenance_json", "runtime_provenance_json"} <= runs
+          assert {"production_run_id", "metric_evidence_json"} <= calibrations
+          assert {"production_run_id", "metric_evidence_json"} <= validations
+          PY
       - name: Round-trip latest migration
         run: |
           alembic -c database/alembic.ini downgrade -1
@@ -163,6 +200,12 @@ jobs:
         run: >-
           python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
           backend/tests/test_hydraulic_engineering_postgis.py
+      - name: Run Production-04 PostGIS and audit integration
+        env:
+          RUN_HYDRAULIC_PRODUCTION_POSTGIS: "1"
+        run: >-
+          python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
+          backend/tests/test_hydraulic_production_postgis.py
 
   worker-integration:
     name: Worker integration

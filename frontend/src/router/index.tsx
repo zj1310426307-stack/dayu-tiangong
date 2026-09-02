@@ -11,6 +11,7 @@ import {
   GlobalOutlined,
   ImportOutlined,
   PartitionOutlined,
+  SafetyCertificateOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons';
 import { Button, Result } from 'antd';
@@ -38,6 +39,7 @@ const HydraulicDataPage = lazy(() => import('../pages/hydraulic-data/HydraulicDa
 const HydraulicConfigPage = lazy(() => import('../pages/hydraulic/HydraulicPages').then((module) => ({ default: module.HydraulicConfigPage })));
 const HydraulicTasksPage = lazy(() => import('../pages/hydraulic/HydraulicPages').then((module) => ({ default: module.HydraulicTasksPage })));
 const HydraulicResultsPage = lazy(() => import('../pages/hydraulic/HydraulicPages').then((module) => ({ default: module.HydraulicResultsPage })));
+const ProductionWorkspacePage = lazy(() => import('../pages/hydraulic/ProductionWorkspacePage').then((module) => ({ default: module.ProductionWorkspacePage })));
 const DispatchPlanListPage = lazy(() => import('../pages/dispatch/DispatchPages').then((module) => ({ default: module.DispatchPlanListPage })));
 const DispatchPlanEditorPage = lazy(() => import('../pages/dispatch/DispatchPages').then((module) => ({ default: module.DispatchPlanEditorPage })));
 const DispatchRunListPage = lazy(() => import('../pages/dispatch/DispatchPages').then((module) => ({ default: module.DispatchRunListPage })));
@@ -173,6 +175,14 @@ export const navigationItems: NavigationItem[] = [
     description: '通过 MASCARET Adapter 配置并运行标准一维水动力模型。',
   },
   {
+    key: 'hydraulic-production',
+    label: '水动力生产工作台',
+    path: '/hydraulic/production',
+    icon: <SafetyCertificateOutlined />,
+    eyebrow: 'PRODUCTION 1D',
+    description: '完成工程数据、QA、率定验证、外部对比与成果输出闭环。',
+  },
+  {
     key: 'optimization',
     label: '优化分析',
     path: '/optimization',
@@ -226,6 +236,7 @@ export const appRouter = createBrowserRouter([
       { path: 'hydraulic/config', element: <Suspense fallback={<RouteLoading label="正在加载水动力配置…" />}><HydraulicConfigPage /></Suspense> },
       { path: 'hydraulic/tasks', element: <Suspense fallback={<RouteLoading label="正在加载模拟任务…" />}><HydraulicTasksPage /></Suspense> },
       { path: 'hydraulic/results', element: <Suspense fallback={<RouteLoading label="正在加载模拟结果…" />}><HydraulicResultsPage /></Suspense> },
+      { path: 'hydraulic/production', element: <Suspense fallback={<RouteLoading label="正在加载生产工作台…" />}><ProductionWorkspacePage /></Suspense> },
       { path: 'dispatch', element: <Navigate to="/dispatch/plans" replace /> },
       { path: 'dispatch/plans', element: <Suspense fallback={<RouteLoading label="正在加载调度计划…" />}><DispatchPlanListPage /></Suspense> },
       { path: 'dispatch/plans/:planId', element: <Suspense fallback={<RouteLoading label="正在加载计划编辑器…" />}><DispatchPlanEditorPage /></Suspense> },

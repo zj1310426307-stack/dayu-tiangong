@@ -46,3 +46,5 @@ HYDRO-DATA-01 的 Network → Branch → Chainage → Cross Section 数据架构
 
 业务层和前端不得直接依赖具体 Solver 文件格式。
 所有 Solver 必须通过统一 Adapter 接入。
+
+对真实工程数据、实测资料、外部模型结果和率定数据，禁止伪造、静默补齐或用合成数据替代后宣称工程验证通过。合成数据仅可用于软件回归测试，并必须明确标识。

@@ -869,3 +869,289 @@ class HydraulicValidationResult(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class HydraulicImportMappingProfile(Base):
+    """Persist a reusable, versioned column/location mapping without source data."""
+
+    __tablename__ = "import_mapping_profile"
+    __table_args__ = (
+        CheckConstraint(
+            "profile_type IN ('engineering','boundary','observation','external_result')",
+            name="ck_hydraulic_import_mapping_profile_type",
+        ),
+        UniqueConstraint("dataset_version_id", "name", name="uq_hydraulic_mapping_profile_name"),
+        Index("ix_hydraulic_mapping_profile_version", "dataset_version_id", "profile_type"),
+        {"schema": "hydraulic"},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    profile_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    schema_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    mapping_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class HydraulicObservationSeries(Base):
+    """Persist an imported H/Q series with explicit unit, datum, quality, and lineage."""
+
+    __tablename__ = "observation_series"
+    __table_args__ = (
+        CheckConstraint(
+            "variable IN ('water_level','discharge')",
+            name="ck_hydraulic_observation_variable",
+        ),
+        CheckConstraint(
+            "time_basis IN ('relative','absolute')",
+            name="ck_hydraulic_observation_time_basis",
+        ),
+        ForeignKeyConstraint(
+            ["branch_id", "dataset_version_id"],
+            ["hydraulic.branch.id", "hydraulic.branch.dataset_version_id"],
+            name="fk_hydraulic_observation_branch_version",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint(
+            "dataset_version_id", "series_code", name="uq_hydraulic_observation_series_code"
+        ),
+        Index(
+            "ix_hydraulic_observation_location",
+            "dataset_version_id",
+            "branch_id",
+            "chainage_m",
+        ),
+        {"schema": "hydraulic"},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="CASCADE"), nullable=False
+    )
+    series_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    station_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    branch_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    chainage_m: Mapped[float] = mapped_column(Float, nullable=False)
+    variable: Mapped[str] = mapped_column(String(24), nullable=False)
+    unit: Mapped[str] = mapped_column(String(16), nullable=False)
+    vertical_datum: Mapped[str] = mapped_column(String(64), nullable=False)
+    time_basis: Mapped[str] = mapped_column(String(16), nullable=False)
+    timezone: Mapped[str | None] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(256), nullable=False)
+    source_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    samples_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    mapping_profile_id: Mapped[int | None] = mapped_column(
+        ForeignKey("hydraulic.import_mapping_profile.id", ondelete="SET NULL")
+    )
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class HydraulicExternalResult(Base):
+    """Persist one generic external hydraulic result, including MIKE11 exports."""
+
+    __tablename__ = "external_result"
+    __table_args__ = (
+        UniqueConstraint(
+            "dataset_version_id", "result_code", name="uq_hydraulic_external_result_code"
+        ),
+        Index("ix_hydraulic_external_result_scenario", "dataset_version_id", "scenario"),
+        {"schema": "hydraulic"},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="CASCADE"), nullable=False
+    )
+    result_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    external_model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    external_model_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    scenario: Mapped[str] = mapped_column(String(128), nullable=False)
+    vertical_datum: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    mapping_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    points_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    provenance_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    imported_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class HydraulicProductionRun(Base):
+    """Bind a formal run state to the immutable task snapshot and QA evidence."""
+
+    __tablename__ = "production_run"
+    __table_args__ = (
+        CheckConstraint(
+            "model_state IN ('DRAFT','QA_PASSED','CALIBRATED','VALIDATED','PRODUCTION_APPROVED')",
+            name="ck_hydraulic_production_run_model_state",
+        ),
+        UniqueConstraint("run_code", name="uq_hydraulic_production_run_code"),
+        Index("ix_hydraulic_production_run_case", "dataset_version_id", "case_id"),
+        {"schema": "hydraulic"},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    run_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="RESTRICT"), nullable=False
+    )
+    case_id: Mapped[int] = mapped_column(
+        ForeignKey("simulation_case.id", ondelete="RESTRICT"), nullable=False
+    )
+    task_id: Mapped[int | None] = mapped_column(
+        ForeignKey("simulation_task.id", ondelete="RESTRICT")
+    )
+    qa_run_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_state: Mapped[str] = mapped_column(String(32), nullable=False)
+    input_snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    input_snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    engine_provenance_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    runtime_provenance_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    mass_balance_relative_error: Mapped[float | None] = mapped_column(Float)
+    approved_by: Mapped[str | None] = mapped_column(String(128))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class HydraulicCalibrationRun(Base):
+    """Persist manual/sweep candidates without overwriting authoritative parameters."""
+
+    __tablename__ = "calibration_run"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('planned','queued','running','completed','failed','cancelled','accepted')",
+            name="ck_hydraulic_calibration_run_status",
+        ),
+        UniqueConstraint("run_code", name="uq_hydraulic_calibration_run_code"),
+        Index("ix_hydraulic_calibration_run_case", "dataset_version_id", "case_id"),
+        {"schema": "hydraulic"},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    production_run_id: Mapped[int] = mapped_column(
+        ForeignKey("hydraulic.production_run.id", ondelete="CASCADE"), nullable=False
+    )
+    run_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="RESTRICT"), nullable=False
+    )
+    case_id: Mapped[int] = mapped_column(
+        ForeignKey("simulation_case.id", ondelete="RESTRICT"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    calibration_dataset_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    parameter_groups_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    metric_evidence_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    candidates_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    objective_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    selected_candidate_id: Mapped[str | None] = mapped_column(String(128))
+    accepted_by: Mapped[str | None] = mapped_column(String(128))
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class HydraulicModelValidationAssessment(Base):
+    """Persist independent validation metrics and project acceptance policy."""
+
+    __tablename__ = "model_validation_assessment"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('planned','running','passed','failed','data_blocked')",
+            name="ck_hydraulic_model_validation_status",
+        ),
+        UniqueConstraint("validation_code", name="uq_hydraulic_model_validation_code"),
+        Index("ix_hydraulic_model_validation_case", "dataset_version_id", "case_id"),
+        {"schema": "hydraulic"},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    production_run_id: Mapped[int] = mapped_column(
+        ForeignKey("hydraulic.production_run.id", ondelete="CASCADE"), nullable=False
+    )
+    validation_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="RESTRICT"), nullable=False
+    )
+    case_id: Mapped[int] = mapped_column(
+        ForeignKey("simulation_case.id", ondelete="RESTRICT"), nullable=False
+    )
+    calibration_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("hydraulic.calibration_run.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    validation_dataset_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    independence_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    criteria_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    metric_evidence_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    metrics_json: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    evaluation_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class HydraulicResultProduct(Base):
+    """Persist one structured product bundle and its content hash."""
+
+    __tablename__ = "result_product"
+    __table_args__ = (
+        UniqueConstraint("product_code", name="uq_hydraulic_result_product_code"),
+        Index("ix_hydraulic_result_product_run", "production_run_id"),
+        {"schema": "hydraulic"},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    production_run_id: Mapped[int] = mapped_column(
+        ForeignKey("hydraulic.production_run.id", ondelete="CASCADE"), nullable=False
+    )
+    schema_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    product_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class HydraulicProductionAuditEvent(Base):
+    """Append an immutable audit event for consequential production actions."""
+
+    __tablename__ = "production_audit_event"
+    __table_args__ = (
+        CheckConstraint(
+            "action IN ('IMPORT','RUN_CREATION','QA_OVERRIDE','PARAMETER_PROMOTION',"
+            "'CALIBRATION_ACCEPTANCE',"
+            "'VALIDATION_ACCEPTANCE','PRODUCTION_APPROVAL','EXPORT')",
+            name="ck_hydraulic_production_audit_action",
+        ),
+        Index("ix_hydraulic_production_audit_entity", "entity_type", "entity_id"),
+        {"schema": "hydraulic"},
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    dataset_version_id: Mapped[int] = mapped_column(
+        ForeignKey("dataset_version.id", ondelete="RESTRICT"), nullable=False
+    )
+    action: Mapped[str] = mapped_column(String(32), nullable=False)
+    actor: Mapped[str] = mapped_column(String(128), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    details_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

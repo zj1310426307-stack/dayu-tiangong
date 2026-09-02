@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 
 from app.database.session import SessionLocal
+from app.hydraulic.production.gate import assert_production_gate
 from app.model_engine.service import parse_frozen_task_model, persist_hydraulic_1d_result
 from app.worker.celery_app import celery_app
 from app.worker.lifecycle import (
@@ -103,6 +104,7 @@ def run_hydraulic_task(self, task_id: int) -> dict[str, str | int]:
                 expected_registry_hash=task.registry_hash,
             )
             model = parse_frozen_task_model(task)
+            assert_production_gate(task.config, model, str(task.input_snapshot_hash or ""))
             result = create_hydraulic_1d_engine().run(
                 model,
                 Hydraulic1DExecutionContext(
