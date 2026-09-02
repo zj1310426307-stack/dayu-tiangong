@@ -7,7 +7,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database.session import get_database_session
-from app.dispatch import service
+from app.dispatch import hydraulic_service, service
+from app.dispatch.hydraulic_schemas import (
+    HydraulicPlanCompileReport,
+    HydraulicPlanCompileRequest,
+    HydraulicPlanFreezeResponse,
+    HydraulicPreviewJobRecord,
+)
 from app.dispatch.schemas import (
     DispatchActionCreate, DispatchActionRecord, DispatchActionUpdate,
     DispatchComparison, DispatchPlanCreate, DispatchPlanRecord, DispatchPlanUpdate,
@@ -32,6 +38,18 @@ def _error(exc: Exception) -> HTTPException:
     if isinstance(exc, service.DispatchQueueError):
         return HTTPException(status_code=503, detail=str(exc))
     return HTTPException(status_code=409, detail=str(exc))
+
+
+def _hydraulic_error(exc: Exception) -> HTTPException:
+    """Map isolated hydraulic-development failures without weakening /runs."""
+
+    detail = {
+        "code": str(getattr(exc, "code", type(exc).__name__.upper())),
+        "message": str(exc),
+    }
+    if isinstance(exc, hydraulic_service.HydraulicDispatchNotFoundError):
+        return HTTPException(status_code=404, detail=detail)
+    return HTTPException(status_code=409, detail=detail)
 
 
 @router.get("/plans", response_model=Page)
@@ -107,6 +125,88 @@ def clone_plan(plan_id: int, session: SessionDependency) -> DispatchPlanRecord:
     except (service.DispatchNotFoundError, IntegrityError) as exc:
         session.rollback()
         raise _error(exc) from exc
+
+
+@router.post("/plans/{plan_id}/hydraulic-clone", response_model=DispatchPlanRecord)
+def clone_plan_for_hydraulic(
+    plan_id: int, session: SessionDependency
+) -> DispatchPlanRecord:
+    """Clone a frozen v2/v3 plan into an explicit hydraulic-v3 draft."""
+
+    try:
+        return service.clone_plan_for_hydraulic(session, plan_id)
+    except (
+        service.DispatchNotFoundError,
+        service.DispatchStateError,
+        IntegrityError,
+    ) as exc:
+        session.rollback()
+        raise _error(exc) from exc
+
+
+@router.post(
+    "/plans/{plan_id}/hydraulic-compile-check",
+    response_model=HydraulicPlanCompileReport,
+)
+def compile_hydraulic_plan(
+    plan_id: int,
+    payload: HydraulicPlanCompileRequest,
+    session: SessionDependency,
+) -> HydraulicPlanCompileReport:
+    """Compile-check a validated v3 clone without creating jobs or files."""
+
+    try:
+        return hydraulic_service.compile_hydraulic_plan(session, plan_id, payload)
+    except (
+        hydraulic_service.HydraulicDispatchNotFoundError,
+        hydraulic_service.HydraulicDispatchStateError,
+    ) as exc:
+        session.rollback()
+        raise _hydraulic_error(exc) from exc
+
+
+@router.post(
+    "/plans/{plan_id}/hydraulic-freeze",
+    response_model=HydraulicPlanFreezeResponse,
+)
+def freeze_hydraulic_plan(
+    plan_id: int,
+    payload: HydraulicPlanCompileRequest,
+    session: SessionDependency,
+) -> HydraulicPlanFreezeResponse:
+    """Freeze a compile-ready synthetic hydraulic plan as immutable v3."""
+
+    try:
+        return hydraulic_service.freeze_hydraulic_plan(session, plan_id, payload)
+    except (
+        hydraulic_service.HydraulicDispatchNotFoundError,
+        hydraulic_service.HydraulicDispatchStateError,
+        IntegrityError,
+    ) as exc:
+        session.rollback()
+        raise _hydraulic_error(exc) from exc
+
+
+@router.post(
+    "/plans/{plan_id}/hydraulic-preview",
+    response_model=HydraulicPreviewJobRecord,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def start_hydraulic_preview(
+    plan_id: int,
+    payload: HydraulicPlanCompileRequest,
+    session: SessionDependency,
+) -> HydraulicPreviewJobRecord:
+    """Start only an accepted asynchronous synthetic hydraulic development job."""
+
+    try:
+        return hydraulic_service.start_hydraulic_preview(session, plan_id, payload)
+    except (
+        hydraulic_service.HydraulicDispatchNotFoundError,
+        hydraulic_service.HydraulicDispatchStateError,
+    ) as exc:
+        session.rollback()
+        raise _hydraulic_error(exc) from exc
 
 
 @router.post("/plans/{plan_id}/validate", response_model=ValidationReport)

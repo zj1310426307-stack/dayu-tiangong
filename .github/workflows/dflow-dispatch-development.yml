@@ -1,0 +1,52 @@
+name: D-Flow Dispatch Development
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  PYTHONPATH: backend:.
+  DFLOW_RUNTIME: disabled
+
+jobs:
+  dflow-contract:
+    name: D-Flow adapter and dispatch contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dflow.txt
+      - name: Install pinned adapter dependencies
+        run: >-
+          python -m pip install
+          -r backend/requirements.txt
+          -r backend/requirements-dflow.txt
+      - name: Verify dependency and import integrity
+        run: |
+          python -m pip check
+          python -m compileall -q model backend/app
+      - name: Verify D-Flow and controlled-dispatch contracts
+        run: >-
+          python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
+          tests/hydraulic_1d/dflow_fm
+          tests/hydraulic_1d/test_multi_engine_registry.py
+          tests/hydraulic_1d/test_controlled_contract.py
+          tests/hydraulic_1d/test_controlled_dispatch_contract.py
+          tests/hydraulic_1d/test_dispatch_v3_snapshot.py
+          backend/tests/test_dispatch_hydraulic_api_contract.py
+          backend/tests/test_dispatch_hydraulic_assets.py
+      - name: Confirm unreviewed external runtime remains closed
+        run: >-
+          python -c "from model.hydraulic_1d.factory import create_hydraulic_1d_engine;
+          engine=create_hydraulic_1d_engine('d-flow-fm');
+          available,reason=engine.availability();
+          assert not available;
+          assert reason.startswith('DFLOW_RUNTIME_BLOCKED')"

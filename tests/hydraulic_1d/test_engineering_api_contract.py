@@ -26,11 +26,16 @@ def test_engine_capability_endpoint_exposes_evidence_without_runtime_details() -
     response = TestClient(app).get("/api/v1/hydraulic/engine-capabilities")
 
     assert response.status_code == 200
-    rows = {item["feature"]: item for item in response.json()}
-    assert rows["BRANCHED_NETWORK"]["status"] == "VERIFIED_NATIVE"
-    assert rows["WEIR"]["benchmark_ids"] == ["S01"]
-    assert rows["GATE"]["status"] == "UNSUPPORTED"
-    assert rows["PUMP"]["status"] == "UNSUPPORTED"
+    rows = {
+        (item["engine"], item["feature"]): item for item in response.json()
+    }
+    assert rows[("mascaret", "BRANCHED_NETWORK")]["status"] == "VERIFIED_NATIVE"
+    assert rows[("mascaret", "WEIR")]["benchmark_ids"] == ["S01"]
+    assert rows[("mascaret", "GATE")]["status"] == "UNSUPPORTED"
+    assert rows[("mascaret", "PUMP")]["status"] == "UNSUPPORTED"
+    assert rows[("d-flow-fm", "GATE")]["status"] == "EXPERIMENTAL"
+    assert rows[("d-flow-fm", "PUMP")]["status"] == "EXPERIMENTAL"
+    assert rows[("d-flow-fm", "D_RTC")]["status"] == "UNVERIFIED"
     assert all("executable" not in item for item in rows.values())
 
 

@@ -95,6 +95,8 @@ class SimulationTaskRecord(BaseModel):
     status: TaskStatus
     progress: int = Field(ge=0, le=100)
     config: dict[str, Any]
+    task_kind: Literal["standard_1d", "controlled_hydraulic_preview"] = "standard_1d"
+    evidence_class: str | None = None
     input_schema_version: str | None
     input_snapshot_hash: str | None
     engine_version: str | None

@@ -27,6 +27,13 @@ class CapabilityStatus(StrEnum):
     UNSUPPORTED = "UNSUPPORTED"
 
 
+class CapabilityExecutionPolicy(StrEnum):
+    """Separate production acceptance from explicitly synthetic development runs."""
+
+    PRODUCTION = "PRODUCTION"
+    SYNTHETIC_NUMERICAL_ONLY = "SYNTHETIC_NUMERICAL_ONLY"
+
+
 @dataclass(frozen=True, slots=True)
 class SolverCapability:
     """Represent one version-bound capability and its acceptance evidence."""
@@ -130,20 +137,42 @@ def required_capabilities(model: Hydraulic1DModel) -> tuple[str, ...]:
     return tuple(sorted(required))
 
 
+def capability_status_allowed(
+    status: CapabilityStatus,
+    *,
+    execution_policy: CapabilityExecutionPolicy = CapabilityExecutionPolicy.PRODUCTION,
+    development_mode: bool = False,
+    production_mode: bool = True,
+) -> bool:
+    """Apply one fail-closed status gate without weakening production semantics."""
+
+    verified = {
+        CapabilityStatus.VERIFIED_NATIVE,
+        CapabilityStatus.VERIFIED_EQUIVALENT,
+    }
+    if production_mode:
+        return status in verified
+    if (
+        development_mode
+        and execution_policy == CapabilityExecutionPolicy.SYNTHETIC_NUMERICAL_ONLY
+    ):
+        return status in verified | {CapabilityStatus.EXPERIMENTAL}
+    return False
+
+
 def compatibility_report(
     model: Hydraulic1DModel,
     *,
     engine: str,
     engine_version: str,
+    execution_policy: CapabilityExecutionPolicy = CapabilityExecutionPolicy.PRODUCTION,
+    development_mode: bool = False,
+    production_mode: bool = True,
 ) -> dict[str, object]:
     """Report every incompatible feature so clients can block before submission."""
 
     matrix = {item.feature: item for item in capabilities_for(engine, engine_version)}
     required = required_capabilities(model)
-    compatible_statuses = {
-        CapabilityStatus.VERIFIED_NATIVE,
-        CapabilityStatus.VERIFIED_EQUIVALENT,
-    }
     issues: list[dict[str, object]] = []
     for feature in required:
         capability = matrix.get(feature)
@@ -157,7 +186,12 @@ def compatibility_report(
                 }
             )
             continue
-        if capability.status not in compatible_statuses:
+        if not capability_status_allowed(
+            capability.status,
+            execution_policy=execution_policy,
+            development_mode=development_mode,
+            production_mode=production_mode,
+        ):
             issues.append(
                 {
                     "feature": feature,
@@ -173,6 +207,9 @@ def compatibility_report(
     return {
         "engine": engine,
         "engine_version": engine_version,
+        "execution_policy": execution_policy.value,
+        "development_mode": development_mode,
+        "production_mode": production_mode,
         "required_features": list(required),
         "compatible": not issues,
         "issues": issues,
@@ -184,10 +221,20 @@ def enforce_compatibility(
     *,
     engine: str,
     engine_version: str,
+    execution_policy: CapabilityExecutionPolicy = CapabilityExecutionPolicy.PRODUCTION,
+    development_mode: bool = False,
+    production_mode: bool = True,
 ) -> None:
     """Fail closed with feature, structure, engine, and reason before runtime starts."""
 
-    report = compatibility_report(model, engine=engine, engine_version=engine_version)
+    report = compatibility_report(
+        model,
+        engine=engine,
+        engine_version=engine_version,
+        execution_policy=execution_policy,
+        development_mode=development_mode,
+        production_mode=production_mode,
+    )
     if report["compatible"]:
         return
     descriptions = [

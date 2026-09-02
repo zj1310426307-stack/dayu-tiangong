@@ -34,6 +34,7 @@ from model.hydraulic_1d.capabilities import capabilities_for
 from model.hydraulic_1d.registry import (
     DEFAULT_HYDRAULIC_1D_ENGINE_ID,
     DEFAULT_HYDRAULIC_1D_ENGINE_VERSION,
+    engine_registrations,
 )
 
 
@@ -42,13 +43,14 @@ STRUCTURE_CHAINAGE_TOLERANCE_M = 5.0
 
 
 def engine_capabilities() -> list[SolverCapabilityRecord]:
-    """Return the pinned MASCARET matrix from the source-controlled registry."""
+    """Return every registered engine matrix from the source-controlled catalog."""
 
     return [
         SolverCapabilityRecord.model_validate(item.to_dict())
+        for registration in engine_registrations()
         for item in capabilities_for(
-            DEFAULT_HYDRAULIC_1D_ENGINE_ID,
-            DEFAULT_HYDRAULIC_1D_ENGINE_VERSION,
+            registration.engine_id,
+            registration.engine_version,
         )
     ]
 

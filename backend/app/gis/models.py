@@ -1630,6 +1630,10 @@ class SimulationTask(Base):
             "build_mode IS NULL OR build_mode IN ('development','ci','release')",
             name="ck_simulation_task_build_mode",
         ),
+        CheckConstraint(
+            "task_kind IN ('standard_1d','controlled_hydraulic_preview')",
+            name="ck_simulation_task_kind",
+        ),
         UniqueConstraint(
             "comparison_group_id", "group_role",
             name="uq_simulation_task_group_role",
@@ -1657,6 +1661,10 @@ class SimulationTask(Base):
     )
     progress: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    task_kind: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="standard_1d"
+    )
+    evidence_class: Mapped[str | None] = mapped_column(String(48))
     input_schema_version: Mapped[str | None] = mapped_column(String(48))
     input_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     input_snapshot_hash: Mapped[str | None] = mapped_column(String(64))
@@ -2031,9 +2039,14 @@ class DispatchPlan(Base):
             "status IN ('draft', 'validated', 'frozen', 'archived')",
             name="ck_dispatch_plan_status",
         ),
+        CheckConstraint(
+            "snapshot_target IN ('static_v2', 'hydraulic_v3')",
+            name="ck_dispatch_plan_snapshot_target",
+        ),
         UniqueConstraint("name", "version", name="uq_dispatch_plan_name_version"),
         Index("ix_dispatch_plan_dataset_version_id", "dataset_version_id"),
         Index("ix_dispatch_plan_status", "status"),
+        Index("ix_dispatch_plan_cloned_from_plan_id", "cloned_from_plan_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -2046,6 +2059,12 @@ class DispatchPlan(Base):
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
     status: Mapped[str] = mapped_column(String(16), nullable=False, server_default="draft")
+    snapshot_target: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="static_v2"
+    )
+    cloned_from_plan_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dispatch_plan.id", ondelete="RESTRICT")
+    )
     description: Mapped[str | None] = mapped_column(Text)
     duration_seconds: Mapped[float] = mapped_column(Float, nullable=False)
     evaluation_config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
@@ -2164,6 +2183,10 @@ class DispatchRun(Base):
 
     __tablename__ = "dispatch_run"
     __table_args__ = (
+        CheckConstraint(
+            "run_mode IN ('legacy','hydraulic_preview','production')",
+            name="ck_dispatch_run_mode",
+        ),
         Index("ix_dispatch_run_plan_id", "plan_id"),
         Index("ix_dispatch_run_status", "status"),
     )
@@ -2179,6 +2202,15 @@ class DispatchRun(Base):
         ForeignKey("simulation_task.id", ondelete="SET NULL")
     )
     status: Mapped[str] = mapped_column(String(24), nullable=False, server_default="pending")
+    run_mode: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default="legacy"
+    )
+    evidence_class: Mapped[str | None] = mapped_column(String(48))
+    engine_id: Mapped[str | None] = mapped_column(String(64))
+    control_runtime: Mapped[str | None] = mapped_column(String(64))
+    compiled_artifact_hash: Mapped[str | None] = mapped_column(String(64))
+    runtime_provenance: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    result_contract: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     progress: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     metrics: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     queue_job_id: Mapped[str | None] = mapped_column(String(128))

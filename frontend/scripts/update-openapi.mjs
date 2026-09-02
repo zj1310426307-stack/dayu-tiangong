@@ -66,6 +66,10 @@ const requiredPaths = [
   '/api/v1/dispatch/plans/{plan_id}/actions', '/api/v1/dispatch/plans/{plan_id}/rules',
   '/api/v1/dispatch/plans/{plan_id}/readiness',
   '/api/v1/dispatch/plans/{plan_id}/schedule-preview',
+  '/api/v1/dispatch/plans/{plan_id}/hydraulic-clone',
+  '/api/v1/dispatch/plans/{plan_id}/hydraulic-compile-check',
+  '/api/v1/dispatch/plans/{plan_id}/hydraulic-freeze',
+  '/api/v1/dispatch/plans/{plan_id}/hydraulic-preview',
   '/api/v1/dispatch/plans/{plan_id}/runs', '/api/v1/dispatch/runs',
   '/api/v1/dispatch/runs/{run_id}', '/api/v1/dispatch/runs/{run_id}/comparison',
   '/api/v1/optimization/tasks', '/api/v1/optimization/tasks/{task_id}',
@@ -234,7 +238,7 @@ export type ImportResource = 'rivers' | 'cross_sections' | 'gates' | 'pumps';
 export interface ApiErrorDetail {
   code: string;
   message: string;
-  context: Record<string, unknown>;
+  context?: Record<string, unknown>;
 }
 
 export class ApiError extends Error {
@@ -257,9 +261,11 @@ function isApiErrorDetail(value: unknown): value is ApiErrorDetail {
   const detail = value as Record<string, unknown>;
   return typeof detail.code === 'string'
     && typeof detail.message === 'string'
-    && typeof detail.context === 'object'
-    && detail.context !== null
-    && !Array.isArray(detail.context);
+    && (detail.context === undefined || (
+      typeof detail.context === 'object'
+      && detail.context !== null
+      && !Array.isArray(detail.context)
+    ));
 }
 
 function decodeApiError(payload: unknown): string | ApiErrorDetail | undefined {
@@ -571,10 +577,14 @@ export const getDispatchPlan = (planId: number, baseUrl = '') => requestJson<Dis
 export const updateDispatchPlan = (planId: number, body: DispatchPlanUpdate, baseUrl = '') => requestJson<DispatchPlanRecord>(\`/api/v1/dispatch/plans/\${planId}\`, jsonOptions('PATCH', body), baseUrl);
 export const deleteDispatchPlan = (planId: number, baseUrl = '') => requestJson<void>(\`/api/v1/dispatch/plans/\${planId}\`, { method: 'DELETE' }, baseUrl);
 export const cloneDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchPlanRecord>(\`/api/v1/dispatch/plans/\${planId}/clone\`, { method: 'POST' }, baseUrl);
+export const cloneDispatchPlanForHydraulic = (planId: number, baseUrl = '') => requestJson<DispatchPlanRecord>(\`/api/v1/dispatch/plans/\${planId}/hydraulic-clone\`, { method: 'POST' }, baseUrl);
 export const validateDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchValidationReport>(\`/api/v1/dispatch/plans/\${planId}/validate\`, { method: 'POST' }, baseUrl);
 export const freezeDispatchPlan = (planId: number, baseUrl = '') => requestJson<DispatchPlanRecord>(\`/api/v1/dispatch/plans/\${planId}/freeze\`, { method: 'POST' }, baseUrl);
 export const getDispatchExecutionReadiness = (planId: number, baseUrl = '') => requestJson<DispatchExecutionReadiness>(\`/api/v1/dispatch/plans/\${planId}/readiness\`, {}, baseUrl);
 export const previewDispatchSchedule = (planId: number, body: DispatchSchedulePreviewRequest, baseUrl = '') => requestJson<DispatchSchedulePreview>(\`/api/v1/dispatch/plans/\${planId}/schedule-preview\`, jsonOptions('POST', body), baseUrl);
+export const compileDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPlanCompileReport>(\`/api/v1/dispatch/plans/\${planId}/hydraulic-compile-check\`, jsonOptions('POST', body), baseUrl);
+export const freezeDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPlanFreezeResponse>(\`/api/v1/dispatch/plans/\${planId}/hydraulic-freeze\`, jsonOptions('POST', body), baseUrl);
+export const previewDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPreviewJobRecord>(\`/api/v1/dispatch/plans/\${planId}/hydraulic-preview\`, jsonOptions('POST', body), baseUrl);
 export const listDispatchActions = (planId: number, baseUrl = '') => requestJson<Array<DispatchActionRecord>>(\`/api/v1/dispatch/plans/\${planId}/actions\`, {}, baseUrl);
 export const createDispatchAction = (planId: number, body: DispatchActionCreate, baseUrl = '') => requestJson<DispatchActionRecord>(\`/api/v1/dispatch/plans/\${planId}/actions\`, jsonOptions('POST', body), baseUrl);
 export const updateDispatchAction = (actionId: number, body: DispatchActionUpdate, baseUrl = '') => requestJson<DispatchActionRecord>(\`/api/v1/dispatch/actions/\${actionId}\`, jsonOptions('PATCH', body), baseUrl);

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import json
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.common.spatial import geometry_json
@@ -27,6 +28,7 @@ from app.hydraulic.models import (
     HydraulicStructureScenario,
 )
 from model.hydraulic_1d import (
+    DEFAULT_HYDRAULIC_1D_ENGINE_ID,
     BoundaryCondition,
     CrossSectionPoint,
     Hydraulic1DModel,
@@ -42,6 +44,7 @@ from model.hydraulic_1d import (
 )
 from model.hydraulic_1d.errors import Hydraulic1DValidationError
 from model.hydraulic_1d.factory import create_hydraulic_1d_engine
+from model.hydraulic_1d.registry import DFLOW_FM_ENGINE_ID
 from model.provenance import snapshot_hash
 
 
@@ -49,6 +52,39 @@ def _reject(code: str, message: str, field_path: str) -> None:
     """Raise one stable readiness error before any task or workspace is created."""
 
     raise Hydraulic1DValidationError(code, message, field_path=field_path)
+
+
+def _geometry_json_in_crs(
+    session: Session,
+    geometry_column: Any,
+    target_crs: str,
+) -> dict[str, Any]:
+    """Serialize one PostGIS geometry after an explicit engineering-CRS transform."""
+
+    raw = session.scalar(
+        func.ST_AsGeoJSON(func.ST_Transform(geometry_column, target_crs), 8)
+    )
+    if raw is None:
+        _reject(
+            "DFLOW_ENGINEERING_GEOMETRY_MISSING",
+            "D-Flow mapping requires geometry transformable to the engineering CRS",
+            "network.engineering_crs",
+        )
+    try:
+        value = json.loads(raw)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise Hydraulic1DValidationError(
+            "DFLOW_ENGINEERING_GEOMETRY_INVALID",
+            "PostGIS returned invalid engineering-CRS GeoJSON",
+            field_path="network.engineering_crs",
+        ) from exc
+    if not isinstance(value, dict):
+        _reject(
+            "DFLOW_ENGINEERING_GEOMETRY_INVALID",
+            "PostGIS returned a non-object engineering-CRS geometry",
+            "network.engineering_crs",
+        )
+    return value
 
 
 def _number(
@@ -366,8 +402,10 @@ def build_hydraulic_1d_model(
     session: Session,
     case_id: int,
     task_config: Mapping[str, Any],
+    *,
+    engine_id: str = DEFAULT_HYDRAULIC_1D_ENGINE_ID,
 ) -> Hydraulic1DModel:
-    """Freeze one Standard 1D model from HYDRO-DATA without legacy projections."""
+    """Freeze one unified model and validate it with the explicitly selected engine."""
 
     case = session.get(SimulationCase, case_id)
     if case is None:
@@ -705,6 +743,70 @@ def build_hydraulic_1d_model(
     )
     structures = _structures(session, case, case_config, network.id)
     configuration_hash = snapshot_hash(dict(case_config))
+    model_metadata: dict[str, Any] = {
+        "dataset_version_id": dataset.id,
+        "dataset_content_hash": dataset.content_hash,
+        "engineering_crs": network.engineering_crs,
+        "display_crs": network.display_crs,
+        "horizontal_unit": network.horizontal_unit,
+        "vertical_unit": network.vertical_unit,
+        "vertical_datum": network.vertical_datum,
+        "hydraulic_1d_configuration_hash": configuration_hash,
+        "roughness_overrides": [dict(value) for value in raw_roughness_overrides],
+    }
+    if engine_id == DFLOW_FM_ENGINE_ID:
+        dflow_config = case_config.get("dflow_fm")
+        if not isinstance(dflow_config, Mapping):
+            _reject(
+                "DFLOW_ADAPTER_METADATA_REQUIRED",
+                "Controlled 1D requires an explicit dflow_fm configuration object",
+                "simulation_case.hydraulic_1d_configuration.dflow_fm",
+            )
+        declared_crs = dflow_config.get("coordinate_reference_system")
+        if declared_crs is not None and declared_crs != network.engineering_crs:
+            _reject(
+                "DFLOW_ENGINEERING_CRS_MISMATCH",
+                "dflow_fm coordinate_reference_system must equal Network engineering_crs",
+                (
+                    "simulation_case.hydraulic_1d_configuration."
+                    "dflow_fm.coordinate_reference_system"
+                ),
+            )
+        node_coordinates: dict[str, list[float]] = {}
+        for row in node_rows:
+            projected = _geometry_json_in_crs(
+                session,
+                row.geometry,
+                network.engineering_crs,
+            )
+            coordinates = projected.get("coordinates")
+            if projected.get("type") != "Point" or not isinstance(
+                coordinates,
+                list,
+            ) or len(coordinates) != 2:
+                _reject(
+                    "DFLOW_NODE_GEOMETRY_INVALID",
+                    "D-Flow node geometry must transform to one 2D Point",
+                    f"hydraulic_node[{row.id}].geometry",
+                )
+            node_coordinates[str(row.id)] = [
+                float(coordinates[0]),
+                float(coordinates[1]),
+            ]
+        branch_geometries = {
+            str(row.id): _geometry_json_in_crs(
+                session,
+                row.geometry,
+                network.engineering_crs,
+            )
+            for row in branch_rows
+        }
+        model_metadata["dflow_fm"] = {
+            **dict(dflow_config),
+            "coordinate_reference_system": network.engineering_crs,
+            "node_coordinates": node_coordinates,
+            "branch_geometries": branch_geometries,
+        }
     provisional = Hydraulic1DModel(
         simulation_id="pending-identity",
         scenario_id=str(case.id),
@@ -716,20 +818,10 @@ def build_hydraulic_1d_model(
         initial_condition=initial,
         settings=settings,
         structures=structures,
-        metadata={
-            "dataset_version_id": dataset.id,
-            "dataset_content_hash": dataset.content_hash,
-            "engineering_crs": network.engineering_crs,
-            "display_crs": network.display_crs,
-            "horizontal_unit": network.horizontal_unit,
-            "vertical_unit": network.vertical_unit,
-            "vertical_datum": network.vertical_datum,
-            "hydraulic_1d_configuration_hash": configuration_hash,
-            "roughness_overrides": [dict(value) for value in raw_roughness_overrides],
-        },
+        metadata=model_metadata,
     )
     model = _with_simulation_identity(provisional)
-    create_hydraulic_1d_engine().validate(model)
+    create_hydraulic_1d_engine(engine_id).validate(model)
     return model
 
 
@@ -737,8 +829,15 @@ def freeze_hydraulic_1d_input(
     session: Session,
     case_id: int,
     task_config: Mapping[str, Any],
+    *,
+    engine_id: str = DEFAULT_HYDRAULIC_1D_ENGINE_ID,
 ) -> tuple[dict[str, Any], str]:
     """Return a canonical JSON snapshot and SHA-256 digest for immutable execution."""
 
-    snapshot = build_hydraulic_1d_model(session, case_id, task_config).model_dump(mode="json")
+    snapshot = build_hydraulic_1d_model(
+        session,
+        case_id,
+        task_config,
+        engine_id=engine_id,
+    ).model_dump(mode="json")
     return snapshot, snapshot_hash(snapshot)
