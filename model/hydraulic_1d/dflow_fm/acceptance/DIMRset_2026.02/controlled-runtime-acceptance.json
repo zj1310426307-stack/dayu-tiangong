@@ -79,28 +79,28 @@
       "case_id": "PUMP01",
       "status": "PASS",
       "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
-      "artifact_sha256": "bd3993e18df5e9ba2cc28ee7d538a17afc9d9ac4a4005250a49a8d239eebe8b3",
+      "artifact_sha256": "5156574c5ceac45774ed78f0e0070812565905ea5af0473137ef2a13505ab8a1",
       "artifact_path": "evidence/pump01-acceptance-v3.json"
     },
     {
       "case_id": "PUMP02",
       "status": "PASS",
       "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
-      "artifact_sha256": "0f887926830a3d34258207167741d3604b028613bdd069bb6bc180b19a7b1309",
+      "artifact_sha256": "e989c8f316eb68691aef5e219d7e483cb591ae7b9d4f16b3c9ec60c08db8ddcb",
       "artifact_path": "evidence/pump02-acceptance-v3.json"
     },
     {
       "case_id": "GP01",
       "status": "PASS",
       "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
-      "artifact_sha256": "cddc821f0f3073e76caf179b3a58eec6fd7c4fa9dffd3ca219c2d61afcb902ed",
+      "artifact_sha256": "da4f392d94a3eda290c031d2ad6d6d905dab4fed9c34358fcc3949ade2177531",
       "artifact_path": "evidence/gp01-acceptance-v3.json"
     },
     {
       "case_id": "GP02",
       "status": "PASS",
       "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
-      "artifact_sha256": "754ee1632f14a4d2cfcde30f71cc96774b8a14cb28b7d432c113e82aceea33de",
+      "artifact_sha256": "22a08ddf8ec03f94285b247bbfbf62fcd12059e6925614b2609878307a79177c",
       "artifact_path": "evidence/gp02-acceptance-v3.json"
     },
     {
@@ -114,7 +114,7 @@
       "case_id": "L01",
       "status": "PASS",
       "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
-      "artifact_sha256": "29f4144c47964ef54bd05684e6c02e628883300aa3a8b856e71f43c3dd8d374c",
+      "artifact_sha256": "25d824bfc22632dc2d1c4774eec37f549f2f24354c312fd41587815b625bd024",
       "artifact_path": "evidence/l01-acceptance-v3.json"
     }
   ],
