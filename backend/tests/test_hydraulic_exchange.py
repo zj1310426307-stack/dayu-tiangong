@@ -210,6 +210,96 @@ def test_cross_section_only_validation_uses_persisted_branch_chainage_range() ->
     }
 
 
+def test_cross_section_groups_must_follow_upstream_to_downstream_order() -> None:
+    """Section groups on one branch must be entered in nondecreasing chainage order."""
+
+    points = [
+        HydraulicSectionPointInput(sequence=0, distance=0, elevation=10),
+        HydraulicSectionPointInput(sequence=1, distance=5, elevation=8),
+        HydraulicSectionPointInput(sequence=2, distance=10, elevation=10),
+    ]
+    payload = HydraulicExchangePayload(
+        network_code="ORDER-NET",
+        network_name="Section order",
+        source_srid=4547,
+        source_kind="excel",
+        branches=[],
+        sections=[
+            HydraulicCrossSectionInput(
+                section_code="DM02",
+                branch_code="gaominghe",
+                chainage=500,
+                topography_id="11",
+                points=points,
+            ),
+            HydraulicCrossSectionInput(
+                section_code="DM01",
+                branch_code="gaominghe",
+                chainage=100,
+                topography_id="11",
+                points=points,
+            ),
+        ],
+    )
+
+    issues = validate_exchange(
+        payload,
+        known_branch_codes={"gaominghe"},
+        known_branch_ranges={"gaominghe": (0.0, 1000.0)},
+    )
+
+    order = [issue for issue in issues if issue.code == "SECTION_CHAINAGE_ORDER_INVALID"]
+    assert len(order) == 1
+    assert order[0].entity_ref == "DM01"
+    assert order[0].context == {
+        "branch_code": "gaominghe",
+        "previous_section_code": "DM02",
+        "previous_chainage": 500.0,
+        "chainage": 100.0,
+    }
+
+
+def test_cross_section_profiles_may_share_one_chainage() -> None:
+    """Multiple TOPOID profiles at one section location keep a valid table order."""
+
+    points = [
+        HydraulicSectionPointInput(sequence=0, distance=0, elevation=10),
+        HydraulicSectionPointInput(sequence=1, distance=5, elevation=8),
+        HydraulicSectionPointInput(sequence=2, distance=10, elevation=10),
+    ]
+    payload = HydraulicExchangePayload(
+        network_code="ORDER-NET",
+        network_name="Section order",
+        source_srid=4547,
+        source_kind="excel",
+        branches=[],
+        sections=[
+            HydraulicCrossSectionInput(
+                section_code="DM01",
+                branch_code="gaominghe",
+                chainage=100,
+                topography_id="11",
+                points=points,
+            ),
+            HydraulicCrossSectionInput(
+                section_code="DM01",
+                branch_code="gaominghe",
+                chainage=100,
+                topography_id="12",
+                points=points,
+            ),
+        ],
+    )
+
+    issues = validate_exchange(
+        payload,
+        known_branch_codes={"gaominghe"},
+        known_branch_ranges={"gaominghe": (0.0, 1000.0)},
+    )
+
+    assert not any(issue.code == "SECTION_CHAINAGE_ORDER_INVALID" for issue in issues)
+
+
 def test_segmented_roughness_geometry_integrates_each_wetted_interval() -> None:
     """Compound-section conveyance inputs must be integrated by roughness interval."""
 

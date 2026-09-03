@@ -11,13 +11,14 @@
 - `HydraulicBranchRecord` 增加 `flow_direction`、`source_revision`、`vertex_count`，OpenAPI 生成客户端已同步。
 - 横断面 XLSX 合同改为六列：`ID、TOPOID、里程、偏移、高程、river_name`。解析器兼容组内空白身份行，按 `(ID, TOPOID)` 分组，仍对未知 Branch 和整批错误 fail closed。
 - 断面单独导入现在会读取目标数据库 Branch 的起止桩号；修复了旧逻辑只校验 Branch 编码、随后把越界断面夹到河端点的风险。
+- 中心线点与断面组统一采用上游到下游的表格语义：中心线桩号严格递增，断面里程按 Branch 非递减；预览对倒序断面返回 `SECTION_CHAINAGE_ORDER_INVALID`。
 - `hydraulic.cross_section/profile/point` 现有规范化结构已能无损承载该合同，因此本次不新增无意义数据库列或 Alembic 迁移；`public.river/cross_section` 保持同事务兼容投影。
 
 ## 数据边界
 
 用户工作簿只作为字段与版式参考，未写入仓库、未提交其工程数据，也未导入正式数据库。仓库模板使用明确的合成示例。六列文件不包含断面轴线或测点 XY，系统不会伪造这些证据。
 
-用户后续提供的 `gaominghe` 中心线截图已逐点整理为项目参考工作簿：21 点、桩号 `0–5432.1266 m`、几何折线累计长度约 `5432.1761 m`，最大累计差 `0.11285 m`。其 Branch 编码与断面表 `river_name=gaominghe` 一致。该资料只声明“CGCS2000”，未声明具体 3°/6°投影带/EPSG，因此未写入数据库；工作簿明确标记为“待确认 EPSG”。
+用户后续提供的 `gaominghe` 中心线截图已逐点整理为项目参考工作簿：21 点、桩号 `0–5432.1266 m`、几何折线累计长度约 `5432.1761 m`，最大累计差 `0.11285 m`。其 Branch 编码与断面表 `river_name=gaominghe` 一致。用户已确认中央经线 114°、中心线与断面均按上游到下游依次输入，因此联合导入文件使用 `EPSG:4547` 且 Branch `flow_direction=forward`；垂直基准仍待确认，未执行正式数据库提交。
 
 断面范围联检发现 `DM21=5432.5237 m`（超出约 `0.3971 m`）和 `DM22=5725.8932 m`（超出约 `293.7666 m`）。在中心线终点或断面里程得到确认前，正式预览应返回越界错误，不能提交。
 

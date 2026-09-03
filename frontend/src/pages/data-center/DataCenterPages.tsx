@@ -194,7 +194,7 @@ export function RiversDatabasePage() {
   return <div className="data-page">
     <DataPageHeader eyebrow="HYDRAULIC DATABASE / NETWORK" title="河道数据库" description="直接读取水动力数据管理的权威 Network → Branch 模型，字段与河网模板保持一致；旧 river 表仅作为兼容投影。" action={<Space><Button icon={<FileExcelOutlined />} href="/api/v1/hydraulic/templates/river-network">下载河网模板</Button><Button type="primary" href="/data-center/hydraulic">进入水动力数据管理</Button></Space>} />
     <DatasetWriteNotice />
-    <Alert className="data-alert" type="info" showIcon message="统一数据真源已启用" description="河道的导入、坐标声明、拓扑处理和修改统一在水动力数据管理中预览后提交，本页不再绕过河网模型直接改写兼容表。" />
+    <Alert className="data-alert" type="info" showIcon message="统一数据真源已启用" description="河道中心线点须按上游到下游、桩号严格递增依次填写；导入、坐标声明、拓扑处理和修改统一在水动力数据管理中预览后提交。" />
     {error && <Alert className="data-alert" type="error" showIcon message={error} />}
     <Card className="data-card" title={`河段清单 · ${filtered.length} 条`} extra={<Space><Input.Search allowClear placeholder="河网、河流或河段" onChange={(event) => setSearch(event.target.value)} /><Button icon={<ReloadOutlined />} disabled={!datasetVersionId} onClick={() => void reload()} /></Space>}>
       <Table rowKey={(row) => `${row.network_id}-${row.id}`} loading={loading} columns={columns} dataSource={filtered} pagination={{ pageSize: 12 }} scroll={{ x: 1500 }} />
@@ -271,7 +271,7 @@ export function CrossSectionsDatabasePage() {
   return <div className="data-page">
     <DataPageHeader eyebrow="HYDRAULIC DATABASE / SECTIONS" title="横断面数据库" description="直接读取标准化 Profile / Point 数据；导入列固定为 ID、TOPOID、里程、偏移、高程、river_name。" action={<Space><Button icon={<FileExcelOutlined />} href="/api/v1/hydraulic/templates/cross-section">下载横断面模板</Button><Button type="primary" href="/data-center/hydraulic">导入与校核</Button></Space>} />
     <DatasetWriteNotice />
-    <Alert className="data-alert" type="info" showIcon message="断面点已统一归一化" description="模板中的首行身份会在同一断面点组内继承；提交仍需匹配当前版本已有 river_name 河段，并经过坐标声明、整批预览与原子提交。" />
+    <Alert className="data-alert" type="info" showIcon message="断面点已统一归一化" description="横断面组须按上游到下游、里程非递减依次填写；同一位置的多个 TOPOID 可使用相同里程。首行身份只在当前断面点组内继承，乱序会在整批预览中拒绝。" />
     {error && <Alert className="data-alert" type="error" showIcon message={error} />}
     <div className="data-split"><Card className="data-card" title={`断面清单 · ${rows.length} 条`} extra={<Button icon={<ReloadOutlined />} disabled={!datasetVersionId} onClick={() => void reload()} />}><Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={{ pageSize: 10 }} scroll={{ x: 1050 }} rowClassName={(row) => row.id === selectedRow?.id ? 'ant-table-row-selected' : ''} onRow={(row) => ({ onClick: () => void selectSection(row) })} /></Card><Card loading={detailLoading} className="data-card profile-card" title="断面剖面预览">{selected ? <><Descriptions column={1} size="small" items={[{ key: 'name', label: '断面', children: selected.section_name }, { key: 'branch', label: 'river_name', children: selected.branch_code }, { key: 'station', label: '里程', children: `${selected.chainage.toFixed(3)} m` }, { key: 'topography', label: 'TOPOID', children: activeProfile?.topography_id ?? '—' }, { key: 'roughness', label: '默认糙率', children: activeProfile?.default_manning_n ?? '—' }, { key: 'points', label: '偏移/高程点数', children: activeProfile?.points.length ?? 0 }]} /><SectionProfileChart section={selected} /></> : <div className="data-empty">从左侧选择一个横断面</div>}</Card></div>
   </div>;

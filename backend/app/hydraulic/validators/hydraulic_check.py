@@ -96,7 +96,29 @@ def validate_exchange(
         branch.code: (branch.points[0].chainage, branch.points[-1].chainage)
         for branch in payload.branches
     })
+    previous_section_by_branch: dict[str, tuple[str, float]] = {}
     for section in payload.sections:
+        previous_section = previous_section_by_branch.get(section.branch_code)
+        if previous_section is not None and section.chainage < previous_section[1]:
+            issues.append(
+                HydraulicIssue(
+                    severity="error",
+                    code="SECTION_CHAINAGE_ORDER_INVALID",
+                    message="横断面组必须按上游到下游、里程非递减顺序依次输入",
+                    entity_type="cross_section",
+                    entity_ref=section.section_code,
+                    context={
+                        "branch_code": section.branch_code,
+                        "previous_section_code": previous_section[0],
+                        "previous_chainage": previous_section[1],
+                        "chainage": section.chainage,
+                    },
+                )
+            )
+        previous_section_by_branch[section.branch_code] = (
+            section.section_code,
+            section.chainage,
+        )
         if section.branch_code not in available_branches:
             issues.append(
                 HydraulicIssue(

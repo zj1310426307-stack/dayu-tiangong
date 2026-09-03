@@ -24,7 +24,7 @@ profile hash 由规范化点、marker、糙率分区、高程基准和单位生�
 
 2026-09-03 起，公开横断面 Excel 模板采用 `ID、TOPOID、里程、偏移、高程、river_name` 六列长表。`ID` 映射 `section_code`，`TOPOID` 映射 profile，`里程`映射 Branch chainage，`偏移/高程`映射有序 profile point，`river_name` 是目标 `branch_code`，不是自由文本河名。
 
-一个 profile 的首个点行必须写全 `ID、TOPOID、里程、river_name`；后续点行可以只写 `偏移、高程`。解析器只在当前 profile 组内前向继承身份，并按 `(ID, TOPOID)` 分组；没有新 ID 却改变 TOPOID、里程或 river_name 时拒绝导入。未知 river_name、少于三个点、非递增偏移或其他整批错误继续 fail closed。
+一个 profile 的首个点行必须写全 `ID、TOPOID、里程、river_name`；后续点行可以只写 `偏移、高程`。解析器只在当前 profile 组内前向继承身份，并按 `(ID, TOPOID)` 分组；没有新 ID 却改变 TOPOID、里程或 river_name 时拒绝导入。表内断面组按各 Branch 的上游到下游顺序录入，里程必须非递减；同一断面的多个 TOPOID 可以使用相同里程。未知 river_name、断面组里程倒序、少于三个点、非递增偏移或其他整批错误继续 fail closed。
 
 断面单独导入时，校验器必须从目标 Dataset Version 的 `hydraulic.branch` 读取 `chainage_start_m/chainage_end_m`；不能只确认 Branch 编码存在。任何越界断面必须返回 `SECTION_CHAINAGE_OUTSIDE_BRANCH`，不得通过端点夹取把越界里程静默定位到河段端点。
 
