@@ -132,7 +132,16 @@ def engine_registry_payload() -> dict[str, object]:
             }
         ],
         "capabilities": [
-            item.to_dict()
+            {
+                "engine": item.engine,
+                "engine_version": item.engine_version,
+                "adapter_version": item.adapter_version,
+                "feature": item.feature,
+                "status": item.status.value,
+                "reason": item.reason,
+                "benchmark_ids": list(item.benchmark_ids),
+                "verified_at": item.verified_at,
+            }
             for item in capabilities_for(
                 DEFAULT_HYDRAULIC_1D_ENGINE_ID,
                 DEFAULT_HYDRAULIC_1D_ENGINE_VERSION,

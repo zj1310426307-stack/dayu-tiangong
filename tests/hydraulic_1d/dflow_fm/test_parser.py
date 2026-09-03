@@ -164,6 +164,41 @@ def _prepared(result_file: Path) -> SimpleNamespace:
     )
 
 
+def _pump_dataset() -> xr.Dataset:
+    times = np.asarray([0.0, 60.0, 120.0])
+    upstream = np.asarray([[2.0], [1.9], [1.8]])
+    downstream = np.asarray([[2.0], [2.1], [2.2]])
+    discharge = np.asarray([[0.0], [1.0], [0.4]])
+    data_vars: dict[str, object] = {
+        "pump_name": (("pump",), np.asarray(["pump-1"])),
+        "pump_structure_discharge": (("time", "pump"), discharge.copy(), {"units": "m3 s-1"}),
+        "pump_capacity": (("time", "pump"), discharge.copy(), {"units": "m3 s-1"}),
+        "pump_discharge_dir": (("time", "pump"), discharge.copy(), {"units": "m3 s-1"}),
+        "pump_s1up": (("time", "pump"), upstream, {"units": "m"}),
+        "pump_s1dn": (("time", "pump"), downstream, {"units": "m"}),
+        "pump_structure_head": (("time", "pump"), upstream - downstream, {"units": "m"}),
+        "pump_actual_stage": (("time", "pump"), np.full((3, 1), np.nan), {"units": ""}),
+        "pump_head": (("time", "pump"), downstream - upstream, {"units": "m"}),
+        "pump_reduction_factor": (("time", "pump"), np.ones((3, 1)), {"units": "1"}),
+        "pump_s1_delivery_side": (("time", "pump"), downstream, {"units": "m"}),
+        "pump_s1_suction_side": (("time", "pump"), upstream, {"units": "m"}),
+        "water_balance_storage": (("time",), np.asarray([0.0, 60.0, 120.0]), {"units": "m3"}),
+        "water_balance_volume_error": (("time",), np.zeros(3), {"units": "m3"}),
+        "water_balance_boundaries_in": (("time",), np.asarray([0.0, 60.0, 120.0]), {"units": "m3"}),
+        "water_balance_boundaries_out": (("time",), np.zeros(3), {"units": "m3"}),
+    }
+    return xr.Dataset(
+        data_vars=data_vars,
+        coords={
+            "time": (
+                ("time",),
+                times,
+                {"units": "seconds since 2020-01-01 00:00:00 +00:00"},
+            )
+        },
+    )
+
+
 def _write_netcdf_fixture_unicode_safe(dataset: xr.Dataset, destination: Path) -> None:
     """Write a real fixture through the same ASCII-only native path constraint."""
 
@@ -231,6 +266,39 @@ def test_real_xarray_netcdf_open_contract(tmp_path: Path) -> None:
 
     assert len(result.records) == 6
     assert result.diagnostics["runtime_seconds"] == pytest.approx(2.5)
+
+
+def test_parse_pump_dataset_keeps_capacity_and_actual_q_separate() -> None:
+    samples, balance = DFlowFMResultParser().parse_pump_and_mass_balance_dataset(
+        _pump_dataset(),
+        expected_structure_id="pump-1",
+    )
+
+    assert [item.native_applied_capacity_m3s for item in samples] == [0.0, 1.0, 0.4]
+    assert [item.actual_discharge_m3s for item in samples] == [0.0, 1.0, 0.4]
+    assert all(item.active_stage is None for item in samples)
+    assert samples[1].intake_water_level_m == pytest.approx(1.9)
+    assert samples[1].outlet_water_level_m == pytest.approx(2.1)
+    assert samples[1].pump_head_m == pytest.approx(0.2)
+    assert balance.structure_transfer_m3 == pytest.approx(72.0)
+    assert balance.relative_residual == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize(
+    "variable",
+    ("pump_discharge_dir", "pump_head", "pump_s1_delivery_side"),
+)
+def test_parse_pump_dataset_rejects_identity_drift(variable: str) -> None:
+    dataset = _pump_dataset()
+    dataset[variable].values[1, 0] += 0.25
+
+    with pytest.raises(Hydraulic1DResultError) as error:
+        DFlowFMResultParser().parse_pump_and_mass_balance_dataset(
+            dataset,
+            expected_structure_id="pump-1",
+        )
+
+    assert error.value.code == "DFLOW_RESULT_FLOW_IDENTITY_INVALID"
 
 
 @pytest.mark.parametrize(

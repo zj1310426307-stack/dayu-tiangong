@@ -49,6 +49,25 @@ class DFlowFMGateSample:
 
 
 @dataclass(frozen=True, slots=True)
+class DFlowFMPumpSample:
+    """One exact non-staged Pump history record from D-Flow FM 2026.02."""
+
+    time_seconds: float
+    structure_id: str
+    actual_discharge_m3s: float
+    native_applied_capacity_m3s: float
+    oriented_discharge_m3s: float
+    intake_water_level_m: float
+    outlet_water_level_m: float
+    structure_head_difference_m: float
+    pump_head_m: float
+    reduction_factor: float
+    delivery_water_level_m: float
+    suction_water_level_m: float
+    active_stage: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class DFlowFMMassBalance:
     """Global cumulative balance plus separately reported internal Gate transfer."""
 
@@ -670,6 +689,240 @@ class DFlowFMResultParser:
         outflow = values["water_balance_boundaries_out"]  # type: ignore[assignment]
         storage = values["water_balance_storage"]  # type: ignore[assignment]
         errors = values["water_balance_volume_error"]  # type: ignore[assignment]
+        inflow_delta = float(inflow[-1] - inflow[0])
+        outflow_delta = float(outflow[-1] - outflow[0])
+        storage_delta = float(storage[-1] - storage[0])
+        residual = float(errors[-1] - errors[0])
+        denominator = max(abs(inflow_delta), abs(outflow_delta), abs(storage_delta), 1.0)
+        balance = DFlowFMMassBalance(
+            inflow_m3=inflow_delta,
+            outflow_m3=outflow_delta,
+            storage_change_m3=storage_delta,
+            structure_transfer_m3=transfer,
+            residual_m3=residual,
+            relative_residual=abs(residual) / denominator,
+            native_max_abs_volume_error_m3=max(abs(float(value)) for value in errors),
+        )
+        return tuple(samples), balance
+
+    def parse_pump_and_mass_balance(
+        self,
+        prepared: DFlowFMPreparedCase,
+        *,
+        expected_structure_id: str,
+    ) -> tuple[tuple[DFlowFMPumpSample, ...], DFlowFMMassBalance]:
+        """Parse the exact non-staged Pump variables and cumulative balance."""
+
+        result_file = prepared.result_file
+        if not result_file.is_file():
+            raise Hydraulic1DResultError(
+                f"D-Flow history result is missing: {result_file.name}",
+                code="DFLOW_RESULT_MISSING",
+            )
+        owner_token = sha256(str(result_file.resolve()).encode("utf-8")).hexdigest()
+        try:
+            if any(not character.isascii() for character in str(result_file)):
+                dataset = _open_unicode_windows_netcdf(result_file, owner_token)
+            else:
+                from netCDF4 import Dataset
+
+                with Dataset(result_file, mode="r") as source:
+                    dataset = _MaterializedNetCDFDataset(source)
+            return self.parse_pump_and_mass_balance_dataset(
+                dataset,
+                expected_structure_id=expected_structure_id,
+            )
+        except Hydraulic1DResultError:
+            raise
+        except Exception as exc:
+            raise Hydraulic1DResultError(
+                f"cannot parse D-Flow Pump history: {exc}",
+                code="DFLOW_RESULT_CORRUPT",
+            ) from exc
+
+    def parse_pump_and_mass_balance_dataset(
+        self,
+        dataset: Any,
+        *,
+        expected_structure_id: str,
+    ) -> tuple[tuple[DFlowFMPumpSample, ...], DFlowFMMassBalance]:
+        """Validate only the pinned native Pump schema; no name fallback is allowed."""
+
+        variables = self._variables(dataset)
+        units = {
+            "pump_structure_discharge": "m3 s-1",
+            "pump_capacity": "m3 s-1",
+            "pump_discharge_dir": "m3 s-1",
+            "pump_s1up": "m",
+            "pump_s1dn": "m",
+            "pump_structure_head": "m",
+            "pump_actual_stage": "",
+            "pump_head": "m",
+            "pump_reduction_factor": "1",
+            "pump_s1_delivery_side": "m",
+            "pump_s1_suction_side": "m",
+            "water_balance_storage": "m3",
+            "water_balance_volume_error": "m3",
+            "water_balance_boundaries_in": "m3",
+            "water_balance_boundaries_out": "m3",
+        }
+        required = {"time", "pump_name", *units}
+        missing = sorted(required.difference(variables))
+        if missing:
+            raise Hydraulic1DResultError(
+                "D-Flow Pump result lacks required variables: " + ", ".join(missing),
+                code="DFLOW_RESULT_SCHEMA_MISMATCH",
+            )
+        time = self._finite_vector(variables["time"], name="time")
+        self._require_dims(variables["time"], ("time",), name="time")
+        self._require_unit(
+            variables["time"],
+            DFLOW_HISTORY_TIME_UNIT,
+            name="time",
+        )
+        ids = self._ids(
+            variables["pump_name"],
+            dimension="pump",
+            name="pump_name",
+        )
+        if ids != (expected_structure_id,):
+            raise Hydraulic1DResultError(
+                "D-Flow Pump structure identity does not match the frozen model",
+                code="DFLOW_RESULT_IDENTITY_MISMATCH",
+            )
+        values: dict[str, Any] = {}
+        for name, expected_unit in units.items():
+            variable = variables[name]
+            self._require_unit(variable, expected_unit, name=name)
+            if name.startswith("pump_"):
+                self._require_matrix(
+                    variable,
+                    "time",
+                    "pump",
+                    len(time),
+                    1,
+                    name=name,
+                )
+                values[name] = variable
+            else:
+                self._require_dims(variable, ("time",), name=name)
+                values[name] = self._finite_vector(variable, name=name)
+
+        samples: list[DFlowFMPumpSample] = []
+        finite_names = tuple(
+            name for name in units if name.startswith("pump_") and name != "pump_actual_stage"
+        )
+        for index, current_time in enumerate(time):
+            sample_values: dict[str, float] = {}
+            for name in finite_names:
+                raw_value = values[name].values[index, 0]
+                try:
+                    number = (
+                        float("nan")
+                        if bool(getattr(raw_value, "mask", False))
+                        else float(raw_value)
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise Hydraulic1DResultError(
+                        f"D-Flow variable {name!r} contains a non-numeric value",
+                        code="DFLOW_RESULT_CORRUPT",
+                    ) from exc
+                if not isfinite(number):
+                    raise Hydraulic1DResultError(
+                        f"D-Flow variable {name!r} is non-finite",
+                        code="DFLOW_RESULT_NONFINITE",
+                    )
+                sample_values[name] = number
+            raw_stage = values["pump_actual_stage"].values[index, 0]
+            if bool(getattr(raw_stage, "mask", False)):
+                stage = None
+            else:
+                try:
+                    stage_number = float(raw_stage)
+                except (TypeError, ValueError) as exc:
+                    raise Hydraulic1DResultError(
+                        "D-Flow Pump stage contains a non-numeric value",
+                        code="DFLOW_RESULT_CORRUPT",
+                    ) from exc
+                if stage_number != stage_number:
+                    stage = None
+                elif not isfinite(stage_number) or not stage_number.is_integer():
+                    raise Hydraulic1DResultError(
+                        "D-Flow Pump stage is invalid",
+                        code="DFLOW_RESULT_NONFINITE",
+                    )
+                else:
+                    stage = int(stage_number)
+            capacity = sample_values["pump_capacity"]
+            reduction = sample_values["pump_reduction_factor"]
+            if capacity < -1e-12 or not -1e-12 <= reduction <= 1.0 + 1e-12:
+                raise Hydraulic1DResultError(
+                    "D-Flow Pump capacity or reduction factor is outside its native range",
+                    code="DFLOW_RESULT_RANGE_INVALID",
+                )
+            upstream = sample_values["pump_s1up"]
+            downstream = sample_values["pump_s1dn"]
+            structure_head = sample_values["pump_structure_head"]
+            if not isclose(structure_head, upstream - downstream, rel_tol=1e-9, abs_tol=1e-9):
+                raise Hydraulic1DResultError(
+                    "D-Flow Pump structure head is inconsistent with endpoint levels",
+                    code="DFLOW_RESULT_FLOW_IDENTITY_INVALID",
+                )
+            actual_discharge = sample_values["pump_structure_discharge"]
+            oriented_discharge = sample_values["pump_discharge_dir"]
+            delivery = sample_values["pump_s1_delivery_side"]
+            suction = sample_values["pump_s1_suction_side"]
+            pump_head = sample_values["pump_head"]
+            if not isclose(actual_discharge, oriented_discharge, rel_tol=1e-9, abs_tol=1e-9):
+                raise Hydraulic1DResultError(
+                    "D-Flow Pump discharge outputs are inconsistent",
+                    code="DFLOW_RESULT_FLOW_IDENTITY_INVALID",
+                )
+            if not isclose(pump_head, delivery - suction, rel_tol=1e-9, abs_tol=1e-9):
+                raise Hydraulic1DResultError(
+                    "D-Flow Pump head is inconsistent with delivery/suction levels",
+                    code="DFLOW_RESULT_FLOW_IDENTITY_INVALID",
+                )
+            if not (
+                isclose(min(delivery, suction), min(upstream, downstream), rel_tol=1e-9, abs_tol=1e-9)
+                and isclose(max(delivery, suction), max(upstream, downstream), rel_tol=1e-9, abs_tol=1e-9)
+            ):
+                raise Hydraulic1DResultError(
+                    "D-Flow Pump endpoint level identities are inconsistent",
+                    code="DFLOW_RESULT_FLOW_IDENTITY_INVALID",
+                )
+            samples.append(
+                DFlowFMPumpSample(
+                    time_seconds=current_time,
+                    structure_id=expected_structure_id,
+                    actual_discharge_m3s=actual_discharge,
+                    native_applied_capacity_m3s=capacity,
+                    oriented_discharge_m3s=oriented_discharge,
+                    intake_water_level_m=upstream,
+                    outlet_water_level_m=downstream,
+                    structure_head_difference_m=structure_head,
+                    pump_head_m=pump_head,
+                    reduction_factor=reduction,
+                    delivery_water_level_m=delivery,
+                    suction_water_level_m=suction,
+                    active_stage=stage,
+                )
+            )
+        if len(samples) < 2:
+            raise Hydraulic1DResultError(
+                "D-Flow Pump result requires at least two time samples",
+                code="DFLOW_RESULT_SCHEMA_MISMATCH",
+            )
+        transfer = sum(
+            0.5
+            * (previous.actual_discharge_m3s + current.actual_discharge_m3s)
+            * (current.time_seconds - previous.time_seconds)
+            for previous, current in zip(samples, samples[1:], strict=False)
+        )
+        inflow = values["water_balance_boundaries_in"]
+        outflow = values["water_balance_boundaries_out"]
+        storage = values["water_balance_storage"]
+        errors = values["water_balance_volume_error"]
         inflow_delta = float(inflow[-1] - inflow[0])
         outflow_delta = float(outflow[-1] - outflow[0])
         storage_delta = float(storage[-1] - storage[0])

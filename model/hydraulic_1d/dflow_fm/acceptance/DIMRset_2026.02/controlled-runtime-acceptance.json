@@ -1,11 +1,11 @@
 {
-  "schema_version": "dayu.controlled-runtime-acceptance.v1",
+  "schema_version": "dayu.controlled-runtime-acceptance.v2",
   "engine_id": "d-flow-fm",
   "engine_version": "DIMRset_2026.02",
   "runtime_manifest_sha256": "52e12a2ea2078a5d01373604bda90781b5c77e7b817297489eb6fd8c030699c8",
   "container_image_digest": "sha256:e53a7c22cdce6a63f39357006ba73f2254ace24979c1f374ba111ee52d5b12b9",
   "fbc_version": "1.6.1",
-  "compiler_version": "dayu.drtc-compiler.v2",
+  "compiler_version": "dayu.drtc-compiler.v3",
   "supported_rule_subset": [
     "one enabled Gate rule",
     "one actuator",
@@ -14,10 +14,15 @@
     "zero hysteresis",
     "zero minimum hold",
     "zero cooldown",
-    "explicit frozen-initial-state fallback"
+    "explicit frozen-initial-state fallback",
+    "one aggregate Pump capacity manual schedule",
+    "one Gate plus one Pump with independent manual schedules",
+    "one Gate threshold plus one independent Pump capacity schedule",
+    "BLOCK interpolation with an explicit t=0 value"
   ],
   "unsupported_features": [
-    "Pump dynamic control",
+    "Pump enabled or unit-count control",
+    "Pump threshold rule",
     "hysteresis greater than zero",
     "minimum hold greater than zero",
     "cooldown greater than zero",
@@ -69,9 +74,51 @@
       "status": "PASS",
       "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
       "artifact_sha256": "47bacbe3c70d5c83ae784f2b906616d74d226198525b86f222774dba12270f63"
+    },
+    {
+      "case_id": "PUMP01",
+      "status": "PASS",
+      "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
+      "artifact_sha256": "5156574c5ceac45774ed78f0e0070812565905ea5af0473137ef2a13505ab8a1",
+      "artifact_path": "evidence/pump01-acceptance-v3.json"
+    },
+    {
+      "case_id": "PUMP02",
+      "status": "PASS",
+      "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
+      "artifact_sha256": "e989c8f316eb68691aef5e219d7e483cb591ae7b9d4f16b3c9ec60c08db8ddcb",
+      "artifact_path": "evidence/pump02-acceptance-v3.json"
+    },
+    {
+      "case_id": "GP01",
+      "status": "PASS",
+      "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
+      "artifact_sha256": "da4f392d94a3eda290c031d2ad6d6d905dab4fed9c34358fcc3949ade2177531",
+      "artifact_path": "evidence/gp01-acceptance-v3.json"
+    },
+    {
+      "case_id": "GP02",
+      "status": "PASS",
+      "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
+      "artifact_sha256": "22a08ddf8ec03f94285b247bbfbf62fcd12059e6925614b2609878307a79177c",
+      "artifact_path": "evidence/gp02-acceptance-v3.json"
+    },
+    {
+      "case_id": "GP03",
+      "status": "PASS",
+      "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
+      "artifact_sha256": "e82044e79076364ab68a0ad2be97873c289d3614e8dad65582c0ac49eb86ea84",
+      "artifact_path": "evidence/gp03-acceptance-v3.json"
+    },
+    {
+      "case_id": "L01",
+      "status": "PASS",
+      "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
+      "artifact_sha256": "25d824bfc22632dc2d1c4774eec37f549f2f24354c312fd41587815b625bd024",
+      "artifact_path": "evidence/l01-acceptance-v3.json"
     }
   ],
-  "verification_date": "2026-09-02",
+  "verification_date": "2026-09-03",
   "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
   "real_engineering_validation": false,
   "real_equipment_command": false,

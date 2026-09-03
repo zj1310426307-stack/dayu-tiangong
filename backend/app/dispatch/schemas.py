@@ -353,8 +353,15 @@ class DispatchCapabilityFact(BaseModel):
     adapter_version: str
     feature: str
     status: str
+    production_status: str | None = None
+    synthetic_status: str | None = None
+    production_eligible: bool | None = None
     reason: str
     benchmark_ids: list[str]
+    accepted_cases: list[str] = Field(default_factory=list)
+    evidence_class: str | None = None
+    supported_subset: list[str] = Field(default_factory=list)
+    unsupported_subset: list[str] = Field(default_factory=list)
     verified_at: str | None = None
 
 

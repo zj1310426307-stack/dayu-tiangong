@@ -1069,7 +1069,7 @@ def persist_controlled_result(
     task: SimulationTask,
     result: ControlledHydraulicResult,
 ) -> None:
-    """Persist H/Q, Gate state, events and evidence for one attempt atomically."""
+    """Persist H/Q, Gate/Pump state, events and evidence for one attempt atomically."""
 
     if task.task_kind != "controlled_hydraulic_preview":
         raise ValueError("controlled result cannot be stored on a standard task")
@@ -1136,6 +1136,7 @@ def persist_controlled_result(
                 structure_type=item.structure_type,
                 structure_id=item.asset_id,
                 requested_value=item.requested_value,
+                resolved_value=item.resolved_value,
                 actual_value=item.applied_value,
                 flow=float(item.discharge_m3s),
                 upstream_level=item.upstream_water_level_m,
@@ -1146,13 +1147,24 @@ def persist_controlled_result(
                     and item.downstream_water_level_m is not None
                     else None
                 ),
+                native_applied_capacity=item.native_applied_capacity_m3s,
+                actual_discharge=item.actual_discharge_m3s,
+                intake_water_level=item.intake_water_level_m,
+                outlet_water_level=item.outlet_water_level_m,
+                structure_head_difference=item.structure_head_difference_m,
+                pump_head=item.pump_head_m,
+                pump_reduction_factor=item.pump_reduction_factor,
+                pump_actual_stage=item.active_stage,
                 transfer_type="internal_transfer",
                 constraint_flags=[],
             )
         )
-    traces = {item.time_seconds: item for item in result.dispatch_trace}
+    traces = {
+        (item.time_seconds, item.structure_type, item.asset_id): item
+        for item in result.dispatch_trace
+    }
     for item in result.control_events:
-        trace = traces.get(item.time_seconds)
+        trace = traces.get((item.time_seconds, item.structure_type, item.asset_id))
         session.add(
             DispatchEvent(
                 run_id=run.id,

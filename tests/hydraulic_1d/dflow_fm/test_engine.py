@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import json
 
 import pytest
 
@@ -16,6 +17,8 @@ from model.hydraulic_1d.engine import Hydraulic1DExecutionContext
 from model.hydraulic_1d.errors import Hydraulic1DRuntimeUnavailable
 from model.hydraulic_1d.registry import DFLOW_FM_ENGINE_ID, DFLOW_FM_ENGINE_VERSION
 from tests.hydraulic_1d.dflow_fm.test_adapter import dflow_model
+from tools.run_controlled_pump_engine_acceptance import build_run as build_pump_run
+from tools.run_dflow_gate_acceptance import IMAGE
 
 
 def _config(tmp_path: Path) -> DFlowRuntimeConfig:
@@ -130,3 +133,37 @@ def test_engine_builds_runs_and_parses_one_isolated_dimr_job(tmp_path: Path) -> 
         (90.0, "parsing"),
         (100.0, "complete"),
     ]
+
+
+def test_engine_compiles_gate_rule_with_independent_pump_schedule(
+    tmp_path: Path,
+) -> None:
+    repository = Path(__file__).resolve().parents[3]
+    engine = DFlowFMEngine(
+        config=DFlowRuntimeConfig(
+            runtime="container",
+            dimr_executable="dimr",
+            dimr_executable_sha256=None,
+            docker_executable="docker",
+            container_image=IMAGE,
+            provenance_file=repository
+            / "model/hydraulic_1d/dflow_fm/acceptance/DIMRset_2026.02/runtime-provenance.json",
+            timeout_seconds=300.0,
+            workspace_root=tmp_path,
+        )
+    )
+
+    compiled = engine.compile_control(
+        build_pump_run(joint=True, gate_rule=True),
+        tmp_path,
+    )
+
+    manifest_artifact = next(
+        item for item in compiled.artifacts if item.artifact_type == "manifest"
+    )
+    manifest = json.loads(
+        (tmp_path / manifest_artifact.relative_path).read_text(encoding="utf-8")
+    )
+    assert manifest["semantic_contract"]["kind"] == (
+        "gate_threshold_with_manual_schedules"
+    )

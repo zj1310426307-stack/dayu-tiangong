@@ -1610,7 +1610,7 @@ def _pump_bindings(
                 structure_id=key[1],
                 native_structure_id=spec.structure_id,
                 supported_command_type="pump_target_flow",
-                bmi_variable=f"pumps/{spec.structure_id}/Capacity",
+                bmi_variable=f"pumps/{spec.structure_id}/capacity",
                 conversion="identity_capacity",
             )
         )

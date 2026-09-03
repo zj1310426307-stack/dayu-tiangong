@@ -188,6 +188,7 @@ def run(
     workspace_root: Path,
     job_id: str,
     *,
+    docker_executable: str = "docker",
     timeout_seconds: float = 300.0,
     cancel_after_seconds: float | None = None,
 ) -> dict[str, object]:
@@ -197,7 +198,7 @@ def run(
             runtime="container",
             dimr_executable="dimr",
             dimr_executable_sha256=None,
-            docker_executable="docker",
+            docker_executable=docker_executable,
             container_image=IMAGE,
             provenance_file=repository
             / "model/hydraulic_1d/dflow_fm/acceptance/DIMRset_2026.02/runtime-provenance.json",
@@ -263,18 +264,20 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--workspace-root", required=True, type=Path)
     parser.add_argument("--job-id", required=True)
+    parser.add_argument("--docker-executable", default="docker")
     parser.add_argument("--timeout-seconds", type=float, default=300.0)
     parser.add_argument("--cancel-after-seconds", type=float)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    print(
-        json.dumps(
-            run(
-                args.workspace_root,
-                args.job_id,
-                timeout_seconds=args.timeout_seconds,
-                cancel_after_seconds=args.cancel_after_seconds,
-            ),
-            indent=2,
-            sort_keys=True,
-        )
+    payload = run(
+        args.workspace_root,
+        args.job_id,
+        docker_executable=args.docker_executable,
+        timeout_seconds=args.timeout_seconds,
+        cancel_after_seconds=args.cancel_after_seconds,
     )
+    serialized = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(serialized, encoding="utf-8")
+    print(serialized, end="")

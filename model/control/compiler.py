@@ -94,9 +94,9 @@ class ActuatorControlBinding(BaseModel):
                 raise ValueError("pump binding requires identity capacity conversion")
             if self.reference_level_m is not None or self.gate_height_m is not None:
                 raise ValueError("pump binding must not define gate geometry")
-            if self.bmi_variable != f"pumps/{self.native_structure_id}/Capacity":
+            if self.bmi_variable != f"pumps/{self.native_structure_id}/capacity":
                 raise ValueError(
-                    "pump binding must target the pinned Capacity BMI variable"
+                    "pump binding must target the pinned capacity BMI variable"
                 )
         return self
 

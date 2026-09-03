@@ -129,11 +129,13 @@ HYDRO-DATA-01 (Network → Branch → Chainage → Cross Section)
 
 `/hydraulic/production` 提供 Data → QA → Calibration → Validation → Compare → Results 工程工作台。文件先 Preview 和展示 Issues，再由用户显式 Import；正式 Production Run 的 QA 封套绑定不可变输入哈希，Backend 创建任务时检查一次，Worker 执行前重新验算一次。观测、外部结果、率定、验证、成果及重要操作均使用 `hydraulic` schema 的版本化记录和来源哈希。
 
-当前软件框架的 P01–P06 合成回归已建立，但受控资料缺少权威边界、实测 H/Q、独立验证事件和合法导出的 MIKE11 结果，真实工程 R01–R07 状态为 `DATA_NOT_AVAILABLE`。不得把现有三个不连通测绘片段或测试数据称为生产验证。Bridge/Culvert 保持 `UNVERIFIED`；Gate/Pump/Sluice 保持 `UNSUPPORTED`。
+当前软件框架的 PROD01–PROD06 合成回归已建立，但受控资料缺少权威边界、实测 H/Q、独立验证事件和合法导出的 MIKE11 结果，真实工程 R01–R07 状态为 `DATA_NOT_AVAILABLE`。不得把现有三个不连通测绘片段或测试数据称为生产验证。Bridge/Culvert 保持 `UNVERIFIED`；MASCARET 中 Gate/Pump/Sluice 保持 `UNSUPPORTED`。
 
 ## 一维闸泵调度开发边界
 
-`/dispatch` 支持计划校验、v2 不可变快照、后端权威执行就绪状态，以及基于显式合成轨迹的静态调度预演。预演只评估人工动作、白名单阈值规则、冲突裁决和冻结闸泵约束；不计算 H/Q、功率、能耗或水量平衡，不创建水力任务/调度运行，也不下发真实设备。MASCARET Gate/Pump 仍为 `UNSUPPORTED`，水力运行接口保持 fail closed。详见 [调度领域契约](docs/dispatch/dispatch_contract.md) 与 [合成静态调度预演](docs/dispatch/static-schedule-replay.md)。
+`/dispatch` 同时保留两条边界：Static Preview 只回放命令与规则，不产生 H/Q；Controlled 1D Development 使用锁定的 D-Flow FM `DIMRset_2026.02` + DIMR/FBC 运行合成水力预演。Gate 合成闭环已验收；Pump 仅支持非分级 inline Pump 的固定 aggregate Capacity 和人工 Capacity schedule；已验证 Gate+Pump 联合人工调度以及“单 Gate 水位阈值 + 独立 Pump schedule”。Pump threshold、`pump_enabled`、`pump_unit_count`、滞回/hold/cooldown/多规则优先级仍 fail closed。
+
+Capacity 是原生控制目标，不等于 Solver 计算的 actual Pump Q；两者分开保存和展示。Production Dispatch 与真实设备按钮未开放，真实工程验证也未完成；D-Flow 所有记录均为 `SYNTHETIC_NUMERICAL_ONLY` 且 `production_eligible=false`。MASCARET 仍是 Standard 1D 默认引擎，其 Gate/Pump 继续 `UNSUPPORTED`。详见 [水力调度开发边界](docs/dispatch/hydraulic-dispatch.md) 与 [D-RTC 编译边界](docs/dispatch/drtc-compiler.md)。
 
 ## 广东开放参考数据
 

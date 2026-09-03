@@ -118,8 +118,20 @@ def _structure_metrics(session: Session, task_id: int) -> list[dict[str, Any]]:
     return [
         {
             "structure_type": row.structure_type, "structure_id": row.structure_id,
-            "time_seconds": row.time_seconds, "actual_value": row.actual_value,
+            "time_seconds": row.time_seconds, "requested_value": row.requested_value,
+            "resolved_value": row.resolved_value, "actual_value": row.actual_value,
             "flow": row.flow, "power_kw": row.power_kw, "energy_kwh": row.energy_kwh,
+            "upstream_level": row.upstream_level,
+            "downstream_level": row.downstream_level,
+            "head_difference": row.head_difference,
+            "native_applied_capacity": row.native_applied_capacity,
+            "actual_discharge": row.actual_discharge,
+            "intake_water_level": row.intake_water_level,
+            "outlet_water_level": row.outlet_water_level,
+            "structure_head_difference": row.structure_head_difference,
+            "pump_head": row.pump_head,
+            "pump_reduction_factor": row.pump_reduction_factor,
+            "pump_actual_stage": row.pump_actual_stage,
             "constraint_flags": row.constraint_flags,
         }
         for row in session.scalars(

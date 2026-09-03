@@ -595,21 +595,31 @@ export function HydraulicDataPage() {
           </Card>
         </Col>
         <Col xs={24} xl={9}>
-          <Card className="data-card" title="MASCARET 9.1.1 工程能力">
+          <Card className="data-card" title="一维水力引擎能力矩阵">
             <Table
-              rowKey="feature"
+              rowKey={(record) => `${record.engine}-${record.engine_version}-${record.feature}`}
               size="small"
               pagination={false}
               dataSource={engineCapabilities}
-              scroll={{ y: 360 }}
+              scroll={{ x: 1450, y: 360 }}
               columns={[
-                { title: '能力', dataIndex: 'feature' },
+                { title: '引擎', width: 165, render: (_, record) => `${record.engine} ${record.engine_version}` },
+                { title: '能力', dataIndex: 'feature', width: 170 },
                 {
-                  title: '状态', dataIndex: 'status', width: 165,
+                  title: '生产状态', dataIndex: 'production_status', width: 165,
                   render: (value: string, record: SolverCapabilityRecord) => (
                     <Tag title={record.reason} color={value.startsWith('VERIFIED') ? 'success' : value === 'UNSUPPORTED' ? 'error' : 'warning'}>{value}</Tag>
                   ),
                 },
+                {
+                  title: '合成门禁', dataIndex: 'synthetic_status', width: 135,
+                  render: (value: string) => <Tag color={value === 'ACCEPTED' ? 'success' : value === 'UNSUPPORTED' ? 'error' : 'warning'}>{value}</Tag>,
+                },
+                { title: '生产资格', dataIndex: 'production_eligible', width: 100, render: (value: boolean) => <Tag color={value ? 'success' : 'default'}>{value ? '可用' : '不可用'}</Tag> },
+                { title: '已支持子集', dataIndex: 'supported_subset', width: 280, render: (value: string[]) => value.length ? value.join('；') : '—' },
+                { title: '未支持子集', dataIndex: 'unsupported_subset', width: 280, render: (value: string[]) => value.length ? value.join('；') : '—' },
+                { title: '已验收算例', dataIndex: 'accepted_cases', width: 250, render: (value: string[]) => value.length ? value.join(', ') : '—' },
+                { title: '证据等级', dataIndex: 'evidence_class', width: 180 },
               ]}
             />
           </Card>

@@ -1,9 +1,9 @@
 # D-RTC 编译器与闭环控制边界
 
-更新日期：2026-09-02
-编译器合同：`dayu.drtc-compiler.v2`
+更新日期：2026-09-03
+编译器合同：`dayu.drtc-compiler.v3`
 固定 Runtime 基线：`DIMRset_2026.02`
-当前结论：单闸门、单水位阈值规则的合成数值闭环已验证；其余动态语义继续关闭
+当前结论：Gate 单水位阈值、Pump 手工 Capacity schedule、独立 Gate+Pump schedule 与 Gate threshold + Pump schedule 的合成数值闭环已验证；其余动态语义继续关闭
 
 ## 权威边界
 
@@ -33,13 +33,13 @@ Controlled Hydraulic Result
 - requested、constraint-resolved 与 native target 分开保存；
 - 约束拒绝不转成一个看似成功的替代目标。
 
-静态编译层仍识别以下 binding，但受控 Runtime 只开放第一项：
+静态编译层识别以下 binding；受控 Runtime 开放 Gate 米制开度与 Pump aggregate Capacity，Gate ratio 仍要求完整映射和对应验收：
 
 | Dayu command | D-Flow target | 转换 |
 |---|---|---|
 | `gate_opening_m` | `.../gateLowerEdgeLevel` | `reference_level_m + opening_m` |
 | `gate_opening_ratio` | `.../gateLowerEdgeLevel` | 先乘显式 `gate_height_m`，再加基准高程 |
-| `pump_target_flow` | `pumps/<native_id>/Capacity` | aggregate capacity identity |
+| `pump_target_flow` | `pumps/<native_id>/capacity` | aggregate capacity identity |
 
 `pump_unit_count`、`pump_enabled` 与 aggregate Capacity 不等价，当前返回 `HYDRAULIC_COMMAND_SEMANTICS_UNSUPPORTED`。编译成功只证明静态命令与约束合同可确定重放，不证明 FBC 已执行这些命令。
 
@@ -51,13 +51,15 @@ Controlled Hydraulic Result
 |---|---|---|
 | disabled Rule | `COMPILED`，省略 | 禁用规则明确不进入目标配置 |
 | 一个 Gate `gate_opening_m` 阈值规则 | `COMPILED` | FBC standard trigger 在目标值与冻结初态 fallback 之间选择，已由 DRTC-S01/G03 证明 |
+| 上述 Gate 规则 + 另一 Pump manual Capacity schedule | `COMPILED` | 两个独立 actuator 在同一 FBC 组件中执行，已由 GP03 证明 |
+| Pump threshold rule | `UNSUPPORTED` | Pump intake observation 到 Capacity trigger 的完整动态语义未验收 |
 | `minimum_hold_seconds > 0` | 追加 blocker | 无 runtime-verified exact mapping |
 | `cooldown_seconds > 0` | 追加 blocker | 无 runtime-verified exact mapping |
 | `hysteresis > 0` | 追加 blocker | `deadBand` 状态等价性未经过固定 FBC benchmark |
 | 多规则控制同一执行器 | 追加 blocker | Priority 与 tie-break 语义未验证 |
 | Manual 与 Rule 控制同一执行器 | 追加 blocker | fallback/merger tie-break 语义未验证 |
 
-`runtime_validated` 由源码控制的 acceptance registry 计算，不是环境开关。Registry 必须同时绑定 Runtime manifest 字节哈希、reviewed image digest、编译器版本、官方 case 与 DF01/DRTC-S01/G01/G02/G03；任一漂移即回到 `false`。多规则 priority/tie-break、manual + rule、hysteresis、hold、cooldown 和 Pump dynamic control 均继续 `UNSUPPORTED`。
+`runtime_validated` 由源码控制的 acceptance registry v2 计算，不是环境开关。Registry 必须同时绑定 Runtime manifest 字节哈希、reviewed image digest、编译器版本、官方 case 与 DF01/DRTC-S01/G01–G03/PUMP01–PUMP02/GP01–GP03/L01；有 artifact path 的算例还要逐文件核对 SHA-256 和证据语义，任一漂移即回到 `false`。多规则 priority/tie-break、同一 actuator manual + rule、hysteresis、hold、cooldown 和 Pump threshold 均继续 `UNSUPPORTED`。
 
 ## Observation bridge
 
@@ -76,16 +78,16 @@ Hydraulic v3 compile 是只读检查，会分别报告：计划、模型、Gate 
 
 - `ready_to_freeze` 需要所有静态语义检查通过，但不把 Runtime availability 当作冻结前提；
 - `ready_to_run` 还必须同时满足 `runtime_available=true` 与 `controlled_runtime_accepted=true`；仅配置本地 reviewed digest 时才可能成立；
-- 一个满足最小 Gate 子集的 enabled Rule 可以 freeze/run；多规则、Pump 或任何未验收时序语义仍精确阻断；
-- manual-only 单 Gate schedule 由 FBC `BLOCK` 表执行，G02 已验证；不得与 Rule 混用。
+- 一个满足最小 Gate 子集的 enabled Rule 可以 freeze/run；它可与另一 Pump 的 manual Capacity schedule 组合，但不可与同一 Gate 的 manual 命令混用；
+- Gate/Pump manual schedule 由 FBC `timeRelative` + `BLOCK` + 显式 t=0 表执行，G02/PUMP02/GP02 已验证；不允许两个 schedule 写同一 actuator。
 
 Runtime unavailable 使用 `DFLOW_RUNTIME_BLOCKED`，规则等价性失败使用 `DRTC_RULE_SEMANTICS_UNSUPPORTED`。两者是不同问题，不能用“用户允许跳过真实验证”互相覆盖，也不能因编译成功自动降级到 MASCARET 或静态 replay。
 
 ## 已关闭的门与仍关闭的门
 
-已关闭：固定四组件 provenance、不可变 digest、官方 D-Flow/FBC case、严格 artifact writer、显式 false fallback、DRTC-S01/G02/G03、requested/resolved/applied、H/Q/Gate parser、水量平衡、取消/超时/并发/孤儿清理。
+已关闭：固定四组件 provenance、不可变 digest、官方 D-Flow/FBC case、严格 artifact writer、显式 false fallback、DRTC-S01/G02/G03/PUMP02/GP02/GP03、requested/resolved/native/actual 四层 Pump 结果、H/Q/Gate/Pump parser、水量平衡、取消/超时/并发/孤儿清理。
 
-仍关闭：多规则 priority/tie-break、hysteresis/hold/cooldown、manual + rule、Pump dynamic control、真实工程验证、生产调度与 PLC/SCADA。UI 必须显示 `Multi-rule priority: Not verified`，生产按钮保持禁用。
+仍关闭：多规则 priority/tie-break、hysteresis/hold/cooldown、同一 actuator manual + rule、Pump threshold、`pump_enabled`、`pump_unit_count`、真实工程验证、生产调度与 PLC/SCADA。UI 必须显示 Backend 权威的 supported/unsupported subset 与 `Multi-rule priority: Not verified`，生产按钮保持禁用。
 
 官方来源：
 

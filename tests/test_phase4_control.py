@@ -8,6 +8,7 @@ from model.control.constraints import validate_command_value, validate_control_t
 from model.control.policy import CompositeControlPolicy, ControlTarget, HydraulicObservation
 from model.control.rules import ThresholdRule, ThresholdRulePolicy
 from model.control.schedule import ManualSchedulePolicy, ScheduledAction
+from model.metrics.energy import evaluate_pump_metrics
 
 
 def _rule(*, priority: int = 5, cooldown: float = 60.0) -> ThresholdRule:
@@ -120,3 +121,50 @@ def test_rule_action_template_is_a_strict_non_executable_contract() -> None:
                 "expression": "__import__('os')",
             },
         )
+
+
+def test_pump_metrics_integrate_actual_q_without_inventing_energy() -> None:
+    """Capacity targets remain separate from actual Q and absent energy evidence."""
+
+    metrics = evaluate_pump_metrics(
+        [
+            {
+                "structure_type": "pump",
+                "structure_id": 1,
+                "time_seconds": 0.0,
+                "requested_value": 0.0,
+                "resolved_value": 0.0,
+                "actual_value": 0.0,
+                "native_applied_capacity": 0.0,
+                "actual_discharge": 0.2,
+                "flow": 0.2,
+            },
+            {
+                "structure_type": "pump",
+                "structure_id": 1,
+                "time_seconds": 10.0,
+                "requested_value": 1.0,
+                "resolved_value": 1.0,
+                "actual_value": 1.0,
+                "native_applied_capacity": 1.0,
+                "actual_discharge": 0.8,
+                "flow": 0.8,
+            },
+            {
+                "structure_type": "pump",
+                "structure_id": 1,
+                "time_seconds": 20.0,
+                "requested_value": 1.0,
+                "resolved_value": 1.0,
+                "actual_value": 1.0,
+                "native_applied_capacity": 1.0,
+                "actual_discharge": 0.8,
+                "flow": 0.8,
+            },
+        ]
+    )
+
+    assert metrics["pump_actual_transfer_volume_m3"] == 10.0
+    assert metrics["pump_requested_capacity_volume_m3"] == 10.0
+    assert metrics["pump_total_energy_kwh"] is None
+    assert metrics["pump_peak_power_kw"] is None

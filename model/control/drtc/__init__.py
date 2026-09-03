@@ -7,6 +7,7 @@ from model.control.drtc.artifacts import (
     DRTCFBCArtifacts,
     DRTCGateThresholdSpec,
     DRTCManualGateScheduleSpec,
+    DRTCManualPumpScheduleSpec,
     FBC_ARTIFACT_SCHEMA,
     FBC_NATIVE_VERSION,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "DRTCFBCArtifacts",
     "DRTCGateThresholdSpec",
     "DRTCManualGateScheduleSpec",
+    "DRTCManualPumpScheduleSpec",
     "FBC_ARTIFACT_SCHEMA",
     "FBC_NATIVE_VERSION",
     "ControlledRuntimeAcceptance",

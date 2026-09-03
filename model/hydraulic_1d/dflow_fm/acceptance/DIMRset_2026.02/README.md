@@ -1,10 +1,11 @@
 # DIMRset_2026.02 controlled-runtime acceptance
 
-Review date: 2026-09-02
+Review date: 2026-09-03
 
 This directory is the source-controlled trust root for the development-only
-`D-Flow FM + DIMR + FBC` controlled Gate path. It does not contain native
-binaries or large Solver outputs.
+`D-Flow FM + DIMR + FBC` controlled Gate/Pump path. It does not contain native
+binaries or large Solver outputs. Compact Phase 07 manifests are committed in
+`evidence/` and hash-checked by the runtime gate.
 
 ## Locked identity
 
@@ -25,6 +26,12 @@ binaries or large Solver outputs.
 | G01 | PASS | two static openings change Gate Q and upstream head; both balances finite and below 0.5% |
 | G02 | PASS | FBC schedule transitions at 0/240/480 s; balance residual `5.46e-15` |
 | G03 | PASS | water-level threshold changes Gate opening at 360 s; balance residual `9.13e-16` |
+| PUMP01 | PASS | fixed native aggregate Capacity 0/1 produces actual Q 0/1 while stage remains unavailable (`null`) |
+| PUMP02 | PASS | FBC Pump capacity schedule 0 → 1 → 0.4 is observed in both native Capacity and actual Q |
+| GP01 | PASS | fixed Gate + Pump joint model returns both structure histories and finite balance |
+| GP02 | PASS | independent Gate/Pump FBC schedules execute in one coupled model with finite balance |
+| GP03 | PASS | one native Gate threshold and one independent Pump capacity schedule execute in the same FBC component |
+| L01 | PASS | 24 h joint Gate/Pump run reaches 86400 s with finite H/Q and balance residual below 0.5% |
 
 Two parallel public-engine G03 runs produced the same control trace SHA-256
 `d60ef6273d7d7ec2144b42a10080ffacfc1c7d58df2289573753d55861195405`
@@ -35,12 +42,16 @@ seconds and is therefore not used as the numerical determinism identity.
 
 ## Lifecycle and worker
 
-- cancellation: PASS, `DFLOW_CANCELLED`, owned container cleanup confirmed;
-- timeout: PASS, `DFLOW_TIMEOUT`, owned container cleanup confirmed;
-- two-job concurrency: PASS, isolated workspaces and identical numerical hash;
+- Gate+Pump cancellation: PASS, `DFLOW_CANCELLED`, owned container cleanup confirmed;
+- Gate+Pump timeout: PASS, `DFLOW_TIMEOUT`, owned container cleanup confirmed;
+- two-job concurrency: PASS, one Gate-only and one Gate+Pump job used isolated input/control/output/logs/metadata workspaces;
 - orphan recovery: PASS, exact cidfile + owner-label container removed;
 - real Redis/Celery/PostgreSQL worker: PASS, one execution attempt persisted
   33 H/Q rows, 10 finite active Gate rows and 2 control events atomically.
+- Phase 07 two-Worker Redis/Celery/PostgreSQL concurrency: PASS; the Gate-only
+  task persisted 33 H/Q and 10 Gate rows, while the Gate+Pump task persisted 66
+  H/Q, 11 Gate, 11 Pump and 11 complete Pump native-audit rows under separate
+  task/run foreign-key identities.
 
 Large native workspaces are retained only under the project verification area
 and are excluded from Git. Evidence classification remains
@@ -54,8 +65,7 @@ official 1D benchmark. Dayu DF01 is the real native 1D adapter/parser gate.
 
 ## Deliberately unsupported
 
-- Pump dynamic control (`PUMP_NATIVE_CONTROL_LIMITED`;
-  P01/P02 not enabled, P03 `BLOCKED_BY_NATIVE_CONTROL_SEMANTICS`);
+- Pump enable/unit-count commands and Pump threshold rules;
 - hysteresis, minimum hold, cooldown;
 - multiple rules for one actuator, priority/tie-break arbitration;
 - manual/rule conflict or merger semantics;

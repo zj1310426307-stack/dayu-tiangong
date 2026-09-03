@@ -1,0 +1,30 @@
+{
+  "case_id": "GP03",
+  "control_artifact_hash": "33ac721afd2f4d772bfaa303956d26c694fa1069c7480c3867cf48c014a10771",
+  "evidence_class": "SYNTHETIC_NUMERICAL_ONLY",
+  "gate_transition": {
+    "initial_opening_m": 2.0,
+    "threshold": 2.01,
+    "threshold_operator": ">=",
+    "transition_time_seconds": 120.0,
+    "triggered_opening_m": 0.5
+  },
+  "hydraulic_record_count": 66,
+  "mass_balance": {
+    "relative_residual": 4.809072843407572e-14,
+    "threshold": 0.005
+  },
+  "native_pump_control_variable": "pumps/<id>/capacity",
+  "plc_scada_connected": false,
+  "pump_capacity_is_actual_discharge": false,
+  "pump_capacity_transitions_m3s": [
+    0.0,
+    1.0,
+    0.4
+  ],
+  "real_engineering_validation": false,
+  "real_equipment_command": false,
+  "runtime_image": "dayu-dflow-runtime@sha256:e53a7c22cdce6a63f39357006ba73f2254ace24979c1f374ba111ee52d5b12b9",
+  "runtime_seconds": 2.25,
+  "status": "PASS"
+}
