@@ -29,6 +29,7 @@ def export_nwk11_subset(payload: HydraulicExchangePayload) -> bytes:
             f"    RiverName = {_quoted(branch.river_name)}",
             f"    BranchName = {_quoted(branch.branch_name)}",
             f"    FlowDirection = {_quoted(branch.flow_direction)}",
+            f"    CenterlineRole = {_quoted(branch.centerline_role)}",
         ])
         if branch.source_revision:
             lines.append(f"    SourceRevision = {_quoted(branch.source_revision)}")

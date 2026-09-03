@@ -37,6 +37,7 @@ def _network_text() -> bytes:
     RiverName = 'River One'
     BranchName = 'Main branch'
     FlowDirection = 'forward'
+    CenterlineRole = 'thalweg'
     Point = 0, 113.1000, 23.1000
     Point = 1000, 113.1100, 23.1100
   EndSect  // BRANCH
@@ -112,7 +113,36 @@ def test_excel_parser_accepts_bilingual_network_and_section_sheets() -> None:
     assert profile == "hydraulic-xlsx-v2"
     assert payload.network_code == "DEMO-NET"
     assert [branch.code for branch in payload.branches] == ["R-001"]
+    assert payload.branches[0].centerline_role == "unknown"
     assert [section.section_code for section in payload.sections] == ["XS-001"]
+    assert [point.marker_type for point in payload.sections[0].points] == [
+        "none", "thalweg", "none"
+    ]
+
+
+def test_excel_parser_rejects_reversed_network_input_instead_of_sorting() -> None:
+    """A centerline entered downstream-to-upstream must fail closed."""
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "河网 Network"
+    sheet.append([
+        "网络编码", "网络名称", "河段编码", "河流名称", "河段名称",
+        "流向", "中心线角色", "桩号", "X坐标", "Y坐标",
+    ])
+    sheet.append([
+        "ORDER-NET", "Order network", "R-001", "River", "Branch",
+        "forward", "thalweg", 1000, 341500, 2518000,
+    ])
+    sheet.append([
+        "ORDER-NET", "Order network", "R-001", "River", "Branch",
+        "forward", "thalweg", 0, 341000, 2517000,
+    ])
+    buffer = BytesIO()
+    workbook.save(buffer)
+
+    with pytest.raises(ValueError, match="strictly increasing"):
+        parse_hydraulic_file("reversed-network.xlsx", buffer.getvalue(), 4547)
 
 
 def test_excel_parser_accepts_mike11_six_column_grouped_profile_layout() -> None:
@@ -144,6 +174,59 @@ def test_excel_parser_accepts_mike11_six_column_grouped_profile_layout() -> None
     assert all(section.branch_code == "gaominghe" for section in payload.sections)
     assert [point.distance for point in payload.sections[0].points] == [0, 5, 10]
     assert [point.sequence for point in payload.sections[0].points] == [0, 1, 2]
+    assert [point.marker_type for point in payload.sections[0].points] == [
+        "none", "thalweg", "none"
+    ]
+
+
+def test_excel_parser_preserves_all_tied_minimum_points_as_thalweg() -> None:
+    """A flat or duplicated minimum is evidence, not a reason to pick one point."""
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "断面 Cross Section"
+    sheet.append(["ID", "TOPOID", "里程", "偏移", "高程", "river_name"])
+    sheet.append(["DM8", 11, 1920.0435, 0, 33.2, "gaominghe"])
+    sheet.append([None, None, None, 25.8, 31.65, None])
+    sheet.append([None, None, None, 30.0, 31.65, None])
+    sheet.append([None, None, None, 60.0, 33.4, None])
+    buffer = BytesIO()
+    workbook.save(buffer)
+
+    payload, _, _ = parse_hydraulic_file("thalweg-tie.xlsx", buffer.getvalue(), 4547)
+
+    thalweg = [
+        point for point in payload.sections[0].points
+        if point.marker_type == "thalweg"
+    ]
+    assert [(point.distance, point.elevation) for point in thalweg] == [
+        (25.8, 31.65), (30.0, 31.65)
+    ]
+    issues = validate_exchange(
+        payload,
+        known_branch_codes={"gaominghe"},
+        known_branch_ranges={"gaominghe": (0.0, 5432.1266)},
+        known_branch_roles={"gaominghe": "thalweg"},
+    )
+    tie = [issue for issue in issues if issue.code == "SECTION_THALWEG_TIE"]
+    assert len(tie) == 1
+    assert tie[0].context == {
+        "count": 2,
+        "offsets_m": [25.8, 30.0],
+        "elevation_m": 31.65,
+    }
+    for point in payload.sections[0].points:
+        point.marker_type = "none"
+    missing = validate_exchange(
+        payload,
+        known_branch_codes={"gaominghe"},
+        known_branch_ranges={"gaominghe": (0.0, 5432.1266)},
+        known_branch_roles={"gaominghe": "thalweg"},
+    )
+    assert any(
+        issue.code == "SECTION_THALWEG_MISSING" and issue.severity == "error"
+        for issue in missing
+    )
 
 
 def test_reviewed_templates_parse_network_and_mike11_grouped_section_contracts() -> None:
@@ -164,7 +247,7 @@ def test_reviewed_templates_parse_network_and_mike11_grouped_section_contracts()
     assert profile.topography_id == "TOPO-2026"
     assert profile.branch_code == "RIVER-DEMO-001"
     assert [point.distance for point in profile.points] == [0, 5, 10]
-    assert [point.marker_type for point in profile.points] == ["none", "none", "none"]
+    assert [point.marker_type for point in profile.points] == ["none", "thalweg", "none"]
     assert profile.roughness_zones == []
     reparsed, _, _ = parse_hydraulic_file(
         "roundtrip.xns11", export_xns11_subset(sections), 4547

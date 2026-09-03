@@ -30,4 +30,10 @@ profile hash 由规范化点、marker、糙率分区、高程基准和单位生�
 
 六列模板没有位置 XY、断面轴线、测量日期、测量方法和分区糙率，因此这些值不得伪造：位置只能由已存在的 Branch 与里程插值得到，方向保持 `pending`，缺省糙率使用 API 明示默认值。需要完整勘测证据时使用扩展 CSV/API 合同补录。
 
+## 深泓点与纵向深泓线
+
+`marker_type=thalweg` 表示 Profile 中的最低高程深泓点；当六列模板未给 marker 时，解析器以最低高程派生标记。多个点高程并列最低时全部保留，不擅自选择一个，并产生 `SECTION_THALWEG_TIE` 供人工复核。
+
+Branch 的 `centerline_role=thalweg` 表示所给中心线是沿河纵向深泓线。它与 `HydraulicCrossSectionInput.axis_points` 的横向断面测线是两个不同几何对象：纵向线不能用来确认横断面左右方向。局部断面基准 0 m 只写入 Coordinate Reference 的高程基准，不把 Profile 最低值提升为权威河床高程。
+
 `/data-center/rivers` 与 `/data-center/cross-sections` 只读取 `hydraulic` 权威模型；旧 `public.river` 和 `public.cross_section` API 继续作为兼容面存在，但前端不得绕过水动力 preview/commit 直接把它们当主数据编辑。

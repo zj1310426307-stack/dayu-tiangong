@@ -34,6 +34,7 @@ HEADER_ALIASES = {
     # branch_code 仍优先匹配独立列，因此同一列只会在断面短表中兼作河段编码。
     "branch_code": {"branch_code", "河段编码", "river_name", "河流名称"},
     "flow_direction": {"flow_direction", "流向"},
+    "centerline_role": {"centerline_role", "中心线角色", "轴线角色"},
     "source_revision": {"source_revision", "来源修订"},
     "chainage": {"chainage", "桩号", "里程"},
     "x": {"x", "东坐标", "x坐标"},
@@ -232,7 +233,9 @@ def parse_excel(
         grouped_branches[code].append(row)
     branches: list[HydraulicBranchInput] = []
     for code, rows in grouped_branches.items():
-        ordered = sorted(rows, key=lambda row: float(row.get("chainage", 0)))
+        # Preserve the submitted row order so a reversed centerline is rejected by
+        # HydraulicBranchInput instead of being silently repaired during parsing.
+        ordered = rows
         first = ordered[0]
         branches.append(
             HydraulicBranchInput(
@@ -240,6 +243,7 @@ def parse_excel(
                 river_name=str(first.get("river_name") or first.get("branch_name") or code)[:128],
                 branch_name=str(first.get("branch_name") or code)[:128],
                 flow_direction=str(first.get("flow_direction", "unknown")).strip().lower(),
+                centerline_role=str(first.get("centerline_role", "unknown")).strip().lower(),
                 source_revision=str(first["source_revision"])[:64] if first.get("source_revision") else None,
                 points=[
                     HydraulicChainageInput(
@@ -274,6 +278,24 @@ def parse_excel(
             for row in ordered
             if "axis_x" in row and "axis_y" in row
         ]
+        explicit_thalweg = any(
+            str(row.get("marker_type") or "none").strip().lower() == "thalweg"
+            for row in ordered
+        )
+        minimum_elevation = min(
+            float(_required(row, "elevation", int(row["_row_number"])))
+            for row in ordered
+        )
+
+        def marker_type(row: dict[str, object]) -> str:
+            """Preserve explicit markers or derive every tied minimum as thalweg."""
+
+            marker = str(row.get("marker_type") or "none").strip().lower()
+            if explicit_thalweg or marker != "none":
+                return marker
+            elevation = float(_required(row, "elevation", int(row["_row_number"])))
+            return "thalweg" if elevation == minimum_elevation else "none"
+
         sections.append(
             HydraulicCrossSectionInput(
                 section_code=code,
@@ -307,7 +329,7 @@ def parse_excel(
                         sequence=int(row.get("sequence", index)),
                         distance=float(_required(row, "distance", int(row["_row_number"]))),
                         elevation=float(_required(row, "elevation", int(row["_row_number"]))),
-                        marker_type=str(row.get("marker_type") or "none").lower(),
+                        marker_type=marker_type(row),
                         point_code=str(row["point_code"])[:64] if row.get("point_code") else None,
                         x=float(row["point_x"]) if "point_x" in row else None,
                         y=float(row["point_y"]) if "point_y" in row else None,

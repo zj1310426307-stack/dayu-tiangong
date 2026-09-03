@@ -88,13 +88,21 @@ def _record_counts(payload: HydraulicExchangePayload | None) -> dict[str, int]:
     """Return bounded entity counts for preview display."""
 
     if payload is None:
-        return {"branches": 0, "branch_vertices": 0, "cross_sections": 0, "profiles": 0, "profile_points": 0}
+        return {
+            "branches": 0, "branch_vertices": 0, "cross_sections": 0,
+            "profiles": 0, "profile_points": 0, "thalweg_points": 0,
+        }
     return {
         "branches": len(payload.branches),
         "branch_vertices": sum(len(v.points) for v in payload.branches),
         "cross_sections": len({v.section_code for v in payload.sections}),
         "profiles": len(payload.sections),
         "profile_points": sum(len(v.points) for v in payload.sections),
+        "thalweg_points": sum(
+            point.marker_type == "thalweg"
+            for section in payload.sections
+            for point in section.points
+        ),
     }
 
 
@@ -109,6 +117,19 @@ def _known_branch_ranges(
         HydraulicBranch.end_chainage,
     ).where(HydraulicBranch.dataset_version_id == dataset_version_id)).all()
     return {code: (float(start), float(end)) for code, start, end in rows}
+
+
+def _known_branch_roles(session: Session, dataset_version_id: int) -> dict[str, str]:
+    """Return persisted centerline semantics for section-only imports."""
+
+    rows = session.execute(select(
+        HydraulicBranch.branch_code,
+        HydraulicBranch.metadata_json,
+    ).where(HydraulicBranch.dataset_version_id == dataset_version_id)).all()
+    return {
+        code: str((metadata or {}).get("centerline_role", "unknown"))
+        for code, metadata in rows
+    }
 
 
 def preview_import(
@@ -128,7 +149,12 @@ def preview_import(
         )
         payload.coordinate_reference = coordinate_reference
         known_ranges = _known_branch_ranges(session, dataset_version_id)
-        issues = validate_exchange(payload, set(known_ranges), known_ranges)
+        issues = validate_exchange(
+            payload,
+            set(known_ranges),
+            known_ranges,
+            _known_branch_roles(session, dataset_version_id),
+        )
     except (HydraulicParseError, ValueError) as exc:
         issues = [HydraulicIssue(
             severity="error", code="IMPORT_PARSE_FAILED", message=str(exc)[:500],
@@ -242,7 +268,10 @@ def _upsert_branch(
                 "confirmed" if source.flow_direction in {"forward", "reverse"} else "unknown"
             ),
             geometry=geometry, source_revision=source.source_revision,
-            metadata_json={"source_flow_direction": source.flow_direction},
+            metadata_json={
+                "source_flow_direction": source.flow_direction,
+                "centerline_role": source.centerline_role,
+            },
         )
         session.add(branch)
         session.flush()
@@ -258,7 +287,11 @@ def _upsert_branch(
     branch.direction_status = "confirmed" if source.flow_direction in {"forward", "reverse"} else "unknown"
     branch.geometry = geometry
     branch.source_revision = source.source_revision
-    branch.metadata_json = {"source_flow_direction": source.flow_direction}
+    branch.metadata_json = {
+        **(branch.metadata_json or {}),
+        "source_flow_direction": source.flow_direction,
+        "centerline_role": source.centerline_role,
+    }
     pipeline = f"axis:{spec.axis_mapping};EPSG:{spec.source_srid}->EPSG:4490"
     for order, point in enumerate(source.points):
         session.add(HydraulicBranchVertex(
@@ -513,7 +546,12 @@ def commit_import(session: Session, job_code: str, preview_hash: str) -> Hydraul
         raise ValueError("Preview configuration changed; run preview again before commit")
     payload = HydraulicExchangePayload.model_validate(job.normalized_payload)
     known_ranges = _known_branch_ranges(session, job.dataset_version_id)
-    issues = validate_exchange(payload, set(known_ranges), known_ranges)
+    issues = validate_exchange(
+        payload,
+        set(known_ranges),
+        known_ranges,
+        _known_branch_roles(session, job.dataset_version_id),
+    )
     job.issues = [v.model_dump(mode="json") for v in issues]
     if any(v.severity == "error" for v in issues):
         job.status, job.completed_at = "rejected", datetime.now(UTC)
@@ -624,6 +662,7 @@ def list_networks(session: Session, dataset_version_id: int) -> list[HydraulicNe
                 branch_name=branch.branch_name, start_chainage=branch.start_chainage,
                 end_chainage=branch.end_chainage, length_m=branch.length_m,
                 flow_direction=(branch.metadata_json or {}).get("source_flow_direction", "unknown"),
+                centerline_role=(branch.metadata_json or {}).get("centerline_role", "unknown"),
                 direction_status=branch.direction_status,
                 source_revision=branch.source_revision,
                 upstream_node_id=branch.upstream_node_id,
@@ -707,6 +746,7 @@ def build_exchange_payload(
             code=branch.branch_code, river_name=branch.river_name,
             branch_name=branch.branch_name,
             flow_direction=(branch.metadata_json or {}).get("source_flow_direction", "unknown"),
+            centerline_role=(branch.metadata_json or {}).get("centerline_role", "unknown"),
             source_revision=branch.source_revision,
             points=[HydraulicChainageInput(
                 chainage=p.chainage, x=_point_xy(session, p.geometry)[0],

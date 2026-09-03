@@ -1443,6 +1443,7 @@ export interface HydraulicBranchInput {
   "river_name": string;
   "branch_name": string;
   "flow_direction"?: "forward" | "reverse" | "unknown";
+  "centerline_role"?: "surveyed_centerline" | "thalweg" | "unknown";
   "source_revision"?: string | null;
   "points": Array<HydraulicChainageInput>;
 }
@@ -1457,6 +1458,7 @@ export interface HydraulicBranchRecord {
   "end_chainage": number;
   "length_m": number;
   "flow_direction": "forward" | "reverse" | "unknown";
+  "centerline_role": "surveyed_centerline" | "thalweg" | "unknown";
   "direction_status": string;
   "source_revision": string | null;
   "upstream_node_id": number | null;

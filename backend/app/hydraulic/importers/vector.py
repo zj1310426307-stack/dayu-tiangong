@@ -150,6 +150,7 @@ def parse_vector(
                     river_name=str(_property(properties, "river_name", "river", default=code))[:128],
                     branch_name=str(_property(properties, "branch_name", "name", "layer", default=code))[:128],
                     flow_direction=str(_property(properties, "flow_direction", "direction", default="forward")).lower(),
+                    centerline_role=str(_property(properties, "centerline_role", default="unknown")).lower(),
                     source_revision=(
                         str(_property(properties, "source_revision"))[:64]
                         if _property(properties, "source_revision") is not None else None

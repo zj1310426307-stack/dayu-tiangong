@@ -374,6 +374,7 @@ button, input { font: inherit; }
 .profile-grid { stroke: rgba(120, 152, 170, 0.17); stroke-width: 1; }
 .profile-line { fill: none; stroke: var(--cyan); stroke-width: 3; stroke-linejoin: round; }
 .profile-point { fill: #102e42; stroke: #7bf7ea; stroke-width: 2; }
+.profile-thalweg-point { fill: #ffc85c; stroke: #fff2c2; stroke-width: 2.5; }
 .profile-axis-label { fill: #9cb3c2; font-size: 12px; font-weight: 600; }
 .hydraulic-compact-uploader { display: block; margin: 8px 0 16px; }
 .hydraulic-compact-uploader .ant-upload-drag { min-height: 132px; background: rgba(8, 26, 40, 0.44) !important; border-color: rgba(47, 230, 214, 0.22) !important; }

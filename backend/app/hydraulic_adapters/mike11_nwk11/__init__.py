@@ -80,6 +80,9 @@ def parse_nwk11(filename: str, content: bytes, source_srid: int) -> HydraulicExc
             river_name=river_name[:128],
             branch_name=branch_name[:128],
             flow_direction=direction,
+            centerline_role=(
+                key_value(block, "CenterlineRole", default="unknown") or "unknown"
+            ).lower(),
             source_revision=key_value(block, "SourceRevision"),
             points=points,
         ))

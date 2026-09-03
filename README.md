@@ -87,7 +87,7 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 
 ## 水动力数据交换
 
-`/data-center/hydraulic` 将 Network–Node–Branch–Reach–Chainage、断面多地形版本、糙率分区、水力查算、导入审计、校核与 MIKE11 交换能力收敛到一个管理页。导入使用“预览校验 → 配置 hash 确认提交”两阶段流程，并在同一数据库事务内写入 `hydraulic` 权威语义和现有 GIS 兼容投影。显示几何统一为 CGCS2000 `EPSG:4490`；拓扑、长度和桩号只能使用明确确认的米制 engineering CRS。
+`/data-center/hydraulic` 将 Network–Node–Branch–Reach–Chainage、断面多地形版本、深泓点、糙率分区、水力查算、导入审计、校核与 MIKE11 交换能力收敛到一个管理页。导入使用“预览校验 → 配置 hash 确认提交”两阶段流程，并在同一数据库事务内写入 `hydraulic` 权威语义和现有 GIS 兼容投影。Branch 可用 `centerline_role=thalweg` 声明纵向深泓线；它不替代横向断面测线。导入页要求显式填写高程基准，不再硬编码基准。显示几何统一为 CGCS2000 `EPSG:4490`；拓扑、长度和桩号只能使用明确确认的米制 engineering CRS。
 
 - `POST /api/v1/hydraulic/imports/preview|commit`
 - `GET /api/v1/hydraulic/networks|cross-sections/{section_id}|imports`

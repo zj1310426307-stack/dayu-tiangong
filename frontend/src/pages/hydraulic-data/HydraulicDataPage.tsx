@@ -96,6 +96,13 @@ function issueTag(severity: string): React.ReactNode {
   return <Tag color={colors[severity] ?? 'default'}>{severity.toUpperCase()}</Tag>;
 }
 
+/** Translate the API-stable centerline role into an engineering label. */
+function centerlineRoleLabel(role: string): string {
+  if (role === 'thalweg') return '深泓线';
+  if (role === 'surveyed_centerline') return '实测中心线';
+  return '未确认';
+}
+
 /** Render a dependency-free distance/elevation profile with explicit scales and units. */
 function SectionProfileChart({ section, profile }: { section?: HydraulicSectionDetail; profile?: HydraulicProfileRecord }) {
   const points = profile?.points ?? [];
@@ -138,8 +145,14 @@ function SectionProfileChart({ section, profile }: { section?: HydraulicSectionD
         ))}
         <path d={path} className="profile-line" />
         {points.map((point) => (
-          <circle key={point.sequence} cx={x(point.distance)} cy={y(point.elevation)} r="4" className="profile-point">
-            <title>{`距离 ${point.distance.toFixed(3)} m，高程 ${point.elevation.toFixed(3)} m`}</title>
+          <circle
+            key={point.sequence}
+            cx={x(point.distance)}
+            cy={y(point.elevation)}
+            r={point.marker_type === 'thalweg' ? 6 : 4}
+            className={point.marker_type === 'thalweg' ? 'profile-point profile-thalweg-point' : 'profile-point'}
+          >
+            <title>{`${point.marker_type === 'thalweg' ? '深泓点；' : ''}距离 ${point.distance.toFixed(3)} m，高程 ${point.elevation.toFixed(3)} m`}</title>
           </circle>
         ))}
         <text x={margin.left + plotWidth / 2} y={height - 8} textAnchor="middle" className="profile-axis-label">距离（m）</text>
@@ -169,7 +182,7 @@ function networkTree(
       },
       ...(network.branches ?? []).map((branch) => ({
         key: `branch:${network.id}:${branch.id}`,
-        title: `${branch.branch_name} · ${branch.branch_code} · ${branch.direction_status} · ${branch.reach_count} Reach`,
+        title: `${branch.branch_name} · ${branch.branch_code} · ${centerlineRoleLabel(branch.centerline_role)} · ${branch.direction_status} · ${branch.reach_count} Reach`,
         children: [
           ...(branch.sections ?? []).map((section) => ({
             key: `section:${network.id}:${branch.id}:${section.id}`,
@@ -206,6 +219,7 @@ export function HydraulicDataPage() {
   const [sourceSrid, setSourceSrid] = useState(4547);
   const [engineeringSrid, setEngineeringSrid] = useState(4547);
   const [axisMapping, setAxisMapping] = useState<'x_easting_y_northing' | 'x_northing_y_easting'>('x_easting_y_northing');
+  const [verticalDatum, setVerticalDatum] = useState('');
   const [preview, setPreview] = useState<HydraulicImportPreview>();
   const [validation, setValidation] = useState<HydraulicValidationRunRecord>();
   const [loading, setLoading] = useState(false);
@@ -274,6 +288,10 @@ export function HydraulicDataPage() {
   const executePreview = async () => {
     const file = files[0]?.originFileObj;
     if (!datasetVersionId || !file) return;
+    if (!verticalDatum.trim()) {
+      setError('请先明确高程基准；局部基准可填写“局部断面基准 0 m”');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
@@ -284,7 +302,7 @@ export function HydraulicDataPage() {
         coordinate_mode: geographic ? 'geographic' : 'projected',
         axis_mapping: axisMapping,
         horizontal_unit: geographic ? 'degree' : 'm',
-        vertical_datum: '1985国家高程基准',
+        vertical_datum: verticalDatum.trim(),
         vertical_unit: 'm',
         central_meridian: CENTRAL_MERIDIANS[engineeringSrid],
         zone_width: 3,
@@ -505,6 +523,7 @@ export function HydraulicDataPage() {
   const activeProfile = section?.profiles.find((profile) => profile.id === selectedProfileId)
     ?? section?.profiles.find((profile) => profile.is_active)
     ?? section?.profiles[0];
+  const activeThalwegPoints = activeProfile?.points.filter((point) => point.marker_type === 'thalweg') ?? [];
   const jobColumns: ColumnsType<HydraulicImportJobRecord> = [
     { title: '任务', dataIndex: 'job_code', width: 215 },
     { title: '文件', dataIndex: 'filename', ellipsis: true },
@@ -658,6 +677,13 @@ export function HydraulicDataPage() {
               { key: 'topo', label: '地形编号', children: activeProfile?.topography_id ?? '—' },
               { key: 'orientation', label: '方向', children: section.orientation_status },
               { key: 'datum', label: '高程基准', children: activeProfile?.vertical_datum ?? '—' },
+              {
+                key: 'thalweg',
+                label: '深泓点',
+                children: activeThalwegPoints.length
+                  ? activeThalwegPoints.map((point) => `${point.distance.toFixed(3)} m / ${point.elevation.toFixed(3)} m`).join('；')
+                  : '未标记',
+              },
               { key: 'chainage', label: '桩号来源', children: section.chainage_source },
               { key: 'snap', label: '吸附距离', children: section.snap_distance_m == null ? '—' : `${section.snap_distance_m.toFixed(3)} m` },
             ]} />}
@@ -679,6 +705,13 @@ export function HydraulicDataPage() {
                   { value: 'x_easting_y_northing', label: 'X=东 / Y=北' },
                   { value: 'x_northing_y_easting', label: 'X=北 / Y=东' },
                 ]} style={{ width: '100%', marginTop: 8 }} />
+                <Text style={{ display: 'block', marginTop: 8 }}>高程基准（必须明确）</Text>
+                <Input
+                  value={verticalDatum}
+                  onChange={(event) => setVerticalDatum(event.target.value)}
+                  placeholder="例如：局部断面基准 0 m"
+                  style={{ marginTop: 8 }}
+                />
               </Col>
               <Col xs={24} md={16}>
                 <Text>支持 .nwk11 / .xns11 / .xlsx / .csv / .geojson / .zip（SHP）/ .dxf，最大 100 MB</Text>
@@ -689,7 +722,7 @@ export function HydraulicDataPage() {
               </Col>
             </Row>
             <Space wrap>
-              <Button type="primary" loading={loading} disabled={!files[0]?.originFileObj} onClick={() => void executePreview()}>仅预检</Button>
+              <Button type="primary" loading={loading} disabled={!files[0]?.originFileObj || !verticalDatum.trim()} onClick={() => void executePreview()}>仅预检</Button>
               <Button icon={<CheckCircleOutlined />} disabled={!isMutable || preview?.job.status !== 'previewed'} onClick={() => void executeCommit()}>确认提交</Button>
               <Button icon={<FileExcelOutlined />} onClick={() => void downloadTemplate('river-network')}>河网模板</Button>
               <Button icon={<FileExcelOutlined />} onClick={() => void downloadTemplate('cross-section')}>断面模板</Button>
@@ -699,7 +732,7 @@ export function HydraulicDataPage() {
                 showIcon
                 type={preview.job.status === 'previewed' || preview.job.status === 'committed' ? 'success' : 'error'}
                 message={`${preview.job.job_code} · ${preview.job.status}`}
-                description={`河段 ${preview.job.record_counts.branches ?? 0}，断面 ${preview.job.record_counts.cross_sections ?? 0}，配置哈希 ${preview.job.config_hash}`}
+                description={`河段 ${preview.job.record_counts.branches ?? 0}，断面 ${preview.job.record_counts.cross_sections ?? 0}，深泓点 ${preview.job.record_counts.thalweg_points ?? 0}，配置哈希 ${preview.job.config_hash}`}
               />
               <Descriptions size="small" column={1} items={[
                 { key: 'pipeline', label: '转换链', children: String(preview.job.transformation_evidence.pipeline ?? '—') },

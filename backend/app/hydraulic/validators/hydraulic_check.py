@@ -17,6 +17,7 @@ def validate_exchange(
     payload: HydraulicExchangePayload,
     known_branch_codes: set[str] | None = None,
     known_branch_ranges: dict[str, tuple[float, float]] | None = None,
+    known_branch_roles: dict[str, str] | None = None,
 ) -> list[HydraulicIssue]:
     """Apply CRS, topology, chainage, and profile gates to one normalized payload."""
 
@@ -96,6 +97,8 @@ def validate_exchange(
         branch.code: (branch.points[0].chainage, branch.points[-1].chainage)
         for branch in payload.branches
     })
+    branch_roles = dict(known_branch_roles or {})
+    branch_roles.update({branch.code: branch.centerline_role for branch in payload.branches})
     previous_section_by_branch: dict[str, tuple[str, float]] = {}
     for section in payload.sections:
         previous_section = previous_section_by_branch.get(section.branch_code)
@@ -148,9 +151,39 @@ def validate_exchange(
                 HydraulicIssue(
                     severity="warning",
                     code="SECTION_AXIS_UNAVAILABLE",
-                    message="断面仅有位置/剖面数据，尚无可核对方向的断面线",
+                    message=(
+                        "缺少横向断面测线，断面方向保持待确认；纵向深泓线不能替代横向测线"
+                    ),
                     entity_type="cross_section",
                     entity_ref=section.section_code,
+                )
+            )
+        thalweg_points = [
+            point for point in section.points if point.marker_type == "thalweg"
+        ]
+        if branch_roles.get(section.branch_code) == "thalweg" and not thalweg_points:
+            issues.append(
+                HydraulicIssue(
+                    severity="error",
+                    code="SECTION_THALWEG_MISSING",
+                    message="深泓线河段上的每个断面必须标记至少一个最低高程深泓点",
+                    entity_type="cross_section",
+                    entity_ref=section.section_code,
+                )
+            )
+        if len(thalweg_points) > 1:
+            issues.append(
+                HydraulicIssue(
+                    severity="warning",
+                    code="SECTION_THALWEG_TIE",
+                    message="断面存在多个同高最低点，已全部保留为深泓点候选并等待人工复核",
+                    entity_type="cross_section",
+                    entity_ref=section.section_code,
+                    context={
+                        "count": len(thalweg_points),
+                        "offsets_m": [point.distance for point in thalweg_points],
+                        "elevation_m": min(point.elevation for point in thalweg_points),
+                    },
                 )
             )
         elevations = [point.elevation for point in section.points]

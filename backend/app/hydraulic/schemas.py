@@ -119,6 +119,7 @@ class HydraulicBranchInput(BaseModel):
     river_name: str = Field(min_length=1, max_length=128)
     branch_name: str = Field(min_length=1, max_length=128)
     flow_direction: Literal["forward", "reverse", "unknown"] = "unknown"
+    centerline_role: Literal["surveyed_centerline", "thalweg", "unknown"] = "unknown"
     source_revision: str | None = Field(default=None, max_length=64)
     points: list[HydraulicChainageInput] = Field(min_length=2)
 
@@ -362,6 +363,7 @@ class HydraulicBranchRecord(BaseModel):
     end_chainage: float
     length_m: float
     flow_direction: Literal["forward", "reverse", "unknown"]
+    centerline_role: Literal["surveyed_centerline", "thalweg", "unknown"]
     direction_status: str
     source_revision: str | None
     upstream_node_id: int | None
