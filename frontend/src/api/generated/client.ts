@@ -1456,9 +1456,12 @@ export interface HydraulicBranchRecord {
   "start_chainage": number;
   "end_chainage": number;
   "length_m": number;
+  "flow_direction": "forward" | "reverse" | "unknown";
   "direction_status": string;
+  "source_revision": string | null;
   "upstream_node_id": number | null;
   "downstream_node_id": number | null;
+  "vertex_count": number;
   "section_count": number;
   "reach_count": number;
   "reaches"?: Array<HydraulicReachRecord>;

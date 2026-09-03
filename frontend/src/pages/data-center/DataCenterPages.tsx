@@ -4,7 +4,6 @@ import {
   DeleteOutlined,
   EditOutlined,
   FileExcelOutlined,
-  NodeIndexOutlined,
   PlusOutlined,
   ReloadOutlined,
   SafetyCertificateOutlined,
@@ -38,54 +37,47 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   BoundaryConditionCreate,
   BoundaryConditionRecord,
-  CrossSectionCreate,
-  CrossSectionRecord,
   GateCreate,
   GateRecord,
+  HydraulicBranchRecord,
   ImportResource,
   ModelParameterCreate,
   ModelParameterRecord,
   Hydraulic1DPreviewResponse,
+  HydraulicSectionDetail,
+  HydraulicSectionSummary,
   PumpCreate,
   PumpRecord,
-  RiverCreate,
-  RiverRecord,
   SimulationCaseCreate,
   SimulationCaseRecord,
   ValidationReport,
 } from '../../api/generated/client';
 import { datasetVersionStatusLabel, useDatasetVersion } from '../../context/DatasetVersionContext';
 import {
-  createCrossSectionRecord,
   createBoundaryCondition,
   createGateRecord,
   createModelParameter,
   createPumpRecord,
-  createRiverRecord,
   createSimulationCase,
   deleteBoundaryCondition,
-  deleteCrossSectionRecord,
   deleteGateRecord,
   deleteModelParameter,
   deletePumpRecord,
-  deleteRiverRecord,
   deleteSimulationCase,
-  generateTopology,
   getBoundaryConditions,
   getModelParameters,
   getSimulationCases,
-  listCrossSectionRecords,
+  getHydraulicSection,
   listGateRecords,
   listPumpRecords,
+  listHydraulicNetworks,
   listRiverRecords,
   previewHydraulicModel,
   runValidation,
-  updateCrossSectionRecord,
   updateBoundaryCondition,
   updateGateRecord,
   updateModelParameter,
   updatePumpRecord,
-  updateRiverRecord,
   updateSimulationCase,
   uploadDataFile,
 } from '../../api/generated/client';
@@ -149,113 +141,68 @@ function coordinatesOf(geometry: Record<string, unknown>): unknown {
   return geometry.coordinates;
 }
 
-interface RiverFormValues {
-  dataset_version_id: number;
-  name: string;
-  code: string;
-  length: number;
-  level: string;
-  status: 'active' | 'inactive' | 'planned';
-  description?: string;
-  coordinates_json: string;
+interface HydraulicRiverRow extends HydraulicBranchRecord {
+  network_id: number;
+  network_code: string;
+  network_name: string;
+  engineering_crs: string | null;
+}
+
+interface HydraulicSectionRow extends HydraulicSectionSummary {
+  network_code: string;
+  network_name: string;
+  branch_code: string;
+  river_name: string;
 }
 
 export function RiversDatabasePage() {
-  const { datasetVersionId, isMutable } = useDatasetVersion();
+  const { datasetVersionId } = useDatasetVersion();
   const [search, setSearch] = useState('');
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState<RiverRecord>();
-  const [submitting, setSubmitting] = useState(false);
-  const [form] = Form.useForm<RiverFormValues>();
   const { data, loading, error, reload } = useRemoteList(
-    () => listRiverRecords({ dataset_version_id: datasetVersionId, search, limit: 500 }), [datasetVersionId, search],
+    () => listHydraulicNetworks(datasetVersionId!),
+    [datasetVersionId],
     Boolean(datasetVersionId),
   );
-
-  const showEditor = (record?: RiverRecord) => {
-    if (!datasetVersionId || !isMutable) {
-      message.warning('请选择可编辑的草稿版本');
-      return;
-    }
-    setEditing(record);
-    form.setFieldsValue(record ? {
-      dataset_version_id: record.dataset_version_id,
-      name: record.name,
-      code: record.code,
-      length: record.length,
-      level: record.level,
-      status: record.status,
-      description: record.description ?? undefined,
-      coordinates_json: jsonText(coordinatesOf(record.geometry)),
-    } : {
-      dataset_version_id: datasetVersionId,
-      level: 'main',
-      status: 'active',
-      coordinates_json: '[[120.00, 30.25], [120.10, 30.28]]',
-    });
-    setOpen(true);
-  };
-
-  const submit = async (values: RiverFormValues) => {
-    setSubmitting(true);
-    try {
-      const { coordinates_json, ...fields } = values;
-      const payload: RiverCreate = {
-        ...fields,
-        geometry: { type: 'LineString', coordinates: JSON.parse(coordinates_json) as unknown },
-      };
-      if (editing) {
-        const { dataset_version_id: _, ...updates } = payload;
-        await updateRiverRecord(editing.id, updates);
-      }
-      else await createRiverRecord(payload);
-      message.success(editing ? '河道已更新' : '河道已新增');
-      setOpen(false);
-      form.resetFields();
-      await reload();
-    } catch (reason) {
-      message.error(reason instanceof Error ? reason.message : '保存失败');
-    } finally { setSubmitting(false); }
-  };
-
-  const columns: ColumnsType<RiverRecord> = [
-    { title: 'ID', dataIndex: 'id', width: 80 },
-    { title: '编码', dataIndex: 'code', width: 150 },
-    { title: '河道名称', dataIndex: 'name' },
-    { title: '等级', dataIndex: 'level', width: 110, render: (value: string) => <Tag color="cyan">{value}</Tag> },
-    { title: '长度', dataIndex: 'length', width: 135, render: (value: number) => `${(value / 1000).toFixed(2)} km` },
-    { title: '状态', dataIndex: 'status', width: 110, render: (value: string) => <Tag color={value === 'active' ? 'success' : 'default'}>{value}</Tag> },
-    { title: '断面/拓扑版本', dataIndex: 'dataset_version_id', width: 135, render: (value: number) => `V-ID ${value}` },
-    { title: '操作', key: 'actions', width: 130, render: (_, record) => <Space><Button type="text" icon={<EditOutlined />} disabled={!isMutable} onClick={() => showEditor(record)} /><Popconfirm disabled={!isMutable} title="确认删除该河道？" onConfirm={async () => { await deleteRiverRecord(record.id); await reload(); }}><Button danger type="text" icon={<DeleteOutlined />} disabled={!isMutable} /></Popconfirm></Space> },
+  const rows = useMemo<HydraulicRiverRow[]>(() => (data ?? []).flatMap((network) =>
+    (network.branches ?? []).map((branch) => ({
+      ...branch,
+      network_id: network.id,
+      network_code: network.code,
+      network_name: network.name,
+      engineering_crs: network.engineering_crs,
+    }))), [data]);
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    if (!term) return rows;
+    return rows.filter((row) => [row.network_code, row.network_name, row.branch_code, row.river_name, row.branch_name]
+      .some((value) => value.toLowerCase().includes(term)));
+  }, [rows, search]);
+  const columns: ColumnsType<HydraulicRiverRow> = [
+    { title: '河网编码', dataIndex: 'network_code', width: 135 },
+    { title: '河网名称', dataIndex: 'network_name', width: 150 },
+    { title: '河段编码', dataIndex: 'branch_code', width: 145 },
+    { title: '河流名称', dataIndex: 'river_name', width: 155 },
+    { title: '河段名称', dataIndex: 'branch_name', width: 155 },
+    { title: '流向', dataIndex: 'flow_direction', width: 95, render: (value: string) => <Tag color={value === 'unknown' ? 'warning' : 'cyan'}>{value}</Tag> },
+    { title: '来源修订', dataIndex: 'source_revision', width: 120, render: (value?: string) => value ?? '未登记' },
+    { title: '桩号范围', width: 185, render: (_, row) => `${row.start_chainage.toFixed(3)} – ${row.end_chainage.toFixed(3)} m` },
+    { title: '长度', dataIndex: 'length_m', width: 115, render: (value: number) => `${value.toFixed(1)} m` },
+    { title: '河网点', dataIndex: 'vertex_count', width: 90 },
+    { title: '断面', dataIndex: 'section_count', width: 80 },
+    { title: '工程坐标系', dataIndex: 'engineering_crs', width: 125, render: (value?: string) => value ?? '未声明' },
   ];
-
-  return (
-    <div className="data-page">
-      <DataPageHeader eyebrow="HYDRAULIC DATABASE / RIVERS" title="河道数据库" description="统一维护河道编码、等级、长度、状态与 CGCS2000 / EPSG:4490 空间线。" action={<Button type="primary" icon={<PlusOutlined />} disabled={!isMutable} onClick={() => showEditor()}>新增河道</Button>} />
-      <DatasetWriteNotice />
-      {error && <Alert className="data-alert" type="error" showIcon message={error} />}
-      <Card className="data-card" title={`河道清单 · ${data?.total ?? 0} 条`} extra={<Space><Input.Search allowClear placeholder="名称或编码" onSearch={setSearch} /><Button icon={<NodeIndexOutlined />} disabled={!datasetVersionId || !isMutable} onClick={async () => { if (!datasetVersionId || !isMutable) return; await generateTopology({ dataset_version_id: datasetVersionId, tolerance: 0.00001 }); message.success('河网拓扑已重新生成'); }}>生成拓扑</Button><Button icon={<ReloadOutlined />} disabled={!datasetVersionId} onClick={() => void reload()} /></Space>}>
-        <Table rowKey="id" loading={loading} columns={columns} dataSource={data?.items ?? []} pagination={{ pageSize: 12 }} scroll={{ x: 960 }} />
-      </Card>
-      <Modal open={open} title={editing ? '编辑河道' : '新增河道'} onCancel={() => setOpen(false)} onOk={() => form.submit()} confirmLoading={submitting} width={720} destroyOnHidden>
-        <Form form={form} layout="vertical" onFinish={(values) => void submit(values)}>
-          <Row gutter={14}><Col span={8}><Form.Item name="dataset_version_id" label="数据版本 ID" rules={[{ required: true }]}><InputNumber min={1} style={{ width: '100%' }} disabled={Boolean(editing)} /></Form.Item></Col><Col span={8}><Form.Item name="code" label="河道编码" rules={[{ required: true }]}><Input /></Form.Item></Col><Col span={8}><Form.Item name="name" label="河道名称" rules={[{ required: true }]}><Input /></Form.Item></Col></Row>
-          <Row gutter={14}><Col span={8}><Form.Item name="length" label="长度（m）" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col><Col span={8}><Form.Item name="level" label="河道等级" rules={[{ required: true }]}><Select options={[{ value: 'main', label: '干流' }, { value: 'tributary', label: '支流' }, { value: 'channel', label: '渠道' }]} /></Form.Item></Col><Col span={8}><Form.Item name="status" label="状态" rules={[{ required: true }]}><Select options={[{ value: 'active', label: '启用' }, { value: 'inactive', label: '停用' }, { value: 'planned', label: '规划' }]} /></Form.Item></Col></Row>
-          <Form.Item name="coordinates_json" label="河道坐标序列（经度、纬度）" rules={[{ required: true }]}><Input.TextArea rows={4} /></Form.Item>
-          <Form.Item name="description" label="说明"><Input.TextArea rows={2} /></Form.Item>
-        </Form>
-      </Modal>
-    </div>
-  );
+  return <div className="data-page">
+    <DataPageHeader eyebrow="HYDRAULIC DATABASE / NETWORK" title="河道数据库" description="直接读取水动力数据管理的权威 Network → Branch 模型，字段与河网模板保持一致；旧 river 表仅作为兼容投影。" action={<Space><Button icon={<FileExcelOutlined />} href="/api/v1/hydraulic/templates/river-network">下载河网模板</Button><Button type="primary" href="/data-center/hydraulic">进入水动力数据管理</Button></Space>} />
+    <DatasetWriteNotice />
+    <Alert className="data-alert" type="info" showIcon message="统一数据真源已启用" description="河道的导入、坐标声明、拓扑处理和修改统一在水动力数据管理中预览后提交，本页不再绕过河网模型直接改写兼容表。" />
+    {error && <Alert className="data-alert" type="error" showIcon message={error} />}
+    <Card className="data-card" title={`河段清单 · ${filtered.length} 条`} extra={<Space><Input.Search allowClear placeholder="河网、河流或河段" onChange={(event) => setSearch(event.target.value)} /><Button icon={<ReloadOutlined />} disabled={!datasetVersionId} onClick={() => void reload()} /></Space>}>
+      <Table rowKey={(row) => `${row.network_id}-${row.id}`} loading={loading} columns={columns} dataSource={filtered} pagination={{ pageSize: 12 }} scroll={{ x: 1500 }} />
+    </Card>
+  </div>;
 }
 
-interface SectionFormValues {
-  dataset_version_id: number; river_id: number; section_code: string; section_name: string;
-  station: number; roughness: number; elevation_min: number; survey_date?: string;
-  longitude: number; latitude: number; points_json: string;
-}
-
-function SectionProfileChart({ section }: { section?: CrossSectionRecord }) {
+function SectionProfileChart({ section }: { section?: HydraulicSectionDetail }) {
   const element = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!element.current || !section) return undefined;
@@ -266,7 +213,8 @@ function SectionProfileChart({ section }: { section?: CrossSectionRecord }) {
       const container = element.current;
       echarts.getInstanceByDom(container)?.dispose();
       const chart = echarts.init(container);
-      const points = section.points.points ?? [];
+      const profile = section.profiles.find((item) => item.is_active) ?? section.profiles[0];
+      const points = (profile?.points ?? []).map((point) => [point.distance, point.elevation]);
       chart.setOption({
         grid: { left: 45, right: 20, top: 24, bottom: 38 },
         tooltip: { trigger: 'axis' },
@@ -285,59 +233,47 @@ function SectionProfileChart({ section }: { section?: CrossSectionRecord }) {
 }
 
 export function CrossSectionsDatabasePage() {
-  const { datasetVersionId, isMutable } = useDatasetVersion();
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState<CrossSectionRecord>();
-  const [selected, setSelected] = useState<CrossSectionRecord>();
-  const [form] = Form.useForm<SectionFormValues>();
-  const { data, loading, error, reload } = useRemoteList(() => listCrossSectionRecords({ dataset_version_id: datasetVersionId, limit: 500 }), [datasetVersionId], Boolean(datasetVersionId));
-  const rivers = useRemoteList(() => listRiverRecords({ dataset_version_id: datasetVersionId, limit: 500 }), [datasetVersionId], Boolean(datasetVersionId));
-  const showEditor = (record?: CrossSectionRecord) => {
-    if (!datasetVersionId || !isMutable) {
-      message.warning('请选择可编辑的草稿版本');
-      return;
-    }
-    setEditing(record);
-    const coordinates = record ? coordinatesOf(record.geometry) : [120.1, 30.25];
-    const point = Array.isArray(coordinates) ? coordinates : [120.1, 30.25];
-    form.setFieldsValue(record ? {
-      dataset_version_id: record.dataset_version_id, river_id: record.river_id, section_code: record.section_code,
-      section_name: record.section_name, station: record.station, roughness: record.roughness,
-      elevation_min: record.elevation_min, survey_date: record.survey_date ?? undefined,
-      longitude: Number(point[0]), latitude: Number(point[1]), points_json: jsonText(record.points.points),
-    } : { dataset_version_id: datasetVersionId, river_id: rivers.data?.items[0]?.id, roughness: 0.035, longitude: 120.1, latitude: 30.25, points_json: '[[0, 10], [5, 8], [10, 10]]' });
-    setOpen(true);
+  const { datasetVersionId } = useDatasetVersion();
+  const [selectedRow, setSelectedRow] = useState<HydraulicSectionRow>();
+  const [selected, setSelected] = useState<HydraulicSectionDetail>();
+  const [detailLoading, setDetailLoading] = useState(false);
+  const { data, loading, error, reload } = useRemoteList(() => listHydraulicNetworks(datasetVersionId!), [datasetVersionId], Boolean(datasetVersionId));
+  const rows = useMemo<HydraulicSectionRow[]>(() => (data ?? []).flatMap((network) =>
+    (network.branches ?? []).flatMap((branch) => (branch.sections ?? []).map((section) => ({
+      ...section,
+      network_code: network.code,
+      network_name: network.name,
+      branch_code: branch.branch_code,
+      river_name: branch.river_name,
+    })))), [data]);
+  useEffect(() => {
+    setSelectedRow(undefined);
+    setSelected(undefined);
+  }, [datasetVersionId]);
+  const selectSection = async (row: HydraulicSectionRow) => {
+    setSelectedRow(row);
+    setDetailLoading(true);
+    try { setSelected(await getHydraulicSection(row.id)); }
+    catch (reason) { message.error(reason instanceof Error ? reason.message : '断面详情加载失败'); }
+    finally { setDetailLoading(false); }
   };
-  const submit = async (values: SectionFormValues) => {
-    try {
-      const points = JSON.parse(values.points_json) as Array<Array<number>>;
-      const payload: CrossSectionCreate = {
-        dataset_version_id: values.dataset_version_id, river_id: values.river_id,
-        section_code: values.section_code, section_name: values.section_name,
-        station: values.station, roughness: values.roughness, elevation_min: values.elevation_min,
-        survey_date: values.survey_date, points: { points },
-        geometry: { type: 'Point', coordinates: [values.longitude, values.latitude] },
-      };
-      if (editing) {
-        const { dataset_version_id: _, ...updates } = payload;
-        await updateCrossSectionRecord(editing.id, updates);
-      } else await createCrossSectionRecord(payload);
-      setOpen(false); message.success('横断面已保存'); await reload();
-    } catch (reason) { message.error(reason instanceof Error ? reason.message : '保存失败'); }
-  };
-  const columns: ColumnsType<CrossSectionRecord> = [
-    { title: '断面编码', dataIndex: 'section_code', width: 150 }, { title: '断面名称', dataIndex: 'section_name' },
-    { title: '河道 ID', dataIndex: 'river_id', width: 95 }, { title: '桩号', dataIndex: 'station', width: 120, render: (value: number) => `${value.toFixed(1)} m` },
-    { title: '糙率', dataIndex: 'roughness', width: 90 }, { title: '最低高程', dataIndex: 'elevation_min', width: 115, render: (value: number) => `${value.toFixed(2)} m` },
-    { title: '测量日期', dataIndex: 'survey_date', width: 120, render: (value?: string) => value ?? '未登记' },
-    { title: '操作', key: 'actions', width: 130, render: (_, record) => <Space><Button type="text" icon={<EditOutlined />} disabled={!isMutable} onClick={() => showEditor(record)} /><Popconfirm disabled={!isMutable} title="确认删除该断面？" onConfirm={async () => { await deleteCrossSectionRecord(record.id); await reload(); }}><Button danger type="text" icon={<DeleteOutlined />} disabled={!isMutable} /></Popconfirm></Space> },
+  const columns: ColumnsType<HydraulicSectionRow> = [
+    { title: 'ID', dataIndex: 'section_code', width: 145 },
+    { title: 'TOPOID', dataIndex: 'topography_id', width: 135 },
+    { title: '里程', dataIndex: 'chainage', width: 125, render: (value: number) => `${value.toFixed(3)} m` },
+    { title: 'river_name', dataIndex: 'branch_code', width: 145 },
+    { title: '河流名称', dataIndex: 'river_name', width: 145 },
+    { title: '剖面点', dataIndex: 'point_count', width: 90 },
+    { title: '历史剖面', dataIndex: 'profile_count', width: 95 },
+    { title: '断面方向', dataIndex: 'orientation_status', width: 105, render: (value: string) => <Tag color={value === 'confirmed' ? 'success' : 'warning'}>{value}</Tag> },
   ];
+  const activeProfile = selected?.profiles.find((profile) => profile.is_active) ?? selected?.profiles[0];
   return <div className="data-page">
-    <DataPageHeader eyebrow="HYDRAULIC DATABASE / SECTIONS" title="横断面数据库" description="维护桩号、剖面点、糙率和测量日期；点击记录可预览断面曲线。" action={<Button type="primary" icon={<PlusOutlined />} disabled={!isMutable || !rivers.data?.items.length} onClick={() => showEditor()}>新增断面</Button>} />
+    <DataPageHeader eyebrow="HYDRAULIC DATABASE / SECTIONS" title="横断面数据库" description="直接读取标准化 Profile / Point 数据；导入列固定为 ID、TOPOID、里程、偏移、高程、river_name。" action={<Space><Button icon={<FileExcelOutlined />} href="/api/v1/hydraulic/templates/cross-section">下载横断面模板</Button><Button type="primary" href="/data-center/hydraulic">导入与校核</Button></Space>} />
     <DatasetWriteNotice />
+    <Alert className="data-alert" type="info" showIcon message="断面点已统一归一化" description="模板中的首行身份会在同一断面点组内继承；提交仍需匹配当前版本已有 river_name 河段，并经过坐标声明、整批预览与原子提交。" />
     {error && <Alert className="data-alert" type="error" showIcon message={error} />}
-    <div className="data-split"><Card className="data-card" title={`断面清单 · ${data?.total ?? 0} 条`}><Table rowKey="id" loading={loading} columns={columns} dataSource={data?.items ?? []} pagination={{ pageSize: 10 }} scroll={{ x: 980 }} onRow={(record) => ({ onClick: () => setSelected(record) })} /></Card><Card className="data-card profile-card" title="断面剖面预览">{selected ? <><Descriptions column={1} size="small" items={[{ key: 'name', label: '断面', children: selected.section_name }, { key: 'station', label: '桩号', children: `${selected.station} m` }, { key: 'roughness', label: '糙率', children: selected.roughness }]} /><SectionProfileChart section={selected} /></> : <div className="data-empty">从左侧选择一个横断面</div>}</Card></div>
-    <Modal open={open} title={editing ? '编辑横断面' : '新增横断面'} onCancel={() => setOpen(false)} onOk={() => form.submit()} width={760} destroyOnHidden><Form form={form} layout="vertical" onFinish={(values) => void submit(values)}><Row gutter={12}><Col span={6}><Form.Item name="dataset_version_id" label="版本 ID" rules={[{ required: true }]}><InputNumber min={1} disabled /></Form.Item></Col><Col span={6}><Form.Item name="river_id" label="所属河道" rules={[{ required: true }]}><Select loading={rivers.loading} options={(rivers.data?.items ?? []).map((river) => ({ value: river.id, label: `${river.code} · ${river.name}` }))} /></Form.Item></Col><Col span={6}><Form.Item name="section_code" label="断面编码" rules={[{ required: true }]}><Input /></Form.Item></Col><Col span={6}><Form.Item name="section_name" label="断面名称" rules={[{ required: true }]}><Input /></Form.Item></Col></Row><Row gutter={12}><Col span={6}><Form.Item name="station" label="桩号（m）" rules={[{ required: true }]}><InputNumber min={0} /></Form.Item></Col><Col span={6}><Form.Item name="roughness" label="糙率" rules={[{ required: true }]}><InputNumber min={0.001} step={0.001} /></Form.Item></Col><Col span={6}><Form.Item name="elevation_min" label="最低高程" rules={[{ required: true }]}><InputNumber /></Form.Item></Col><Col span={6}><Form.Item name="survey_date" label="测量日期"><Input placeholder="YYYY-MM-DD" /></Form.Item></Col></Row><Row gutter={12}><Col span={12}><Form.Item name="longitude" label="经度" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col><Col span={12}><Form.Item name="latitude" label="纬度" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col></Row><Form.Item name="points_json" label="剖面点 [横距, 高程]" rules={[{ required: true }]}><Input.TextArea rows={5} /></Form.Item></Form></Modal>
+    <div className="data-split"><Card className="data-card" title={`断面清单 · ${rows.length} 条`} extra={<Button icon={<ReloadOutlined />} disabled={!datasetVersionId} onClick={() => void reload()} />}><Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={{ pageSize: 10 }} scroll={{ x: 1050 }} rowClassName={(row) => row.id === selectedRow?.id ? 'ant-table-row-selected' : ''} onRow={(row) => ({ onClick: () => void selectSection(row) })} /></Card><Card loading={detailLoading} className="data-card profile-card" title="断面剖面预览">{selected ? <><Descriptions column={1} size="small" items={[{ key: 'name', label: '断面', children: selected.section_name }, { key: 'branch', label: 'river_name', children: selected.branch_code }, { key: 'station', label: '里程', children: `${selected.chainage.toFixed(3)} m` }, { key: 'topography', label: 'TOPOID', children: activeProfile?.topography_id ?? '—' }, { key: 'roughness', label: '默认糙率', children: activeProfile?.default_manning_n ?? '—' }, { key: 'points', label: '偏移/高程点数', children: activeProfile?.points.length ?? 0 }]} /><SectionProfileChart section={selected} /></> : <div className="data-empty">从左侧选择一个横断面</div>}</Card></div>
   </div>;
 }
 
@@ -442,6 +378,8 @@ export function DataImportPage() {
   const [files, setFiles] = useState<UploadFile[]>([]);
   const [result, setResult] = useState<Awaited<ReturnType<typeof uploadDataFile>>>();
   const [loading, setLoading] = useState(false);
+  const usesHydraulicWorkflow = resource === 'rivers' || resource === 'cross_sections';
+  const hydraulicTemplate = resource === 'rivers' ? 'river-network' : 'cross-section';
   const upload = async () => {
     const origin = files[0]?.originFileObj;
     if (!origin) { message.warning('请先选择文件'); return; }
@@ -451,7 +389,7 @@ export function DataImportPage() {
     catch (reason) { message.error(reason instanceof Error ? reason.message : '导入失败'); }
     finally { setLoading(false); }
   };
-  return <div className="data-page"><DataPageHeader eyebrow="DATA PIPELINE / IMPORT" title="数据导入中心" description="支持 Excel、CSV 与 GeoJSON；文件先整体校验，再在单一事务中写入。" /><DatasetWriteNotice /><Row gutter={18}><Col xs={24} lg={15}><Card className="data-card" title="上传数据文件"><Row gutter={14}><Col span={8}><Text>资源类型</Text><Select value={resource} onChange={setResource} style={{ width: '100%', marginTop: 8 }} options={[{ value: 'rivers', label: '河道' }, { value: 'cross_sections', label: '横断面' }, { value: 'gates', label: '闸门' }, { value: 'pumps', label: '泵站' }]} /></Col><Col span={8}><Text>文件格式</Text><Select value={kind} onChange={setKind} style={{ width: '100%', marginTop: 8 }} options={[{ value: 'excel', label: 'Excel .xlsx' }, { value: 'csv', label: 'CSV UTF-8' }, { value: 'geojson', label: 'GeoJSON' }]} /></Col><Col span={8}><Text>当前数据版本</Text><InputNumber min={1} value={datasetVersionId} disabled style={{ width: '100%', marginTop: 8 }} /></Col></Row><Upload.Dragger className="data-uploader" beforeUpload={() => false} maxCount={1} fileList={files} disabled={!isMutable} onChange={({ fileList }) => setFiles(fileList)}><p className="ant-upload-drag-icon"><CloudUploadOutlined /></p><p className="ant-upload-text">点击或拖拽文件到这里</p><p className="ant-upload-hint">单文件不超过 20 MB；失败批次不会写入部分数据</p></Upload.Dragger><Space wrap><Button type="primary" loading={loading} disabled={!isMutable || !files[0]?.originFileObj} onClick={() => void upload()}>开始校验并导入</Button><Button icon={<FileExcelOutlined />} href={`/api/v1/import/templates/${resource}`}>下载 Excel 模板</Button></Space></Card></Col><Col xs={24} lg={9}><Card className="data-card" title="最近一次导入结果">{result ? <><Alert type={result.status === 'success' ? 'success' : 'error'} showIcon message={result.status === 'success' ? `已导入 ${result.imported_count} 条` : '导入未写入'} description={`存档：${result.stored_filename}`} /><div className="import-issues">{result.errors.map((issue) => <Alert key={`${issue.row}-${issue.message}`} type="error" message={`第 ${issue.row} 行：${issue.message}`} />)}</div></> : <div className="data-empty">完成一次导入后，这里会显示数量和逐行错误。</div>}</Card></Col></Row></div>;
+  return <div className="data-page"><DataPageHeader eyebrow="DATA PIPELINE / IMPORT" title="数据导入中心" description="河网与横断面统一走水动力预览/提交链路；闸门与泵站继续使用通用原子批量导入。" /><DatasetWriteNotice /><Row gutter={18}><Col xs={24} lg={15}><Card className="data-card" title="上传数据文件"><Row gutter={14}><Col span={8}><Text>资源类型</Text><Select value={resource} onChange={(value) => { setResource(value); setFiles([]); setResult(undefined); }} style={{ width: '100%', marginTop: 8 }} options={[{ value: 'rivers', label: '河道 / 河网' }, { value: 'cross_sections', label: '横断面' }, { value: 'gates', label: '闸门' }, { value: 'pumps', label: '泵站' }]} /></Col><Col span={8}><Text>文件格式</Text><Select value={usesHydraulicWorkflow ? 'excel' : kind} disabled={usesHydraulicWorkflow} onChange={setKind} style={{ width: '100%', marginTop: 8 }} options={[{ value: 'excel', label: 'Excel .xlsx' }, { value: 'csv', label: 'CSV UTF-8' }, { value: 'geojson', label: 'GeoJSON' }]} /></Col><Col span={8}><Text>当前数据版本</Text><InputNumber min={1} value={datasetVersionId} disabled style={{ width: '100%', marginTop: 8 }} /></Col></Row>{usesHydraulicWorkflow ? <Alert className="data-alert" type="info" showIcon message="请使用水动力数据管理导入" description="河网和断面必须声明坐标系、先预览质量问题，再以同一预览哈希原子提交；通用导入入口不会绕过这些门禁。" /> : <Upload.Dragger className="data-uploader" beforeUpload={() => false} maxCount={1} fileList={files} disabled={!isMutable} onChange={({ fileList }) => setFiles(fileList)}><p className="ant-upload-drag-icon"><CloudUploadOutlined /></p><p className="ant-upload-text">点击或拖拽文件到这里</p><p className="ant-upload-hint">单文件不超过 20 MB；失败批次不会写入部分数据</p></Upload.Dragger>}<Space wrap>{usesHydraulicWorkflow ? <Button type="primary" href="/data-center/hydraulic">进入水动力导入与校核</Button> : <Button type="primary" loading={loading} disabled={!isMutable || !files[0]?.originFileObj} onClick={() => void upload()}>开始校验并导入</Button>}<Button icon={<FileExcelOutlined />} href={usesHydraulicWorkflow ? `/api/v1/hydraulic/templates/${hydraulicTemplate}` : `/api/v1/import/templates/${resource}`}>下载 Excel 模板</Button></Space></Card></Col><Col xs={24} lg={9}><Card className="data-card" title="最近一次导入结果">{result ? <><Alert type={result.status === 'success' ? 'success' : 'error'} showIcon message={result.status === 'success' ? `已导入 ${result.imported_count} 条` : '导入未写入'} description={`存档：${result.stored_filename}`} /><div className="import-issues">{result.errors.map((issue) => <Alert key={`${issue.row}-${issue.message}`} type="error" message={`第 ${issue.row} 行：${issue.message}`} />)}</div></> : <div className="data-empty">{usesHydraulicWorkflow ? '水动力导入的预览、问题和提交结果统一显示在水动力数据管理。' : '完成一次导入后，这里会显示数量和逐行错误。'}</div>}</Card></Col></Row></div>;
 }
 
 export function DataValidationPage() {

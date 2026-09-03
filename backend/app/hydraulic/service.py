@@ -98,6 +98,19 @@ def _record_counts(payload: HydraulicExchangePayload | None) -> dict[str, int]:
     }
 
 
+def _known_branch_ranges(
+    session: Session, dataset_version_id: int
+) -> dict[str, tuple[float, float]]:
+    """Return persisted adopted chainage limits for cross-section-only imports."""
+
+    rows = session.execute(select(
+        HydraulicBranch.branch_code,
+        HydraulicBranch.start_chainage,
+        HydraulicBranch.end_chainage,
+    ).where(HydraulicBranch.dataset_version_id == dataset_version_id)).all()
+    return {code: (float(start), float(end)) for code, start, end in rows}
+
+
 def preview_import(
     session: Session, dataset_version_id: int, filename: str, content: bytes,
     coordinate_reference: CoordinateReferenceSpec,
@@ -114,10 +127,8 @@ def preview_import(
             filename, content, coordinate_reference.source_srid
         )
         payload.coordinate_reference = coordinate_reference
-        known_codes = set(session.scalars(select(HydraulicBranch.branch_code).where(
-            HydraulicBranch.dataset_version_id == dataset_version_id
-        )).all())
-        issues = validate_exchange(payload, known_codes)
+        known_ranges = _known_branch_ranges(session, dataset_version_id)
+        issues = validate_exchange(payload, set(known_ranges), known_ranges)
     except (HydraulicParseError, ValueError) as exc:
         issues = [HydraulicIssue(
             severity="error", code="IMPORT_PARSE_FAILED", message=str(exc)[:500],
@@ -501,9 +512,8 @@ def commit_import(session: Session, job_code: str, preview_hash: str) -> Hydraul
     if preview_hash != job.config_hash:
         raise ValueError("Preview configuration changed; run preview again before commit")
     payload = HydraulicExchangePayload.model_validate(job.normalized_payload)
-    issues = validate_exchange(payload, set(session.scalars(select(HydraulicBranch.branch_code).where(
-        HydraulicBranch.dataset_version_id == job.dataset_version_id
-    )).all()))
+    known_ranges = _known_branch_ranges(session, job.dataset_version_id)
+    issues = validate_exchange(payload, set(known_ranges), known_ranges)
     job.issues = [v.model_dump(mode="json") for v in issues]
     if any(v.severity == "error" for v in issues):
         job.status, job.completed_at = "rejected", datetime.now(UTC)
@@ -574,6 +584,9 @@ def list_networks(session: Session, dataset_version_id: int) -> list[HydraulicNe
         for branch in session.scalars(select(HydraulicBranch).where(
             HydraulicBranch.network_id == network.id
         ).order_by(HydraulicBranch.branch_code)).all():
+            vertex_count = int(session.scalar(select(func.count(HydraulicBranchVertex.id)).where(
+                HydraulicBranchVertex.branch_id == branch.id
+            )) or 0)
             reaches = session.scalars(select(HydraulicReach).where(
                 HydraulicReach.branch_id == branch.id
             ).order_by(HydraulicReach.start_chainage_m)).all()
@@ -610,10 +623,12 @@ def list_networks(session: Session, dataset_version_id: int) -> list[HydraulicNe
                 branch_code=branch.branch_code, river_name=branch.river_name,
                 branch_name=branch.branch_name, start_chainage=branch.start_chainage,
                 end_chainage=branch.end_chainage, length_m=branch.length_m,
+                flow_direction=(branch.metadata_json or {}).get("source_flow_direction", "unknown"),
                 direction_status=branch.direction_status,
+                source_revision=branch.source_revision,
                 upstream_node_id=branch.upstream_node_id,
                 downstream_node_id=branch.downstream_node_id,
-                section_count=len(summaries), reach_count=len(reaches),
+                vertex_count=vertex_count, section_count=len(summaries), reach_count=len(reaches),
                 reaches=reach_records, sections=summaries,
             ))
         records.append(HydraulicNetworkRecord(

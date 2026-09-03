@@ -52,7 +52,7 @@ def parse_hydraulic_file(
         if kind == "xns11":
             return parse_xns11(filename, content, source_srid)
         if kind == "xlsx":
-            return parse_excel(filename, content, source_srid), "hydraulic-xlsx-v1", "NOT_APPLICABLE"
+            return parse_excel(filename, content, source_srid), "hydraulic-xlsx-v2", "NOT_APPLICABLE"
         if kind == "csv":
             return parse_csv(filename, content, source_srid), "hydraulic-csv-v1", "NOT_APPLICABLE"
         return parse_vector(filename, content, source_srid, kind), "gdal-hydraulic-v1", "NOT_APPLICABLE"

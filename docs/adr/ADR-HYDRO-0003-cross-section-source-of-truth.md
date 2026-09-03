@@ -19,3 +19,15 @@
 ## 处理和缓存
 
 profile hash 由规范化点、marker、糙率分区、高程基准和单位生成。查算缓存键为 `profile_hash + processor_version + vertical_step_m`。计算复用 `model.geometry.sections.TabulatedSectionGeometry`，不复制第二套断面算法。
+
+## MIKE11 六列断面模板合同
+
+2026-09-03 起，公开横断面 Excel 模板采用 `ID、TOPOID、里程、偏移、高程、river_name` 六列长表。`ID` 映射 `section_code`，`TOPOID` 映射 profile，`里程`映射 Branch chainage，`偏移/高程`映射有序 profile point，`river_name` 是目标 `branch_code`，不是自由文本河名。
+
+一个 profile 的首个点行必须写全 `ID、TOPOID、里程、river_name`；后续点行可以只写 `偏移、高程`。解析器只在当前 profile 组内前向继承身份，并按 `(ID, TOPOID)` 分组；没有新 ID 却改变 TOPOID、里程或 river_name 时拒绝导入。未知 river_name、少于三个点、非递增偏移或其他整批错误继续 fail closed。
+
+断面单独导入时，校验器必须从目标 Dataset Version 的 `hydraulic.branch` 读取 `chainage_start_m/chainage_end_m`；不能只确认 Branch 编码存在。任何越界断面必须返回 `SECTION_CHAINAGE_OUTSIDE_BRANCH`，不得通过端点夹取把越界里程静默定位到河段端点。
+
+六列模板没有位置 XY、断面轴线、测量日期、测量方法和分区糙率，因此这些值不得伪造：位置只能由已存在的 Branch 与里程插值得到，方向保持 `pending`，缺省糙率使用 API 明示默认值。需要完整勘测证据时使用扩展 CSV/API 合同补录。
+
+`/data-center/rivers` 与 `/data-center/cross-sections` 只读取 `hydraulic` 权威模型；旧 `public.river` 和 `public.cross_section` API 继续作为兼容面存在，但前端不得绕过水动力 preview/commit 直接把它们当主数据编辑。

@@ -16,11 +16,12 @@ def _finite(value: float) -> bool:
 def validate_exchange(
     payload: HydraulicExchangePayload,
     known_branch_codes: set[str] | None = None,
+    known_branch_ranges: dict[str, tuple[float, float]] | None = None,
 ) -> list[HydraulicIssue]:
     """Apply CRS, topology, chainage, and profile gates to one normalized payload."""
 
     issues: list[HydraulicIssue] = []
-    available_branches = set(known_branch_codes or set()) | {
+    available_branches = set(known_branch_codes or set()) | set(known_branch_ranges or {}) | {
         branch.code for branch in payload.branches
     }
     for branch in payload.branches:
@@ -90,10 +91,11 @@ def validate_exchange(
                     )
                     break
 
-    branch_ranges = {
+    branch_ranges = dict(known_branch_ranges or {})
+    branch_ranges.update({
         branch.code: (branch.points[0].chainage, branch.points[-1].chainage)
         for branch in payload.branches
-    }
+    })
     for section in payload.sections:
         if section.branch_code not in available_branches:
             issues.append(

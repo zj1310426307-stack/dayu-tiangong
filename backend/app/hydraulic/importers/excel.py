@@ -30,19 +30,21 @@ HEADER_ALIASES = {
     "network_name": {"network_name", "网络名称"},
     "river_name": {"river_name", "河流名称"},
     "branch_name": {"branch_name", "河段名称"},
-    "branch_code": {"branch_code", "河段编码"},
+    # MIKE11 批量断面模板用 river_name 承载目标河段标识；在完整河网模板中
+    # branch_code 仍优先匹配独立列，因此同一列只会在断面短表中兼作河段编码。
+    "branch_code": {"branch_code", "河段编码", "river_name", "河流名称"},
     "flow_direction": {"flow_direction", "流向"},
     "source_revision": {"source_revision", "来源修订"},
-    "chainage": {"chainage", "桩号"},
+    "chainage": {"chainage", "桩号", "里程"},
     "x": {"x", "东坐标", "x坐标"},
     "y": {"y", "北坐标", "y坐标"},
     "z": {"z", "高程坐标", "z坐标"},
     "point_code": {"point_code", "点编码"},
-    "section_code": {"section_code", "断面编号"},
+    "section_code": {"section_code", "断面编号", "id"},
     "section_name": {"section_name", "断面名称"},
-    "topography_id": {"topography_id", "topo_id", "地形编号"},
+    "topography_id": {"topography_id", "topo_id", "topoid", "地形编号"},
     "sequence": {"sequence", "点序"},
-    "distance": {"distance", "距离"},
+    "distance": {"distance", "距离", "偏移"},
     "elevation": {"elevation", "高程"},
     "point_x": {"point_x", "点x", "点东坐标"},
     "point_y": {"point_y", "点y", "点北坐标"},
@@ -139,6 +141,62 @@ def _is_section_sheet(title: str, rows: list[dict[str, object]]) -> bool:
     return "section" in lowered or "断面" in title or bool(rows and {"section_code", "distance", "elevation"} <= rows[0].keys())
 
 
+SECTION_IDENTITY_FIELDS = (
+    "section_code",
+    "topography_id",
+    "chainage",
+    "branch_code",
+    "section_name",
+    "survey_date",
+    "survey_method",
+    "default_manning_n",
+    "location_x",
+    "location_y",
+)
+
+
+def _normalize_section_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Forward-fill grouped MIKE11 section metadata without hiding malformed groups.
+
+    The reviewed six-column layout writes ID/TOPOID/chainage/river_name only on the
+    first point of each profile.  Continuation rows contain only offset/elevation.
+    A row that changes identity without a new ID is rejected instead of being
+    silently attached to the previous profile.
+    """
+
+    normalized: list[dict[str, object]] = []
+    current: dict[str, object] = {}
+    for input_order, row in enumerate(rows):
+        row_number = input_order + 2
+        if "section_code" in row:
+            current = {
+                key: value
+                for key, value in row.items()
+                if key in SECTION_IDENTITY_FIELDS
+            }
+            for required in ("section_code", "topography_id", "chainage", "branch_code"):
+                _required(current, required, row_number)
+        elif not current:
+            raise ValueError(
+                f"Excel row {row_number} is a continuation row before the first section ID"
+            )
+        else:
+            for key in ("topography_id", "chainage", "branch_code"):
+                if key in row and str(row[key]).strip() != str(current.get(key, "")).strip():
+                    raise ValueError(
+                        f"Excel row {row_number} changes {key} without a new section ID"
+                    )
+            for key in SECTION_IDENTITY_FIELDS:
+                if key in row:
+                    current[key] = row[key]
+
+        enriched = {**current, **row}
+        enriched["_input_order"] = input_order
+        enriched["_row_number"] = row_number
+        normalized.append(enriched)
+    return normalized
+
+
 def parse_excel(
     filename: str,
     content: bytes,
@@ -181,7 +239,7 @@ def parse_excel(
                 code=code,
                 river_name=str(first.get("river_name") or first.get("branch_name") or code)[:128],
                 branch_name=str(first.get("branch_name") or code)[:128],
-                flow_direction=str(first.get("flow_direction", "forward")).strip().lower(),
+                flow_direction=str(first.get("flow_direction", "unknown")).strip().lower(),
                 source_revision=str(first["source_revision"])[:64] if first.get("source_revision") else None,
                 points=[
                     HydraulicChainageInput(
@@ -196,13 +254,18 @@ def parse_excel(
             )
         )
 
-    grouped_sections: dict[str, list[dict[str, object]]] = defaultdict(list)
-    for row_number, row in enumerate(section_rows, start=2):
+    grouped_sections: dict[tuple[str, str], list[dict[str, object]]] = defaultdict(list)
+    for row in _normalize_section_rows(section_rows):
+        row_number = int(row["_row_number"])
         code = safe_code(str(_required(row, "section_code", row_number)), f"XS-{row_number:04d}")
-        grouped_sections[code].append(row)
+        topography_id = str(_required(row, "topography_id", row_number)).strip()[:64]
+        grouped_sections[(code, topography_id)].append(row)
     sections: list[HydraulicCrossSectionInput] = []
-    for code, rows in grouped_sections.items():
-        ordered = sorted(rows, key=lambda row: int(row.get("sequence", 0)))
+    for (code, topography_id), rows in grouped_sections.items():
+        ordered = sorted(
+            rows,
+            key=lambda row: int(row.get("sequence", row["_input_order"])),
+        )
         first = ordered[0]
         location_x = first.get("location_x")
         location_y = first.get("location_y")
@@ -219,7 +282,7 @@ def parse_excel(
                     str(_required(first, "branch_code", 2)), "BRANCH-UNKNOWN"
                 ),
                 chainage=float(_required(first, "chainage", 2)),
-                topography_id=str(first.get("topography_id", "DEFAULT"))[:64],
+                topography_id=topography_id,
                 survey_date=_as_date(first.get("survey_date")),
                 survey_method=str(first["survey_method"])[:64] if first.get("survey_method") else None,
                 default_manning_n=float(first.get("default_manning_n", 0.03)),
@@ -242,8 +305,8 @@ def parse_excel(
                 points=[
                     HydraulicSectionPointInput(
                         sequence=int(row.get("sequence", index)),
-                        distance=float(_required(row, "distance", index + 2)),
-                        elevation=float(_required(row, "elevation", index + 2)),
+                        distance=float(_required(row, "distance", int(row["_row_number"]))),
+                        elevation=float(_required(row, "elevation", int(row["_row_number"]))),
                         marker_type=str(row.get("marker_type") or "none").lower(),
                         point_code=str(row["point_code"])[:64] if row.get("point_code") else None,
                         x=float(row["point_x"]) if "point_x" in row else None,

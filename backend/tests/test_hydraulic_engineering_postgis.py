@@ -174,6 +174,17 @@ def test_structure_crud_location_capability_and_network_graph_round_trip() -> No
         assert [item["id"] for item in graph_payload["boundaries"]] == [boundary_id]
         assert graph_payload["branches"][0]["upstream_node_id"] is not None
 
+        database_view = client.get(
+            "/api/v1/hydraulic/networks",
+            params={"dataset_version_id": version_id},
+        )
+        assert database_view.status_code == 200, database_view.text
+        branch_view = database_view.json()[0]["branches"][0]
+        assert branch_view["branch_code"] == "E03-BRANCH"
+        assert branch_view["flow_direction"] == "unknown"
+        assert branch_view["source_revision"] is None
+        assert branch_view["vertex_count"] == 0
+
         deleted = client.delete(f"/api/v1/hydraulic/structures/{structure_id}")
         assert deleted.status_code == 204
         assert client.get(f"/api/v1/hydraulic/structures/{structure_id}").status_code == 404

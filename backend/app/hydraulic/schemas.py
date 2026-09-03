@@ -361,9 +361,12 @@ class HydraulicBranchRecord(BaseModel):
     start_chainage: float
     end_chainage: float
     length_m: float
+    flow_direction: Literal["forward", "reverse", "unknown"]
     direction_status: str
+    source_revision: str | None
     upstream_node_id: int | None
     downstream_node_id: int | None
+    vertex_count: int = Field(ge=0)
     section_count: int = Field(ge=0)
     reach_count: int = Field(ge=0)
     reaches: list[HydraulicReachRecord] = Field(default_factory=list)
