@@ -842,8 +842,15 @@ export interface DispatchCapabilityFact {
   "adapter_version": string;
   "feature": string;
   "status": string;
+  "production_status"?: string | null;
+  "synthetic_status"?: string | null;
+  "production_eligible"?: boolean | null;
   "reason": string;
   "benchmark_ids": Array<string>;
+  "accepted_cases"?: Array<string>;
+  "evidence_class"?: string | null;
+  "supported_subset"?: Array<string>;
+  "unsupported_subset"?: Array<string>;
   "verified_at"?: string | null;
 }
 
@@ -2843,8 +2850,15 @@ export interface SolverCapabilityRecord {
   "adapter_version": string;
   "feature": string;
   "status": string;
+  "production_status": string;
+  "synthetic_status": string;
+  "production_eligible": boolean;
   "reason": string;
   "benchmark_ids": Array<string>;
+  "accepted_cases": Array<string>;
+  "evidence_class": string;
+  "supported_subset": Array<string>;
+  "unsupported_subset": Array<string>;
   "verified_at": string | null;
 }
 

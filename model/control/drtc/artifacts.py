@@ -1,4 +1,4 @@
-"""Version-pinned FBC/D-RTC artifacts for the verified Gate control subset.
+"""Version-pinned FBC/D-RTC artifacts for the verified Gate/Pump subset.
 
 The module emits configuration only.  DIMR remains the time-step owner and no
 Python process reads or advances the hydraulic model between coupling steps.
@@ -17,7 +17,7 @@ from xml.etree import ElementTree as ET
 from model.provenance import snapshot_hash
 
 
-FBC_ARTIFACT_SCHEMA = "dayu.drtc-fbc-artifacts.v1"
+FBC_ARTIFACT_SCHEMA = "dayu.drtc-fbc-artifacts.v2"
 FBC_RUNTIME_TAG = "DIMRset_2026.02"
 FBC_NATIVE_VERSION = "1.6.1"
 _RTC_NS = "http://www.wldelft.nl/fews"
@@ -100,6 +100,32 @@ class DRTCManualGateScheduleSpec:
             raise ValueError("schedule times must be unique")
         for _, value in self.records:
             _finite(value, "schedule native value")
+
+
+@dataclass(frozen=True, slots=True)
+class DRTCManualPumpScheduleSpec:
+    """One precompiled aggregate Pump-capacity schedule executed inside FBC."""
+
+    schedule_id: str
+    actuator_bmi_variable: str
+    records: tuple[tuple[float, float], ...]
+
+    def __post_init__(self) -> None:
+        _identifier(self.schedule_id, "schedule_id")
+        if not self.actuator_bmi_variable.startswith("pumps/") or not (
+            self.actuator_bmi_variable.endswith("/capacity")
+        ):
+            raise ValueError("only the audited aggregate Pump capacity target is supported")
+        if not self.records or self.records[0][0] != 0:
+            raise ValueError("a Pump schedule requires an explicit t0 value")
+        times = tuple(_finite(item[0], "schedule time") for item in self.records)
+        if any(value < 0 for value in times) or tuple(sorted(times)) != times:
+            raise ValueError("schedule times must be non-negative and ordered")
+        if len(set(times)) != len(times):
+            raise ValueError("schedule times must be unique")
+        for _, value in self.records:
+            if _finite(value, "schedule native value") < 0:
+                raise ValueError("Pump capacity schedule values must be non-negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,30 +242,263 @@ class DRTCFBCArtifactWriter:
     ) -> DRTCFBCArtifacts:
         """Emit a BLOCK-interpolated absolute table for G02."""
 
-        output_series = f"output_{spec.schedule_id}_gate_lower_edge_level"
+        return self.write_schedules(
+            job_root=job_root,
+            dflow_input_file=dflow_input_file,
+            start=start,
+            duration_seconds=duration_seconds,
+            coupling_step_seconds=coupling_step_seconds,
+            specs=(spec,),
+        )
+
+    def write_gate_threshold_with_schedules(
+        self,
+        *,
+        job_root: Path,
+        dflow_input_file: str,
+        start: datetime,
+        duration_seconds: float,
+        coupling_step_seconds: float,
+        threshold_spec: DRTCGateThresholdSpec,
+        schedule_specs: tuple[
+            DRTCManualGateScheduleSpec | DRTCManualPumpScheduleSpec, ...
+        ],
+    ) -> DRTCFBCArtifacts:
+        """Emit one Gate threshold and independent schedules in one FBC component."""
+
+        if not schedule_specs:
+            raise ValueError("at least one independent schedule is required")
+        if any(
+            item.actuator_bmi_variable == threshold_spec.actuator_bmi_variable
+            for item in schedule_specs
+        ):
+            raise ValueError("threshold and schedule may not target the same actuator")
+        schedule_ids = tuple(item.schedule_id for item in schedule_specs)
+        actuator_ids = tuple(item.actuator_bmi_variable for item in schedule_specs)
+        if len(set(schedule_ids)) != len(schedule_ids):
+            raise ValueError("schedule ids must be unique")
+        if len(set(actuator_ids)) != len(actuator_ids):
+            raise ValueError("each actuator may have only one schedule")
+
+        stem = threshold_spec.rule_id
+        threshold_input = f"input_{stem}_water_level"
+        threshold_output = f"output_{stem}_gate_lower_edge_level"
         tools = ET.Element("rtcToolsConfig", {"xmlns": _RTC_NS})
         general = _element(tools, "general")
-        _element(general, "description", "Dayu compiled manual Gate schedule")
+        _element(general, "description", "Dayu Gate threshold with independent schedules")
         _element(general, "poolRoutingScheme", "Theta")
         _element(general, "theta", "0.5")
         rules = _element(tools, "rules")
-        rule = _element(rules, "rule")
-        timed = _element(rule, "timeRelative", id=spec.schedule_id)
-        _element(timed, "mode", "NATIVE")
-        _element(timed, "valueOption", "ABSOLUTE")
-        _element(timed, "maximumPeriod", _scalar(duration_seconds))
-        _element(timed, "interpolationOption", "BLOCK")
-        table = _element(timed, "controlTable")
-        for time_seconds, value in spec.records:
-            _element(
-                table,
-                "record",
-                time=_scalar(time_seconds),
-                value=_scalar(value),
+        target_rule = f"{stem}.true"
+        fallback_rule = f"{stem}.false"
+        for rule_name, value in (
+            (target_rule, threshold_spec.target_native_value),
+            (fallback_rule, threshold_spec.fallback_native_value),
+        ):
+            rule = _element(rules, "rule")
+            constant = _element(rule, "constant", id=rule_name)
+            _element(constant, "constant", _scalar(value))
+            output = _element(constant, "output")
+            _element(output, "y", threshold_output)
+
+        imports: list[tuple[str, str, str]] = [
+            (threshold_input, "water_level", "m")
+        ]
+        outputs: list[tuple[str, str, str]] = [
+            (threshold_output, "gate_lower_edge_level", "m"),
+            (f"status_{stem}", "trigger_status", "s"),
+        ]
+        couplings: list[tuple[str, str]] = [
+            (threshold_output, threshold_spec.actuator_bmi_variable)
+        ]
+        schedule_semantics: list[dict[str, object]] = []
+        for spec in schedule_specs:
+            is_pump = isinstance(spec, DRTCManualPumpScheduleSpec)
+            suffix = "pump_capacity" if is_pump else "gate_lower_edge_level"
+            output_series = f"output_{spec.schedule_id}_{suffix}"
+            rule = _element(rules, "rule")
+            timed = _element(rule, "timeRelative", id=spec.schedule_id)
+            _element(timed, "mode", "NATIVE")
+            _element(timed, "valueOption", "ABSOLUTE")
+            _element(timed, "maximumPeriod", _scalar(duration_seconds))
+            _element(timed, "interpolationOption", "BLOCK")
+            table = _element(timed, "controlTable")
+            for time_seconds, value in spec.records:
+                _element(
+                    table,
+                    "record",
+                    time=_scalar(time_seconds),
+                    value=_scalar(value),
+                )
+            output = _element(timed, "output")
+            _element(output, "y", output_series)
+            _element(output, "timeActive", f"time_active_{spec.schedule_id}")
+            imports.append((f"input_{spec.schedule_id}_clock", "internal_clock", "s"))
+            outputs.extend(
+                (
+                    (
+                        output_series,
+                        "pump_capacity" if is_pump else "gate_lower_edge_level",
+                        "m^3/s" if is_pump else "m",
+                    ),
+                    (f"time_active_{spec.schedule_id}", "time_active", "s"),
+                )
             )
-        output = _element(timed, "output")
-        _element(output, "y", output_series)
-        _element(output, "timeActive", f"time_active_{spec.schedule_id}")
+            couplings.append((output_series, spec.actuator_bmi_variable))
+            schedule_semantics.append(
+                {
+                    "kind": (
+                        "manual_pump_capacity_schedule"
+                        if is_pump
+                        else "manual_gate_schedule"
+                    ),
+                    "structure_type": "pump" if is_pump else "gate",
+                    "schedule_id": spec.schedule_id,
+                    "actuator_bmi_variable": spec.actuator_bmi_variable,
+                    "interpolation": "BLOCK",
+                    "records": [list(item) for item in spec.records],
+                }
+            )
+
+        triggers = _element(tools, "triggers")
+        trigger = _element(
+            _element(triggers, "trigger"), "standard", id=f"{stem}.trigger"
+        )
+        condition = _element(trigger, "condition")
+        _element(condition, "x1Series", threshold_input, ref="IMPLICIT")
+        _element(
+            condition,
+            "relationalOperator",
+            _OPERATOR[threshold_spec.operator],
+        )
+        _element(condition, "x2Value", _scalar(threshold_spec.threshold))
+        _element(trigger, "default", "false")
+        for branch_name, rule_name in (("true", target_rule), ("false", fallback_rule)):
+            branch = _element(trigger, branch_name)
+            nested = _element(branch, "trigger")
+            _element(nested, "ruleReference", rule_name)
+        trigger_output = _element(trigger, "output")
+        _element(trigger_output, "status", f"status_{stem}")
+        return self._write(
+            job_root=job_root,
+            dflow_input_file=dflow_input_file,
+            start=start,
+            duration_seconds=duration_seconds,
+            coupling_step_seconds=coupling_step_seconds,
+            import_series=tuple(imports),
+            export_series=tuple(outputs),
+            flow_to_rtc=((threshold_spec.observation_bmi_variable, threshold_input),),
+            rtc_to_flow=tuple(couplings),
+            tools=tools,
+            semantic_payload={
+                "kind": "gate_threshold_with_manual_schedules",
+                "gate_threshold": {
+                    "rule_id": threshold_spec.rule_id,
+                    "operator": threshold_spec.operator,
+                    "threshold": threshold_spec.threshold,
+                    "target_native_value": threshold_spec.target_native_value,
+                    "fallback_native_value": threshold_spec.fallback_native_value,
+                    "observation_bmi_variable": threshold_spec.observation_bmi_variable,
+                    "actuator_bmi_variable": threshold_spec.actuator_bmi_variable,
+                },
+                "schedules": schedule_semantics,
+            },
+        )
+
+    def write_pump_schedule(
+        self,
+        *,
+        job_root: Path,
+        dflow_input_file: str,
+        start: datetime,
+        duration_seconds: float,
+        coupling_step_seconds: float,
+        spec: DRTCManualPumpScheduleSpec,
+    ) -> DRTCFBCArtifacts:
+        """Emit a BLOCK-interpolated aggregate Pump-capacity table for PUMP02."""
+
+        return self.write_schedules(
+            job_root=job_root,
+            dflow_input_file=dflow_input_file,
+            start=start,
+            duration_seconds=duration_seconds,
+            coupling_step_seconds=coupling_step_seconds,
+            specs=(spec,),
+        )
+
+    def write_schedules(
+        self,
+        *,
+        job_root: Path,
+        dflow_input_file: str,
+        start: datetime,
+        duration_seconds: float,
+        coupling_step_seconds: float,
+        specs: tuple[DRTCManualGateScheduleSpec | DRTCManualPumpScheduleSpec, ...],
+    ) -> DRTCFBCArtifacts:
+        """Emit independent native Gate/Pump schedules in one FBC component."""
+
+        if not specs:
+            raise ValueError("at least one actuator schedule is required")
+        schedule_ids = tuple(item.schedule_id for item in specs)
+        actuator_ids = tuple(item.actuator_bmi_variable for item in specs)
+        if len(set(schedule_ids)) != len(schedule_ids):
+            raise ValueError("schedule ids must be unique")
+        if len(set(actuator_ids)) != len(actuator_ids):
+            raise ValueError("each actuator may have only one schedule")
+        tools = ET.Element("rtcToolsConfig", {"xmlns": _RTC_NS})
+        general = _element(tools, "general")
+        _element(general, "description", "Dayu compiled native Gate/Pump schedules")
+        _element(general, "poolRoutingScheme", "Theta")
+        _element(general, "theta", "0.5")
+        rules = _element(tools, "rules")
+        outputs: list[tuple[str, str, str]] = []
+        imports: list[tuple[str, str, str]] = []
+        couplings: list[tuple[str, str]] = []
+        semantics: list[dict[str, object]] = []
+        for spec in specs:
+            is_pump = isinstance(spec, DRTCManualPumpScheduleSpec)
+            suffix = "pump_capacity" if is_pump else "gate_lower_edge_level"
+            output_series = f"output_{spec.schedule_id}_{suffix}"
+            rule = _element(rules, "rule")
+            timed = _element(rule, "timeRelative", id=spec.schedule_id)
+            _element(timed, "mode", "NATIVE")
+            _element(timed, "valueOption", "ABSOLUTE")
+            _element(timed, "maximumPeriod", _scalar(duration_seconds))
+            _element(timed, "interpolationOption", "BLOCK")
+            table = _element(timed, "controlTable")
+            for time_seconds, value in spec.records:
+                _element(
+                    table,
+                    "record",
+                    time=_scalar(time_seconds),
+                    value=_scalar(value),
+                )
+            output = _element(timed, "output")
+            _element(output, "y", output_series)
+            _element(output, "timeActive", f"time_active_{spec.schedule_id}")
+            imports.append((f"input_{spec.schedule_id}_clock", "internal_clock", "s"))
+            outputs.extend(
+                (
+                    (
+                        output_series,
+                        "pump_capacity" if is_pump else "gate_lower_edge_level",
+                        "m^3/s" if is_pump else "m",
+                    ),
+                    (f"time_active_{spec.schedule_id}", "time_active", "s"),
+                )
+            )
+            couplings.append((output_series, spec.actuator_bmi_variable))
+            semantics.append(
+                {
+                    "kind": "manual_pump_capacity_schedule" if is_pump else "manual_gate_schedule",
+                    "structure_type": "pump" if is_pump else "gate",
+                    "schedule_id": spec.schedule_id,
+                    "actuator_bmi_variable": spec.actuator_bmi_variable,
+                    "interpolation": "BLOCK",
+                    "records": [list(item) for item in spec.records],
+                }
+            )
         return self._write(
             job_root=job_root,
             dflow_input_file=dflow_input_file,
@@ -249,21 +508,16 @@ class DRTCFBCArtifactWriter:
             # rtcDataConfig.xsd requires at least one import series even for a
             # purely time-relative rule.  This internal, uncoupled placeholder
             # satisfies that native contract and never drives the actuator.
-            import_series=((f"input_{spec.schedule_id}_clock", "internal_clock", "s"),),
-            export_series=(
-                (output_series, "gate_lower_edge_level", "m"),
-                (f"time_active_{spec.schedule_id}", "time_active", "s"),
-            ),
+            import_series=tuple(imports),
+            export_series=tuple(outputs),
             flow_to_rtc=(),
-            rtc_to_flow=((output_series, spec.actuator_bmi_variable),),
+            rtc_to_flow=tuple(couplings),
             tools=tools,
-            semantic_payload={
-                "kind": "manual_gate_schedule",
-                "schedule_id": spec.schedule_id,
-                "actuator_bmi_variable": spec.actuator_bmi_variable,
-                "interpolation": "BLOCK",
-                "records": [list(item) for item in spec.records],
-            },
+            semantic_payload=(
+                semantics[0]
+                if len(semantics) == 1
+                else {"kind": "manual_structure_schedules", "schedules": semantics}
+            ),
         )
 
     def _write(

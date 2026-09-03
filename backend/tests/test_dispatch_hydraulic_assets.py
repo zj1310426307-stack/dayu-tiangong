@@ -227,7 +227,7 @@ def test_successful_fixture_builds_typed_specs_and_exact_bmi_bindings() -> None:
     assert [item.structure_id for item in result.pump_specs] == ["pump-22"]
     assert [item.bmi_variable for item in result.control_bindings] == [
         "orifices/gate-11/gateLowerEdgeLevel",
-        "pumps/pump-22/Capacity",
+        "pumps/pump-22/capacity",
     ]
     assert [item.structure_id for item in result.control_assets] == [gate_id, pump_id]
     assert result.control_assets[0].constraints["maximum_opening_m"] == 2.0

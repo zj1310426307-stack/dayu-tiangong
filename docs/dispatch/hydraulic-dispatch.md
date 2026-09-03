@@ -1,15 +1,15 @@
 # 一维水力调度开发边界
 
-更新日期：2026-09-02
+更新日期：2026-09-03
 适用合同：`dayu.dispatch-plan.v2` / `dayu.dispatch-plan.v3`
-当前状态：静态预演保持原样；单 Gate 合成水力预演已通过 reviewed Runtime 解锁；正式调度与生产能力保持 fail closed
+当前状态：静态预演保持原样；Gate、受限 Pump 及 Gate+Pump 合成水力预演已通过 reviewed Runtime；正式调度与生产能力保持 fail closed
 
 ## 四类能力不得混同
 
 | 层级 | 用途与证据 | 可输出内容 | 当前实现状态 | 不得宣称 |
 |---|---|---|---|---|
 | **Static Preview** | 对冻结 `static_v2` 调度策略使用显式合成观测做确定性回放；证据级别为 `SYNTHETIC_DEVELOPMENT_ONLY` | 命令请求值、约束后值、选择/限制/拒绝结果、规则事件和冲突裁决 | `POST /api/v1/dispatch/plans/{plan_id}/schedule-preview` 可用；只读冻结快照，不创建任务或运行记录 | 水位 H、流量 Q、实际闸泵状态、能耗、水量平衡或 Solver 结果 |
-| **Synthetic Hydraulic Preview** | 面向 D-Flow FM + DIMR + FBC/D-RTC 的合成数值开发轨道；证据级别为 `SYNTHETIC_NUMERICAL_ONLY` | 固定外部 Runtime 实际计算的 H/Q、Gate 状态/流量、水头差、control trace 与质量平衡 | 单 Gate schedule 或单水位阈值规则可创建异步任务；多规则与 Pump 动态控制 fail closed | 真实工程验证、生产可用、现场控制或实际设备命令 |
+| **Synthetic Hydraulic Preview** | 面向 D-Flow FM + DIMR + FBC/D-RTC 的合成数值开发轨道；证据级别为 `SYNTHETIC_NUMERICAL_ONLY` | 固定外部 Runtime 实际计算的 H/Q、Gate opening/Q、Pump requested/resolved/native Capacity 与 actual Q、控制轨迹和质量平衡 | Gate schedule/单水位阈值、Pump Capacity schedule、联合人工 schedule 及 Gate threshold + 独立 Pump schedule 可创建异步任务 | 真实工程验证、生产可用、现场控制或实际设备命令 |
 | **Real Engineering Validation** | 基于可追溯实际河网、闸泵、边界与实测资料，完成 QA、率定、独立验证和交叉验证 | 经审查的率定/验证指标、偏差、不确定性、守恒证据和完整运行 provenance | 本阶段未执行；当前 v3 响应明确固定 `real_engineering_validation=false` | “类型化文件生成通过”或“合成 benchmark 通过”即真实工程验证 |
 | **Real Equipment Control** | 向 PLC/SCADA/现场设备下发命令的独立安全系统，需要设备授权、联锁、人工接管、回执和审计 | 只能是经授权控制系统中已确认、可追溯的命令与回执 | 不在本仓库当前调度预演范围；`real_equipment_command=false` 且 `plc_scada_connected=false` | 任何预演、数值模拟或工程验证自动授予设备控制权 |
 
@@ -56,7 +56,7 @@ hydraulic_v3 draft -- POST .../validate --> hydraulic_v3 validated
 - `runtime_available` 单独表示所选外部运行边界及完整 provenance 通过；
 - `controlled_runtime_accepted` 单独表示经验收的 D-RTC/FBC 耦合运行时，不能由工件存在、静态编译或 Runtime readiness 推导；
 - `ready_to_run = ready_to_freeze && runtime_available && controlled_runtime_accepted`，但它仍不是生产授权；
-- 一个 Gate `gate_opening_m` + 一个 scalar water-level threshold Rule，或单 Gate manual schedule，可以进入运行；多规则 priority、manual+rule、hysteresis/hold/cooldown 与 Pump 动态控制精确阻断；
+- 支持单 Gate manual schedule 或单 scalar water-level threshold Rule、单 Pump aggregate Capacity schedule、独立 Gate+Pump manual schedules，以及 Gate threshold + 独立 Pump schedule；多规则 priority、同一执行器 manual+rule、hysteresis/hold/cooldown、Pump threshold、`pump_enabled` 与 `pump_unit_count` 精确阻断；
 - D-Flow FM 当前 `UNSTEADY_1D`、`BRANCHED_NETWORK`、`GATE`、`PUMP`、`ORIFICE`、`DYNAMIC_CONTROL` 是 `EXPERIMENTAL`，`D_RTC` 是 `UNVERIFIED`，没有任何 `VERIFIED_*` 能力。`EXPERIMENTAL` 只可按明确的合成开发策略进入编译路径，不可进入生产。
 
 该路由是只读检查：不修改计划，不创建 `SimulationTask`、`DispatchRun`、Workspace 或 native 运行文件。报告使用自身 `report_hash` 固定当次诊断内容。
@@ -80,9 +80,9 @@ Runtime unavailable 可以与静态合同已冻结同时存在：这是可审计
 3. 本次请求与冻结的初态、Observation contract、Runtime mode 和 timeout 逐项相同，且 timeout 与 Worker 当前 Runtime 配置精确匹配；
 4. 外部 Runtime 可用且 provenance 完整。
 
-运行时缺失时仍返回 HTTP 409 `DFLOW_RUNTIME_BLOCKED`；registry 漂移时返回 `DRTC_COMPILER_BLOCKED`。门禁通过后创建不可变 `controlled_hydraulic_preview` 任务与 `hydraulic_preview` 运行记录，交给现有 Celery `hydraulic-1d` 队列。Worker 用执行 lease/CAS 处理 heartbeat、取消、超时、重投和孤儿恢复；成功时原子持久化 H/Q、Gate requested/resolved/applied、结构物流量/水头差、控制事件、四组件 provenance 与质量平衡。
+运行时缺失时仍返回 HTTP 409 `DFLOW_RUNTIME_BLOCKED`；registry 漂移时返回 `DRTC_COMPILER_BLOCKED`。门禁通过后创建不可变 `controlled_hydraulic_preview` 任务与 `hydraulic_preview` 运行记录，交给现有 Celery `hydraulic-1d` 队列。Worker 用执行 lease/CAS 处理 heartbeat、取消、超时、重投和孤儿恢复；成功时原子持久化 H/Q、Gate requested/resolved/applied、Pump requested/resolved/native Capacity/actual Q/intake/outlet/head、控制事件、四组件 provenance 与质量平衡。
 
-前端轮询任务状态并链接到运行详情；规则兼容逐条展示，且固定显示 `Multi-rule priority: Not verified`。任何失败都不得降级到 MASCARET、静态 replay 或 Python 自制水力方程。
+前端轮询任务状态并链接到运行详情；规则兼容逐条展示，能力表直接展示后端返回的 supported/unsupported subset，且固定显示 `Multi-rule priority: Not verified`。Pump Capacity target 与 actual Q 分图展示，结果 KPI 以 actual Q 积分转输水量，不计算无证据的 kWh。任何失败都不得降级到 MASCARET、静态 replay 或 Python 自制水力方程。
 
 ## 正式 Dispatch `/runs` 继续关闭
 

@@ -1,6 +1,6 @@
 # D-Flow FM Adapter 与外部运行时边界
 
-更新日期：2026-09-02
+更新日期：2026-09-03
 适用版本：`dayu-dflow-fm-adapter-v1` / `DIMRset_2026.02`
 当前结论：reviewed Container Runtime 已通过合成开发验收；CLI 与生产能力继续关闭
 
@@ -8,11 +8,11 @@
 
 仓库已经具备 D-Flow FM 的开发期边界：多引擎登记、Solver-neutral 模型校验、HYDROLIB-core 类型化文件生成、Gate/Pump 严格子集映射、HIS NetCDF 结果解析、隔离 Workspace、CLI/Container 进程监督及完整 Runtime provenance 合同。
 
-固定官方源码构建出的 reviewed Container Runtime 已由 digest `sha256:e53a7c22cdce6a63f39357006ba73f2254ace24979c1f374ba111ee52d5b12b9` 锁定，并通过官方 D-Flow、官方 D-Flow+FBC、DF01、DRTC-S01、G01、G02 与 G03。证据仍是 `SYNTHETIC_NUMERICAL_ONLY`，D-Flow 登记项保持 `production_eligible=false`，不得描述为真实工程或生产水力验证。Pump native mapping 仍是 `PUMP_NATIVE_CONTROL_LIMITED`，P03 为 `BLOCKED_BY_NATIVE_CONTROL_SEMANTICS`。
+固定官方源码构建出的 reviewed Container Runtime 已由 digest `sha256:e53a7c22cdce6a63f39357006ba73f2254ace24979c1f374ba111ee52d5b12b9` 锁定，并通过官方 D-Flow、官方 D-Flow+FBC、DF01、DRTC-S01、G01–G03、PUMP01–PUMP02、GP01–GP03 和 24h L01。证据仍是 `SYNTHETIC_NUMERICAL_ONLY`，D-Flow 登记项保持 `production_eligible=false`，不得描述为真实工程或生产水力验证。Pump 为受限原生子集：固定 aggregate Capacity 与 FBC 手工 Capacity schedule 已验收，Pump threshold/PUMP03 仍为 `BLOCKED_BY_NATIVE_CONTROL_SEMANTICS`。
 
 `DFlowFMEngine.run()` 的 DF01 路径已通过真实 DIMR/D-Flow 运行。它对带活动结构但没有显式 Gate/Pump spec 的普通 run 继续拒绝推断。
 
-Controlled path 与普通 DF01 path 保持独立。`validate_controlled_model()`、`compile_control()`、`run_controlled()` 和 `parse_controlled_results()` 已开放单 Gate schedule/threshold 子集；所有身份与 registry 检查 fail closed，且不会用 Python 逐时步耦合器代替官方 DIMR/FBC。
+Controlled path 与普通 DF01 path 保持独立。`validate_controlled_model()`、`compile_control()`、`run_controlled()` 和 `parse_controlled_results()` 已开放单 Gate schedule/threshold、单 Pump Capacity schedule、Gate+Pump 联合 schedule，以及单 Gate threshold + 独立 Pump schedule 子集；所有身份与 registry 检查 fail closed，且不会用 Python 逐时步耦合器代替官方 DIMR/FBC。
 
 ## 固定源码与 Python 包
 
@@ -41,7 +41,7 @@ DFlowFMModelBuilder + DFlowFMStructureMapper
         ↓ HYDROLIB-core 1.0.1
 dimr_config.xml + dayu.mdu + dayu_net.nc + INI/BC
         ↓ 仅允许 DIMR 作为顶层入口
-D-Flow FM (+ 未来经证明的 FBC/D-RTC coupling)
+D-Flow FM + 已锁定的 DIMR/FBC 受限控制子集
         ↓ dayu_his.nc
 DFlowFMResultParser
         ↓
@@ -67,13 +67,13 @@ Builder 通过 HYDROLIB 递归保存、重新加载并核对必需文件，最�
 | `general_opening` | HYDROLIB `GeneralStructure` | 几何与正/反向自由/淹没系数全部显式；包含 1.0.1 discriminator 兼容处理 |
 | inline Pump | HYDROLIB `Pump`，`numStages=0` | 只允许 aggregate `Capacity`；必须有 availability 与至少两点的有证据 head/reduction curve |
 
-`unit_count`、`pump_enabled`、跨流域/外部转输 Pump 不能转换成 aggregate Capacity。未知 Gate subtype、缺少来源状态的参数、默认 Q-H 曲线或隐式方向均在生成 native 文件前 fail closed。
+`unit_count`、`pump_enabled`、跨流域/外部转输 Pump 不能转换成 aggregate Capacity。未知 Gate subtype、缺少来源状态的参数、默认 Q-H 曲线或隐式方向均在生成 native 文件前 fail closed。运行期仅将 `pump_target_flow` 精确映射为小写 BMI 路径 `pumps/<id>/capacity`；Capacity 是限定值，不是 actual Q，Capacity=0 也不自动表示物理停机。
 
 ## 结果合同
 
 `DFlowFMResultParser` 只读预期的 `output/dayu_his.nc`，并通过 xarray 精确匹配变量、dimension、unit、Dayu observation ID 和完整时间轴。它不搜索“相似变量”、不选最近位置、不填补缺失 H/Q，也不把空文件或成功退出但无结果视为成功。
 
-当前默认合同要求 water level、cross-section discharge、flow area 与 velocity。任何文件缺失、维度/单位漂移、重复或缺失位置、非有限值、时间轴错误均返回稳定的 `DFLOW_RESULT_*` 错误。
+当前默认合同要求 water level、cross-section discharge、flow area 与 velocity。Pump 结果额外精确核对原生 Capacity、actual discharge、intake/outlet water level、structure/pump head、reduction factor 及 endpoint identity；Solver 未给出分级时 `active_stage=null`，不由 `unit_count` 推断。任何文件缺失、维度/单位/身份漂移、重复或缺失位置、非有限值、时间轴错误均返回稳定的 `DFLOW_RESULT_*` 错误。
 
 ## Runtime 模式与 Workspace
 
@@ -132,7 +132,7 @@ D-Flow FM、DIMR 与 FBC 必须共享已审计 suite tag、commit 和 source man
 |---|---|---|---|
 | D-Flow FM | 固定组件许可事实：AGPL-3.0 | 仅作为独立 CLI/Container 进程；Backend Python 包不 vendoring 源码或二进制 | 必须完成 tag 级源文件/SPDX 盘点、通知/源码提供义务评审和依赖许可兼容审查 |
 | DIMR | 固定组件许可事实：GPL-3.0 | 是唯一允许的顶层启动边界；不进入 Backend wheel | 容器/安装包分发必须同时带完整许可清单、notices、对应源码/获取方式及人工批准 |
-| FBC / D-RTC | 固定 FBC 组件许可事实：GPL-2.0 | 仅在未来固定 DIMR coupling Runtime 中运行；当前不生成或执行任意 RTC/FBC artifact | 完成源码头、构建链、依赖、配置文件及分发模式的专项审查 |
+| FBC / D-RTC | 固定 FBC 组件许可事实：GPL-2.0 | 仅在锁定 DIMR coupling Runtime 中执行经 acceptance registry 允许的最小 artifact 子集 | 完成源码头、构建链、依赖、配置文件及分发模式的专项审查 |
 | Delft3D 共享 utilities / third party | 上游说明若干 utilities 为 LGPL-2.1，第三方包保留各自许可证 | 不假定 `fm-suite` 镜像只有一种许可证 | 对实际 runtime image 生成 SBOM、文件/包级许可映射、notices 和源码义务清单 |
 | HYDROLIB-core `1.0.1` | 固定组件许可事实：MIT；已记录 wheel/sdist SHA-256 | 仅在隔离 Adapter/Worker 环境按固定版本安装 | 随产物保留 MIT 文本与 attribution，核对实际安装 artifact hash |
 | `requirements-dflow.txt` 转递依赖 | 每个 Python 包使用各自许可证，HYDROLIB-core 的 MIT 不会覆盖转递依赖 | 与默认 Backend 依赖隔离 | 按实际解析的锁定包/平台 wheel 生成 Python SBOM 和许可清单 |

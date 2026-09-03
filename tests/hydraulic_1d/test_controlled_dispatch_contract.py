@@ -131,7 +131,7 @@ def test_pump_enabled_and_unit_count_are_not_relabelled_as_capacity() -> None:
                 structure_id=12,
                 native_structure_id="pump-12",
                 supported_command_type="pump_target_flow",
-                bmi_variable="pumps/pump-12/Capacity",
+                bmi_variable="pumps/pump-12/capacity",
                 conversion="identity_capacity",
             ),
         ),

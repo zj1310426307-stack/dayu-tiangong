@@ -46,6 +46,11 @@ class SolverCapability:
     reason: str
     benchmark_ids: tuple[str, ...]
     verified_at: str | None = None
+    synthetic_status: str = "NOT_ACCEPTED"
+    production_eligible: bool = False
+    evidence_class: str = "NONE"
+    supported_subset: tuple[str, ...] = ()
+    unsupported_subset: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         """Return the stable public/API representation."""
@@ -56,8 +61,15 @@ class SolverCapability:
             "adapter_version": self.adapter_version,
             "feature": self.feature,
             "status": self.status.value,
+            "production_status": self.status.value,
+            "synthetic_status": self.synthetic_status,
+            "production_eligible": self.production_eligible,
             "reason": self.reason,
             "benchmark_ids": list(self.benchmark_ids),
+            "accepted_cases": list(self.benchmark_ids),
+            "evidence_class": self.evidence_class,
+            "supported_subset": list(self.supported_subset),
+            "unsupported_subset": list(self.unsupported_subset),
             "verified_at": self.verified_at,
         }
 
@@ -69,7 +81,7 @@ def capability_registry_payload() -> dict[str, Any]:
     payload = yaml.safe_load(CAPABILITY_MANIFEST.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise RuntimeError("hydraulic capability manifest must be an object")
-    if payload.get("schema_version") != "dayu.hydraulic-engine-capabilities.v1":
+    if payload.get("schema_version") != "dayu.hydraulic-engine-capabilities.v2":
         raise RuntimeError("unsupported hydraulic capability manifest schema")
     engines = payload.get("engines")
     if not isinstance(engines, list) or not engines:
@@ -99,19 +111,53 @@ def capabilities_for(engine: str, engine_version: str) -> tuple[SolverCapability
         if not feature or feature in seen:
             raise RuntimeError("capability features must be non-empty and unique")
         seen.add(feature)
+        production_status = CapabilityStatus(
+            str(item.get("production_status", item.get("status")))
+        )
+        benchmark_ids = tuple(
+            str(value)
+            for value in item.get("accepted_cases", item.get("benchmark_ids", []))
+        )
+        synthetic_status = str(item.get("synthetic_status", "NOT_ACCEPTED"))
+        if synthetic_status not in {"ACCEPTED", "PARTIAL", "NOT_ACCEPTED"}:
+            raise RuntimeError("unsupported synthetic capability status")
+        production_eligible = bool(
+            item.get(
+                "production_eligible",
+                production_status
+                in {
+                    CapabilityStatus.VERIFIED_NATIVE,
+                    CapabilityStatus.VERIFIED_EQUIVALENT,
+                },
+            )
+        )
+        if production_eligible and production_status not in {
+            CapabilityStatus.VERIFIED_NATIVE,
+            CapabilityStatus.VERIFIED_EQUIVALENT,
+        }:
+            raise RuntimeError("production eligibility requires a verified production status")
+        if synthetic_status == "ACCEPTED" and not benchmark_ids:
+            raise RuntimeError("accepted synthetic capability requires accepted cases")
         result.append(
             SolverCapability(
                 engine=engine,
                 engine_version=engine_version,
                 adapter_version=str(match["adapter_version"]),
                 feature=feature,
-                status=CapabilityStatus(str(item["status"])),
+                status=production_status,
                 reason=str(item.get("reason", "")),
-                benchmark_ids=tuple(
-                    str(value) for value in item.get("benchmark_ids", [])
-                ),
+                benchmark_ids=benchmark_ids,
                 verified_at=(
                     str(item["verified_at"]) if item.get("verified_at") else None
+                ),
+                synthetic_status=synthetic_status,
+                production_eligible=production_eligible,
+                evidence_class=str(item.get("evidence_class", "NONE")),
+                supported_subset=tuple(
+                    str(value) for value in item.get("supported_subset", [])
+                ),
+                unsupported_subset=tuple(
+                    str(value) for value in item.get("unsupported_subset", [])
                 ),
             )
         )

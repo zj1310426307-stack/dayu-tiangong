@@ -1,13 +1,13 @@
 # 一维求解器能力矩阵
 
-更新日期：2026-09-02
-Registry：`dayu.hydraulic-engine-capabilities.v1`
+更新日期：2026-09-03
+Registry：`dayu.hydraulic-engine-capabilities.v2`
 
 ## 状态语义与门禁
 
-版本控制清单 `model/hydraulic_1d/hydraulic_engine_capabilities.yaml` 以 engine、engine version 和 adapter version 为键。状态只有：`VERIFIED_NATIVE`、`VERIFIED_EQUIVALENT`、`EXPERIMENTAL`、`UNVERIFIED`、`UNSUPPORTED`。只有前两类可进入生产 Adapter；其余状态都在 Runtime 前 fail closed。
+版本控制清单 `model/hydraulic_1d/hydraulic_engine_capabilities.yaml` 以 engine、engine version 和 adapter version 为键。v2 将 `production_status`/`production_eligible` 与 `synthetic_status`/`accepted_cases`/`evidence_class` 分开：合成数值算例 PASS 不会把生产状态升格为 `VERIFIED_NATIVE`。生产只接受经现行门禁核准的 verified 能力；D-Flow 开发子集始终 `production_eligible=false`。
 
-API `GET /api/v1/hydraulic/engine-capabilities` 返回版本、feature、status、reason、benchmark IDs 和验证日期，不泄露宿主可执行路径。Frontend 使用同一生成客户端显示当前模型所需能力与求解器状态。
+API `GET /api/v1/hydraulic/engine-capabilities` 返回 engine/version/feature、生产与合成状态、生产资格、已验收算例、证据等级、支持/未支持子集与 reason。Frontend 只使用该后端权威响应，不根据引擎名称自行推导。
 
 ## MASCARET v9.1.1
 
@@ -36,12 +36,9 @@ Adapter：`dayu-mascaret-adapter-v2`
 
 当前已建立 `dayu-dflow-fm-adapter-v1` 的开发期合同：Solver-neutral 1D 模型严格校验、HYDROLIB-core `1.0.1` 类型化 Network/MDU/INI/BC/DIMR 生成、Gate/Pump 受限映射、HIS NetCDF 结果解析、Job Workspace 隔离及 DIMR CLI/Container 运行边界。官方源固定为 `DIMRset_2026.02` / `5a4649830b1e5072caf019fb4850bbdefd9ad431`。
 
-这些合同仍只是开发证据：
+开发证据现已绑定 reviewed OCI digest、四组件 provenance、acceptance registry v2 及每份紧凑证据的 SHA-256。官方 D-Flow 01、官方 D-Flow+FBC 10、DF01、DRTC-S01、G01–G03、PUMP01–PUMP02、GP01–GP03 与 24h L01 均已 PASS。其中 Pump 只开放经审计的 `pumps/<id>/capacity` aggregate Capacity 目标，并将 requested/resolved/native Capacity 与 actual structure discharge 分开；`pump_enabled`、`pump_unit_count`、Pump threshold、分级 Pump 仍关闭。Gate 可以使用单水位阈值，且 GP03 证明它可与另一 Pump 的手工 Capacity schedule 在同一 FBC 组件中并行。
 
-- 早期 Bridge/Culvert/Pump `structures.ini` spike 仍只证明序列化，不是 runtime 或数值证据；
-- 新 Adapter 会生成并重读 native case，但尚无官方 D-Flow/D-RTC case 和 Dayu benchmark 通过已审查 runtime；
-- 本机/仓库无满足 provenance 合同的 `dflowfm` / `dimr` / `fbc` 二进制或不可变镜像，因此当前为 `DFLOW_RUNTIME_BLOCKED`；
-- D-Flow FM 登记仍 `production_eligible=false`；`UNSTEADY_1D`、`BRANCHED_NETWORK`、`GATE`、`PUMP`、`ORIFICE`、`DYNAMIC_CONTROL` 为 `EXPERIMENTAL`，`D_RTC` 与其余未验证能力为 `UNVERIFIED`，没有任何 `VERIFIED_NATIVE` 或 `VERIFIED_EQUIVALENT`，不影响 MASCARET 现有验证矩阵。
+这些全部是 `SYNTHETIC_NUMERICAL_ONLY`：D-Flow 的生产状态仍为 `EXPERIMENTAL`/`UNVERIFIED`，不具备生产资格，也不影响 MASCARET 作为 Standard 1D 默认引擎的现有验证矩阵。Bridge/Culvert 的早期序列化 spike 仍不是 runtime 或数值证据。
 
 官方资料：
 

@@ -1,4 +1,4 @@
-"""Fail-closed compiler for the runtime-verified minimal D-RTC Gate subset."""
+"""Fail-closed compiler for the runtime-verified minimal D-RTC subset."""
 
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ from model.control.rules import ThresholdRule
 from model.provenance import snapshot_hash
 
 
-DRTC_COMPILER_VERSION = "dayu.drtc-compiler.v2"
+DRTC_COMPILER_VERSION = "dayu.drtc-compiler.v3"
 
 
 class DRTCCompiler:
-    """Compile only the single-Gate threshold state machine proven by DRTC-S01."""
+    """Compile the single-Gate threshold semantics proven by DRTC-S01/G03."""
 
     def compile(
         self,

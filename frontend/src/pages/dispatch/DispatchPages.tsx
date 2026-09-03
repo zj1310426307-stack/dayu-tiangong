@@ -164,6 +164,7 @@ interface HydraulicObservationRequirement {
 const STRUCTURE_METRIC_PANELS: StructureMetricPanel[] = [
   { kind: 'gate', metric: 'actual_value', title: '闸门开度', unit: 'm' },
   { kind: 'gate', metric: 'flow', title: '闸门流量', unit: 'm³/s' },
+  { kind: 'pump', metric: 'actual_value', title: '泵站原生容量', unit: 'm³/s' },
   { kind: 'pump', metric: 'flow', title: '泵站流量', unit: 'm³/s' },
   { kind: 'pump', metric: 'energy_kwh', title: '泵站累计能耗', unit: 'kWh' },
 ];
@@ -784,10 +785,16 @@ export function DispatchPlanEditorPage() {
     { title: '动作模板', dataIndex: 'action_template', render: (value) => <code>{JSON.stringify(value)}</code> },
   ];
   const hydraulicCapabilityColumns: ColumnsType<SolverCapabilityRecord> = [
+    { title: '引擎', width: 165, render: (_, row) => `${row.engine} ${row.engine_version}` },
     { title: '能力', dataIndex: 'feature', width: 190 },
-    { title: '状态', dataIndex: 'status', width: 150, render: (value) => <Tag color={String(value).startsWith('VERIFIED') ? 'success' : 'warning'}>{value}</Tag> },
+    { title: '生产状态', dataIndex: 'production_status', width: 150, render: (value) => <Tag color={String(value).startsWith('VERIFIED') ? 'success' : String(value) === 'UNSUPPORTED' ? 'error' : 'warning'}>{value}</Tag> },
+    { title: '合成门禁', dataIndex: 'synthetic_status', width: 135, render: (value) => <Tag color={value === 'ACCEPTED' ? 'success' : value === 'UNSUPPORTED' ? 'error' : 'warning'}>{value}</Tag> },
+    { title: '可用于生产', dataIndex: 'production_eligible', width: 110, render: (value: boolean) => <Tag color={value ? 'success' : 'default'}>{value ? '是' : '否'}</Tag> },
     { title: '精确说明', dataIndex: 'reason' },
-    { title: '基准证据', dataIndex: 'benchmark_ids', width: 220, render: (value: string[]) => value.length ? value.join(', ') : '—' },
+    { title: '已支持子集', dataIndex: 'supported_subset', width: 300, render: (value: string[]) => value.length ? value.join('；') : '—' },
+    { title: '未支持子集', dataIndex: 'unsupported_subset', width: 300, render: (value: string[]) => value.length ? value.join('；') : '—' },
+    { title: '已验收算例', dataIndex: 'accepted_cases', width: 250, render: (value: string[]) => value.length ? value.join(', ') : '—' },
+    { title: '证据等级', dataIndex: 'evidence_class', width: 180 },
   ];
 
   return (
@@ -906,7 +913,7 @@ export function DispatchPlanEditorPage() {
               pagination={false}
               dataSource={hydraulicCapabilities}
               columns={hydraulicCapabilityColumns}
-              scroll={{ x: 900 }}
+              scroll={{ x: 1500 }}
             />
           ) : (
             <Alert type="error" showIcon message="D-FLOW-CAPABILITY-CATALOG-MISSING" description="未加载固定 DIMRset_2026.02 能力矩阵，Hydraulic Preview 必须 fail closed。" />
@@ -1191,7 +1198,7 @@ export function DispatchRunListPage() {
     { title: '错误', dataIndex: 'error_message', ellipsis: true },
     { title: '操作', width: 150, render: (_, row) => <Space><Button size="small" onClick={() => navigate(`/dispatch/runs/${row.id}?datasetVersionId=${datasetVersionId}`)}>详情</Button>{['queued', 'running'].includes(row.status) && <Button size="small" danger onClick={async () => { await cancelDispatchRun(row.id); await reload(); }}>取消</Button>}</Space> },
   ];
-  return <div className="data-page dispatch-page"><DispatchHeader eyebrow="DISPATCH / LEGACY RUNS" title="历史调度运行" description="只读兼容查看既有运行；当前 Gate/Pump 水力运行与重试均保持关闭。" action={<Space><Button onClick={() => navigate(`/dispatch/plans?datasetVersionId=${datasetVersionId}`)}>计划列表</Button><Button icon={<ReloadOutlined />} onClick={() => void reload()} /></Space>} /><Alert className="data-alert" type="warning" showIcon message="历史 success 不代表现行 MASCARET 支持、真实验证或生产可用" description="本阶段的新能力仅为冻结计划的合成静态预演；运行列表不会创建或重试水力任务。" /><Card className="data-card"><Table rowKey="id" loading={loading} dataSource={runs} columns={columns} scroll={{ x: 1250 }} /></Card></div>;
+  return <div className="data-page dispatch-page"><DispatchHeader eyebrow="DISPATCH / RUNS" title="调度运行" description="审阅既有运行及 D-Flow FM 合成数值开发结果；生产运行仍由能力矩阵和任务门禁控制。" action={<Space><Button onClick={() => navigate(`/dispatch/plans?datasetVersionId=${datasetVersionId}`)}>计划列表</Button><Button icon={<ReloadOutlined />} onClick={() => void reload()} /></Space>} /><Alert className="data-alert" type="warning" showIcon message="success 不等于真实工程验证或生产可用" description="D-Flow FM 闸泵结果属于合成数值开发证据，不代表真实设备控制；MASCARET 的 Gate/Pump 仍保持不支持并关闭失败。" /><Card className="data-card"><Table rowKey="id" loading={loading} dataSource={runs} columns={columns} scroll={{ x: 1250 }} /></Card></div>;
 }
 
 function ComparisonChart({ comparison }: { comparison?: DispatchComparison }) {
@@ -1274,7 +1281,7 @@ function buildLatestStructureStatuses(
       key,
       label: `${kind === 'gate' ? '闸门' : '泵站'} #${structureId}`,
       status: actual === undefined ? '无状态' : actual > 1.0e-6 ? (kind === 'gate' ? '开启' : '运行') : (kind === 'gate' ? '关闭' : '停止'),
-      actuator: actual === undefined ? '—' : kind === 'gate' ? `${actual.toFixed(3)} m` : `${actual.toFixed(0)} 台`,
+      actuator: actual === undefined ? '—' : kind === 'gate' ? `${actual.toFixed(3)} m` : `${actual.toFixed(3)} m³/s 容量`,
       flow: finiteRowNumber(row.flow),
       controlSource: latestSources.get(key)?.label ?? '固定输入',
       regime: typeof row.regime === 'string' && row.regime ? row.regime : '—',
@@ -1532,7 +1539,7 @@ export function DispatchRunDetailPage() {
   const currentComparison = resultRunId === id ? comparison : undefined;
   useEffect(() => { void reload(); if (currentRun?.status === 'success' || currentRun?.status === 'failed' || currentRun?.status === 'cancelled') return undefined; const timer = window.setInterval(() => void reload(), 3000); return () => window.clearInterval(timer); }, [currentRun?.status, reload]);
   const metrics = currentComparison?.metrics ?? currentRun?.metrics ?? {};
-  const metricKeys = ['network_maximum_water_level', 'maximum_level_reduction', 'pump_total_energy_kwh', 'gate_action_count', 'global_balance_residual', 'maximum_node_balance_residual'];
+  const metricKeys = ['network_maximum_water_level', 'maximum_level_reduction', 'pump_actual_transfer_volume_m3', 'pump_maximum_actual_flow_m3s', 'gate_action_count', 'global_balance_residual', 'maximum_node_balance_residual'];
   const structureCoverage = useMemo(() => buildStructureCoverage(structures), [structures]);
   const structureCoverageStartHours = structureCoverage.length
     ? Math.max(...structureCoverage.map((item) => item.startHours)) : 0;
@@ -1568,9 +1575,9 @@ export function DispatchRunDetailPage() {
   );
   return (
     <div className="data-page dispatch-page">
-      <DispatchHeader eyebrow="DISPATCH / LEGACY RUN DETAIL" title={`历史调度运行 #${id}`} description="只读查看既有记录中的基准/调度、水位、结构、能耗与诊断字段；这些字段不是本阶段静态预演输出。" action={<Space><Button onClick={() => navigate(`/dispatch/runs?datasetVersionId=${datasetVersionId}`)}>历史运行</Button><Button icon={<AimOutlined />} onClick={() => navigate(`/gis?datasetVersionId=${datasetVersionId}&dispatchRunId=${id}&time=0`)}>GIS 联动</Button></Space>} />
+      <DispatchHeader eyebrow="DISPATCH / RUN DETAIL" title={`调度运行 #${id}`} description="查看基准/调度、水位、结构、能耗与诊断字段；以任务记录中的引擎、版本和证据等级判断结果用途。" action={<Space><Button onClick={() => navigate(`/dispatch/runs?datasetVersionId=${datasetVersionId}`)}>调度运行</Button><Button icon={<AimOutlined />} onClick={() => navigate(`/gis?datasetVersionId=${datasetVersionId}&dispatchRunId=${id}&time=0`)}>GIS 联动</Button></Space>} />
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}
-      <Alert className="data-alert" type="warning" showIcon message="历史记录仅供兼容审阅" description="即使状态为 success，也不代表当前 Gate/Pump Solver 能力已支持、真实工程验证已通过或设备可以下发。" />
+      <Alert className="data-alert" type="warning" showIcon message="合成结果与生产资格分开判定" description="即使状态为 success，也不代表真实工程验证已通过或设备可以下发；MASCARET 的 Gate/Pump 仍不支持，D-Flow FM 仅按能力矩阵开放已验收的合成子集。" />
       {currentRun && <>
         <Card className="data-card" title="运行状态" extra={stateTag(currentRun.status)}><Row gutter={[16, 16]}><Col xs={24} md={8}><Progress percent={currentRun.progress} status={currentRun.status === 'failed' ? 'exception' : currentRun.status === 'success' ? 'success' : 'active'} /></Col><Col xs={24} md={16}><Descriptions column={2} items={[{ key: 'baseline', label: '基准任务', children: currentRun.baseline_task_id }, { key: 'controlled', label: '调度任务', children: currentRun.controlled_task_id }, { key: 'start', label: '开始', children: localTime(currentRun.start_time) }, { key: 'end', label: '结束', children: localTime(currentRun.end_time) }]} /></Col></Row>{currentRun.error_message && <Alert type="error" showIcon message={currentRun.error_message} />}</Card>
         <Card className="data-card" title="Worker 与任务状态"><Table rowKey="id" pagination={false} dataSource={tasks} columns={[{ title: '任务', dataIndex: 'id' }, { title: '状态', dataIndex: 'status', render: stateTag }, { title: '进度', dataIndex: 'progress', render: (value: number) => `${value}%` }, { title: '执行阶段', dataIndex: 'execution_phase', render: (value: string | null) => value ?? '—' }, { title: '引擎', render: (_, task) => `${task.solver_id ?? 'mascaret'} ${task.engine_version ?? 'v9.1.1'}` }, { title: 'Adapter', dataIndex: 'runtime_adapter_id', render: (value: string | null) => value ?? '—' }, { title: 'Worker', dataIndex: 'worker_id', render: (value: string | null) => value ?? '—' }, { title: '心跳', dataIndex: 'heartbeat_time', render: localTime }, { title: '快照 SHA-256', dataIndex: 'input_snapshot_hash', ellipsis: true }]} scroll={{ x: 1350 }} /></Card>
@@ -1581,7 +1588,7 @@ export function DispatchRunDetailPage() {
             {latestStructureStatuses.length ? <Table rowKey="key" size="small" pagination={false} dataSource={latestStructureStatuses} scroll={{ x: 900 }} columns={[
               { title: '设施', dataIndex: 'label', width: 130 },
               { title: '当前状态', dataIndex: 'status', width: 110, render: (value: string) => <Tag color={['开启', '运行'].includes(value) ? 'success' : value === '无状态' ? 'default' : 'warning'}>{value}</Tag> },
-              { title: '开度 / 运行机组', dataIndex: 'actuator', width: 145 },
+              { title: '开度 / 原生容量', dataIndex: 'actuator', width: 175 },
               { title: '流量（m³/s）', dataIndex: 'flow', width: 125, render: (value?: number) => value === undefined ? '—' : value.toFixed(3) },
               { title: '控制模式 / 来源', dataIndex: 'controlSource', width: 180 },
               { title: '流态', dataIndex: 'regime', width: 120 },

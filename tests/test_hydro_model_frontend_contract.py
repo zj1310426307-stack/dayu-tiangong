@@ -37,7 +37,7 @@ def test_dispatch_detail_exposes_a_non_synthetic_24_hour_structure_view() -> Non
     assert "metric: 'flow', title: '泵站流量'" in source
     assert "metric: 'energy_kwh', title: '泵站累计能耗'" in source
     assert 'title="闸泵当前运行状态"' in source
-    assert "开度 / 运行机组" in source
+    assert "开度 / 原生容量" in source
     assert "控制模式 / 来源" in source
     assert "latestSources.get(key)?.label ?? '固定输入'" in source
     assert "clearResultData();" in source

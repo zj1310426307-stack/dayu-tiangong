@@ -744,8 +744,15 @@ class SolverCapabilityRecord(BaseModel):
     adapter_version: str
     feature: str
     status: str
+    production_status: str
+    synthetic_status: str
+    production_eligible: bool
     reason: str
     benchmark_ids: list[str]
+    accepted_cases: list[str]
+    evidence_class: str
+    supported_subset: list[str]
+    unsupported_subset: list[str]
     verified_at: str | None
 
 

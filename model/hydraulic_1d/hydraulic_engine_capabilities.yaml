@@ -1,4 +1,4 @@
-schema_version: dayu.hydraulic-engine-capabilities.v1
+schema_version: dayu.hydraulic-engine-capabilities.v2
 engines:
   - engine: mascaret
     engine_version: v9.1.1
@@ -82,74 +82,116 @@ engines:
     upstream_commit: 5a4649830b1e5072caf019fb4850bbdefd9ad431
     capabilities:
       - feature: UNSTEADY_1D
-        status: EXPERIMENTAL
-        benchmark_ids: []
-        reason: The typed HYDROLIB-core base-1D adapter is implemented; external runtime and numerical benchmark evidence remain unavailable.
+        production_status: EXPERIMENTAL
+        synthetic_status: ACCEPTED
+        production_eligible: false
+        evidence_class: SYNTHETIC_NUMERICAL_ONLY
+        accepted_cases: [DF01, PUMP01, PUMP02, GP01, GP02, GP03, L01]
+        supported_subset: [typed 1D network, exact boundaries, native H/Q history]
+        unsupported_subset: [real engineering calibration, production operation]
+        reason: Locked D-Flow FM runtime passes source-controlled synthetic 1D cases; no real engineering validation exists.
       - feature: STEADY_1D
-        status: UNVERIFIED
-        benchmark_ids: []
+        production_status: UNVERIFIED
+        synthetic_status: NOT_ACCEPTED
+        production_eligible: false
         reason: No Dayu steady-flow mapping or runtime benchmark is accepted yet.
       - feature: BRANCHED_NETWORK
-        status: EXPERIMENTAL
-        benchmark_ids: []
-        reason: Explicit projected nodes, directed branches, mesh, and cross-section locations are mapped, without external-runtime acceptance evidence.
+        production_status: EXPERIMENTAL
+        synthetic_status: ACCEPTED
+        production_eligible: false
+        evidence_class: SYNTHETIC_NUMERICAL_ONLY
+        accepted_cases: [DF01]
+        reason: Explicit projected nodes, directed branches, mesh and cross-section locations pass synthetic runtime acceptance only.
       - feature: LATERAL_INFLOW
-        status: UNVERIFIED
-        benchmark_ids: []
+        production_status: UNVERIFIED
+        synthetic_status: NOT_ACCEPTED
+        production_eligible: false
         reason: Lateral inflow mapping has not passed an external-runtime benchmark.
       - feature: COMBINED_BOUNDARIES
-        status: UNVERIFIED
-        benchmark_ids: []
+        production_status: UNVERIFIED
+        synthetic_status: NOT_ACCEPTED
+        production_eligible: false
         reason: Combined boundary semantics have not passed an external-runtime benchmark.
       - feature: WEIR
-        status: UNVERIFIED
-        benchmark_ids: []
+        production_status: UNVERIFIED
+        synthetic_status: NOT_ACCEPTED
+        production_eligible: false
         reason: No Dayu-to-D-Flow FM weir mapping has passed a controlled benchmark.
       - feature: CULVERT
-        status: UNVERIFIED
-        benchmark_ids: []
+        production_status: UNVERIFIED
+        synthetic_status: NOT_ACCEPTED
+        production_eligible: false
         reason: The earlier serialization spike is not accepted runtime evidence.
       - feature: BRIDGE
-        status: UNVERIFIED
-        benchmark_ids: []
+        production_status: UNVERIFIED
+        synthetic_status: NOT_ACCEPTED
+        production_eligible: false
         reason: The earlier serialization spike is not accepted runtime evidence.
       - feature: GATE
-        status: EXPERIMENTAL
-        benchmark_ids: []
-        reason: Explicit vertical-underflow Orifice and complete GeneralStructure mappings are typed and fail closed on missing engineering data; no runtime benchmark is accepted.
+        production_status: EXPERIMENTAL
+        synthetic_status: ACCEPTED
+        production_eligible: false
+        evidence_class: SYNTHETIC_NUMERICAL_ONLY
+        accepted_cases: [G01, G02, G03, GP01, GP02, GP03]
+        supported_subset: [vertical underflow Gate, fixed opening, manual schedule, one scalar water-level rule]
+        unsupported_subset: [multiple Gate priority, production control]
+        reason: Native Gate mapping and the listed synthetic fixed/manual/simple-rule cases pass on the locked runtime.
       - feature: SLUICE
-        status: UNVERIFIED
-        benchmark_ids: []
-        reason: Sluice semantics and native mapping are not implemented in 06A.
+        production_status: UNVERIFIED
+        synthetic_status: NOT_ACCEPTED
+        production_eligible: false
+        reason: Sluice semantics and native mapping are not implemented.
       - feature: PUMP
-        status: EXPERIMENTAL
-        benchmark_ids: []
-        reason: Inline aggregate-capacity Pump mapping with an explicit D-Flow head/reduction curve is typed; unit-count semantics and external runtime remain unverified.
+        production_status: EXPERIMENTAL
+        synthetic_status: ACCEPTED
+        production_eligible: false
+        evidence_class: SYNTHETIC_NUMERICAL_ONLY
+        accepted_cases: [PUMP01, PUMP02, GP01, GP02, GP03, L01]
+        supported_subset: [inline non-staged Pump, fixed aggregate capacity, manual aggregate-capacity schedule, explicit synthetic head-reduction curve]
+        unsupported_subset: [pump_enabled, pump_unit_count, staged Pump, real equipment curve, PLC/SCADA]
+        reason: Native aggregate capacity and actual discharge are independently observed in synthetic runtime cases; unit and equipment semantics remain unsupported.
       - feature: ORIFICE
-        status: EXPERIMENTAL
-        benchmark_ids: []
-        reason: The audited vertical-underflow Gate subset maps to Orifice, but no controlled external-runtime benchmark has passed.
+        production_status: EXPERIMENTAL
+        synthetic_status: ACCEPTED
+        production_eligible: false
+        evidence_class: SYNTHETIC_NUMERICAL_ONLY
+        accepted_cases: [G01, G02, G03, GP01, GP02, GP03]
+        reason: The audited vertical-underflow Gate subset maps to native Orifice and passes listed synthetic cases.
       - feature: DAM
-        status: UNVERIFIED
-        benchmark_ids: []
-        reason: Dam and breach semantics are not part of the 06A adapter contract.
+        production_status: UNVERIFIED
+        synthetic_status: NOT_ACCEPTED
+        production_eligible: false
+        reason: Dam and breach semantics are not part of the adapter contract.
       - feature: STORAGE_LINK
-        status: UNVERIFIED
-        benchmark_ids: []
-        reason: Storage linkage semantics are not part of the 06A adapter contract.
+        production_status: UNVERIFIED
+        synthetic_status: NOT_ACCEPTED
+        production_eligible: false
+        reason: Storage linkage semantics are not part of the adapter contract.
       - feature: COMPOUND
-        status: UNVERIFIED
-        benchmark_ids: []
+        production_status: UNVERIFIED
+        synthetic_status: NOT_ACCEPTED
+        production_eligible: false
         reason: Compound structures require a future explicit mapping and benchmark.
       - feature: CASIER
-        status: UNVERIFIED
-        benchmark_ids: []
+        production_status: UNVERIFIED
+        synthetic_status: NOT_ACCEPTED
+        production_eligible: false
         reason: No Dayu storage-area mapping has passed a controlled benchmark.
       - feature: DYNAMIC_CONTROL
-        status: EXPERIMENTAL
-        benchmark_ids: []
-        reason: Manual schedules compile to exact audited BMI targets with explicit initial state; coupled runtime execution remains blocked.
+        production_status: EXPERIMENTAL
+        synthetic_status: ACCEPTED
+        production_eligible: false
+        evidence_class: SYNTHETIC_NUMERICAL_ONLY
+        accepted_cases: [DRTC-S01, G02, G03, PUMP02, GP02, GP03]
+        supported_subset: [one Gate schedule, one Pump capacity schedule, joint Gate/Pump schedules, one Gate scalar threshold, one Gate threshold plus an independent Pump schedule]
+        unsupported_subset: [pump_enabled, pump_unit_count, Pump threshold, priority arbitration, hold, cooldown]
+        reason: FBC drives exact audited Gate and aggregate Pump BMI targets in the listed synthetic cases.
       - feature: D_RTC
-        status: UNVERIFIED
-        benchmark_ids: []
-        reason: DIMR/FBC identities are pinned, but exact inactive-state, hysteresis, hold, cooldown, priority, and conflict semantics have no accepted runtime proof.
+        production_status: UNVERIFIED
+        synthetic_status: ACCEPTED
+        production_eligible: false
+        evidence_class: SYNTHETIC_NUMERICAL_ONLY
+        accepted_cases: [DRTC-S01, G03, GP03]
+        supported_subset: [single scalar Gate threshold, explicit frozen fallback, independent Pump capacity schedule]
+        unsupported_subset: [hysteresis, minimum hold, cooldown, multiple-rule priority, Pump threshold]
+        reason: The minimal Gate threshold subset is accepted on the pinned FBC runtime; all wider D-RTC semantics remain fail closed.

@@ -320,7 +320,7 @@ class DispatchTraceRecord(StrictControlledModel):
     ]
     requested_value: FiniteFloat
     resolved_value: FiniteFloat
-    applied_value: FiniteFloat
+    applied_value: FiniteFloat | None = None
     unit: Literal["m", "ratio", "boolean_0_or_1", "count", "m3/s"]
 
 
@@ -369,6 +369,16 @@ class ControlledStructureResult(StrictControlledModel):
     downstream_water_level_m: FiniteFloat | None = None
     discharge_m3s: FiniteFloat | None = None
     active_unit_count: int | None = Field(default=None, ge=0)
+    active_stage: int | None = Field(default=None, ge=0)
+    requested_capacity_m3s: FiniteFloat | None = Field(default=None, ge=0)
+    resolved_capacity_m3s: FiniteFloat | None = Field(default=None, ge=0)
+    native_applied_capacity_m3s: FiniteFloat | None = Field(default=None, ge=0)
+    actual_discharge_m3s: FiniteFloat | None = None
+    intake_water_level_m: FiniteFloat | None = None
+    outlet_water_level_m: FiniteFloat | None = None
+    structure_head_difference_m: FiniteFloat | None = None
+    pump_head_m: FiniteFloat | None = None
+    pump_reduction_factor: FiniteFloat | None = Field(default=None, ge=0, le=1)
 
 
 class RuntimeProvenanceRecord(StrictControlledModel):

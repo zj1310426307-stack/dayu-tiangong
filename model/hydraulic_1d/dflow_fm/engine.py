@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from hashlib import sha256
 import json
+from math import isclose
 from pathlib import Path
 from time import monotonic
 from typing import Any
@@ -20,6 +21,7 @@ from model.control.drtc import (
     DRTCFBCArtifactWriter,
     DRTCGateThresholdSpec,
     DRTCManualGateScheduleSpec,
+    DRTCManualPumpScheduleSpec,
     controlled_runtime_acceptance,
 )
 from model.control.observation_bridge import ObservationBinding
@@ -89,6 +91,17 @@ CONTROL_COMPILER_BUNDLE_VERSION = (
 
 def _sha256(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class _ControlledStructureContract:
+    gate_specs: tuple[GateHydraulicSpec, ...]
+    pump_specs: tuple[PumpHydraulicSpec, ...]
+    bindings: tuple[ActuatorControlBinding, ...]
+    initial_states: tuple[InitialActuatorState, ...]
+    manual: HydraulicControlCompileReport
+    rules: tuple[ThresholdRule, ...]
+    observations: tuple[ObservationBinding, ...]
 
 
 class DFlowFMEngine(ControlledHydraulic1DEngine):
@@ -289,17 +302,10 @@ class DFlowFMEngine(ControlledHydraulic1DEngine):
             opening *= float(binding.gate_height_m)
         return float(binding.reference_level_m) + opening
 
-    def _gate_contract(
+    def _controlled_structure_contract(
         self,
         run: ControlledHydraulic1DRun,
-    ) -> tuple[
-        GateHydraulicSpec,
-        ActuatorControlBinding,
-        InitialActuatorState,
-        HydraulicControlCompileReport,
-        tuple[ThresholdRule, ...],
-        tuple[ObservationBinding, ...],
-    ]:
+    ) -> _ControlledStructureContract:
         payload = self._payload(run)
         gate_specs = tuple(
             GateHydraulicSpec.model_validate(item)
@@ -309,39 +315,52 @@ class DFlowFMEngine(ControlledHydraulic1DEngine):
             PumpHydraulicSpec.model_validate(item)
             for item in payload.get("pump_hydraulic_specs", [])
         )
-        if len(gate_specs) != 1 or pump_specs:
-            raise Hydraulic1DValidationError(
-                "CONTROLLED_STRUCTURE_SUBSET_UNSUPPORTED",
-                "the accepted coupled subset requires exactly one Gate and no Pump",
-                field_path="hydraulic_structure_specs",
-            )
-        binding = ActuatorControlBinding.model_validate(
-            next(
-                (
-                    item
-                    for item in payload.get("control_bindings", [])
-                    if item.get("structure_type") == "gate"
-                ),
-                None,
-            )
-        )
-        initial = InitialActuatorState.model_validate(
-            next(
-                (
-                    item
-                    for item in payload.get("initial_actuator_state", [])
-                    if item.get("structure_type") == "gate"
-                ),
-                None,
-            )
-        )
         if (
-            binding.native_structure_id != gate_specs[0].structure_id
-            or binding.structure_id != initial.structure_id
+            not gate_specs and not pump_specs
+            or len(gate_specs) > 1
+            or len(pump_specs) > 1
         ):
             raise Hydraulic1DValidationError(
-                "CONTROLLED_GATE_IDENTITY_MISMATCH",
-                "Gate specification, actuator binding and initial state do not match",
+                "CONTROLLED_STRUCTURE_SUBSET_UNSUPPORTED",
+                "the accepted subset requires one Gate, one Pump, or one of each",
+                field_path="hydraulic_structure_specs",
+            )
+        bindings = tuple(
+            ActuatorControlBinding.model_validate(item)
+            for item in payload.get("control_bindings", [])
+        )
+        initial_states = tuple(
+            InitialActuatorState.model_validate(item)
+            for item in payload.get("initial_actuator_state", [])
+        )
+        expected_native = {
+            "gate": {item.structure_id for item in gate_specs},
+            "pump": {item.structure_id for item in pump_specs},
+        }
+        if len(bindings) != len(gate_specs) + len(pump_specs):
+            raise Hydraulic1DValidationError(
+                "CONTROLLED_BINDING_SET_INVALID",
+                "each controlled Gate/Pump requires exactly one native actuator binding",
+            )
+        identities: set[tuple[str, int]] = set()
+        for binding in bindings:
+            identity = (binding.structure_type, binding.structure_id)
+            if (
+                identity in identities
+                or binding.native_structure_id not in expected_native[binding.structure_type]
+            ):
+                raise Hydraulic1DValidationError(
+                    "CONTROLLED_STRUCTURE_IDENTITY_MISMATCH",
+                    "structure specification and actuator binding identities do not match",
+                )
+            identities.add(identity)
+        initial_identities = {
+            (item.structure_type, item.structure_id) for item in initial_states
+        }
+        if len(initial_states) != len(identities) or initial_identities != identities:
+            raise Hydraulic1DValidationError(
+                "CONTROLLED_INITIAL_STATE_SET_INVALID",
+                "each controlled Gate/Pump requires one matching explicit initial state",
             )
         manual = HydraulicControlCompileReport.model_validate(
             payload.get("manual_control_report")
@@ -370,10 +389,18 @@ class DFlowFMEngine(ControlledHydraulic1DEngine):
                 "bindings", []
             )
         )
-        return gate_specs[0], binding, initial, manual, rules, observations
+        return _ControlledStructureContract(
+            gate_specs=gate_specs,
+            pump_specs=pump_specs,
+            bindings=bindings,
+            initial_states=initial_states,
+            manual=manual,
+            rules=rules,
+            observations=observations,
+        )
 
     def validate_controlled_model(self, run: ControlledHydraulic1DRun) -> None:
-        """Validate the exact Gate-only subset against committed native evidence."""
+        """Validate the exact Gate/Pump subset against committed native evidence."""
 
         if (
             run.engine_selection.engine_id != self.engine_id
@@ -403,28 +430,31 @@ class DFlowFMEngine(ControlledHydraulic1DEngine):
                 code="DFLOW_RUNTIME_BLOCKED",
             )
         self.builder.validator.validate_base(run.hydraulic_model)
-        gate, binding, initial, manual, rules, observations = self._gate_contract(run)
-        del gate, initial
-        if manual.status != "COMPILED":
+        contract = self._controlled_structure_contract(run)
+        if contract.manual.status != "COMPILED":
             raise Hydraulic1DValidationError(
                 "CONTROLLED_MANUAL_COMPILE_INVALID",
                 "frozen manual control report is not compiled",
             )
         gate_commands = tuple(
-            item for item in manual.commands if item.structure_type == "gate"
+            item for item in contract.manual.commands if item.structure_type == "gate"
         )
-        if any(item.structure_type != "gate" for item in manual.commands):
-            raise Hydraulic1DValidationError(
-                "PUMP_NATIVE_CONTROL_LIMITED",
-                "Pump control is not part of the accepted native subset",
-            )
-        if len(rules) > 1 or (rules and gate_commands):
+        if len(contract.rules) > 1 or (contract.rules and gate_commands):
             raise Hydraulic1DValidationError(
                 "CONTROL_CONFLICT_UNSUPPORTED",
                 "one Gate rule cannot be combined with a manual Gate schedule",
             )
-        if rules:
-            rule = rules[0]
+        if contract.rules:
+            rule = contract.rules[0]
+            gate_bindings = tuple(
+                item for item in contract.bindings if item.structure_type == "gate"
+            )
+            if len(gate_bindings) != 1:
+                raise Hydraulic1DValidationError(
+                    "CONTROLLED_GATE_BINDING_MISSING",
+                    "Gate rule requires one exact native actuator binding",
+                )
+            binding = gate_bindings[0]
             if (
                 rule.hysteresis != 0
                 or rule.minimum_hold_seconds != 0
@@ -442,7 +472,7 @@ class DFlowFMEngine(ControlledHydraulic1DEngine):
                 )
             matches = tuple(
                 item
-                for item in observations
+                for item in contract.observations
                 if item.observation_type == rule.observation_type
                 and item.observation_object_id == rule.observation_object_id
             )
@@ -460,7 +490,7 @@ class DFlowFMEngine(ControlledHydraulic1DEngine):
         """Emit only the accepted FBC schedule or threshold artifact bundle."""
 
         self.validate_controlled_model(run)
-        gate, binding, initial, manual, rules, observations = self._gate_contract(run)
+        contract = self._controlled_structure_contract(run)
         root = Path(workspace).resolve()
         writer = DRTCFBCArtifactWriter()
         common = {
@@ -472,43 +502,137 @@ class DFlowFMEngine(ControlledHydraulic1DEngine):
                 run.dispatch_plan_snapshot.control_observation_contract.sampling_interval_seconds
             ),
         }
-        if rules:
-            rule = rules[0]
+        if contract.rules:
+            rule = contract.rules[0]
+            binding = next(
+                item for item in contract.bindings if item.structure_type == "gate"
+            )
+            initial = next(
+                item for item in contract.initial_states if item.structure_type == "gate"
+            )
             observation = next(
                 item
-                for item in observations
+                for item in contract.observations
                 if item.observation_type == rule.observation_type
                 and item.observation_object_id == rule.observation_object_id
             )
-            artifacts = writer.write_threshold(
-                **common,
-                spec=DRTCGateThresholdSpec(
-                    rule_id=f"gate_rule_{rule.id or 1}",
-                    observation_bmi_variable=observation.bmi_variables()[0],
-                    actuator_bmi_variable=binding.bmi_variable,
-                    operator=rule.operator,
-                    threshold=float(rule.threshold),
-                    target_native_value=self._native_target(
-                        binding, float(rule.action_template["target_value"])
-                    ),
-                    fallback_native_value=self._native_target(
-                        binding, float(initial.gate_opening_m)
-                    ),
+            threshold_spec = DRTCGateThresholdSpec(
+                rule_id=f"gate_rule_{rule.id or 1}",
+                observation_bmi_variable=observation.bmi_variables()[0],
+                actuator_bmi_variable=binding.bmi_variable,
+                operator=rule.operator,
+                threshold=float(rule.threshold),
+                target_native_value=self._native_target(
+                    binding, float(rule.action_template["target_value"])
+                ),
+                fallback_native_value=self._native_target(
+                    binding, float(initial.gate_opening_m)
                 ),
             )
+            pump_schedules: list[DRTCManualPumpScheduleSpec] = []
+            for pump_binding in (
+                item for item in contract.bindings if item.structure_type == "pump"
+            ):
+                pump = next(
+                    item
+                    for item in contract.pump_specs
+                    if item.structure_id == pump_binding.native_structure_id
+                )
+                pump_initial = next(
+                    item
+                    for item in contract.initial_states
+                    if item.structure_type == "pump"
+                    and item.structure_id == pump_binding.structure_id
+                )
+                if pump.aggregate_capacity_m3s.value is None:
+                    raise Hydraulic1DValidationError(
+                        "PUMP_CAPACITY_UNKNOWN",
+                        "Pump aggregate capacity is unavailable",
+                    )
+                initial_capacity = (
+                    float(pump.aggregate_capacity_m3s.value)
+                    if pump_initial.pump_enabled
+                    else 0.0
+                )
+                records: dict[float, float] = {0.0: initial_capacity}
+                for command in contract.manual.commands:
+                    if (
+                        command.structure_type == "pump"
+                        and command.structure_id == pump_binding.structure_id
+                    ):
+                        records[float(command.time_seconds)] = float(
+                            command.native_target_value
+                        )
+                pump_schedules.append(
+                    DRTCManualPumpScheduleSpec(
+                        schedule_id=f"pump_schedule_{pump_binding.structure_id}",
+                        actuator_bmi_variable=pump_binding.bmi_variable,
+                        records=tuple(sorted(records.items())),
+                    )
+                )
+            artifacts = (
+                writer.write_gate_threshold_with_schedules(
+                    **common,
+                    threshold_spec=threshold_spec,
+                    schedule_specs=tuple(pump_schedules),
+                )
+                if pump_schedules
+                else writer.write_threshold(**common, spec=threshold_spec)
+            )
         else:
-            records: dict[float, float] = {
-                0.0: self._native_target(binding, float(initial.gate_opening_m))
+            schedules: list[DRTCManualGateScheduleSpec | DRTCManualPumpScheduleSpec] = []
+            pumps = {item.structure_id: item for item in contract.pump_specs}
+            initial_by_identity = {
+                (item.structure_type, item.structure_id): item
+                for item in contract.initial_states
             }
-            for command in manual.commands:
-                records[float(command.time_seconds)] = float(command.native_target_value)
-            artifacts = writer.write_schedule(
+            for binding in contract.bindings:
+                initial = initial_by_identity[(binding.structure_type, binding.structure_id)]
+                if binding.structure_type == "gate":
+                    initial_native = self._native_target(
+                        binding, float(initial.gate_opening_m)
+                    )
+                else:
+                    pump = pumps[binding.native_structure_id]
+                    if pump.aggregate_capacity_m3s.value is None:
+                        raise Hydraulic1DValidationError(
+                            "PUMP_CAPACITY_UNKNOWN",
+                            "Pump aggregate capacity is unavailable",
+                        )
+                    initial_native = (
+                        float(pump.aggregate_capacity_m3s.value)
+                        if initial.pump_enabled
+                        else 0.0
+                    )
+                records: dict[float, float] = {0.0: initial_native}
+                for command in contract.manual.commands:
+                    if (
+                        command.structure_type == binding.structure_type
+                        and command.structure_id == binding.structure_id
+                    ):
+                        records[float(command.time_seconds)] = float(
+                            command.native_target_value
+                        )
+                schedule_id = f"{binding.structure_type}_schedule_{binding.structure_id}"
+                if binding.structure_type == "gate":
+                    schedules.append(
+                        DRTCManualGateScheduleSpec(
+                            schedule_id=schedule_id,
+                            actuator_bmi_variable=binding.bmi_variable,
+                            records=tuple(sorted(records.items())),
+                        )
+                    )
+                else:
+                    schedules.append(
+                        DRTCManualPumpScheduleSpec(
+                            schedule_id=schedule_id,
+                            actuator_bmi_variable=binding.bmi_variable,
+                            records=tuple(sorted(records.items())),
+                        )
+                    )
+            artifacts = writer.write_schedules(
                 **common,
-                spec=DRTCManualGateScheduleSpec(
-                    schedule_id=f"gate_schedule_{binding.structure_id}",
-                    actuator_bmi_variable=binding.bmi_variable,
-                    records=tuple(sorted(records.items())),
-                ),
+                specs=tuple(schedules),
             )
         paths = (
             artifacts.dimr_config,
@@ -537,13 +661,13 @@ class DFlowFMEngine(ControlledHydraulic1DEngine):
         run: ControlledHydraulic1DRun,
         context: Hydraulic1DExecutionContext,
     ) -> ControlledHydraulicResult:
-        """Run the accepted DIMR + D-Flow FM + FBC Gate path in one job."""
+        """Run the accepted DIMR + D-Flow FM + FBC Gate/Pump path in one job."""
 
         self.validate_controlled_model(run)
         available, detail = self.runtime.availability()
         if not available:
             raise Hydraulic1DRuntimeUnavailable(detail, code="DFLOW_RUNTIME_BLOCKED")
-        gate, _, _, _, _, _ = self._gate_contract(run)
+        contract = self._controlled_structure_contract(run)
         workspace = DFlowJobWorkspace.create(
             context.workspace_root or self.config.workspace_root,
             simulation_id=run.hydraulic_model.simulation_id,
@@ -554,7 +678,8 @@ class DFlowFMEngine(ControlledHydraulic1DEngine):
         prepared = self.builder.build(
             run.hydraulic_model,
             workspace,
-            gate_specs=(gate,),
+            gate_specs=contract.gate_specs,
+            pump_specs=contract.pump_specs,
         )
         compiled = self.compile_control(run, workspace.path)
         if context.progress_callback:
@@ -675,16 +800,55 @@ class DFlowFMEngine(ControlledHydraulic1DEngine):
         runtime_provenance: dict[str, Any],
         compiled: CompiledControl,
     ) -> ControlledHydraulicResult:
-        gate, binding, initial, manual, rules, _ = self._gate_contract(run)
+        contract = self._controlled_structure_contract(run)
         hydraulic = self.parser.parse(
             run.hydraulic_model,
             prepared,
             runtime_seconds=runtime_seconds,
         )
-        samples, balance = self.parser.parse_gate_and_mass_balance(
-            prepared,
-            expected_structure_id=gate.structure_id,
-        )
+        gate_samples: tuple[Any, ...] = ()
+        pump_samples: tuple[Any, ...] = ()
+        balances: list[Any] = []
+        if contract.gate_specs:
+            gate_samples, gate_balance = self.parser.parse_gate_and_mass_balance(
+                prepared,
+                expected_structure_id=contract.gate_specs[0].structure_id,
+            )
+            balances.append(gate_balance)
+        if contract.pump_specs:
+            pump_samples, pump_balance = self.parser.parse_pump_and_mass_balance(
+                prepared,
+                expected_structure_id=contract.pump_specs[0].structure_id,
+            )
+            balances.append(pump_balance)
+        balance = balances[0]
+        if len(balances) == 2:
+            for field in (
+                "inflow_m3",
+                "outflow_m3",
+                "storage_change_m3",
+                "residual_m3",
+                "relative_residual",
+                "native_max_abs_volume_error_m3",
+            ):
+                if not isclose(
+                    float(getattr(balances[0], field)),
+                    float(getattr(balances[1], field)),
+                    rel_tol=0.0,
+                    abs_tol=1e-9,
+                ):
+                    raise Hydraulic1DResultError(
+                        "Gate/Pump parsers returned inconsistent global balance",
+                        code="DFLOW_RESULT_FLOW_IDENTITY_INVALID",
+                    )
+            balance = type(balance)(
+                **{
+                    **asdict(balance),
+                    "structure_transfer_m3": sum(
+                        item.structure_transfer_m3 for item in balances
+                    ),
+                }
+            )
         trace_file = prepared.job_workspace.control_dir / "rtc" / "xml_dir" / "timeseries_0000.csv"
         if not trace_file.is_file():
             raise Hydraulic1DResultError(
@@ -706,13 +870,19 @@ class DFlowFMEngine(ControlledHydraulic1DEngine):
                 "artifacts": ("control/rtc/xml_dir/timeseries_0000.csv",),
             }
         )
-        manual_commands = tuple(
-            item for item in manual.commands if item.structure_type == "gate"
-        )
+        manual_commands = contract.manual.commands
+        binding_by_kind = {item.structure_type: item for item in contract.bindings}
+        initial_by_kind = {
+            item.structure_type: item for item in contract.initial_states
+        }
 
-        def logical_for(sample: Any) -> tuple[float, float, str, int | None, str, str]:
-            if rules:
-                rule = rules[0]
+        def gate_logical_for(
+            sample: Any,
+        ) -> tuple[float, float, str, int | None, str, str]:
+            binding = binding_by_kind["gate"]
+            initial = initial_by_kind["gate"]
+            if contract.rules:
+                rule = contract.rules[0]
                 target = float(rule.action_template["target_value"])
                 fallback = float(initial.gate_opening_m)
                 target_native = self._native_target(binding, target)
@@ -723,7 +893,8 @@ class DFlowFMEngine(ControlledHydraulic1DEngine):
                 (
                     item
                     for item in reversed(manual_commands)
-                    if float(item.time_seconds) <= sample.time_seconds + 1e-8
+                    if item.structure_type == "gate"
+                    and float(item.time_seconds) <= sample.time_seconds + 1e-8
                 ),
                 None,
             )
@@ -735,8 +906,10 @@ class DFlowFMEngine(ControlledHydraulic1DEngine):
         events: list[ControlledEventRecord] = []
         structures: list[ControlledStructureResult] = []
         previous_opening: float | None = None
-        for sample in samples:
-            requested, resolved, source_type, source_id, command_type, unit = logical_for(sample)
+        for sample in gate_samples:
+            gate = contract.gate_specs[0]
+            binding = binding_by_kind["gate"]
+            requested, resolved, source_type, source_id, command_type, unit = gate_logical_for(sample)
             applied = (
                 sample.actual_opening_m / float(binding.gate_height_m)
                 if command_type == "gate_opening_ratio"
@@ -784,6 +957,98 @@ class DFlowFMEngine(ControlledHydraulic1DEngine):
                     )
                 )
                 previous_opening = sample.actual_opening_m
+        if pump_samples:
+            pump = contract.pump_specs[0]
+            binding = binding_by_kind["pump"]
+            initial = initial_by_kind["pump"]
+            if pump.aggregate_capacity_m3s.value is None:
+                raise Hydraulic1DResultError(
+                    "frozen Pump capacity is unavailable while parsing results",
+                    code="DFLOW_RESULT_IDENTITY_MISMATCH",
+                )
+            initial_capacity = (
+                float(pump.aggregate_capacity_m3s.value)
+                if initial.pump_enabled
+                else 0.0
+            )
+            pump_commands = tuple(
+                item for item in manual_commands if item.structure_type == "pump"
+            )
+            previous_capacity: float | None = None
+            for sample in pump_samples:
+                matched = next(
+                    (
+                        item
+                        for item in reversed(pump_commands)
+                        if float(item.time_seconds) <= sample.time_seconds + 1e-8
+                    ),
+                    None,
+                )
+                if matched is None:
+                    requested = resolved = initial_capacity
+                    source_type = "initial_state"
+                    source_id = None
+                else:
+                    requested = float(matched.requested_value)
+                    resolved = float(matched.resolved_value)
+                    source_type = "manual_schedule"
+                    source_id = matched.source_id
+                applied = sample.native_applied_capacity_m3s
+                structures.append(
+                    ControlledStructureResult(
+                        time_seconds=sample.time_seconds,
+                        structure_type="pump",
+                        asset_id=binding.structure_id,
+                        hydraulic_structure_id=pump.structure_id,
+                        requested_value=requested,
+                        resolved_value=resolved,
+                        applied_value=applied,
+                        upstream_water_level_m=sample.intake_water_level_m,
+                        downstream_water_level_m=sample.outlet_water_level_m,
+                        discharge_m3s=sample.actual_discharge_m3s,
+                        active_unit_count=None,
+                        active_stage=sample.active_stage,
+                        requested_capacity_m3s=requested,
+                        resolved_capacity_m3s=resolved,
+                        native_applied_capacity_m3s=applied,
+                        actual_discharge_m3s=sample.actual_discharge_m3s,
+                        intake_water_level_m=sample.intake_water_level_m,
+                        outlet_water_level_m=sample.outlet_water_level_m,
+                        structure_head_difference_m=(
+                            sample.structure_head_difference_m
+                        ),
+                        pump_head_m=sample.pump_head_m,
+                        pump_reduction_factor=sample.reduction_factor,
+                    )
+                )
+                if previous_capacity is None or abs(applied - previous_capacity) > 1e-8:
+                    traces.append(
+                        DispatchTraceRecord(
+                            time_seconds=sample.time_seconds,
+                            source_type=source_type,
+                            source_id=source_id,
+                            structure_type="pump",
+                            asset_id=binding.structure_id,
+                            hydraulic_structure_id=pump.structure_id,
+                            command_type="pump_target_flow",
+                            requested_value=requested,
+                            resolved_value=resolved,
+                            applied_value=applied,
+                            unit="m3/s",
+                        )
+                    )
+                    events.append(
+                        ControlledEventRecord(
+                            time_seconds=sample.time_seconds,
+                            event_type="pump_capacity_transition",
+                            outcome="APPLIED",
+                            reason_code="FBC_NATIVE_CAPACITY_OBSERVED",
+                            structure_type="pump",
+                            asset_id=binding.structure_id,
+                            hydraulic_structure_id=pump.structure_id,
+                        )
+                    )
+                    previous_capacity = applied
         records = []
         for component, key in (
             ("dflowfm", "dflowfm"),

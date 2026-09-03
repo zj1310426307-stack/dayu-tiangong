@@ -13,6 +13,7 @@ from model.control.drtc import (
     DRTCFBCArtifactWriter,
     DRTCGateThresholdSpec,
     DRTCManualGateScheduleSpec,
+    DRTCManualPumpScheduleSpec,
 )
 
 
@@ -113,6 +114,121 @@ def test_manual_schedule_uses_block_table_and_no_flow_feedback(tmp_path: Path) -
     }
 
 
+def test_manual_pump_schedule_uses_exact_capacity_target(tmp_path: Path) -> None:
+    artifacts = DRTCFBCArtifactWriter().write_pump_schedule(
+        job_root=tmp_path,
+        dflow_input_file="model.mdu",
+        start=datetime(2020, 1, 1),
+        duration_seconds=600,
+        coupling_step_seconds=60,
+        spec=DRTCManualPumpScheduleSpec(
+            schedule_id="pump_schedule_1",
+            actuator_bmi_variable="pumps/pump-1/capacity",
+            records=((0, 0.0), (180, 1.0), (420, 0.4)),
+        ),
+    )
+
+    dimr_text = artifacts.dimr_config.read_text(encoding="utf-8")
+    assert "pumps/pump-1/capacity" in dimr_text
+    assert "flow2rtc" not in dimr_text
+    assert "rtc2flow" in dimr_text
+    assert "m^3/s" in {
+        item.text for item in _local(ET.parse(artifacts.data_config).getroot(), "unit")
+    }
+    manifest = json.loads(artifacts.manifest.read_text(encoding="utf-8"))
+    assert manifest["semantic_contract"]["kind"] == "manual_pump_capacity_schedule"
+
+
+def test_joint_gate_pump_schedules_are_independent(tmp_path: Path) -> None:
+    artifacts = DRTCFBCArtifactWriter().write_schedules(
+        job_root=tmp_path,
+        dflow_input_file="model.mdu",
+        start=datetime(2020, 1, 1),
+        duration_seconds=600,
+        coupling_step_seconds=60,
+        specs=(
+            DRTCManualGateScheduleSpec(
+                schedule_id="gate_schedule_1",
+                actuator_bmi_variable="orifices/gate-1/gateLowerEdgeLevel",
+                records=((0, 2.0), (300, 2.5)),
+            ),
+            DRTCManualPumpScheduleSpec(
+                schedule_id="pump_schedule_1",
+                actuator_bmi_variable="pumps/pump-1/capacity",
+                records=((0, 0.0), (180, 1.0)),
+            ),
+        ),
+    )
+
+    dimr_text = artifacts.dimr_config.read_text(encoding="utf-8")
+    assert "orifices/gate-1/gateLowerEdgeLevel" in dimr_text
+    assert "pumps/pump-1/capacity" in dimr_text
+    tools = ET.parse(artifacts.tools_config).getroot()
+    assert len(_local(tools, "timeRelative")) == 2
+    manifest = json.loads(artifacts.manifest.read_text(encoding="utf-8"))
+    assert manifest["semantic_contract"]["kind"] == "manual_structure_schedules"
+    assert {item["structure_type"] for item in manifest["semantic_contract"]["schedules"]} == {
+        "gate",
+        "pump",
+    }
+
+
+def test_gate_threshold_and_pump_schedule_share_one_native_component(
+    tmp_path: Path,
+) -> None:
+    artifacts = DRTCFBCArtifactWriter().write_gate_threshold_with_schedules(
+        job_root=tmp_path,
+        dflow_input_file="model.mdu",
+        start=datetime(2020, 1, 1),
+        duration_seconds=600,
+        coupling_step_seconds=60,
+        threshold_spec=DRTCGateThresholdSpec(
+            rule_id="gate_rule_1",
+            observation_bmi_variable="observations/section-up/water_level",
+            actuator_bmi_variable="orifices/gate-1/gateLowerEdgeLevel",
+            operator=">=",
+            threshold=2.01,
+            target_native_value=0.5,
+            fallback_native_value=2.0,
+        ),
+        schedule_specs=(
+            DRTCManualPumpScheduleSpec(
+                schedule_id="pump_schedule_1",
+                actuator_bmi_variable="pumps/pump-1/capacity",
+                records=((0, 0.0), (180, 1.0), (420, 0.4)),
+            ),
+        ),
+    )
+
+    dimr_text = artifacts.dimr_config.read_text(encoding="utf-8")
+    assert "flow2rtc" in dimr_text
+    assert "orifices/gate-1/gateLowerEdgeLevel" in dimr_text
+    assert "pumps/pump-1/capacity" in dimr_text
+    tools = ET.parse(artifacts.tools_config).getroot()
+    assert len(_local(tools, "standard")) == 1
+    assert len(_local(tools, "timeRelative")) == 1
+    manifest = json.loads(artifacts.manifest.read_text(encoding="utf-8"))
+    assert manifest["semantic_contract"]["kind"] == (
+        "gate_threshold_with_manual_schedules"
+    )
+    assert manifest["semantic_contract"]["schedules"][0]["structure_type"] == "pump"
+
+
+def test_pump_schedule_rejects_uppercase_or_negative_capacity() -> None:
+    with pytest.raises(ValueError, match="aggregate Pump capacity"):
+        DRTCManualPumpScheduleSpec(
+            schedule_id="pump_schedule_1",
+            actuator_bmi_variable="pumps/pump-1/Capacity",
+            records=((0, 0.0),),
+        )
+    with pytest.raises(ValueError, match="non-negative"):
+        DRTCManualPumpScheduleSpec(
+            schedule_id="pump_schedule_1",
+            actuator_bmi_variable="pumps/pump-1/capacity",
+            records=((0, -0.1),),
+        )
+
+
 @pytest.mark.parametrize(
     "spec",
     [
@@ -126,7 +242,7 @@ def test_specs_reject_unreviewed_native_targets(spec: type[object]) -> None:
             spec(
                 rule_id="r1",
                 observation_bmi_variable="observations/up/water_level",
-                actuator_bmi_variable="pumps/p1/Capacity",
+                actuator_bmi_variable="pumps/p1/capacity",
                 operator=">",
                 threshold=1,
                 target_native_value=1,
@@ -135,6 +251,6 @@ def test_specs_reject_unreviewed_native_targets(spec: type[object]) -> None:
         else:
             spec(
                 schedule_id="s1",
-                actuator_bmi_variable="pumps/p1/Capacity",
+                actuator_bmi_variable="pumps/p1/capacity",
                 records=((0, 1),),
             )
