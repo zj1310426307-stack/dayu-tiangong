@@ -79,6 +79,7 @@ import {
   updateModelParameter,
   updatePumpRecord,
   updateSimulationCase,
+  updateHydraulicSectionMarkers,
   uploadDataFile,
 } from '../../api/generated/client';
 
@@ -247,6 +248,9 @@ export function CrossSectionsDatabasePage() {
   const [selectedRow, setSelectedRow] = useState<HydraulicSectionRow>();
   const [selected, setSelected] = useState<HydraulicSectionDetail>();
   const [detailLoading, setDetailLoading] = useState(false);
+  const [marker1Sequence, setMarker1Sequence] = useState<number>();
+  const [marker3Sequence, setMarker3Sequence] = useState<number>();
+  const [markerSaving, setMarkerSaving] = useState(false);
   const { data, loading, error, reload } = useRemoteList(() => listHydraulicNetworks(datasetVersionId!), [datasetVersionId], Boolean(datasetVersionId));
   const rows = useMemo<HydraulicSectionRow[]>(() => (data ?? []).flatMap((network) =>
     (network.branches ?? []).flatMap((branch) => (branch.sections ?? []).map((section) => ({
@@ -259,11 +263,19 @@ export function CrossSectionsDatabasePage() {
   useEffect(() => {
     setSelectedRow(undefined);
     setSelected(undefined);
+    setMarker1Sequence(undefined);
+    setMarker3Sequence(undefined);
   }, [datasetVersionId]);
   const selectSection = async (row: HydraulicSectionRow) => {
     setSelectedRow(row);
     setDetailLoading(true);
-    try { setSelected(await getHydraulicSection(row.id)); }
+    try {
+      const detail = await getHydraulicSection(row.id);
+      setSelected(detail);
+      const profile = detail.profiles.find((item) => item.is_active) ?? detail.profiles[0];
+      setMarker1Sequence(profile?.points.find((point) => point.marker_type === 'left_levee' || point.marker_type === 'left_bank')?.sequence);
+      setMarker3Sequence(profile?.points.find((point) => point.marker_type === 'right_levee' || point.marker_type === 'right_bank')?.sequence);
+    }
     catch (reason) { message.error(reason instanceof Error ? reason.message : '断面详情加载失败'); }
     finally { setDetailLoading(false); }
   };
@@ -279,12 +291,27 @@ export function CrossSectionsDatabasePage() {
   ];
   const activeProfile = selected?.profiles.find((profile) => profile.is_active) ?? selected?.profiles[0];
   const thalwegPoints = activeProfile?.points.filter((point) => point.marker_type === 'thalweg') ?? [];
+  const markerOptions = (activeProfile?.points ?? []).map((point) => ({ value: point.sequence, label: `${point.sequence} · 横距 ${point.distance.toFixed(3)} m · 高程 ${point.elevation.toFixed(3)} m` }));
+  const saveMarkers = async () => {
+    if (!selected) return;
+    if (marker1Sequence !== undefined && marker3Sequence !== undefined && marker1Sequence >= marker3Sequence) {
+      message.warning('Marker 1 必须位于 Marker 3 上游侧（断面点序更小）');
+      return;
+    }
+    setMarkerSaving(true);
+    try {
+      const detail = await updateHydraulicSectionMarkers(selected.id, { marker1_sequence: marker1Sequence ?? null, marker3_sequence: marker3Sequence ?? null, actor: 'web-operator' });
+      setSelected(detail);
+      message.success('Marker 1/3 已保存；该断面的水力查算缓存将重新生成');
+    } catch (reason) { message.error(reason instanceof Error ? reason.message : 'Marker 1/3 保存失败'); }
+    finally { setMarkerSaving(false); }
+  };
   return <div className="data-page">
     <DataPageHeader eyebrow="HYDRAULIC DATABASE / SECTIONS" title="横断面数据库" description="直接读取标准化 Profile / Point 数据；导入列固定为 ID、TOPOID、里程、偏移、高程、river_name。" action={<Space><Button icon={<FileExcelOutlined />} href="/api/v1/hydraulic/templates/cross-section">下载横断面模板</Button><Button type="primary" href="/data-center/hydraulic">导入与校核</Button></Space>} />
     <DatasetWriteNotice />
     <Alert className="data-alert" type="info" showIcon message="断面点已统一归一化" description="横断面组须按上游到下游、里程非递减依次填写；六列模板自动把最低高程点标为深泓点，同高最低点全部保留并提示复核。纵向深泓线不等于横向断面测线，缺少横向测线时方向仍为待确认。" />
     {error && <Alert className="data-alert" type="error" showIcon message={error} />}
-    <div className="data-split"><Card className="data-card" title={`断面清单 · ${rows.length} 条`} extra={<Button icon={<ReloadOutlined />} disabled={!datasetVersionId} onClick={() => void reload()} />}><Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={{ pageSize: 10 }} scroll={{ x: 1050 }} rowClassName={(row) => row.id === selectedRow?.id ? 'ant-table-row-selected' : ''} onRow={(row) => ({ onClick: () => void selectSection(row) })} /></Card><Card loading={detailLoading} className="data-card profile-card" title="断面剖面预览">{selected ? <><Descriptions column={1} size="small" items={[{ key: 'name', label: '断面', children: selected.section_name }, { key: 'branch', label: 'river_name', children: selected.branch_code }, { key: 'station', label: '里程', children: `${selected.chainage.toFixed(3)} m` }, { key: 'topography', label: 'TOPOID', children: activeProfile?.topography_id ?? '—' }, { key: 'datum', label: '高程基准', children: activeProfile?.vertical_datum ?? '—' }, { key: 'thalweg', label: '深泓点', children: thalwegPoints.length ? thalwegPoints.map((point) => `${point.distance.toFixed(3)} / ${point.elevation.toFixed(3)} m`).join('；') : '未标记' }, { key: 'roughness', label: '默认糙率', children: activeProfile?.default_manning_n ?? '—' }, { key: 'points', label: '偏移/高程点数', children: activeProfile?.points.length ?? 0 }]} /><SectionProfileChart section={selected} /></> : <div className="data-empty">从左侧选择一个横断面</div>}</Card></div>
+    <div className="data-split"><Card className="data-card" title={`断面清单 · ${rows.length} 条`} extra={<Button icon={<ReloadOutlined />} disabled={!datasetVersionId} onClick={() => void reload()} />}><Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={{ pageSize: 10 }} scroll={{ x: 1050 }} rowClassName={(row) => row.id === selectedRow?.id ? 'ant-table-row-selected' : ''} onRow={(row) => ({ onClick: () => void selectSection(row) })} /></Card><Card loading={detailLoading} className="data-card profile-card" title="断面剖面预览">{selected ? <><Descriptions column={1} size="small" items={[{ key: 'name', label: '断面', children: selected.section_name }, { key: 'branch', label: 'river_name', children: selected.branch_code }, { key: 'station', label: '里程', children: `${selected.chainage.toFixed(3)} m` }, { key: 'topography', label: 'TOPOID', children: activeProfile?.topography_id ?? '—' }, { key: 'datum', label: '高程基准', children: activeProfile?.vertical_datum ?? '—' }, { key: 'thalweg', label: '深泓点', children: thalwegPoints.length ? thalwegPoints.map((point) => `${point.distance.toFixed(3)} / ${point.elevation.toFixed(3)} m`).join('；') : '未标记' }, { key: 'roughness', label: '默认糙率', children: activeProfile?.default_manning_n ?? '—' }, { key: 'points', label: '偏移/高程点数', children: activeProfile?.points.length ?? 0 }]} /><Card size="small" title="MIKE11 Marker 1/3 有效断面范围" style={{ marginTop: 12 }}><Alert type="info" showIcon message="Marker 1 = Left levee bank，Marker 3 = Right levee bank" description="只对 Marker 1 到 Marker 3 之间的点参与有效断面计算；未设置时保留全断面并显示复核状态。" /><Space wrap style={{ marginTop: 12 }}><span>Marker 1</span><Select allowClear value={marker1Sequence} options={markerOptions} placeholder="选择左堤防点" onChange={setMarker1Sequence} style={{ minWidth: 250 }} /><span>Marker 3</span><Select allowClear value={marker3Sequence} options={markerOptions} placeholder="选择右堤防点" onChange={setMarker3Sequence} style={{ minWidth: 250 }} /><Button type="primary" loading={markerSaving} onClick={() => void saveMarkers()}>保存有效范围</Button></Space></Card><SectionProfileChart section={selected} /></> : <div className="data-empty">从左侧选择一个横断面</div>}</Card></div>
   </div>;
 }
 

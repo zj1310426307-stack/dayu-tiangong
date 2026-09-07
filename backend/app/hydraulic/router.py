@@ -25,6 +25,7 @@ from app.hydraulic.schemas import (
     HydraulicImportCommitRequest,
     HydraulicImportJobRecord,
     HydraulicImportPreview,
+    HydraulicMarkerUpdate,
     HydraulicNetworkRecord,
     HydraulicLocateRequest,
     HydraulicProcessRequest,
@@ -238,6 +239,26 @@ def read_cross_section(section_id: int, session: SessionDependency) -> Hydraulic
     if record is None:
         raise not_found("水动力断面")
     return record
+
+
+@router.put(
+    "/cross-sections/{section_id}/markers",
+    response_model=HydraulicSectionDetail,
+    summary="设置 MIKE11 Marker 1/3 有效断面范围",
+)
+def update_cross_section_markers(
+    section_id: int,
+    payload: HydraulicMarkerUpdate,
+    session: SessionDependency,
+) -> HydraulicSectionDetail:
+    """Set or clear left/right levee markers for the active profile."""
+
+    try:
+        return commit_or_conflict(
+            session, lambda: service.update_section_markers(session, section_id, payload)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get(

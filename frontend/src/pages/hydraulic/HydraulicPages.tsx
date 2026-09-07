@@ -733,7 +733,7 @@ export function HydraulicScenarioResultsPage() {
         eyebrow="PUBLISHED SCENARIO RESULTS"
         title="工程方案成果"
         description="沿河道上游到下游查看已发布的准恒定水面线、河底高程、流速与数值质量证据。"
-        action={<Space><Button onClick={() => navigate('/hydraulic/results')}>任务结果</Button><Button onClick={() => navigate('/gis')}>GIS 一张图</Button></Space>}
+        action={<Space><Button onClick={() => navigate('/hydraulic/results')}>任务结果</Button><Button onClick={() => navigate(`/gis?scenarioBundleId=${encodeURIComponent(bundle?.bundle_id ?? '')}&scenarioId=${encodeURIComponent(selectedScenario?.scenario_id ?? '')}`)}>GIS 一张图</Button></Space>}
       />
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}
       {!loading && !bundle && <Alert type="info" showIcon message="暂无已发布方案成果" description="请先把受控成果包放入平台本地运行存储。" />}
@@ -762,6 +762,20 @@ export function HydraulicScenarioResultsPage() {
             message="成果边界说明"
             description="本成果仅为未率定方案计算：三工况通过时间收敛、质量平衡和沿程流量一致性检查；尚未完成实测资料率定、独立验证、MIKE11 交叉验证或生产工程定级。"
           />
+          <Card className="data-card" title="案例工程文件" style={{ marginBottom: 16 }}>
+            <Text type="secondary">每个步骤的输入、规范化 DTO、交换文件、成果包和 GIS 图层均保存在平台受控案例目录。</Text>
+            <Space wrap style={{ marginTop: 12 }}>
+              {[
+                ['01_river_database_import_gaominghe_EPSG4547.xlsx', '河道数据库导入'],
+                ['02_cross_section_database_import_gaominghe_1985_Marker1-3.xlsx', '横断面数据库导入'],
+                ['03_normalized_payload.json', '规范化输入'],
+                ['04_network.nwk11', 'NWK11'],
+                ['05_cross_sections.xns11', 'XNS11'],
+                ['case_manifest.json', '步骤索引'],
+                ['spatial.geojson', 'GIS 图层'],
+              ].map(([filename, label]) => <Button key={filename} size="small" href={`/api/v1/model/scenario-results/${encodeURIComponent(bundle.bundle_id)}/artifacts/${encodeURIComponent(filename)}`} target="_blank">{label}</Button>)}
+            </Space>
+          </Card>
           <Row gutter={[16, 16]} className="hydraulic-stats scenario-kpis">
             <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="上游流量" value={selectedScenario.q_m3s} precision={2} suffix="m³/s" /></Card></Col>
             <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="下游水位" value={selectedScenario.downstream_h_m} precision={3} suffix="m" /></Card></Col>

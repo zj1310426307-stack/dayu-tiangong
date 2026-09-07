@@ -229,6 +229,26 @@ def test_excel_parser_preserves_all_tied_minimum_points_as_thalweg() -> None:
     )
 
 
+def test_excel_parser_maps_mike11_marker_1_and_3_columns() -> None:
+    """Explicit levee marker columns become the persisted MIKE11 marker enum."""
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "断面 Cross Section"
+    sheet.append(["ID", "TOPOID", "里程", "偏移", "高程", "river_name", "Marker 1", "Marker 3"])
+    sheet.append(["DM1", 1, 0, 0, 18.0, "gaominghe", "x", None])
+    sheet.append([None, None, None, 5, 12.0, None, None, None])
+    sheet.append([None, None, None, 10, 18.5, None, None, "x"])
+    buffer = BytesIO()
+    workbook.save(buffer)
+
+    payload, _, _ = parse_hydraulic_file("marker-columns.xlsx", buffer.getvalue(), 4547)
+
+    assert [point.marker_type for point in payload.sections[0].points] == [
+        "left_levee", "thalweg", "right_levee"
+    ]
+
+
 def test_reviewed_templates_parse_network_and_mike11_grouped_section_contracts() -> None:
     """Both reviewed workbooks must remain parser-valid after the template change."""
 

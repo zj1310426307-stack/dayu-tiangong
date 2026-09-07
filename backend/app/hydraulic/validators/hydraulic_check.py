@@ -186,6 +186,32 @@ def validate_exchange(
                     },
                 )
             )
+        marker1_points = [
+            point for point in section.points
+            if point.marker_type in {"left_bank", "left_levee"}
+        ]
+        marker3_points = [
+            point for point in section.points
+            if point.marker_type in {"right_bank", "right_levee"}
+        ]
+        if not marker1_points or not marker3_points:
+            issues.append(
+                HydraulicIssue(
+                    severity="warning",
+                    code="MIKE11_MARKER_EXTENT_UNDECLARED",
+                    message=(
+                        "未同时声明 MIKE11 Marker 1/3；当前按全断面点计算，"
+                        "请在横断面数据库中补充左右堤防点后重新处理断面"
+                    ),
+                    entity_type="cross_section",
+                    entity_ref=section.section_code,
+                    context={
+                        "marker1_count": len(marker1_points),
+                        "marker3_count": len(marker3_points),
+                        "fallback": "full_profile",
+                    },
+                )
+            )
         elevations = [point.elevation for point in section.points]
         if any(not _finite(value) for value in elevations):
             issues.append(

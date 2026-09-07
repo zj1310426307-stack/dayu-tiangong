@@ -57,7 +57,13 @@ HEADER_ALIASES = {
     "survey_date": {"survey_date", "测量日期"},
     "survey_method": {"survey_method", "测量方法"},
     "default_manning_n": {"default_manning_n", "默认曼宁系数"},
-    "marker_type": {"marker_type", "标志类型"},
+    # MIKE11 marker columns are accepted in both the canonical point form and
+    # the labels used in the reviewed operator guide.  Marker 1/3 are mapped
+    # to left/right levee points during normalization; the persisted model
+    # continues to use the single, versioned ``marker_type`` enum.
+    "marker_type": {"marker_type", "标志类型", "marker", "标记"},
+    "marker1": {"marker1", "marker_1", "marker 1", "左堤防", "左堤岸", "left levee bank", "left_bank_marker"},
+    "marker3": {"marker3", "marker_3", "marker 3", "右堤防", "右堤岸", "right levee bank", "right_bank_marker"},
     "roughness_zone_order": {"roughness_zone_order", "糙率分区序号"},
     "roughness_start": {"roughness_start", "糙率起点"},
     "roughness_end": {"roughness_end", "糙率终点"},
@@ -198,6 +204,41 @@ def _normalize_section_rows(rows: list[dict[str, object]]) -> list[dict[str, obj
     return normalized
 
 
+def _marker_flag(value: object | None) -> bool:
+    """Interpret the tolerant boolean/text forms used by MIKE11 templates."""
+
+    if value is None:
+        return False
+    return str(value).strip().lower() in {
+        "1", "true", "yes", "y", "on", "x", "marker1", "marker 1",
+        "marker3", "marker 3", "left levee bank", "right levee bank",
+    }
+
+
+def _canonical_marker(row: dict[str, object], explicit_thalweg: bool, minimum_elevation: float) -> str:
+    """Map explicit Marker 1/3 fields to the persisted MIKE11 marker enum."""
+
+    marker = str(row.get("marker_type") or "none").strip().lower().replace(" ", "_")
+    aliases = {
+        "marker_1": "left_levee", "marker1": "left_levee", "left_levee_bank": "left_levee",
+        "marker_3": "right_levee", "marker3": "right_levee", "right_levee_bank": "right_levee",
+        "left_bank_marker": "left_levee", "right_bank_marker": "right_levee",
+    }
+    marker = aliases.get(marker, marker)
+    if marker not in {"none", "left_bank", "right_bank", "left_levee", "right_levee", "low_flow_left", "low_flow_right", "thalweg"}:
+        marker = "none"
+    if marker == "none":
+        if _marker_flag(row.get("marker1")):
+            marker = "left_levee"
+        elif _marker_flag(row.get("marker3")):
+            marker = "right_levee"
+    if marker == "none" and not explicit_thalweg:
+        elevation = float(_required(row, "elevation", int(row["_row_number"])))
+        if elevation == minimum_elevation:
+            marker = "thalweg"
+    return marker
+
+
 def parse_excel(
     filename: str,
     content: bytes,
@@ -287,15 +328,6 @@ def parse_excel(
             for row in ordered
         )
 
-        def marker_type(row: dict[str, object]) -> str:
-            """Preserve explicit markers or derive every tied minimum as thalweg."""
-
-            marker = str(row.get("marker_type") or "none").strip().lower()
-            if explicit_thalweg or marker != "none":
-                return marker
-            elevation = float(_required(row, "elevation", int(row["_row_number"])))
-            return "thalweg" if elevation == minimum_elevation else "none"
-
         sections.append(
             HydraulicCrossSectionInput(
                 section_code=code,
@@ -329,7 +361,7 @@ def parse_excel(
                         sequence=int(row.get("sequence", index)),
                         distance=float(_required(row, "distance", int(row["_row_number"]))),
                         elevation=float(_required(row, "elevation", int(row["_row_number"]))),
-                        marker_type=marker_type(row),
+                        marker_type=_canonical_marker(row, explicit_thalweg, minimum_elevation),
                         point_code=str(row["point_code"])[:64] if row.get("point_code") else None,
                         x=float(row["point_x"]) if "point_x" in row else None,
                         y=float(row["point_y"]) if "point_y" in row else None,

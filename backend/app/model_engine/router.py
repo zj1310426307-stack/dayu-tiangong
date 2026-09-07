@@ -7,6 +7,7 @@ from os import getenv
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -42,6 +43,50 @@ def list_scenario_results() -> list[PublishedScenarioBundle]:
         return scenario_results.list_published_scenario_results()
     except scenario_results.ScenarioResultBundleError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get(
+    "/scenario-results/{bundle_id}/geojson",
+    summary="Return a scenario result GIS overlay",
+)
+def get_scenario_result_geojson(
+    bundle_id: str,
+    scenario_id: str | None = Query(default=None),
+) -> dict[str, object]:
+    """Expose only the validated local scenario overlay and its result values."""
+
+    try:
+        return scenario_results.published_scenario_geojson(bundle_id, scenario_id)
+    except scenario_results.ScenarioResultBundleError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/scenario-results/{bundle_id}/case-manifest",
+    summary="Read the scenario case step index",
+)
+def get_scenario_case_manifest(bundle_id: str) -> dict[str, object]:
+    """Expose the auditable list of import, model, result, and GIS files."""
+
+    try:
+        return scenario_results.published_case_manifest(bundle_id)
+    except scenario_results.ScenarioResultBundleError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/scenario-results/{bundle_id}/artifacts/{filename}",
+    response_class=FileResponse,
+    summary="Download one scenario case artifact",
+)
+def download_scenario_case_artifact(bundle_id: str, filename: str) -> FileResponse:
+    """Serve only allow-listed files from the governed local case bundle."""
+
+    try:
+        path = scenario_results.published_case_artifact(bundle_id, filename)
+    except scenario_results.ScenarioResultBundleError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, filename=path.name)
 
 
 def _map_error(exc: Exception) -> HTTPException:

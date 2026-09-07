@@ -485,6 +485,26 @@ class HydraulicSectionDetail(BaseModel):
     profiles: list[HydraulicProfileRecord]
 
 
+class HydraulicMarkerUpdate(BaseModel):
+    """Select the MIKE11 Marker 1/3 points for one active profile."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    marker1_sequence: int | None = Field(default=None, ge=0)
+    marker3_sequence: int | None = Field(default=None, ge=0)
+    actor: str = Field(default="platform", min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_marker_order(self) -> "HydraulicMarkerUpdate":
+        if (
+            self.marker1_sequence is not None
+            and self.marker3_sequence is not None
+            and self.marker1_sequence >= self.marker3_sequence
+        ):
+            raise ValueError("Marker 1 must precede Marker 3 in the section point order")
+        return self
+
+
 class HydraulicImportJobRecord(BaseModel):
     """Return immutable source identity, coordinate evidence, issues, and status."""
 

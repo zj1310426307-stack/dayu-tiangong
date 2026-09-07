@@ -34,6 +34,7 @@ from app.hydraulic.schemas import (
     HydraulicProfileRecord, HydraulicReachRecord, HydraulicRoughnessZoneInput,
     HydraulicRoughnessZoneRecord, HydraulicSectionDetail, HydraulicSectionPointInput,
     HydraulicSectionPointRecord, HydraulicSectionSummary, HydraulicValidationRunRecord,
+    HydraulicMarkerUpdate,
 )
 from app.hydraulic.validators import validate_exchange
 
@@ -713,6 +714,66 @@ def get_section_detail(session: Session, section_id: int) -> HydraulicSectionDet
         axis_geometry=geometry_json(session, section.axis_geometry) if section.axis_geometry is not None else None,
         profiles=[_profile_record(session, v) for v in profiles],
     )
+
+
+def update_section_markers(
+    session: Session, section_id: int, payload: HydraulicMarkerUpdate
+) -> HydraulicSectionDetail:
+    """Persist MIKE11 Marker 1/3 selections without changing surveyed elevations."""
+
+    section = session.get(HydraulicCrossSection, section_id)
+    if section is None:
+        raise ValueError("Hydraulic cross-section does not exist")
+    assert_dataset_version_mutable(session, section.dataset_version_id)
+    profile = session.scalar(
+        select(HydraulicCrossSectionProfile).where(
+            HydraulicCrossSectionProfile.cross_section_id == section.id,
+            HydraulicCrossSectionProfile.is_active.is_(True),
+        ).order_by(HydraulicCrossSectionProfile.id.desc())
+    )
+    if profile is None:
+        raise ValueError("Active cross-section profile does not exist")
+    points = session.scalars(
+        select(HydraulicCrossSectionPoint).where(
+            HydraulicCrossSectionPoint.profile_id == profile.id
+        ).order_by(HydraulicCrossSectionPoint.sequence)
+    ).all()
+    by_sequence = {point.sequence: point for point in points}
+    for sequence in (payload.marker1_sequence, payload.marker3_sequence):
+        if sequence is not None and sequence not in by_sequence:
+            raise ValueError(f"Marker sequence {sequence} does not exist in the active profile")
+    # Only the two levee marker classes are replaced.  Thalweg and low-flow
+    # markers remain untouched so this operation is safe for solver inputs.
+    for point in points:
+        if point.marker_type in {"left_bank", "right_bank", "left_levee", "right_levee"}:
+            point.marker_type = "none"
+    if payload.marker1_sequence is not None:
+        by_sequence[payload.marker1_sequence].marker_type = "left_levee"
+    if payload.marker3_sequence is not None:
+        by_sequence[payload.marker3_sequence].marker_type = "right_levee"
+    profile.metadata_json = {
+        **(profile.metadata_json or {}),
+        "mike11_marker_policy": "marker_1_to_3_active_extent",
+        "marker1_sequence": payload.marker1_sequence,
+        "marker3_sequence": payload.marker3_sequence,
+        "marker_actor": payload.actor,
+        "marker_updated_at": datetime.now(UTC).isoformat(),
+    }
+    profile.profile_hash = canonical_hash({
+        "profile_hash_before_marker_update": profile.profile_hash,
+        "marker1_sequence": payload.marker1_sequence,
+        "marker3_sequence": payload.marker3_sequence,
+        "points": [
+            {"sequence": point.sequence, "distance": point.distance,
+             "elevation": point.elevation, "marker_type": point.marker_type}
+            for point in points
+        ],
+    })
+    session.flush()
+    result = get_section_detail(session, section.id)
+    if result is None:
+        raise ValueError("Hydraulic cross-section could not be reloaded")
+    return result
 
 
 def _point_xy(session: Session, geometry) -> tuple[float, float]:

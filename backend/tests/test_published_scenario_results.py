@@ -88,6 +88,24 @@ def _write_bundle(root: Path, payload: dict[str, object]) -> None:
     (directory / "manifest.json").write_text(
         json.dumps(payload, ensure_ascii=False), encoding="utf-8"
     )
+    (directory / "spatial.geojson").write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "features": [
+                    {
+                        "type": "Feature",
+                        "geometry": {"type": "Point", "coordinates": [114.0, 23.0]},
+                        "properties": {"cross_section_id": "DM1"},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (directory / "case_manifest.json").write_text(
+        json.dumps({"case_id": "TEST", "steps": []}), encoding="utf-8"
+    )
 
 
 def test_lists_valid_result_bundle_with_digest(tmp_path: Path) -> None:
@@ -129,3 +147,24 @@ def test_api_exposes_published_results_without_database(
     assert response.status_code == 200
     assert response.json()[0]["river_name"] == "测试河"
     assert response.json()[0]["classification"] == "UNCALIBRATED_SCENARIO_CALCULATION"
+
+
+def test_api_exposes_scenario_geojson_and_case_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GIS overlay and step index stay readable without a PostGIS connection."""
+
+    _write_bundle(tmp_path, _manifest())
+    monkeypatch.setattr(scenario_results, "SCENARIO_RESULT_ROOT", tmp_path)
+
+    geojson = TestClient(app).get(
+        "/api/v1/model/scenario-results/test-result/geojson?scenario_id=q100"
+    )
+    assert geojson.status_code == 200
+    assert geojson.json()["features"][0]["properties"]["water_level_m"] == 35.0
+
+    case_manifest = TestClient(app).get(
+        "/api/v1/model/scenario-results/test-result/case-manifest"
+    )
+    assert case_manifest.status_code == 200
+    assert case_manifest.json()["case_id"] == "TEST"
