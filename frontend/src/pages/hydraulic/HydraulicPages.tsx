@@ -34,9 +34,13 @@ import {
   getHydraulicResult,
   getSimulationCases,
   listHydraulicTasks,
+  listPublishedScenarioResults,
   previewHydraulicModel,
   retryHydraulicTask,
   type Hydraulic1DReadinessResponse,
+  type PublishedScenarioBundle,
+  type PublishedScenarioResult,
+  type ScenarioResultSection,
   type SimulationResultResponse,
   type SimulationTaskCreate,
   type SimulationTaskRecord,
@@ -573,6 +577,241 @@ function HydraulicResultChart({ result }: { result?: HydraulicChartSeries }) {
   }, [result]);
 
   return <div ref={element} className="hydraulic-result-chart" />;
+}
+
+const scenarioColors = ['#2fe6d6', '#38a8ff', '#f3b85b', '#a291ff'];
+
+/** Draw the upstream-to-downstream riverbed, water surfaces, and selected velocity profile. */
+function ScenarioLongitudinalChart({
+  bundle,
+  selectedScenario,
+}: {
+  bundle: PublishedScenarioBundle;
+  selectedScenario: PublishedScenarioResult;
+}) {
+  const element = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!element.current) return undefined;
+    let disposed = false;
+    let dispose: (() => void) | undefined;
+    void import('echarts').then((echarts) => {
+      if (disposed || !element.current) return;
+      const container = element.current;
+      echarts.getInstanceByDom(container)?.dispose();
+      const chart = echarts.init(container);
+      const reference = bundle.scenarios[0].section_summary;
+      const waterSeries = bundle.scenarios.map((scenario, index) => {
+        const selected = scenario.scenario_id === selectedScenario.scenario_id;
+        return {
+          name: scenario.label,
+          type: 'line',
+          xAxisIndex: 0,
+          yAxisIndex: 0,
+          data: scenario.section_summary.map((section) => [section.chainage_m, section.final_water_level_m]),
+          showSymbol: selected,
+          symbolSize: selected ? 7 : 4,
+          smooth: false,
+          z: selected ? 5 : 3,
+          lineStyle: { color: scenarioColors[index % scenarioColors.length], width: selected ? 4 : 2, opacity: selected ? 1 : 0.48 },
+          itemStyle: { color: scenarioColors[index % scenarioColors.length] },
+          areaStyle: selected ? { color: 'rgba(47,230,214,.08)' } : undefined,
+        };
+      });
+      chart.setOption({
+        animationDuration: 600,
+        tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+        legend: { top: 4, textStyle: { color: '#9bb7c6' } },
+        grid: [
+          { left: 62, right: 34, top: 56, height: '48%' },
+          { left: 62, right: 34, top: '72%', height: '19%' },
+        ],
+        xAxis: [0, 1].map((gridIndex) => ({
+          type: 'value',
+          gridIndex,
+          min: 0,
+          name: '上游 → 下游桩号 / m',
+          axisLabel: { color: '#7898aa' },
+          axisLine: { lineStyle: { color: 'rgba(102,145,168,.28)' } },
+        })),
+        yAxis: [
+          {
+            type: 'value', gridIndex: 0, name: '1985 高程 / m', scale: true,
+            nameTextStyle: { color: '#9bb7c6' }, axisLabel: { color: '#7898aa' }, splitLine: { lineStyle: { color: 'rgba(100,151,183,.10)' } },
+          },
+          {
+            type: 'value', gridIndex: 1, name: '流速 / m/s', min: 0,
+            nameTextStyle: { color: '#9bb7c6' }, axisLabel: { color: '#7898aa' }, splitLine: { lineStyle: { color: 'rgba(100,151,183,.10)' } },
+          },
+        ],
+        series: [
+          {
+            name: '河底深泓高程', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+            data: reference.map((section) => [section.chainage_m, section.bed_min_m]),
+            showSymbol: false, lineStyle: { color: '#8a735f', width: 3 }, areaStyle: { color: 'rgba(117,86,59,.20)' }, z: 2,
+          },
+          ...waterSeries,
+          {
+            name: `${selectedScenario.label} 流速`, type: 'bar', xAxisIndex: 1, yAxisIndex: 1,
+            data: selectedScenario.section_summary.map((section) => [section.chainage_m, section.final_velocity_ms]),
+            barMaxWidth: 18, itemStyle: { color: '#38a8ff', borderRadius: [4, 4, 0, 0] },
+          },
+        ],
+      });
+      const resize = () => chart.resize();
+      window.addEventListener('resize', resize);
+      dispose = () => {
+        window.removeEventListener('resize', resize);
+        chart.dispose();
+      };
+    });
+    return () => {
+      disposed = true;
+      dispose?.();
+    };
+  }, [bundle, selectedScenario]);
+
+  return <div ref={element} className="scenario-longitudinal-chart" />;
+}
+
+/** Present locally published engineering results without implying calibration or production approval. */
+export function HydraulicScenarioResultsPage() {
+  const navigate = useNavigate();
+  const [bundles, setBundles] = useState<PublishedScenarioBundle[]>([]);
+  const [bundleId, setBundleId] = useState('');
+  const [scenarioId, setScenarioId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    listPublishedScenarioResults()
+      .then((items) => {
+        if (cancelled) return;
+        setBundles(items);
+        setBundleId((current) => current || items[0]?.bundle_id || '');
+        setScenarioId((current) => current || items[0]?.scenarios[0]?.scenario_id || '');
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : '方案成果加载失败');
+      })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const bundle = useMemo(
+    () => bundles.find((item) => item.bundle_id === bundleId) ?? bundles[0],
+    [bundleId, bundles],
+  );
+  const selectedScenario = useMemo(
+    () => bundle?.scenarios.find((item) => item.scenario_id === scenarioId) ?? bundle?.scenarios[0],
+    [bundle, scenarioId],
+  );
+
+  /** Keep scenario selection valid when the operator switches result bundles. */
+  const changeBundle = (value: string) => {
+    const next = bundles.find((item) => item.bundle_id === value);
+    setBundleId(value);
+    setScenarioId(next?.scenarios[0]?.scenario_id ?? '');
+  };
+
+  const columns: ColumnsType<ScenarioResultSection> = [
+    { title: '断面', dataIndex: 'cross_section_id', fixed: 'left', width: 85 },
+    { title: '桩号 (m)', dataIndex: 'chainage_m', width: 110, render: (value: number) => value.toFixed(1) },
+    { title: '深泓高程 (m)', dataIndex: 'bed_min_m', width: 125, render: (value: number) => value.toFixed(3) },
+    { title: '水位 (m)', dataIndex: 'final_water_level_m', width: 105, render: (value: number) => value.toFixed(3) },
+    { title: '水深 (m)', dataIndex: 'final_depth_m', width: 105, render: (value: number) => value.toFixed(3) },
+    { title: '流量 (m³/s)', dataIndex: 'final_discharge_m3s', width: 125, render: (value: number) => value.toFixed(3) },
+    { title: '流速 (m/s)', dataIndex: 'final_velocity_ms', width: 115, render: (value: number) => value.toFixed(3) },
+    { title: '过流面积 (m²)', dataIndex: 'flow_area_m2', width: 130, render: (value: number) => value.toFixed(2) },
+  ];
+
+  return (
+    <div className="data-page hydraulic-page scenario-results-page">
+      <HydraulicHeader
+        eyebrow="PUBLISHED SCENARIO RESULTS"
+        title="工程方案成果"
+        description="沿河道上游到下游查看已发布的准恒定水面线、河底高程、流速与数值质量证据。"
+        action={<Space><Button onClick={() => navigate('/hydraulic/results')}>任务结果</Button><Button onClick={() => navigate('/gis')}>GIS 一张图</Button></Space>}
+      />
+      {error && <Alert className="data-alert" type="error" showIcon message={error} />}
+      {!loading && !bundle && <Alert type="info" showIcon message="暂无已发布方案成果" description="请先把受控成果包放入平台本地运行存储。" />}
+      <Card className="data-card scenario-selector" loading={loading}>
+        <Row gutter={[18, 18]} align="middle">
+          <Col xs={24} lg={9}>
+            <Text type="secondary">成果包</Text>
+            <Select className="hydraulic-select" value={bundle?.bundle_id} onChange={changeBundle} options={bundles.map((item) => ({ value: item.bundle_id, label: item.title }))} />
+          </Col>
+          <Col xs={24} lg={9}>
+            <Text type="secondary">计算工况</Text>
+            <Select className="hydraulic-select" value={selectedScenario?.scenario_id} onChange={setScenarioId} options={bundle?.scenarios.map((item) => ({ value: item.scenario_id, label: `${item.label} · Q ${item.q_m3s} m³/s` })) ?? []} />
+          </Col>
+          <Col xs={24} lg={6} className="scenario-classification">
+            <Tag color="gold">未率定方案计算</Tag>
+            <Tag color="success">数值 QA 通过</Tag>
+          </Col>
+        </Row>
+      </Card>
+      {bundle && selectedScenario && (
+        <>
+          <Alert
+            className="data-alert"
+            type="warning"
+            showIcon
+            message="成果边界说明"
+            description="本成果仅为未率定方案计算：三工况通过时间收敛、质量平衡和沿程流量一致性检查；尚未完成实测资料率定、独立验证、MIKE11 交叉验证或生产工程定级。"
+          />
+          <Row gutter={[16, 16]} className="hydraulic-stats scenario-kpis">
+            <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="上游流量" value={selectedScenario.q_m3s} precision={2} suffix="m³/s" /></Card></Col>
+            <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="下游水位" value={selectedScenario.downstream_h_m} precision={3} suffix="m" /></Card></Col>
+            <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="上游水位" value={selectedScenario.upstream_water_level_m} precision={3} suffix="m" /></Card></Col>
+            <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="最高水位" value={selectedScenario.maximum_water_level_m} precision={3} suffix="m" /></Card></Col>
+            <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="最大流速" value={selectedScenario.maximum_velocity_ms} precision={3} suffix="m/s" /></Card></Col>
+            <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic prefix={<CheckCircleOutlined />} title="质量平衡误差" value={selectedScenario.mass_balance_residual * 100} precision={4} suffix="%" /></Card></Col>
+          </Row>
+          <Card
+            className="data-card scenario-chart-card"
+            title={`${bundle.river_name} · 沿程水面线与流速`}
+            extra={<Space><Tag color="cyan">DM1 → DM22</Tag><Tag>{selectedScenario.section_summary.length} 个断面</Tag></Space>}
+          >
+            <ScenarioLongitudinalChart bundle={bundle} selectedScenario={selectedScenario} />
+          </Card>
+          <Row gutter={[16, 16]}>
+            <Col xs={24} xl={14}>
+              <Card className="data-card" title={`${selectedScenario.label} · 断面成果表`}>
+                <Table rowKey="cross_section_id" size="small" columns={columns} dataSource={selectedScenario.section_summary} pagination={false} scroll={{ x: 900, y: 470 }} />
+              </Card>
+            </Col>
+            <Col xs={24} xl={10}>
+              <Card className="data-card" title="模型与数据口径">
+                <Descriptions column={1} size="small" items={[
+                  { key: 'crs', label: '平面坐标', children: String(bundle.input.source_crs ?? '—') },
+                  { key: 'datum', label: '高程基准', children: '1985 国家高程基准 · MIKE11 Datum 0.000 m' },
+                  { key: 'roughness', label: '综合糙率', children: `n = ${String(bundle.physical_assumptions.manning_n ?? '—')}` },
+                  { key: 'boundary', label: '边界条件', children: `${selectedScenario.q_m3s} m³/s（上游） / ${selectedScenario.downstream_h_m} m（下游）` },
+                  { key: 'overbank', label: '漫滩处理', children: '全归槽 · 首末测点近竖直边墙' },
+                  { key: 'solver', label: '求解器', children: `${String(bundle.runtime_provenance.engine_name ?? 'MASCARET')} ${String(bundle.runtime_provenance.engine_version ?? 'v9.1.1')}` },
+                  { key: 'mode', label: '计算模式', children: '恒定 Q/H 边界时间推进至准恒定' },
+                  { key: 'duration', label: '计算时长', children: `${(selectedScenario.duration_seconds / 3600).toFixed(1)} h` },
+                  { key: 'mesh', label: '计算网格', children: `${selectedScenario.mesh_spacing_m.toFixed(0)} m` },
+                  { key: 'digest', label: '成果摘要', children: <Text code copyable>{(bundle.source_digest ?? '').slice(0, 16)}…</Text> },
+                ]} />
+              </Card>
+              <Card className="data-card" title="数值门禁">
+                <Descriptions column={1} size="small" items={[
+                  { key: 'temporal', label: '时间收敛', children: <Tag color={selectedScenario.quality_gate.temporal_converged ? 'success' : 'error'}>{selectedScenario.quality_gate.temporal_converged ? '通过' : '未通过'}</Tag> },
+                  { key: 'balance', label: '质量平衡', children: `${(selectedScenario.quality_gate.mass_balance_residual * 100).toFixed(6)}% ≤ ${(selectedScenario.quality_gate.mass_balance_tolerance * 100).toFixed(3)}%` },
+                  { key: 'flow-span', label: '沿程流量差', children: `${selectedScenario.quality_gate.final_discharge_span_m3s.toFixed(4)} ≤ ${selectedScenario.quality_gate.final_discharge_span_tolerance_m3s.toFixed(1)} m³/s` },
+                  { key: 'acceptance', label: '综合结论', children: <Tag color={selectedScenario.quality_gate.passed ? 'success' : 'error'}>{selectedScenario.quality_gate.passed ? 'PASS' : 'FAIL'}</Tag> },
+                ]} />
+              </Card>
+            </Col>
+          </Row>
+        </>
+      )}
+    </div>
+  );
 }
 
 /** Read a unified result and expose no MASCARET-native output format to the UI. */

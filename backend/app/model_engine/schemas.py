@@ -183,6 +183,70 @@ class SimulationResultResponse(BaseModel):
     diagnostics: dict[str, Any] | None
 
 
+class ScenarioResultQualityGate(BaseModel):
+    """Expose the numerical checks attached to one published scenario."""
+
+    temporal_converged: bool
+    mass_balance_residual: FiniteFloat
+    mass_balance_tolerance: FiniteFloat = Field(gt=0)
+    final_discharge_span_m3s: FiniteFloat = Field(ge=0)
+    final_discharge_span_tolerance_m3s: FiniteFloat = Field(gt=0)
+    passed: bool
+
+
+class ScenarioResultSection(BaseModel):
+    """Describe one upstream-to-downstream final-state Section sample."""
+
+    cross_section_id: str = Field(min_length=1, max_length=128)
+    chainage_m: FiniteFloat = Field(ge=0)
+    bed_min_m: FiniteFloat
+    final_water_level_m: FiniteFloat
+    final_depth_m: FiniteFloat = Field(ge=0)
+    final_discharge_m3s: FiniteFloat
+    final_velocity_ms: FiniteFloat
+    flow_area_m2: FiniteFloat = Field(gt=0)
+
+
+class PublishedScenarioResult(BaseModel):
+    """Return one accepted numerical scenario without claiming calibration."""
+
+    scenario_id: str = Field(min_length=1, max_length=128)
+    label: str = Field(min_length=1, max_length=128)
+    q_m3s: FiniteFloat
+    downstream_h_m: FiniteFloat
+    status: str = Field(min_length=1, max_length=64)
+    mesh_spacing_m: FiniteFloat = Field(gt=0)
+    time_step_seconds: FiniteFloat = Field(gt=0)
+    duration_seconds: FiniteFloat = Field(gt=0)
+    upstream_water_level_m: FiniteFloat
+    maximum_water_level_m: FiniteFloat
+    minimum_depth_m: FiniteFloat = Field(ge=0)
+    maximum_velocity_ms: FiniteFloat = Field(ge=0)
+    final_discharge_span_m3s: FiniteFloat = Field(ge=0)
+    mass_balance_residual: FiniteFloat = Field(ge=0)
+    quality_gate: ScenarioResultQualityGate
+    section_summary: list[ScenarioResultSection] = Field(min_length=2, max_length=500)
+
+
+class PublishedScenarioBundle(BaseModel):
+    """Represent a locally published, solver-neutral engineering result bundle."""
+
+    bundle_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,63}$")
+    title: str = Field(min_length=1, max_length=200)
+    river_name: str = Field(min_length=1, max_length=128)
+    schema_version: str
+    generated_at: datetime
+    classification: str
+    acceptance: str
+    not_claimed: list[str]
+    input: dict[str, Any]
+    physical_assumptions: dict[str, Any]
+    numerical_acceptance: dict[str, Any]
+    runtime_provenance: dict[str, Any]
+    scenarios: list[PublishedScenarioResult] = Field(min_length=1, max_length=20)
+    source_digest: str = Field(default="", pattern=r"^$|^[0-9a-f]{64}$")
+
+
 class Hydraulic1DReadinessResponse(BaseModel):
     """Explain Case mapping readiness and external runtime availability."""
 

@@ -58,6 +58,7 @@ const requiredPaths = [
   '/api/v1/model-data/parameters', '/api/v1/model-data/boundary-conditions',
   '/api/v1/model-data/simulation-cases',
   '/api/v1/model/readiness', '/api/v1/model/preview',
+  '/api/v1/model/scenario-results',
   '/api/v1/model/tasks', '/api/v1/model/tasks/{task_id}/run',
   '/api/v1/model/tasks/{task_id}', '/api/v1/model/results/{task_id}',
   '/api/v1/model/tasks/{task_id}/enqueue', '/api/v1/model/tasks/{task_id}/cancel',
@@ -558,6 +559,7 @@ export async function importProductionExternal(datasetVersionId: number, resultC
 
 export const createHydraulicTask = (body: SimulationTaskCreate, baseUrl = '') => requestJson<SimulationTaskRecord>('/api/v1/model/tasks', jsonOptions('POST', body), baseUrl);
 export const getHydraulicReadiness = (caseId: number, baseUrl = '') => requestJson<Hydraulic1DReadinessResponse>(\`/api/v1/model/readiness\${toQuery({ case_id: caseId })}\`, {}, baseUrl);
+export const listPublishedScenarioResults = (baseUrl = '') => requestJson<Array<PublishedScenarioBundle>>('/api/v1/model/scenario-results', {}, baseUrl);
 export const previewHydraulicModel = (body: SimulationTaskCreate, baseUrl = '') => requestJson<Hydraulic1DPreviewResponse>('/api/v1/model/preview', jsonOptions('POST', body), baseUrl);
 export const listHydraulicTasks = (paramsOrBaseUrl: DatasetTaskListQuery | string = {}, baseUrl = '') => {
   const [params, resolvedBaseUrl] = datasetTaskListArgs(paramsOrBaseUrl, baseUrl);

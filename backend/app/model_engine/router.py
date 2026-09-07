@@ -11,10 +11,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database.session import get_database_session
-from app.model_engine import service
+from app.model_engine import scenario_results, service
 from app.model_engine.schemas import (
     Hydraulic1DPreviewResponse,
     Hydraulic1DReadinessResponse,
+    PublishedScenarioBundle,
     SimulationResultResponse,
     SimulationTaskCreate,
     SimulationTaskRecord,
@@ -27,6 +28,20 @@ from model.hydraulic_1d.contracts import HYDRAULIC_1D_INPUT_SCHEMA
 
 router = APIRouter(prefix="/api/v1/model", tags=["hydraulic-model"])
 SessionDependency = Annotated[Session, Depends(get_database_session)]
+
+
+@router.get(
+    "/scenario-results",
+    response_model=list[PublishedScenarioBundle],
+    summary="List locally published engineering scenario results",
+)
+def list_scenario_results() -> list[PublishedScenarioBundle]:
+    """Expose governed result bundles independently from mutable Dataset Versions."""
+
+    try:
+        return scenario_results.list_published_scenario_results()
+    except scenario_results.ScenarioResultBundleError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 def _map_error(exc: Exception) -> HTTPException:

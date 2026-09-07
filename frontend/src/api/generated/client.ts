@@ -2436,6 +2436,42 @@ export interface PublicationRecord {
   "created_at": string;
 }
 
+export interface PublishedScenarioBundle {
+  "bundle_id": string;
+  "title": string;
+  "river_name": string;
+  "schema_version": string;
+  "generated_at": string;
+  "classification": string;
+  "acceptance": string;
+  "not_claimed": Array<string>;
+  "input": Record<string, unknown>;
+  "physical_assumptions": Record<string, unknown>;
+  "numerical_acceptance": Record<string, unknown>;
+  "runtime_provenance": Record<string, unknown>;
+  "scenarios": Array<PublishedScenarioResult>;
+  "source_digest"?: string;
+}
+
+export interface PublishedScenarioResult {
+  "scenario_id": string;
+  "label": string;
+  "q_m3s": number;
+  "downstream_h_m": number;
+  "status": string;
+  "mesh_spacing_m": number;
+  "time_step_seconds": number;
+  "duration_seconds": number;
+  "upstream_water_level_m": number;
+  "maximum_water_level_m": number;
+  "minimum_depth_m": number;
+  "maximum_velocity_ms": number;
+  "final_discharge_span_m3s": number;
+  "mass_balance_residual": number;
+  "quality_gate": ScenarioResultQualityGate;
+  "section_summary": Array<ScenarioResultSection>;
+}
+
 export interface PublishRequest {
   "published_by": string;
   "manifest_json"?: Record<string, unknown>;
@@ -2721,6 +2757,26 @@ export interface RoughnessOverride {
   "group_id": string;
   "cross_section_ids": Array<number>;
   "manning_n": number;
+}
+
+export interface ScenarioResultQualityGate {
+  "temporal_converged": boolean;
+  "mass_balance_residual": number;
+  "mass_balance_tolerance": number;
+  "final_discharge_span_m3s": number;
+  "final_discharge_span_tolerance_m3s": number;
+  "passed": boolean;
+}
+
+export interface ScenarioResultSection {
+  "cross_section_id": string;
+  "chainage_m": number;
+  "bed_min_m": number;
+  "final_water_level_m": number;
+  "final_depth_m": number;
+  "final_discharge_m3s": number;
+  "final_velocity_ms": number;
+  "flow_area_m2": number;
 }
 
 export interface SimulationCaseCreate {
@@ -3436,6 +3492,7 @@ export async function importProductionExternal(datasetVersionId: number, resultC
 
 export const createHydraulicTask = (body: SimulationTaskCreate, baseUrl = '') => requestJson<SimulationTaskRecord>('/api/v1/model/tasks', jsonOptions('POST', body), baseUrl);
 export const getHydraulicReadiness = (caseId: number, baseUrl = '') => requestJson<Hydraulic1DReadinessResponse>(`/api/v1/model/readiness${toQuery({ case_id: caseId })}`, {}, baseUrl);
+export const listPublishedScenarioResults = (baseUrl = '') => requestJson<Array<PublishedScenarioBundle>>('/api/v1/model/scenario-results', {}, baseUrl);
 export const previewHydraulicModel = (body: SimulationTaskCreate, baseUrl = '') => requestJson<Hydraulic1DPreviewResponse>('/api/v1/model/preview', jsonOptions('POST', body), baseUrl);
 export const listHydraulicTasks = (paramsOrBaseUrl: DatasetTaskListQuery | string = {}, baseUrl = '') => {
   const [params, resolvedBaseUrl] = datasetTaskListArgs(paramsOrBaseUrl, baseUrl);

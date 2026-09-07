@@ -24,6 +24,7 @@ export function MainLayout() {
   const [versionForm] = Form.useForm<DatasetVersionCreate>();
   const location = useLocation();
   const navigate = useNavigate();
+  const isPublishedScenarioResults = location.pathname.startsWith('/hydraulic/scenario-results');
   const {
     versions,
     datasetVersionId,
@@ -130,24 +131,33 @@ export function MainLayout() {
           </div>
 
           <div className="top-bar__right">
-            <Select
-              aria-label="当前数据版本"
-              className="dataset-version-select"
-              loading={loading}
-              value={datasetVersionId}
-              onChange={setDatasetVersionId}
-              options={versions.map((item) => ({
-                value: item.id,
-                label: `${item.version} · ${item.name} · ${datasetVersionStatusLabel(item.status)}`,
-              }))}
-              placeholder="选择数据版本"
-            />
-            <Tooltip title={error || '创建独立的可编辑草稿；已发布版本始终保持只读'}>
-              <Button icon={<PlusOutlined />} onClick={openCreateDraft}>新建草稿</Button>
-            </Tooltip>
-            <Tag color={versionStatusColor(currentVersion?.status)}>
-              {datasetVersionStatusLabel(currentVersion?.status)}
-            </Tag>
+            {isPublishedScenarioResults ? (
+              <>
+                <Tag color="cyan">本地成果包</Tag>
+                <Tag color="gold">未率定</Tag>
+              </>
+            ) : (
+              <>
+                <Select
+                  aria-label="当前数据版本"
+                  className="dataset-version-select"
+                  loading={loading}
+                  value={datasetVersionId}
+                  onChange={setDatasetVersionId}
+                  options={versions.map((item) => ({
+                    value: item.id,
+                    label: `${item.version} · ${item.name} · ${datasetVersionStatusLabel(item.status)}`,
+                  }))}
+                  placeholder="选择数据版本"
+                />
+                <Tooltip title={error || '创建独立的可编辑草稿；已发布版本始终保持只读'}>
+                  <Button icon={<PlusOutlined />} onClick={openCreateDraft}>新建草稿</Button>
+                </Tooltip>
+                <Tag color={versionStatusColor(currentVersion?.status)}>
+                  {datasetVersionStatusLabel(currentVersion?.status)}
+                </Tag>
+              </>
+            )}
             <Tag className="env-tag">原型环境</Tag>
             <Tooltip title="通知中心将在后续阶段接入">
               <Button className="notification-button" type="text" icon={<BellOutlined />} />
