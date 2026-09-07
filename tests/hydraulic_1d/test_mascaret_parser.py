@@ -101,6 +101,16 @@ def test_parser_accepts_the_official_native_first_step_time_axis(tmp_path) -> No
     assert result.diagnostics["time_axis_mode"] == "mascaret-native"
 
 
+def test_parser_matches_native_four_decimal_chainage_without_accepting_mesh_rows() -> None:
+    """Respect Opthyca rounding while keeping interpolated mesh nodes excluded."""
+
+    source = model_fixture().cross_sections[0]
+    section = source.model_copy(update={"chainage_m": 274.17282})
+
+    assert MascaretResultParser._match_section([section], 274.1728) is section
+    assert MascaretResultParser._match_section([section], 274.1727) is None
+
+
 def test_parser_normalizes_signed_rezo_froude_magnitude(tmp_path) -> None:
     """Keep the unified Froude contract non-negative when REZO signs flow direction."""
 

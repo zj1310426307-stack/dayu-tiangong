@@ -35,6 +35,7 @@ class MascaretResultParser:
     """Parse official Opthyca rows and reject topology or time-axis drift."""
 
     REQUIRED_VARIABLES = frozenset({"Z", "Q"})
+    OPTHYCA_CHAINAGE_ROUNDING_TOLERANCE_M = 5.1e-5
 
     def parse(
         self,
@@ -425,7 +426,14 @@ class MascaretResultParser:
         """Map only exact authoritative profile locations and ignore interpolated mesh rows."""
 
         closest = min(sections, key=lambda item: abs(item.chainage_m - chainage_m))
-        tolerance = max(1e-6, abs(closest.chainage_m) * 1e-10)
+        # The native Opthyca writer emits chainage with four decimal places,
+        # even when the generated geometry retains more precision.  Accept only
+        # the half-unit rounding error (plus a small textual conversion guard),
+        # so interpolated mesh rows remain excluded.
+        tolerance = max(
+            MascaretResultParser.OPTHYCA_CHAINAGE_ROUNDING_TOLERANCE_M,
+            abs(closest.chainage_m) * 1e-10,
+        )
         return closest if abs(closest.chainage_m - chainage_m) <= tolerance else None
 
     @staticmethod
