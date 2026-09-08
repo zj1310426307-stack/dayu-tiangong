@@ -7,7 +7,7 @@ import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
 
 from app.common.spatial import geometry_json
@@ -475,6 +475,15 @@ def _upsert_section(
     profile.default_manning_n = source.default_manning_n
     profile.profile_hash = _profile_digest(source, spec)
     profile.is_active = True
+    # Bulk-clearing the previous active row can leave an existing ORM instance
+    # stale in long-lived import transactions.  Write the active flag directly
+    # as the final profile-state assertion so downstream Marker/processing APIs
+    # always see exactly one active profile for this section.
+    session.execute(
+        update(HydraulicCrossSectionProfile)
+        .where(HydraulicCrossSectionProfile.id == profile.id)
+        .values(is_active=True)
+    )
     for point in source.points:
         point_geometry = None
         if point.x is not None and point.y is not None:
@@ -732,7 +741,24 @@ def update_section_markers(
         ).order_by(HydraulicCrossSectionProfile.id.desc())
     )
     if profile is None:
-        raise ValueError("Active cross-section profile does not exist")
+        # Older imports may have left every profile inactive after a bulk
+        # replacement.  Promote the newest profile rather than blocking a
+        # safe Marker edit; the section still remains version-scoped and the
+        # promotion is recorded by the same transaction as the edit.
+        profile = session.scalar(
+            select(HydraulicCrossSectionProfile).where(
+                HydraulicCrossSectionProfile.cross_section_id == section.id,
+            ).order_by(HydraulicCrossSectionProfile.id.desc())
+        )
+        if profile is None:
+            raise ValueError("Active cross-section profile does not exist")
+        session.execute(
+            update(HydraulicCrossSectionProfile)
+            .where(HydraulicCrossSectionProfile.cross_section_id == section.id)
+            .values(is_active=False)
+        )
+        profile.is_active = True
+        session.flush()
     points = session.scalars(
         select(HydraulicCrossSectionPoint).where(
             HydraulicCrossSectionPoint.profile_id == profile.id
