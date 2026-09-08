@@ -37,3 +37,9 @@ profile hash 由规范化点、marker、糙率分区、高程基准和单位生�
 Branch 的 `centerline_role=thalweg` 表示所给中心线是沿河纵向深泓线。它与 `HydraulicCrossSectionInput.axis_points` 的横向断面测线是两个不同几何对象：纵向线不能用来确认横断面左右方向。局部断面基准 0 m 只写入 Coordinate Reference 的高程基准，不把 Profile 最低值提升为权威河床高程。
 
 `/data-center/rivers` 与 `/data-center/cross-sections` 只读取 `hydraulic` 权威模型；旧 `public.river` 和 `public.cross_section` API 继续作为兼容面存在，但前端不得绕过水动力 preview/commit 直接把它们当主数据编辑。
+
+## 剖面预览与 Marker 编辑语义
+
+横断面数据库的剖面图必须读取当前 active profile 的全部 `cross_section_point`，按 `sequence` 排序后逐点直线连接。预览不得抽稀、补点或使用平滑插值；显示点数必须与该活动剖面的入库点数一致。深泓点、Marker 1（左堤防）和 Marker 3（右堤防）作为同一组原始点上的标记叠加展示，不生成新的测量点。
+
+Marker 1/3 属于 Dataset Version 的受治理内容。只有 `draft` 状态允许修改；`published`、`approved`、`retired` 等只读版本只能查看。前端必须在发出写请求前禁用 Marker 选择与保存，并给出中文草稿指引；后端继续以不可变门禁作为最终权威，不能因前端状态失效而放宽已发布版本。

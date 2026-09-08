@@ -219,18 +219,39 @@ function SectionProfileChart({ section }: { section?: HydraulicSectionDetail }) 
       echarts.getInstanceByDom(container)?.dispose();
       const chart = echarts.init(container);
       const profile = section.profiles.find((item) => item.is_active) ?? section.profiles[0];
-      const points = (profile?.points ?? []).map((point) => [point.distance, point.elevation]);
-      const thalweg = (profile?.points ?? [])
+      // Render every persisted survey point in point order.  Do not smooth,
+      // sample, or synthesize points because the preview is an audit surface.
+      const profilePoints = [...(profile?.points ?? [])]
+        .sort((left, right) => left.sequence - right.sequence);
+      const points = profilePoints.map((point) => [point.distance, point.elevation]);
+      const thalweg = profilePoints
         .filter((point) => point.marker_type === 'thalweg')
         .map((point) => [point.distance, point.elevation]);
+      const marker1 = profilePoints
+        .filter((point) => point.marker_type === 'left_levee' || point.marker_type === 'left_bank')
+        .map((point) => [point.distance, point.elevation]);
+      const marker3 = profilePoints
+        .filter((point) => point.marker_type === 'right_levee' || point.marker_type === 'right_bank')
+        .map((point) => [point.distance, point.elevation]);
+      const activeExtent = marker1[0] && marker3[0]
+        ? [[{ name: 'Marker 1–3 有效范围', xAxis: marker1[0][0] }, { xAxis: marker3[0][0] }]]
+        : [];
       chart.setOption({
         grid: { left: 45, right: 20, top: 24, bottom: 38 },
         tooltip: { trigger: 'axis' },
         xAxis: { type: 'value', name: '横距 / m', axisLabel: { color: '#7891a4' }, splitLine: { lineStyle: { color: 'rgba(100,151,183,.12)' } } },
         yAxis: { type: 'value', name: '高程 / m', axisLabel: { color: '#7891a4' }, splitLine: { lineStyle: { color: 'rgba(100,151,183,.12)' } } },
         series: [
-          { name: '断面', type: 'line', data: points, smooth: true, symbolSize: 7, lineStyle: { color: '#2fe6d6', width: 3 }, areaStyle: { color: 'rgba(47,230,214,.12)' } },
+          {
+            name: `完整断面（${points.length} 点）`, type: 'line', data: points,
+            smooth: false, showSymbol: true, symbolSize: 6,
+            lineStyle: { color: '#2fe6d6', width: 3 },
+            areaStyle: { color: 'rgba(47,230,214,.12)' },
+            markArea: { silent: true, itemStyle: { color: 'rgba(92, 196, 255, .10)' }, data: activeExtent },
+          },
           { name: '深泓点', type: 'scatter', data: thalweg, symbolSize: 13, itemStyle: { color: '#ffc85c', borderColor: '#fff2c2', borderWidth: 2 } },
+          { name: 'Marker 1 左堤防', type: 'scatter', data: marker1, symbol: 'triangle', symbolSize: 15, itemStyle: { color: '#5cc4ff' } },
+          { name: 'Marker 3 右堤防', type: 'scatter', data: marker3, symbol: 'triangle', symbolRotate: 180, symbolSize: 15, itemStyle: { color: '#ff8f70' } },
         ],
       });
       dispose = () => chart.dispose();
@@ -244,7 +265,7 @@ function SectionProfileChart({ section }: { section?: HydraulicSectionDetail }) 
 }
 
 export function CrossSectionsDatabasePage() {
-  const { datasetVersionId } = useDatasetVersion();
+  const { datasetVersionId, currentVersion, isMutable } = useDatasetVersion();
   const [selectedRow, setSelectedRow] = useState<HydraulicSectionRow>();
   const [selected, setSelected] = useState<HydraulicSectionDetail>();
   const [detailLoading, setDetailLoading] = useState(false);
@@ -294,8 +315,12 @@ export function CrossSectionsDatabasePage() {
   const markerOptions = (activeProfile?.points ?? []).map((point) => ({ value: point.sequence, label: `${point.sequence} · 横距 ${point.distance.toFixed(3)} m · 高程 ${point.elevation.toFixed(3)} m` }));
   const saveMarkers = async () => {
     if (!selected) return;
+    if (!isMutable) {
+      message.warning(`当前版本 ${currentVersion?.version ?? ''} 为只读，请在顶部选择或新建草稿后再设置 Marker 1/3`);
+      return;
+    }
     if (marker1Sequence !== undefined && marker3Sequence !== undefined && marker1Sequence >= marker3Sequence) {
-      message.warning('Marker 1 必须位于 Marker 3 上游侧（断面点序更小）');
+      message.warning('Marker 1 的横断面点序必须小于 Marker 3');
       return;
     }
     setMarkerSaving(true);
@@ -303,7 +328,14 @@ export function CrossSectionsDatabasePage() {
       const detail = await updateHydraulicSectionMarkers(selected.id, { marker1_sequence: marker1Sequence ?? null, marker3_sequence: marker3Sequence ?? null, actor: 'web-operator' });
       setSelected(detail);
       message.success('Marker 1/3 已保存；该断面的水力查算缓存将重新生成');
-    } catch (reason) { message.error(reason instanceof Error ? reason.message : 'Marker 1/3 保存失败'); }
+    } catch (reason) {
+      const detail = reason instanceof Error ? reason.message : 'Marker 1/3 保存失败';
+      if (/published.*immutable|immutable.*published/i.test(detail)) {
+        message.warning('当前数据版本已发布且不可修改，请切换到草稿后重试');
+      } else {
+        message.error(detail);
+      }
+    }
     finally { setMarkerSaving(false); }
   };
   return <div className="data-page">
@@ -311,7 +343,7 @@ export function CrossSectionsDatabasePage() {
     <DatasetWriteNotice />
     <Alert className="data-alert" type="info" showIcon message="断面点已统一归一化" description="横断面组须按上游到下游、里程非递减依次填写；六列模板自动把最低高程点标为深泓点，同高最低点全部保留并提示复核。纵向深泓线不等于横向断面测线，缺少横向测线时方向仍为待确认。" />
     {error && <Alert className="data-alert" type="error" showIcon message={error} />}
-    <div className="data-split"><Card className="data-card" title={`断面清单 · ${rows.length} 条`} extra={<Button icon={<ReloadOutlined />} disabled={!datasetVersionId} onClick={() => void reload()} />}><Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={{ pageSize: 10 }} scroll={{ x: 1050 }} rowClassName={(row) => row.id === selectedRow?.id ? 'ant-table-row-selected' : ''} onRow={(row) => ({ onClick: () => void selectSection(row) })} /></Card><Card loading={detailLoading} className="data-card profile-card" title="断面剖面预览">{selected ? <><Descriptions column={1} size="small" items={[{ key: 'name', label: '断面', children: selected.section_name }, { key: 'branch', label: 'river_name', children: selected.branch_code }, { key: 'station', label: '里程', children: `${selected.chainage.toFixed(3)} m` }, { key: 'topography', label: 'TOPOID', children: activeProfile?.topography_id ?? '—' }, { key: 'datum', label: '高程基准', children: activeProfile?.vertical_datum ?? '—' }, { key: 'thalweg', label: '深泓点', children: thalwegPoints.length ? thalwegPoints.map((point) => `${point.distance.toFixed(3)} / ${point.elevation.toFixed(3)} m`).join('；') : '未标记' }, { key: 'roughness', label: '默认糙率', children: activeProfile?.default_manning_n ?? '—' }, { key: 'points', label: '偏移/高程点数', children: activeProfile?.points.length ?? 0 }]} /><Card size="small" title="MIKE11 Marker 1/3 有效断面范围" style={{ marginTop: 12 }}><Alert type="info" showIcon message="Marker 1 = Left levee bank，Marker 3 = Right levee bank" description="只对 Marker 1 到 Marker 3 之间的点参与有效断面计算；未设置时保留全断面并显示复核状态。" /><Space wrap style={{ marginTop: 12 }}><span>Marker 1</span><Select allowClear value={marker1Sequence} options={markerOptions} placeholder="选择左堤防点" onChange={setMarker1Sequence} style={{ minWidth: 250 }} /><span>Marker 3</span><Select allowClear value={marker3Sequence} options={markerOptions} placeholder="选择右堤防点" onChange={setMarker3Sequence} style={{ minWidth: 250 }} /><Button type="primary" loading={markerSaving} onClick={() => void saveMarkers()}>保存有效范围</Button></Space></Card><SectionProfileChart section={selected} /></> : <div className="data-empty">从左侧选择一个横断面</div>}</Card></div>
+    <div className="data-split"><Card className="data-card" title={`断面清单 · ${rows.length} 条`} extra={<Button icon={<ReloadOutlined />} disabled={!datasetVersionId} onClick={() => void reload()} />}><Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={{ pageSize: 10 }} scroll={{ x: 1050 }} rowClassName={(row) => row.id === selectedRow?.id ? 'ant-table-row-selected' : ''} onRow={(row) => ({ onClick: () => void selectSection(row) })} /></Card><Card loading={detailLoading} className="data-card profile-card" title="断面剖面预览">{selected ? <><Descriptions column={1} size="small" items={[{ key: 'name', label: '断面', children: selected.section_name }, { key: 'branch', label: 'river_name', children: selected.branch_code }, { key: 'station', label: '里程', children: `${selected.chainage.toFixed(3)} m` }, { key: 'topography', label: 'TOPOID', children: activeProfile?.topography_id ?? '—' }, { key: 'datum', label: '高程基准', children: activeProfile?.vertical_datum ?? '—' }, { key: 'thalweg', label: '深泓点', children: thalwegPoints.length ? thalwegPoints.map((point) => `${point.distance.toFixed(3)} / ${point.elevation.toFixed(3)} m`).join('；') : '未标记' }, { key: 'roughness', label: '默认糙率', children: activeProfile?.default_manning_n ?? '—' }, { key: 'points', label: '偏移/高程点数', children: activeProfile?.points.length ?? 0 }]} /><Alert style={{ marginTop: 12 }} type="success" showIcon message={`完整剖面：按点序绘制 ${activeProfile?.points.length ?? 0} 个导入点`} description="预览不抽稀、不补点、不使用平滑曲线；折线逐点连接，点数与当前活动剖面的入库点数一致。" /><Card size="small" title="MIKE11 Marker 1/3 有效断面范围" style={{ marginTop: 12 }}><Alert type={isMutable ? 'info' : 'warning'} showIcon message={isMutable ? 'Marker 1 = Left levee bank，Marker 3 = Right levee bank' : `当前版本 ${currentVersion?.version ?? ''} 为只读，Marker 仅可查看`} description={isMutable ? 'Marker 1 到 Marker 3 之间为有效断面范围；未设置时保留全断面并显示复核状态。' : '已发布、已批准或已退役版本不可原地修改；请在顶部选择现有草稿或新建草稿后设置 Marker。'} /><Space wrap style={{ marginTop: 12 }}><span>Marker 1</span><Select allowClear disabled={!isMutable} value={marker1Sequence} options={markerOptions} placeholder="选择左堤防点" onChange={setMarker1Sequence} style={{ minWidth: 250 }} /><span>Marker 3</span><Select allowClear disabled={!isMutable} value={marker3Sequence} options={markerOptions} placeholder="选择右堤防点" onChange={setMarker3Sequence} style={{ minWidth: 250 }} /><Button type="primary" disabled={!isMutable} loading={markerSaving} onClick={() => void saveMarkers()}>保存有效范围</Button></Space></Card><SectionProfileChart section={selected} /></> : <div className="data-empty">从左侧选择一个横断面</div>}</Card></div>
   </div>;
 }
 
