@@ -235,15 +235,16 @@ def test_excel_parser_maps_mike11_marker_1_and_3_columns() -> None:
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "断面 Cross Section"
-    sheet.append(["ID", "TOPOID", "里程", "偏移", "高程", "river_name", "Marker 1", "Marker 3"])
-    sheet.append(["DM1", 1, 0, 0, 18.0, "gaominghe", "x", None])
-    sheet.append([None, None, None, 5, 12.0, None, None, None])
-    sheet.append([None, None, None, 10, 18.5, None, None, "x"])
+    sheet.append(["ID", "TOPOID", "里程", "偏移", "高程", "river_name", "Marker 1", "Marker 3", "manning_n"])
+    sheet.append(["DM1", 1, 0, 0, 18.0, "gaominghe", "x", None, 0.029])
+    sheet.append([None, None, None, 5, 12.0, None, None, None, None])
+    sheet.append([None, None, None, 10, 18.5, None, None, "x", None])
     buffer = BytesIO()
     workbook.save(buffer)
 
     payload, _, _ = parse_hydraulic_file("marker-columns.xlsx", buffer.getvalue(), 4547)
 
+    assert payload.sections[0].default_manning_n == pytest.approx(0.029)
     assert [point.marker_type for point in payload.sections[0].points] == [
         "left_levee", "thalweg", "right_levee"
     ]

@@ -56,7 +56,9 @@ HEADER_ALIASES = {
     "axis_y": {"axis_y", "断面线y", "轴线y"},
     "survey_date": {"survey_date", "测量日期"},
     "survey_method": {"survey_method", "测量方法"},
-    "default_manning_n": {"default_manning_n", "默认曼宁系数"},
+    "default_manning_n": {
+        "default_manning_n", "manning_n", "n", "默认曼宁系数", "糙率", "曼宁n",
+    },
     # MIKE11 marker columns are accepted in both the canonical point form and
     # the labels used in the reviewed operator guide.  Marker 1/3 are mapped
     # to left/right levee points during normalization; the persisted model

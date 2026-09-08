@@ -127,7 +127,10 @@ def validate_exchange(
                 HydraulicIssue(
                     severity="error",
                     code="SECTION_BRANCH_MISSING",
-                    message="断面引用的河段编码在本次导入和目标版本中均不存在",
+                    message=(
+                        "断面引用的河段编码在本次文件和当前数据版本中均不存在；"
+                        "横断面文件可不含河段，但必须先在同一数据版本提交对应的河道中心线"
+                    ),
                     entity_type="cross_section",
                     entity_ref=section.section_code,
                     context={"branch_code": section.branch_code},

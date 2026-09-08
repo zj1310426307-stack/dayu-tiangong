@@ -727,6 +727,13 @@ export function HydraulicDataPage() {
               <Button icon={<FileExcelOutlined />} onClick={() => void downloadTemplate('river-network')}>河网模板</Button>
               <Button icon={<FileExcelOutlined />} onClick={() => void downloadTemplate('cross-section')}>断面模板</Button>
             </Space>
+            <Alert
+              className="data-alert"
+              type="info"
+              showIcon
+              message="横断面导入依赖当前数据版本已有对应河道中心线"
+              description="横断面文件本身显示“河段 0”是正常的；请先在同一草稿版本提交河道中心线，再提交 river_name/branch_code 相同的横断面。若当前版本没有匹配河段，预检会以 SECTION_BRANCH_MISSING 拒绝，不会写入半成品。"
+            />
             {preview && <div className="hydraulic-preview-panel">
               <Alert
                 showIcon
