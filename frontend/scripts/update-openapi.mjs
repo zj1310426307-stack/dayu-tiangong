@@ -117,7 +117,7 @@ const requiredPaths = [
   '/api/v1/hydraulic/networks', '/api/v1/hydraulic/networks/{network_id}/graph',
   '/api/v1/hydraulic/structures', '/api/v1/hydraulic/structures/{structure_id}',
   '/api/v1/hydraulic/structures/{structure_id}/scenarios/{case_id}',
-  '/api/v1/hydraulic/cross-sections/{section_id}', '/api/v1/hydraulic/cross-sections/{section_id}/markers', '/api/v1/hydraulic/cross-sections/{section_id}/derive-spatial-geometry', '/api/v1/hydraulic/cross-sections/{section_id}/derived-spatial-geometry', '/api/v1/hydraulic/datasets/{dataset_version_id}/derive-spatial-geometry', '/api/v1/hydraulic/imports',
+  '/api/v1/hydraulic/cross-sections/{section_id}', '/api/v1/hydraulic/cross-sections/{section_id}/markers', '/api/v1/hydraulic/cross-sections/{section_id}/marker-detection', '/api/v1/hydraulic/profiles/{profile_id}/marker-workflow', '/api/v1/hydraulic/marker-detection/batch', '/api/v1/hydraulic/cross-sections/{section_id}/derive-spatial-geometry', '/api/v1/hydraulic/cross-sections/{section_id}/derived-spatial-geometry', '/api/v1/hydraulic/datasets/{dataset_version_id}/derive-spatial-geometry', '/api/v1/hydraulic/imports',
   '/api/v1/hydraulic/imports/preview', '/api/v1/hydraulic/imports/commit',
   '/api/v1/hydraulic/networks/{network_id}/topology',
   '/api/v1/hydraulic/branches/{branch_id}/reverse',
@@ -480,6 +480,9 @@ export const upsertHydraulicStructureScenario = (structureId: number, caseId: nu
 export const listHydraulicNetworks = (datasetVersionId: number, baseUrl = '') => requestJson<Array<HydraulicNetworkRecord>>(\`/api/v1/hydraulic/networks\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
 export const getHydraulicSection = (sectionId: number, baseUrl = '') => requestJson<HydraulicSectionDetail>(\`/api/v1/hydraulic/cross-sections/\${sectionId}\`, {}, baseUrl);
 export const updateHydraulicSectionMarkers = (sectionId: number, body: HydraulicMarkerUpdate, baseUrl = '') => requestJson<HydraulicSectionDetail>(\`/api/v1/hydraulic/cross-sections/\${sectionId}/markers\`, jsonOptions('PUT', body), baseUrl);
+export const detectHydraulicSectionMarkers = (sectionId: number, body: HydraulicMarkerDetectionRequest, baseUrl = '') => requestJson<HydraulicSectionDetail>(\`/api/v1/hydraulic/cross-sections/\${sectionId}/marker-detection\`, jsonOptions('POST', body), baseUrl);
+export const updateHydraulicMarkerWorkflow = (profileId: number, body: HydraulicMarkerWorkflowUpdate, baseUrl = '') => requestJson<HydraulicMarkerWorkflowRecord>(\`/api/v1/hydraulic/profiles/\${profileId}/marker-workflow\`, jsonOptions('PUT', body), baseUrl);
+export const batchDetectHydraulicMarkers = (body: HydraulicBatchMarkerDetectionRequest, baseUrl = '') => requestJson<HydraulicBatchMarkerDetectionRecord>('/api/v1/hydraulic/marker-detection/batch', jsonOptions('POST', body), baseUrl);
 export const deriveHydraulicSectionSpatialGeometry = (sectionId: number, baseUrl = '') => requestJson<HydraulicSectionDetail>(\`/api/v1/hydraulic/cross-sections/\${sectionId}/derive-spatial-geometry\`, jsonOptions('POST', {}), baseUrl);
 export const clearHydraulicSectionSpatialGeometry = (sectionId: number, baseUrl = '') => requestJson<HydraulicSectionDetail>(\`/api/v1/hydraulic/cross-sections/\${sectionId}/derived-spatial-geometry\`, { method: 'DELETE' }, baseUrl);
 export const deriveHydraulicDatasetSpatialGeometry = (datasetVersionId: number, baseUrl = '') => requestJson<Record<string, number>>(\`/api/v1/hydraulic/datasets/\${datasetVersionId}/derive-spatial-geometry\`, jsonOptions('POST', {}), baseUrl);

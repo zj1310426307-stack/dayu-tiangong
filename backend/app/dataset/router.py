@@ -63,9 +63,9 @@ def update_dataset_version(version_id: int, payload: DatasetVersionUpdate, sessi
     return commit_or_conflict(session, lambda: service.update_dataset_version(session, entity, payload))
 
 
-@router.delete("/dataset-versions/{version_id}", status_code=204, summary="删除空数据集版本")
+@router.delete("/dataset-versions/{version_id}", status_code=204, summary="删除草稿箱数据版本")
 def delete_dataset_version(version_id: int, session: SessionDependency) -> Response:
-    """删除无关联资产的数据集版本。"""
+    """删除草稿版本；非草稿和被生产运行引用的版本由后端拒绝。"""
 
     entity = session.get(DatasetVersion, version_id)
     if entity is None:

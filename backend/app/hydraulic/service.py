@@ -36,6 +36,13 @@ from app.hydraulic.schemas import (
     HydraulicRoughnessZoneRecord, HydraulicSectionDetail, HydraulicSectionPointInput,
     HydraulicSectionPointRecord, HydraulicSectionSummary, HydraulicValidationRunRecord,
     HydraulicMarkerUpdate,
+    HydraulicBatchMarkerDetectionRecord, HydraulicBatchMarkerDetectionRequest,
+    HydraulicMarkerDetectionRequest, HydraulicMarkerRecord, HydraulicMarkerWorkflowRecord,
+    HydraulicMarkerWorkflowUpdate, HydraulicProcessedPointRecord,
+)
+from app.hydraulic.marker_processing import (
+    ALGORITHM_VERSION, SectionPoint, build_processed_geometry,
+    detect_markers, marker_dict,
 )
 from app.hydraulic.spatial_geometry import derive_section_geometry
 from app.hydraulic.validators import validate_exchange
@@ -107,6 +114,57 @@ def _record_counts(payload: HydraulicExchangePayload | None) -> dict[str, int]:
             for point in section.points
         ),
     }
+
+
+def _initial_marker_workflow(
+    points: list[HydraulicSectionPointInput],
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Create legacy-safe FULL_EXTENT markers and a raw-equivalent processed profile."""
+
+    raw = [
+        SectionPoint(
+            sequence=value.sequence, offset=value.distance, elevation=value.elevation,
+            x=value.x, y=value.y, point_code=value.point_code,
+        )
+        for value in points
+    ]
+    result = detect_markers(raw, "FULL_EXTENT")
+    markers = marker_dict(result)
+    explicit = {
+        "M1": next((value for value in points if value.marker_type in {"left_bank", "left_levee"}), None),
+        "M2": next((value for value in points if value.marker_type in {"main_channel", "thalweg"}), None),
+        "M3": next((value for value in points if value.marker_type in {"right_bank", "right_levee"}), None),
+    }
+    for marker_type, value in explicit.items():
+        if value is None:
+            continue
+        markers[marker_type] = {
+            **markers[marker_type],
+            "sequence": value.sequence,
+            "offset": value.distance,
+            "elevation": value.elevation,
+            "x": value.x,
+            "y": value.y,
+            "source": "IMPORT_DEFAULT",
+        }
+    marker_config: dict[str, object] = {
+        "markers": markers,
+        "warnings": list(result.warnings),
+        "review_status": result.review_status,
+        "algorithm_version": ALGORITHM_VERSION,
+    }
+    processed: dict[str, object] = {
+        "algorithm_version": ALGORITHM_VERSION,
+        "points": [
+            {
+                "offset": value.distance, "elevation": value.elevation,
+                "virtual": False, "source_sequence": value.sequence,
+            }
+            for value in points
+        ],
+        "warnings": [],
+    }
+    return marker_config, processed
 
 
 def _known_branch_ranges(
@@ -490,7 +548,22 @@ def _upsert_section(
     profile.vertical_datum = spec.vertical_datum
     profile.vertical_unit = spec.vertical_unit
     profile.default_manning_n = source.default_manning_n
-    profile.profile_hash = _profile_digest(source, spec)
+    raw_profile_hash = _profile_digest(source, spec)
+    profile.profile_hash = raw_profile_hash
+    initial_marker_config, initial_processed_geometry = _initial_marker_workflow(source.points)
+    profile.marker_detection_mode = "FULL_EXTENT"
+    profile.active_extent_mode = "FULL_EXTENT"
+    profile.overbank_treatment = "REAL_GEOMETRY"
+    profile.extension_top_elevation_m = None
+    profile.design_max_water_level_m = None
+    profile.safety_freeboard_m = 0.0
+    profile.marker_config_json = initial_marker_config
+    profile.processed_geometry_json = initial_processed_geometry
+    profile.processing_config_version = ALGORITHM_VERSION
+    profile.metadata_json = {
+        **(profile.metadata_json or {}),
+        "raw_profile_hash": raw_profile_hash,
+    }
     profile.is_active = True
     # Bulk-clearing the previous active row can leave an existing ORM instance
     # stale in long-lived import transactions.  Write the active flag directly
@@ -633,6 +706,7 @@ def derive_section_spatial_geometry(
         section.review_status = review_status
         section.spatial_geometry_source = "DERIVED_FROM_BRANCH"
         section.spatial_geometry_status = "DERIVED"
+        section.orientation_status = "confirmed"
         section.hydraulic_ready = True
         for point, xy in zip(points, display_points):
             # Keep raw/survey geometry intact; only fill the disposable derived field.
@@ -812,6 +886,34 @@ def _processing_record(session: Session, value: HydraulicCrossSectionProcessing 
     )
 
 
+def _marker_workflow_record(profile: HydraulicCrossSectionProfile) -> HydraulicMarkerWorkflowRecord:
+    """Serialize the independent Marker/Processed layer without touching raw points."""
+
+    config = profile.marker_config_json or {}
+    geometry = profile.processed_geometry_json or {}
+    markers = config.get("markers", {})
+    return HydraulicMarkerWorkflowRecord(
+        profile_id=profile.id,
+        marker_detection_mode=profile.marker_detection_mode,
+        active_extent_mode=profile.active_extent_mode,
+        overbank_treatment=profile.overbank_treatment,
+        extension_top_elevation_m=profile.extension_top_elevation_m,
+        design_max_water_level_m=profile.design_max_water_level_m,
+        safety_freeboard_m=profile.safety_freeboard_m,
+        processing_config_version=profile.processing_config_version,
+        review_status=str(config.get("review_status", "NEEDS_REVIEW")),
+        warnings=[str(value) for value in config.get("warnings", [])],
+        markers=[
+            HydraulicMarkerRecord.model_validate(markers[key])
+            for key in ("M1", "M2", "M3") if key in markers
+        ],
+        processed_points=[
+            HydraulicProcessedPointRecord.model_validate(value)
+            for value in geometry.get("points", [])
+        ],
+    )
+
+
 def _profile_record(session: Session, profile: HydraulicCrossSectionProfile) -> HydraulicProfileRecord:
     """Return ordered profile points, roughness, and newest matching processing cache."""
 
@@ -841,6 +943,7 @@ def _profile_record(session: Session, profile: HydraulicCrossSectionProfile) -> 
         ) for p in points],
         roughness_zones=[HydraulicRoughnessZoneRecord.model_validate(z, from_attributes=True) for z in zones],
         processing=_processing_record(session, processing),
+        marker_workflow=_marker_workflow_record(profile),
     )
 
 
@@ -884,6 +987,10 @@ def list_networks(session: Session, dataset_version_id: int) -> list[HydraulicNe
                         HydraulicCrossSectionPoint.profile_id == profile.id
                     )) or 0) if profile else 0,
                     orientation_status=section.orientation_status,
+                    marker_review_status=(
+                        str((profile.marker_config_json or {}).get("review_status", "NEEDS_REVIEW"))
+                        if profile else "NEEDS_REVIEW"
+                    ),
                     bed_elevation_m=section.bed_elevation_m,
                     bed_elevation_source=section.bed_elevation_source,
                 ))
@@ -964,6 +1071,215 @@ def get_section_detail(session: Session, section_id: int) -> HydraulicSectionDet
     )
 
 
+def _raw_marker_points(points: list[HydraulicCrossSectionPoint]) -> list[SectionPoint]:
+    """Project ORM points to immutable pure-algorithm inputs."""
+
+    return [
+        SectionPoint(
+            sequence=point.sequence,
+            offset=point.distance,
+            elevation=point.elevation,
+            x=point.source_x,
+            y=point.source_y,
+            point_code=point.point_code,
+        )
+        for point in points
+    ]
+
+
+def _persist_processed_geometry(
+    profile: HydraulicCrossSectionProfile,
+    points: list[HydraulicCrossSectionPoint],
+) -> None:
+    """Regenerate disposable processed geometry from persisted workflow state."""
+
+    config = profile.marker_config_json or {}
+    processed, warnings = build_processed_geometry(
+        _raw_marker_points(points),
+        config.get("markers", {}),
+        profile.active_extent_mode,
+        profile.overbank_treatment,
+        profile.extension_top_elevation_m,
+        profile.design_max_water_level_m,
+        profile.safety_freeboard_m,
+    )
+    raw_profile_hash = str(
+        (profile.metadata_json or {}).get("raw_profile_hash")
+        or (profile.processed_geometry_json or {}).get("raw_profile_hash")
+        or profile.profile_hash
+    )
+    profile.metadata_json = {
+        **(profile.metadata_json or {}),
+        "raw_profile_hash": raw_profile_hash,
+    }
+    profile.processed_geometry_json = {
+        "algorithm_version": ALGORITHM_VERSION,
+        "raw_profile_hash": raw_profile_hash,
+        "points": [
+            {
+                "offset": value.offset,
+                "elevation": value.elevation,
+                "virtual": value.virtual,
+                "source_sequence": value.source_sequence,
+            }
+            for value in processed
+        ],
+        "warnings": warnings,
+    }
+    if warnings:
+        profile.marker_config_json = {
+            **config,
+            "warnings": list(dict.fromkeys([*config.get("warnings", []), *warnings])),
+            "review_status": "NEEDS_REVIEW",
+        }
+
+
+def _active_profile_and_points(
+    session: Session, section: HydraulicCrossSection
+) -> tuple[HydraulicCrossSectionProfile, list[HydraulicCrossSectionPoint]]:
+    """Load one active profile and its stable raw point order."""
+
+    profile = session.scalar(
+        select(HydraulicCrossSectionProfile).where(
+            HydraulicCrossSectionProfile.cross_section_id == section.id,
+            HydraulicCrossSectionProfile.is_active.is_(True),
+        ).order_by(HydraulicCrossSectionProfile.id.desc())
+    )
+    if profile is None:
+        raise ValueError("Active cross-section profile does not exist")
+    points = list(session.scalars(
+        select(HydraulicCrossSectionPoint).where(
+            HydraulicCrossSectionPoint.profile_id == profile.id
+        ).order_by(HydraulicCrossSectionPoint.sequence)
+    ).all())
+    return profile, points
+
+
+def detect_section_markers(
+    session: Session, section_id: int, payload: HydraulicMarkerDetectionRequest
+) -> HydraulicSectionDetail:
+    """Run a deterministic marker strategy while preserving locked/manual markers."""
+
+    section = session.get(HydraulicCrossSection, section_id)
+    if section is None:
+        raise ValueError("Hydraulic cross-section does not exist")
+    assert_dataset_version_mutable(session, section.dataset_version_id)
+    profile, points = _active_profile_and_points(session, section)
+    existing = (profile.marker_config_json or {}).get("markers", {})
+    result = detect_markers(_raw_marker_points(points), payload.mode, existing, force=payload.force)
+    if not result.markers:
+        raise ValueError(", ".join(result.warnings))
+    records = marker_dict(result)
+    warnings = list(result.warnings)
+    if section.orientation_status != "confirmed" and section.spatial_geometry_source == "UNAVAILABLE":
+        warnings.append("UNKNOWN_ORIENTATION")
+    # marker_type is retained as a compatibility projection only.  Raw offset,
+    # elevation, XYZ and point code remain unchanged.
+    by_sequence = {point.sequence: point for point in points}
+    for point in points:
+        if point.marker_type in {"left_bank", "right_bank", "left_levee", "right_levee", "main_channel"}:
+            point.marker_type = "none"
+    for key, marker_type in (("M1", "left_levee"), ("M2", "main_channel"), ("M3", "right_levee")):
+        by_sequence[int(records[key]["sequence"])].marker_type = marker_type
+    profile.marker_detection_mode = payload.mode
+    profile.marker_config_json = {
+        "markers": records,
+        "warnings": list(dict.fromkeys(warnings)),
+        "review_status": "NEEDS_REVIEW" if warnings else result.review_status,
+        "algorithm_version": ALGORITHM_VERSION,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    section.review_status = "NEEDS_REVIEW" if warnings else "REVIEWED"
+    _persist_processed_geometry(profile, points)
+    profile.profile_hash = canonical_hash({
+        "raw_profile_hash": profile.metadata_json["raw_profile_hash"],
+        "marker_config": profile.marker_config_json,
+        "processing": {
+            "active_extent_mode": profile.active_extent_mode,
+            "overbank_treatment": profile.overbank_treatment,
+            "extension_top_elevation_m": profile.extension_top_elevation_m,
+        },
+    })
+    session.flush()
+    if section.axis_geometry is None:
+        return derive_section_spatial_geometry(session, section.id)
+    result_detail = get_section_detail(session, section.id)
+    if result_detail is None:
+        raise ValueError("Hydraulic cross-section could not be reloaded")
+    return result_detail
+
+
+def update_marker_workflow(
+    session: Session, profile_id: int, payload: HydraulicMarkerWorkflowUpdate
+) -> HydraulicMarkerWorkflowRecord:
+    """Update Active Extent and overbank treatment and rebuild derived geometry."""
+
+    profile = session.get(HydraulicCrossSectionProfile, profile_id)
+    if profile is None:
+        raise ValueError("Hydraulic cross-section profile does not exist")
+    assert_dataset_version_mutable(session, profile.dataset_version_id)
+    points = list(session.scalars(
+        select(HydraulicCrossSectionPoint).where(
+            HydraulicCrossSectionPoint.profile_id == profile.id
+        ).order_by(HydraulicCrossSectionPoint.sequence)
+    ).all())
+    profile.active_extent_mode = payload.active_extent_mode
+    profile.overbank_treatment = payload.overbank_treatment
+    profile.extension_top_elevation_m = payload.extension_top_elevation_m
+    profile.design_max_water_level_m = payload.design_max_water_level_m
+    profile.safety_freeboard_m = payload.safety_freeboard_m
+    profile.processing_config_version = ALGORITHM_VERSION
+    _persist_processed_geometry(profile, points)
+    profile.profile_hash = canonical_hash({
+        "raw_profile_hash": profile.metadata_json["raw_profile_hash"],
+        "marker_config": profile.marker_config_json,
+        "workflow": payload.model_dump(mode="json"),
+        "algorithm_version": ALGORITHM_VERSION,
+    })
+    session.flush()
+    return _marker_workflow_record(profile)
+
+
+def batch_detect_markers(
+    session: Session, payload: HydraulicBatchMarkerDetectionRequest
+) -> HydraulicBatchMarkerDetectionRecord:
+    """Process up to 1000 active profiles synchronously and return review statistics."""
+
+    assert_dataset_version_mutable(session, payload.dataset_version_id)
+    profiles = list(session.scalars(
+        select(HydraulicCrossSectionProfile).where(
+            HydraulicCrossSectionProfile.dataset_version_id == payload.dataset_version_id,
+            HydraulicCrossSectionProfile.is_active.is_(True),
+        ).order_by(HydraulicCrossSectionProfile.id).limit(1000)
+    ).all())
+    detected = needs_review = failed = locked_skipped = unknown_orientation = invalid_order = 0
+    for profile in profiles:
+        section = session.get(HydraulicCrossSection, profile.cross_section_id)
+        unknown_orientation += bool(section and section.orientation_status != "confirmed")
+        existing = (profile.marker_config_json or {}).get("markers", {})
+        if existing and all(value.get("locked") for value in existing.values()) and not payload.force:
+            locked_skipped += 1
+            continue
+        try:
+            detail = detect_section_markers(
+                session,
+                profile.cross_section_id,
+                HydraulicMarkerDetectionRequest(mode=payload.mode, force=payload.force),
+            )
+            detected += 1
+            workflow = next(value.marker_workflow for value in detail.profiles if value.id == profile.id)
+            needs_review += workflow.review_status == "NEEDS_REVIEW"
+            invalid_order += "INVALID_MARKER_ORDER" in workflow.warnings
+        except ValueError as exc:
+            failed += 1
+            invalid_order += "INVALID_MARKER_ORDER" in str(exc)
+    return HydraulicBatchMarkerDetectionRecord(
+        total_sections=len(profiles), detected=detected, needs_review=needs_review,
+        failed=failed, locked_skipped=locked_skipped, unknown_orientation=unknown_orientation,
+        invalid_marker_order=invalid_order,
+    )
+
+
 def update_section_markers(
     session: Session, section_id: int, payload: HydraulicMarkerUpdate
 ) -> HydraulicSectionDetail:
@@ -1018,6 +1334,41 @@ def update_section_markers(
         by_sequence[payload.marker2_sequence].marker_type = "main_channel"
     if payload.marker3_sequence is not None:
         by_sequence[payload.marker3_sequence].marker_type = "right_levee"
+    manual_markers: dict[str, dict[str, object]] = {}
+    marker_specs = (
+        ("M1", "LEFT_LEVEE", payload.marker1_sequence, payload.lock_marker1),
+        ("M2", "CHANNEL_LOW_POINT", payload.marker2_sequence, payload.lock_marker2),
+        ("M3", "RIGHT_LEVEE", payload.marker3_sequence, payload.lock_marker3),
+    )
+    for marker_type, role, sequence, locked in marker_specs:
+        if sequence is None:
+            continue
+        point = by_sequence[sequence]
+        manual_markers[marker_type] = {
+            "type": marker_type,
+            "role": role,
+            "sequence": point.sequence,
+            "offset": point.distance,
+            "elevation": point.elevation,
+            "x": point.source_x,
+            "y": point.source_y,
+            "source": "MANUAL",
+            "confidence": 1.0,
+            "locked": locked,
+            "review_status": "REVIEWED",
+            "algorithm_version": ALGORITHM_VERSION,
+            "notes": payload.notes,
+        }
+    profile.marker_detection_mode = "MANUAL"
+    profile.marker_config_json = {
+        "markers": manual_markers,
+        "warnings": [],
+        "review_status": "REVIEWED" if len(manual_markers) == 3 else "NEEDS_REVIEW",
+        "algorithm_version": ALGORITHM_VERSION,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    section.review_status = "REVIEWED" if len(manual_markers) == 3 else "NEEDS_REVIEW"
+    _persist_processed_geometry(profile, points)
     profile.metadata_json = {
         **(profile.metadata_json or {}),
         "mike11_marker_policy": "marker_1_to_3_active_extent",
@@ -1028,7 +1379,7 @@ def update_section_markers(
         "marker_updated_at": datetime.now(UTC).isoformat(),
     }
     profile.profile_hash = canonical_hash({
-        "profile_hash_before_marker_update": profile.profile_hash,
+        "raw_profile_hash": profile.metadata_json["raw_profile_hash"],
         "marker1_sequence": payload.marker1_sequence,
         "marker2_sequence": payload.marker2_sequence,
         "marker3_sequence": payload.marker3_sequence,

@@ -1425,6 +1425,22 @@ export interface Hydraulic1DReadinessResponse {
   "input_summary"?: Record<string, unknown> | null;
 }
 
+export interface HydraulicBatchMarkerDetectionRecord {
+  "total_sections": number;
+  "detected": number;
+  "needs_review": number;
+  "failed": number;
+  "locked_skipped": number;
+  "unknown_orientation": number;
+  "invalid_marker_order": number;
+}
+
+export interface HydraulicBatchMarkerDetectionRequest {
+  "mode"?: "FULL_EXTENT" | "MIKE11_COMPATIBLE";
+  "force"?: boolean;
+  "dataset_version_id": number;
+}
+
 export interface HydraulicBatchProcessRequest {
   "vertical_step_m"?: number;
   "profile_ids": Array<number>;
@@ -1598,11 +1614,59 @@ export interface HydraulicLocateRequest {
   "actor"?: string | null;
 }
 
+export interface HydraulicMarkerDetectionRequest {
+  "mode"?: "FULL_EXTENT" | "MIKE11_COMPATIBLE";
+  "force"?: boolean;
+}
+
+export interface HydraulicMarkerRecord {
+  "type": "M1" | "M2" | "M3";
+  "role": "LEFT_LEVEE" | "CHANNEL_LOW_POINT" | "RIGHT_LEVEE";
+  "sequence": number;
+  "offset": number;
+  "elevation": number;
+  "x"?: number | null;
+  "y"?: number | null;
+  "source": "IMPORT_DEFAULT" | "AUTO_MIKE11_COMPATIBLE" | "GIS_LEVEE" | "SURVEY_CODE" | "MANUAL";
+  "confidence": number;
+  "locked": boolean;
+  "review_status": "AUTO_ACCEPTED" | "NEEDS_REVIEW" | "REVIEWED" | "REJECTED";
+  "algorithm_version": string;
+  "notes"?: string | null;
+}
+
 export interface HydraulicMarkerUpdate {
   "marker1_sequence"?: number | null;
   "marker2_sequence"?: number | null;
   "marker3_sequence"?: number | null;
+  "lock_marker1"?: boolean;
+  "lock_marker2"?: boolean;
+  "lock_marker3"?: boolean;
+  "notes"?: string | null;
   "actor"?: string;
+}
+
+export interface HydraulicMarkerWorkflowRecord {
+  "profile_id": number;
+  "marker_detection_mode": string;
+  "active_extent_mode": string;
+  "overbank_treatment": string;
+  "extension_top_elevation_m": number | null;
+  "design_max_water_level_m": number | null;
+  "safety_freeboard_m": number;
+  "processing_config_version": string;
+  "review_status": string;
+  "warnings": Array<string>;
+  "markers"?: Array<HydraulicMarkerRecord>;
+  "processed_points"?: Array<HydraulicProcessedPointRecord>;
+}
+
+export interface HydraulicMarkerWorkflowUpdate {
+  "active_extent_mode"?: "FULL_EXTENT" | "MARKER_EXTENT";
+  "overbank_treatment"?: "REAL_GEOMETRY" | "VERTICAL_EXTENSION";
+  "extension_top_elevation_m"?: number | null;
+  "design_max_water_level_m"?: number | null;
+  "safety_freeboard_m"?: number;
 }
 
 export interface HydraulicMetrics {
@@ -1750,6 +1814,13 @@ export interface HydraulicPreviewJobRecord {
   "plc_scada_connected"?: false;
 }
 
+export interface HydraulicProcessedPointRecord {
+  "offset": number;
+  "elevation": number;
+  "virtual": boolean;
+  "source_sequence"?: number | null;
+}
+
 export interface HydraulicProcessingRecord {
   "id": number;
   "profile_hash": string;
@@ -1780,6 +1851,7 @@ export interface HydraulicProfileRecord {
   "points": Array<HydraulicSectionPointRecord>;
   "roughness_zones": Array<HydraulicRoughnessZoneRecord>;
   "processing"?: HydraulicProcessingRecord | null;
+  "marker_workflow"?: HydraulicMarkerWorkflowRecord | null;
 }
 
 export interface HydraulicReachRecord {
@@ -1859,7 +1931,7 @@ export interface HydraulicSectionPointInput {
   "sequence": number;
   "distance": number;
   "elevation": number;
-  "marker_type"?: "none" | "left_bank" | "right_bank" | "left_levee" | "right_levee" | "low_flow_left" | "low_flow_right" | "thalweg";
+  "marker_type"?: "none" | "left_bank" | "right_bank" | "left_levee" | "right_levee" | "low_flow_left" | "low_flow_right" | "thalweg" | "main_channel";
   "point_code"?: string | null;
   "x"?: number | null;
   "y"?: number | null;
@@ -1887,6 +1959,7 @@ export interface HydraulicSectionSummary {
   "profile_count": number;
   "point_count": number;
   "orientation_status": string;
+  "marker_review_status": string;
   "bed_elevation_m": number | null;
   "bed_elevation_source": string;
 }
@@ -3427,6 +3500,9 @@ export const upsertHydraulicStructureScenario = (structureId: number, caseId: nu
 export const listHydraulicNetworks = (datasetVersionId: number, baseUrl = '') => requestJson<Array<HydraulicNetworkRecord>>(`/api/v1/hydraulic/networks${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
 export const getHydraulicSection = (sectionId: number, baseUrl = '') => requestJson<HydraulicSectionDetail>(`/api/v1/hydraulic/cross-sections/${sectionId}`, {}, baseUrl);
 export const updateHydraulicSectionMarkers = (sectionId: number, body: HydraulicMarkerUpdate, baseUrl = '') => requestJson<HydraulicSectionDetail>(`/api/v1/hydraulic/cross-sections/${sectionId}/markers`, jsonOptions('PUT', body), baseUrl);
+export const detectHydraulicSectionMarkers = (sectionId: number, body: HydraulicMarkerDetectionRequest, baseUrl = '') => requestJson<HydraulicSectionDetail>(`/api/v1/hydraulic/cross-sections/${sectionId}/marker-detection`, jsonOptions('POST', body), baseUrl);
+export const updateHydraulicMarkerWorkflow = (profileId: number, body: HydraulicMarkerWorkflowUpdate, baseUrl = '') => requestJson<HydraulicMarkerWorkflowRecord>(`/api/v1/hydraulic/profiles/${profileId}/marker-workflow`, jsonOptions('PUT', body), baseUrl);
+export const batchDetectHydraulicMarkers = (body: HydraulicBatchMarkerDetectionRequest, baseUrl = '') => requestJson<HydraulicBatchMarkerDetectionRecord>('/api/v1/hydraulic/marker-detection/batch', jsonOptions('POST', body), baseUrl);
 export const deriveHydraulicSectionSpatialGeometry = (sectionId: number, baseUrl = '') => requestJson<HydraulicSectionDetail>(`/api/v1/hydraulic/cross-sections/${sectionId}/derive-spatial-geometry`, jsonOptions('POST', {}), baseUrl);
 export const clearHydraulicSectionSpatialGeometry = (sectionId: number, baseUrl = '') => requestJson<HydraulicSectionDetail>(`/api/v1/hydraulic/cross-sections/${sectionId}/derived-spatial-geometry`, { method: 'DELETE' }, baseUrl);
 export const deriveHydraulicDatasetSpatialGeometry = (datasetVersionId: number, baseUrl = '') => requestJson<Record<string, number>>(`/api/v1/hydraulic/datasets/${datasetVersionId}/derive-spatial-geometry`, jsonOptions('POST', {}), baseUrl);

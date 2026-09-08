@@ -1,8 +1,8 @@
-import { BellOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlusOutlined } from '@ant-design/icons';
-import { Button, Form, Input, Layout, Menu, Modal, Select, Tag, Tooltip, message } from 'antd';
+import { BellOutlined, DeleteOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlusOutlined } from '@ant-design/icons';
+import { Button, Form, Input, Layout, Menu, Modal, Popconfirm, Select, Tag, Tooltip, message } from 'antd';
 import { useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { createDatasetVersion, type DatasetVersionCreate } from '../api/generated/client';
+import { createDatasetVersion, deleteDatasetVersion, type DatasetVersionCreate } from '../api/generated/client';
 import { navigationItems } from '../router';
 import { datasetVersionStatusLabel, useDatasetVersion } from '../context/DatasetVersionContext';
 
@@ -21,6 +21,7 @@ export function MainLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [versionForm] = Form.useForm<DatasetVersionCreate>();
   const location = useLocation();
   const navigate = useNavigate();
@@ -69,6 +70,21 @@ export function MainLayout() {
       description: '由大禹天工 Web 工作台创建的可编辑数据版本',
     });
     setCreateOpen(true);
+  };
+
+  /** 删除当前草稿；后端生命周期与外键门仍是最终权威。 */
+  const deleteCurrentDraft = async () => {
+    if (!currentVersion || currentVersion.status !== 'draft') return;
+    setDeleting(true);
+    try {
+      await deleteDatasetVersion(currentVersion.id);
+      await refreshVersions();
+      message.success(`草稿 ${currentVersion.version} 已删除`);
+    } catch (reason) {
+      message.error(reason instanceof Error ? reason.message : '草稿删除失败；请先清理被运行或审批引用的内容');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   return (
@@ -153,6 +169,18 @@ export function MainLayout() {
                 <Tooltip title={error || '创建独立的可编辑草稿；已发布版本始终保持只读'}>
                   <Button icon={<PlusOutlined />} onClick={openCreateDraft}>新建草稿</Button>
                 </Tooltip>
+                {currentVersion?.status === 'draft' && (
+                  <Popconfirm
+                    title="删除当前草稿？"
+                    description={`将删除 ${currentVersion.version}；已发布、审核中或被运行引用的版本不会被删除。`}
+                    okText="删除草稿"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => void deleteCurrentDraft()}
+                  >
+                    <Button danger loading={deleting} icon={<DeleteOutlined />}>删除草稿</Button>
+                  </Popconfirm>
+                )}
                 <Tag color={versionStatusColor(currentVersion?.status)}>
                   {datasetVersionStatusLabel(currentVersion?.status)}
                 </Tag>

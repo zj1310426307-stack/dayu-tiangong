@@ -17,6 +17,7 @@
 - [一维求解器能力矩阵](docs/hydraulics/solver-capabilities.md)
 - [生产工作流](docs/hydraulics/production-workflow.md)
 - [工程数据导入](docs/hydraulics/engineering-data-import.md)
+- [横断面 Marker 与全归槽处理](docs/hydraulics/cross-section-marker-processing.md)
 - [模型 QA](docs/hydraulics/model-qa.md)
 - [率定与独立验证](docs/hydraulics/calibration-validation.md)
 - [外部模型交叉对比](docs/hydraulics/external-model-comparison.md)
@@ -95,6 +96,10 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 - `POST /api/v1/hydraulic/branches/{branch_id}/reverse|recalculate-chainage`
 - `POST /api/v1/hydraulic/cross-sections/{section_id}/locate`
 - `POST /api/v1/hydraulic/profiles/{profile_id}/process|process-batch`
+- `PUT /api/v1/hydraulic/cross-sections/{section_id}/markers`
+- `POST /api/v1/hydraulic/cross-sections/{section_id}/marker-detection`
+- `PUT /api/v1/hydraulic/profiles/{profile_id}/marker-workflow`
+- `POST /api/v1/hydraulic/marker-detection/batch`
 - `POST /api/v1/hydraulic/validation/run`
 - `GET /api/v1/hydraulic/validation/{run_code}`
 - `GET /api/v1/hydraulic/exports/network.nwk11|cross-sections.xns11`

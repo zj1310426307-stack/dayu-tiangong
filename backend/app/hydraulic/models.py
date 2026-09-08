@@ -641,6 +641,19 @@ class HydraulicCrossSectionProfile(Base):
     __tablename__ = "cross_section_profile"
     __table_args__ = (
         CheckConstraint("default_manning_n > 0", name="ck_hydraulic_profile_manning"),
+        CheckConstraint(
+            "marker_detection_mode IN ('FULL_EXTENT','MIKE11_COMPATIBLE','MANUAL','GIS_ASSISTED')",
+            name="ck_hydraulic_profile_marker_detection_mode",
+        ),
+        CheckConstraint(
+            "active_extent_mode IN ('FULL_EXTENT','MARKER_EXTENT')",
+            name="ck_hydraulic_profile_active_extent_mode",
+        ),
+        CheckConstraint(
+            "overbank_treatment IN ('REAL_GEOMETRY','VERTICAL_EXTENSION')",
+            name="ck_hydraulic_profile_overbank_treatment",
+        ),
+        CheckConstraint("safety_freeboard_m >= 0", name="ck_hydraulic_profile_safety_freeboard"),
         ForeignKeyConstraint(
             ["cross_section_id", "dataset_version_id"],
             ["hydraulic.cross_section.id", "hydraulic.cross_section.dataset_version_id"],
@@ -672,6 +685,27 @@ class HydraulicCrossSectionProfile(Base):
     )
     vertical_unit: Mapped[str] = mapped_column(String(16), nullable=False, server_default="m")
     default_manning_n: Mapped[float] = mapped_column(Float, nullable=False)
+    marker_detection_mode: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="FULL_EXTENT"
+    )
+    active_extent_mode: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default="FULL_EXTENT"
+    )
+    overbank_treatment: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="REAL_GEOMETRY"
+    )
+    extension_top_elevation_m: Mapped[float | None] = mapped_column(Float)
+    design_max_water_level_m: Mapped[float | None] = mapped_column(Float)
+    safety_freeboard_m: Mapped[float] = mapped_column(Float, nullable=False, server_default="0")
+    marker_config_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    processed_geometry_json: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, server_default="{}"
+    )
+    processing_config_version: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default="dayu-marker-v1"
+    )
     source_revision: Mapped[str | None] = mapped_column(String(64))
     profile_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")

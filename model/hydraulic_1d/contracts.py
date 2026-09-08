@@ -75,11 +75,21 @@ class HydraulicCrossSection(StrictHydraulicModel):
 
     @model_validator(mode="after")
     def validate_profile(self) -> Self:
-        """Require strictly ordered points and bounded transverse roughness zones."""
+        """Require ordered points, allowing explicit vertical walls at either boundary."""
 
         stations = [item.station_m for item in self.points]
-        if any(right <= left for left, right in zip(stations, stations[1:])):
-            raise ValueError("cross-section stations must be strictly increasing")
+        if any(right < left for left, right in zip(stations, stations[1:])):
+            raise ValueError("cross-section stations must be non-decreasing")
+        duplicate_indices = [
+            index
+            for index, (left, right) in enumerate(zip(stations, stations[1:]))
+            if right == left
+        ]
+        for index in duplicate_indices:
+            if index not in {0, len(stations) - 2}:
+                raise ValueError("duplicate cross-section station is only valid for a boundary wall")
+            if self.points[index].elevation_m == self.points[index + 1].elevation_m:
+                raise ValueError("a boundary wall requires two different elevations")
         for zone in self.roughness_zones:
             if zone.end_station_m > stations[-1]:
                 raise ValueError(

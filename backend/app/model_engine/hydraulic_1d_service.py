@@ -589,10 +589,10 @@ def build_hydraulic_1d_model(
         )
     cross_sections: list[HydraulicCrossSection] = []
     for index, row in enumerate(section_rows):
-        if row.orientation_status != "confirmed":
+        if not row.hydraulic_ready:
             _reject(
-                "DAYU_CROSS_SECTION_ORIENTATION_UNCONFIRMED",
-                "Cross Section orientation must be confirmed",
+                "DAYU_CROSS_SECTION_HYDRAULIC_NOT_READY",
+                "Cross Section hydraulic geometry is not ready",
                 f"cross_sections[{index}]",
             )
         profiles = list(
@@ -638,6 +638,18 @@ def build_hydraulic_1d_model(
         )
         override = roughness_by_section.get(row.id)
         adopted_manning_n = override[1] if override is not None else profile.default_manning_n
+        raw_by_sequence = {point.sequence: point for point in points}
+        processed_rows = (profile.processed_geometry_json or {}).get("points", [])
+        solver_points = processed_rows or [
+            {
+                "offset": point.distance,
+                "elevation": point.elevation,
+                "source_sequence": point.sequence,
+            }
+            for point in points
+        ]
+        solver_station_min = float(solver_points[0]["offset"])
+        solver_station_max = float(solver_points[-1]["offset"])
         cross_sections.append(
             HydraulicCrossSection(
                 id=str(row.id),
@@ -647,29 +659,48 @@ def build_hydraulic_1d_model(
                 vertical_datum=profile.vertical_datum,
                 points=tuple(
                     CrossSectionPoint(
-                        station_m=point.distance,
-                        elevation_m=point.elevation,
-                        source_x=point.source_x,
-                        source_y=point.source_y,
-                        source_z=point.source_z,
-                        source_crs=point.source_crs,
-                        source_axis_mapping=point.source_axis_mapping,
+                        station_m=float(point["offset"]),
+                        elevation_m=float(point["elevation"]),
+                        source_x=(raw_by_sequence.get(point.get("source_sequence")).source_x
+                                  if raw_by_sequence.get(point.get("source_sequence")) else None),
+                        source_y=(raw_by_sequence.get(point.get("source_sequence")).source_y
+                                  if raw_by_sequence.get(point.get("source_sequence")) else None),
+                        source_z=(raw_by_sequence.get(point.get("source_sequence")).source_z
+                                  if raw_by_sequence.get(point.get("source_sequence")) else None),
+                        source_crs=(raw_by_sequence.get(point.get("source_sequence")).source_crs
+                                    if raw_by_sequence.get(point.get("source_sequence")) else None),
+                        source_axis_mapping=(
+                            raw_by_sequence.get(point.get("source_sequence")).source_axis_mapping
+                            if raw_by_sequence.get(point.get("source_sequence")) else None
+                        ),
                     )
-                    for point in points
+                    for point in solver_points
                 ),
                 manning_n=adopted_manning_n,
                 roughness_zones=tuple(
                     RoughnessZone(
-                        start_station_m=zone.offset_start_m,
-                        end_station_m=zone.offset_end_m,
+                        start_station_m=max(solver_station_min, zone.offset_start_m),
+                        end_station_m=min(solver_station_max, zone.offset_end_m),
                         manning_n=adopted_manning_n if override is not None else zone.manning_n,
                     )
                     for zone in zones
+                    if min(solver_station_max, zone.offset_end_m)
+                    > max(solver_station_min, zone.offset_start_m)
                 ),
-                location_geometry=geometry_json(session, row.location_geometry),
+                location_geometry=geometry_json(
+                    session,
+                    row.location_geometry
+                    if row.location_geometry is not None
+                    else row.derived_location_geometry,
+                ),
                 axis_geometry=(
-                    geometry_json(session, row.axis_geometry)
-                    if row.axis_geometry is not None
+                    geometry_json(
+                        session,
+                        row.axis_geometry
+                        if row.axis_geometry is not None
+                        else row.derived_axis_geometry,
+                    )
+                    if row.axis_geometry is not None or row.derived_axis_geometry is not None
                     else None
                 ),
                 left_bank=(

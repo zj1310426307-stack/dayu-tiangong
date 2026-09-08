@@ -34,6 +34,11 @@ def _submerged_interval_metrics(
 
     area_m2 = top_width_m = wetted_perimeter_m = 0.0
     for (x1, z1), (x2, z2) in zip(points, points[1:]):
+        if math.isclose(x1, x2, abs_tol=1.0e-12):
+            if left_m - 1.0e-12 <= x1 <= right_m + 1.0e-12:
+                lower, upper = sorted((z1, z2))
+                wetted_perimeter_m += max(0.0, min(stage_m, upper) - lower)
+            continue
         segment_left, segment_right = max(x1, left_m), min(x2, right_m)
         if segment_right <= segment_left:
             continue
@@ -134,10 +139,31 @@ def process_profile(
         .where(HydraulicRoughnessZone.profile_id == profile.id)
         .order_by(HydraulicRoughnessZone.zone_order)
     ).all()
-    profile_points = [(value.distance, value.elevation) for value in points]
-    geometry = TabulatedSectionGeometry.from_points(profile_points, vertical_step=vertical_step_m)
+    raw_profile_points = [(value.distance, value.elevation) for value in points]
+    processed_payload = profile.processed_geometry_json or {}
+    processed_rows = processed_payload.get("points", [])
+    profile_points = (
+        [(float(value["offset"]), float(value["elevation"])) for value in processed_rows]
+        if processed_rows else raw_profile_points
+    )
+    if profile.overbank_treatment == "VERTICAL_EXTENSION" and processed_rows:
+        minimum_stage = min(value[1] for value in profile_points)
+        maximum_stage = float(profile.extension_top_elevation_m)
+        count = max(2, math.ceil((maximum_stage - minimum_stage) / vertical_step_m))
+        stages = tuple(
+            minimum_stage + (maximum_stage - minimum_stage) * index / count
+            for index in range(count + 1)
+        )
+        geometry = None
+    else:
+        geometry = TabulatedSectionGeometry.from_points(
+            profile_points, vertical_step=vertical_step_m
+        )
+        minimum_stage, maximum_stage, stages = (
+            geometry.minimum_stage, geometry.maximum_stage, geometry.stages
+        )
     intervals = _roughness_intervals(
-        profile_points, list(roughness_zones), profile.default_manning_n
+        raw_profile_points, list(roughness_zones), profile.default_manning_n
     )
     processing = HydraulicCrossSectionProcessing(
         dataset_version_id=profile.dataset_version_id,
@@ -146,18 +172,22 @@ def process_profile(
         processor_version=PROCESSOR_VERSION,
         vertical_step_m=vertical_step_m,
         status="ready",
-        minimum_stage_m=geometry.minimum_stage,
-        maximum_stage_m=geometry.maximum_stage,
+        minimum_stage_m=minimum_stage,
+        maximum_stage_m=maximum_stage,
         generated_at=datetime.now(UTC),
         diagnostics_json={
-            "stage_count": len(geometry.stages),
+            "stage_count": len(stages),
             "roughness_method": "segmented_manning_conveyance",
             "roughness_interval_count": len(intervals),
+            "active_extent_mode": profile.active_extent_mode,
+            "overbank_treatment": profile.overbank_treatment,
+            "processing_config_version": profile.processing_config_version,
+            "virtual_point_count": sum(bool(value.get("virtual")) for value in processed_rows),
         },
     )
     session.add(processing)
     session.flush()
-    for stage in geometry.stages:
+    for stage in stages:
         area = top_width = perimeter = conveyance = 0.0
         for left, right, manning_n in intervals:
             zone_area, zone_width, zone_perimeter = _submerged_interval_metrics(
