@@ -110,6 +110,72 @@ def _number(
     return float(value)
 
 
+def _boundary_derived_initial_condition(
+    branches: Sequence[HydraulicBranch],
+    cross_sections: Sequence[HydraulicCrossSection],
+    boundaries: Sequence[BoundaryCondition],
+) -> InitialCondition | None:
+    """Build a wet single-branch cold start from the time-zero Q/H boundaries."""
+
+    if len(branches) != 1:
+        return None
+    branch = branches[0]
+    sections = sorted(
+        (item for item in cross_sections if item.branch_id == branch.id),
+        key=lambda item: item.chainage_m,
+    )
+    upstream_q = next(
+        (
+            float(item.series[0].value)
+            for item in boundaries
+            if item.branch_id == branch.id
+            and item.location == "upstream"
+            and item.variable == "discharge"
+        ),
+        None,
+    )
+    downstream_h = next(
+        (
+            float(item.series[0].value)
+            for item in boundaries
+            if item.branch_id == branch.id
+            and item.location == "downstream"
+            and item.variable == "water_level"
+        ),
+        None,
+    )
+    if upstream_q is None or downstream_h is None or not sections:
+        return None
+    minimum_depth_m = 0.5
+    minimum_beds = [min(point.elevation_m for point in item.points) for item in sections]
+    if downstream_h <= minimum_beds[-1]:
+        _reject(
+            "DAYU_DOWNSTREAM_BOUNDARY_DRY",
+            "downstream water level must exceed the downstream Cross Section bed",
+            "boundary_conditions.downstream_water_level",
+        )
+    upstream_stage = max(downstream_h, minimum_beds[0] + minimum_depth_m)
+    branch_span = branch.end_chainage_m - branch.start_chainage_m
+    states: list[SectionInitialState] = []
+    for section, minimum_bed in zip(sections, minimum_beds):
+        upstream_fraction = (
+            (branch.end_chainage_m - section.chainage_m) / branch_span
+            if branch_span > 0
+            else 0.0
+        )
+        interpolated_stage = downstream_h + (
+            upstream_stage - downstream_h
+        ) * min(1.0, max(0.0, upstream_fraction))
+        states.append(
+            SectionInitialState(
+                cross_section_id=section.id,
+                water_level_m=max(interpolated_stage, minimum_bed + minimum_depth_m),
+                discharge_m3s=upstream_q,
+            )
+        )
+    return InitialCondition(by_section=tuple(states))
+
+
 def _time_values(
     row: BoundaryConditionRow,
     *,
@@ -753,30 +819,39 @@ def build_hydraulic_1d_model(
             by_section=tuple(SectionInitialState.model_validate(item) for item in by_section)
         )
     else:
-        # A constant upstream Q and downstream H already define a safe uniform
-        # starting state for the standard quasi-steady workflow. Explicit task or
-        # case values retain priority for genuinely transient studies.
-        boundary_initial: dict[str, float] = {}
-        for boundary in boundaries:
-            if boundary.location == "upstream" and boundary.variable == "discharge":
-                boundary_initial.setdefault("discharge_m3s", float(boundary.series[0].value))
-            elif boundary.location == "downstream" and boundary.variable == "water_level":
-                boundary_initial.setdefault("water_level_m", float(boundary.series[0].value))
-        resolved_initial = boundary_initial | dict(initial_config)
-        initial = InitialCondition(
-            water_level_m=_number(
-                task_config,
-                resolved_initial,
-                "initial_water_level",
-                "water_level_m",
-            ),
-            discharge_m3s=_number(
-                task_config,
-                resolved_initial,
-                "initial_flow",
-                "discharge_m3s",
-            ),
+        explicit_initial = any(
+            value is not None
+            for value in (
+                task_config.get("initial_water_level"),
+                task_config.get("initial_flow"),
+                initial_config.get("initial_water_level"),
+                initial_config.get("water_level_m"),
+                initial_config.get("initial_flow"),
+                initial_config.get("discharge_m3s"),
+            )
         )
+        derived_initial = (
+            None
+            if explicit_initial
+            else _boundary_derived_initial_condition(branches, cross_sections, boundaries)
+        )
+        if derived_initial is not None:
+            initial = derived_initial
+        else:
+            initial = InitialCondition(
+                water_level_m=_number(
+                    task_config,
+                    initial_config,
+                    "initial_water_level",
+                    "water_level_m",
+                ),
+                discharge_m3s=_number(
+                    task_config,
+                    initial_config,
+                    "initial_flow",
+                    "discharge_m3s",
+                ),
+            )
     settings_config = case_config.get("settings", {})
     if not isinstance(settings_config, Mapping):
         _reject(
@@ -801,6 +876,11 @@ def build_hydraulic_1d_model(
         "vertical_datum": network.vertical_datum,
         "hydraulic_1d_configuration_hash": configuration_hash,
         "roughness_overrides": [dict(value) for value in raw_roughness_overrides],
+        "initial_condition_source": (
+            "boundary_wet_bed_envelope"
+            if initial.by_section and not by_section
+            else "case_or_task"
+        ),
     }
     if engine_id == DFLOW_FM_ENGINE_ID:
         dflow_config = case_config.get("dflow_fm")

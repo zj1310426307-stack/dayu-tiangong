@@ -6,7 +6,10 @@ import pytest
 from pydantic import ValidationError
 
 from app.model_engine.schemas import SimulationTaskCreate
-from app.model_engine.hydraulic_1d_service import _with_simulation_identity
+from app.model_engine.hydraulic_1d_service import (
+    _boundary_derived_initial_condition,
+    _with_simulation_identity,
+)
 from app.model_engine.service import _validate_result, parse_frozen_task_model, retry_block_reason
 from model.hydraulic_1d.contracts import (
     HYDRAULIC_1D_INPUT_SCHEMA,
@@ -57,6 +60,31 @@ def test_endpoint_chainage_accepts_millimetre_import_rounding_only() -> None:
     payload["cross_sections"][-1]["chainage_m"] = 999.998
     with pytest.raises(ValidationError, match="last cross section must coincide"):
         Hydraulic1DModel.model_validate(payload)
+
+
+def test_single_branch_boundaries_derive_a_wet_section_initial_state() -> None:
+    """Optional initial fields use a traceable wet-bed envelope, not downstream H uniformly."""
+
+    source = model_fixture()
+    raised_upstream = source.cross_sections[0].model_copy(
+        update={
+            "points": tuple(
+                point.model_copy(update={"elevation_m": point.elevation_m + 3.0})
+                for point in source.cross_sections[0].points
+            )
+        }
+    )
+    initial = _boundary_derived_initial_condition(
+        source.branches,
+        (raised_upstream, source.cross_sections[1]),
+        source.boundaries,
+    )
+
+    assert initial is not None
+    assert initial.water_level_m is None
+    assert initial.by_section[0].water_level_m == 3.5
+    assert initial.by_section[-1].water_level_m == 2.0
+    assert {item.discharge_m3s for item in initial.by_section} == {11.0}
 
 
 def test_historical_custom_solver_task_is_never_retryable() -> None:
