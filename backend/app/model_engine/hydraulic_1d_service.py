@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 import json
+from math import sqrt
 from typing import Any
 
 from sqlalchemy import func, select
@@ -146,7 +147,6 @@ def _boundary_derived_initial_condition(
     )
     if upstream_q is None or downstream_h is None or not sections:
         return None
-    minimum_depth_m = 0.5
     minimum_beds = [min(point.elevation_m for point in item.points) for item in sections]
     if downstream_h <= minimum_beds[-1]:
         _reject(
@@ -154,10 +154,33 @@ def _boundary_derived_initial_condition(
             "downstream water level must exceed the downstream Cross Section bed",
             "boundary_conditions.downstream_water_level",
         )
-    upstream_stage = max(downstream_h, minimum_beds[0] + minimum_depth_m)
+    # Keep the cold start comfortably subcritical for a high-discharge design
+    # case.  This is only a numerical initial field; Q(t), H(t), roughness and
+    # the surveyed profiles remain the authoritative physical inputs.
+    target_froude = 0.5
+    minimum_depths = [
+        max(
+            0.5,
+            (
+                abs(upstream_q)
+                / (
+                    target_froude
+                    * (section.points[-1].station_m - section.points[0].station_m)
+                    * sqrt(9.81)
+                )
+            )
+            ** (2.0 / 3.0),
+        )
+        for section in sections
+    ]
+    upstream_stage = max(downstream_h, minimum_beds[0] + minimum_depths[0])
     branch_span = branch.end_chainage_m - branch.start_chainage_m
     states: list[SectionInitialState] = []
-    for section, minimum_bed in zip(sections, minimum_beds):
+    for section, minimum_bed, minimum_depth in zip(
+        sections,
+        minimum_beds,
+        minimum_depths,
+    ):
         upstream_fraction = (
             (branch.end_chainage_m - section.chainage_m) / branch_span
             if branch_span > 0
@@ -169,7 +192,7 @@ def _boundary_derived_initial_condition(
         states.append(
             SectionInitialState(
                 cross_section_id=section.id,
-                water_level_m=max(interpolated_stage, minimum_bed + minimum_depth_m),
+                water_level_m=max(interpolated_stage, minimum_bed + minimum_depth),
                 discharge_m3s=upstream_q,
             )
         )

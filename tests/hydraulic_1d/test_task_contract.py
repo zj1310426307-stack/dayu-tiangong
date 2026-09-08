@@ -87,6 +87,34 @@ def test_single_branch_boundaries_derive_a_wet_section_initial_state() -> None:
     assert {item.discharge_m3s for item in initial.by_section} == {11.0}
 
 
+def test_high_discharge_boundary_derives_a_subcritical_cold_start() -> None:
+    """A design flood must not reuse the fixed minimum depth at a narrow profile."""
+
+    source = model_fixture()
+    high_flow_boundaries = tuple(
+        boundary.model_copy(
+            update={
+                "series": (
+                    boundary.series[0].model_copy(update={"value": 405.43}),
+                )
+            }
+        )
+        if boundary.variable == "discharge"
+        else boundary
+        for boundary in source.boundaries
+    )
+
+    initial = _boundary_derived_initial_condition(
+        source.branches,
+        source.cross_sections,
+        high_flow_boundaries,
+    )
+
+    assert initial is not None
+    assert initial.by_section[0].water_level_m > 5.0
+    assert initial.by_section[-1].water_level_m > 5.0
+
+
 def test_historical_custom_solver_task_is_never_retryable() -> None:
     """Old immutable rows remain auditable but cannot call deleted code."""
 
