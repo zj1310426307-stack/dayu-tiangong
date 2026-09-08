@@ -13,6 +13,7 @@ from app.dataset.schemas import (
     BoundaryConditionRecord,
     BoundaryConditionUpdate,
     DatasetVersionCreate,
+    DatasetVersionApprovalRequest,
     DatasetVersionRecord,
     DatasetVersionUpdate,
     ModelParameterCreate,
@@ -61,6 +62,27 @@ def update_dataset_version(version_id: int, payload: DatasetVersionUpdate, sessi
     if entity is None:
         raise not_found("数据集版本")
     return commit_or_conflict(session, lambda: service.update_dataset_version(session, entity, payload))
+
+
+@router.post(
+    "/dataset-versions/{version_id}/approve-for-calculation",
+    response_model=DatasetVersionRecord,
+    summary="校核并冻结 Standard 1D 计算数据版本",
+)
+def approve_dataset_version_for_calculation(
+    version_id: int,
+    payload: DatasetVersionApprovalRequest,
+    session: SessionDependency,
+) -> DatasetVersionRecord:
+    """Approve only a fully validated draft and make it immutable for calculation."""
+
+    entity = session.get(DatasetVersion, version_id)
+    if entity is None:
+        raise not_found("数据集版本")
+    return _commit_value_error(
+        session,
+        lambda: service.approve_dataset_version_for_calculation(session, entity, payload),
+    )
 
 
 @router.delete("/dataset-versions/{version_id}", status_code=204, summary="删除草稿箱数据版本")

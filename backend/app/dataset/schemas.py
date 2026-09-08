@@ -31,6 +31,14 @@ class DatasetVersionUpdate(BaseModel):
     description: str | None = None
 
 
+class DatasetVersionApprovalRequest(BaseModel):
+    """Record the operator decision that freezes a validated calculation dataset."""
+
+    model_config = ConfigDict(extra="forbid")
+    reviewer: str = Field(min_length=1, max_length=64)
+    reason: str = Field(min_length=1, max_length=512)
+
+
 class DatasetVersionRecord(DatasetVersionCreate):
     """返回带主键与创建时间的数据集版本。"""
 

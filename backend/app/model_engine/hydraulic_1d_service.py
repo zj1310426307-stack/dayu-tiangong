@@ -404,8 +404,13 @@ def build_hydraulic_1d_model(
     task_config: Mapping[str, Any],
     *,
     engine_id: str = DEFAULT_HYDRAULIC_1D_ENGINE_ID,
+    allow_draft_for_approval: bool = False,
 ) -> Hydraulic1DModel:
-    """Freeze one unified model and validate it with the explicitly selected engine."""
+    """Freeze one unified model and validate it with the explicitly selected engine.
+
+    Draft access is restricted to the Dataset approval transaction so the same
+    fail-closed mapper can prove a version before it becomes immutable.
+    """
 
     case = session.get(SimulationCase, case_id)
     if case is None:
@@ -413,7 +418,9 @@ def build_hydraulic_1d_model(
     dataset = session.get(DatasetVersion, case.dataset_version_id)
     if dataset is None:
         raise LookupError("simulation case Dataset Version does not exist")
-    if dataset.status not in {"approved", "published"}:
+    if dataset.status not in {"approved", "published"} and not (
+        allow_draft_for_approval and dataset.status == "draft"
+    ):
         _reject(
             "DAYU_DATASET_NOT_AUTHORITATIVE",
             "Standard 1D requires an approved or published Dataset Version",
@@ -746,16 +753,26 @@ def build_hydraulic_1d_model(
             by_section=tuple(SectionInitialState.model_validate(item) for item in by_section)
         )
     else:
+        # A constant upstream Q and downstream H already define a safe uniform
+        # starting state for the standard quasi-steady workflow. Explicit task or
+        # case values retain priority for genuinely transient studies.
+        boundary_initial: dict[str, float] = {}
+        for boundary in boundaries:
+            if boundary.location == "upstream" and boundary.variable == "discharge":
+                boundary_initial.setdefault("discharge_m3s", float(boundary.series[0].value))
+            elif boundary.location == "downstream" and boundary.variable == "water_level":
+                boundary_initial.setdefault("water_level_m", float(boundary.series[0].value))
+        resolved_initial = boundary_initial | dict(initial_config)
         initial = InitialCondition(
             water_level_m=_number(
                 task_config,
-                initial_config,
+                resolved_initial,
                 "initial_water_level",
                 "water_level_m",
             ),
             discharge_m3s=_number(
                 task_config,
-                initial_config,
+                resolved_initial,
                 "initial_flow",
                 "discharge_m3s",
             ),

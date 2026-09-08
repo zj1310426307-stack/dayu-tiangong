@@ -728,6 +728,11 @@ export interface CrossSectionUpdate {
   "geometry"?: Record<string, unknown> | null;
 }
 
+export interface DatasetVersionApprovalRequest {
+  "reviewer": string;
+  "reason": string;
+}
+
 export interface DatasetVersionCreate {
   "version": string;
   "name": string;
@@ -3474,6 +3479,7 @@ export const getDatasetVersions = (baseUrl = '') => requestJson<Array<DatasetVer
 export const createDatasetVersion = (body: DatasetVersionCreate, baseUrl = '') => requestJson<DatasetVersionRecord>('/api/v1/model-data/dataset-versions', jsonOptions('POST', body), baseUrl);
 export const updateDatasetVersion = (versionId: number, body: DatasetVersionUpdate, baseUrl = '') => requestJson<DatasetVersionRecord>(`/api/v1/model-data/dataset-versions/${versionId}`, jsonOptions('PUT', body), baseUrl);
 export const deleteDatasetVersion = (versionId: number, baseUrl = '') => requestJson<void>(`/api/v1/model-data/dataset-versions/${versionId}`, { method: 'DELETE' }, baseUrl);
+export const approveDatasetVersionForCalculation = (versionId: number, body: DatasetVersionApprovalRequest, baseUrl = '') => requestJson<DatasetVersionRecord>(`/api/v1/model-data/dataset-versions/${versionId}/approve-for-calculation`, jsonOptions('POST', body), baseUrl);
 export const getModelParameters = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<ModelParameterRecord>>(`/api/v1/model-data/parameters${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
 export const createModelParameter = (body: ModelParameterCreate, baseUrl = '') => requestJson<ModelParameterRecord>('/api/v1/model-data/parameters', jsonOptions('POST', body), baseUrl);
 export const updateModelParameter = (parameterId: number, body: ModelParameterUpdate, baseUrl = '') => requestJson<ModelParameterRecord>(`/api/v1/model-data/parameters/${parameterId}`, jsonOptions('PUT', body), baseUrl);

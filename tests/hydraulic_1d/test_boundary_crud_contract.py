@@ -188,8 +188,11 @@ class _PreviewSession:
                 section_code="XS-0",
                 chainage=0.0,
                 orientation_status="confirmed",
+                hydraulic_ready=True,
                 location_geometry={"type": "Point", "coordinates": [120.0, 30.0]},
+                derived_location_geometry=None,
                 axis_geometry=None,
+                derived_axis_geometry=None,
                 left_bank=None,
                 right_bank=None,
             ),
@@ -199,8 +202,11 @@ class _PreviewSession:
                 section_code="XS-1000",
                 chainage=1000.0,
                 orientation_status="confirmed",
+                hydraulic_ready=True,
                 location_geometry={"type": "Point", "coordinates": [120.01, 30.0]},
+                derived_location_geometry=None,
                 axis_geometry=None,
+                derived_axis_geometry=None,
                 left_bank=None,
                 right_bank=None,
             ),
@@ -211,11 +217,13 @@ class _PreviewSession:
                 vertical_unit="m",
                 vertical_datum="1985-national-height-datum",
                 default_manning_n=0.03,
+                processed_geometry_json=None,
             )
             for index in range(2)
         ]
         points = [
             SimpleNamespace(
+                sequence=sequence,
                 distance=distance,
                 elevation=elevation,
                 source_x=None,
@@ -224,12 +232,12 @@ class _PreviewSession:
                 source_crs=None,
                 source_axis_mapping=None,
             )
-            for distance, elevation in (
+            for sequence, (distance, elevation) in enumerate((
                 (0.0, 3.0),
                 (5.0, 0.0),
                 (15.0, 0.0),
                 (20.0, 3.0),
-            )
+            ))
         ]
         boundaries = [
             SimpleNamespace(

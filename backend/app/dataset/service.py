@@ -1,5 +1,6 @@
 """Dataset Version, model configuration, boundary, and Case services."""
 
+from datetime import UTC, datetime
 from typing import Any, TypeVar
 
 from sqlalchemy import select
@@ -11,6 +12,7 @@ from app.dataset.schemas import (
     BoundaryConditionRecord,
     BoundaryConditionUpdate,
     DatasetVersionCreate,
+    DatasetVersionApprovalRequest,
     DatasetVersionRecord,
     DatasetVersionUpdate,
     ModelParameterCreate,
@@ -31,6 +33,9 @@ from app.hydraulic.models import (
     HydraulicBranch as HydraulicBranchRow,
     HydraulicNode,
 )
+from app.gis_governance.service import dataset_core_content_hash
+from app.model_engine.hydraulic_1d_service import build_hydraulic_1d_model
+from app.validation.service import run_validation
 
 
 Entity = TypeVar("Entity")
@@ -85,6 +90,54 @@ def update_dataset_version(session: Session, entity: DatasetVersion, payload: Da
 
     mutable = assert_dataset_version_mutable(session, entity.id)
     _apply(mutable, payload.model_dump(exclude_unset=True))
+    session.flush()
+    return DatasetVersionRecord(**_dump(mutable))
+
+
+def approve_dataset_version_for_calculation(
+    session: Session,
+    entity: DatasetVersion,
+    payload: DatasetVersionApprovalRequest,
+) -> DatasetVersionRecord:
+    """Validate and freeze one draft for traceable Standard 1D calculations."""
+
+    if entity.status in {"approved", "published"}:
+        return DatasetVersionRecord(**_dump(entity))
+    mutable = assert_dataset_version_mutable(session, entity.id)
+    report = run_validation(session, mutable.id)
+    if report.summary.errors or report.summary.warnings or not report.summary.is_model_ready:
+        raise ValueError(
+            "数据版本校核未通过：批准前必须为 0 个错误、0 个警告且模型已就绪"
+        )
+    case_ids = list(
+        session.scalars(
+            select(SimulationCase.id)
+            .where(SimulationCase.dataset_version_id == mutable.id)
+            .order_by(SimulationCase.id)
+        ).all()
+    )
+    if not case_ids:
+        raise ValueError("数据版本没有可校核的计算方案")
+    approval_defaults = {
+        "duration_seconds": 3600.0,
+        "time_step_seconds": 10.0,
+        "output_interval_seconds": 60.0,
+    }
+    for case_id in case_ids:
+        build_hydraulic_1d_model(
+            session,
+            case_id,
+            approval_defaults,
+            allow_draft_for_approval=True,
+        )
+    now = datetime.now(UTC)
+    mutable.content_hash = dataset_core_content_hash(session, mutable.id)
+    mutable.change_summary = payload.reason
+    mutable.reviewed_by = payload.reviewer
+    mutable.reviewed_at = now
+    mutable.approved_by = payload.reviewer
+    mutable.approved_at = now
+    mutable.status = "approved"
     session.flush()
     return DatasetVersionRecord(**_dump(mutable))
 

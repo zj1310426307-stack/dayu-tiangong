@@ -38,6 +38,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   BoundaryConditionCreate,
   BoundaryConditionRecord,
+  DatasetVersionRecord,
   GateCreate,
   GateRecord,
   HydraulicBranchRecord,
@@ -59,6 +60,7 @@ import {
   useDatasetVersion,
 } from "../../context/DatasetVersionContext";
 import {
+  approveDatasetVersionForCalculation,
   createBoundaryCondition,
   createGateRecord,
   createModelParameter,
@@ -2155,7 +2157,8 @@ interface SimulationCaseFormValues {
 
 /** 提供模型参数、边界条件与计算方案的草稿编辑，以及任意版本的只读快照。 */
 export function ModelDataPage() {
-  const { versions, datasetVersionId, isMutable } = useDatasetVersion();
+  const { versions, datasetVersionId, isMutable, refreshVersions } =
+    useDatasetVersion();
   const [snapshot, setSnapshot] = useState<Hydraulic1DPreviewResponse>();
   const [parameterOpen, setParameterOpen] = useState(false);
   const [parameterEditing, setParameterEditing] =
@@ -2166,6 +2169,7 @@ export function ModelDataPage() {
   const [caseOpen, setCaseOpen] = useState(false);
   const [caseEditing, setCaseEditing] = useState<SimulationCaseRecord>();
   const [submitting, setSubmitting] = useState(false);
+  const [approvingVersionId, setApprovingVersionId] = useState<number>();
   const [parameterForm] = Form.useForm<ModelParameterFormValues>();
   const [boundaryForm] = Form.useForm<BoundaryFormValues>();
   const [caseForm] = Form.useForm<SimulationCaseFormValues>();
@@ -2397,6 +2401,25 @@ export function ModelDataPage() {
     }
   };
 
+  /** 用核心 QA 与真实 Standard 1D 映射校核草稿，通过后冻结为权威计算版本。 */
+  const approveForCalculation = async (record: DatasetVersionRecord) => {
+    setApprovingVersionId(record.id);
+    try {
+      await approveDatasetVersionForCalculation(record.id, {
+        reviewer: "web-operator",
+        reason: "核心数据校核和全部 Standard 1D 方案映射通过，冻结用于计算",
+      });
+      await refreshVersions(record.id);
+      message.success(`${record.version} 已校核并冻结，可用于一维水动力计算`);
+    } catch (reason) {
+      message.error(
+        reason instanceof Error ? reason.message : "数据版本校核冻结失败",
+      );
+    } finally {
+      setApprovingVersionId(undefined);
+    }
+  };
+
   const tabs = [
     {
       key: "versions",
@@ -2417,7 +2440,7 @@ export function ModelDataPage() {
                   color={
                     value === "draft"
                       ? "gold"
-                      : value === "published"
+                      : value === "approved" || value === "published"
                         ? "success"
                         : "default"
                   }
@@ -2431,6 +2454,31 @@ export function ModelDataPage() {
               title: "创建时间",
               dataIndex: "created_time",
               render: (value: string) => new Date(value).toLocaleString(),
+            },
+            {
+              title: "计算发布",
+              width: 150,
+              render: (_, record: DatasetVersionRecord) =>
+                record.status === "draft" ? (
+                  <Popconfirm
+                    title="校核并冻结该数据版本？"
+                    description="将检查全部数据规则和计算方案映射；通过后版本不可再编辑。"
+                    okText="校核并冻结"
+                    cancelText="取消"
+                    onConfirm={() => approveForCalculation(record)}
+                  >
+                    <Button
+                      type="primary"
+                      size="small"
+                      icon={<SafetyCertificateOutlined />}
+                      loading={approvingVersionId === record.id}
+                    >
+                      校核并冻结
+                    </Button>
+                  </Popconfirm>
+                ) : (
+                  <Text type="secondary">已冻结</Text>
+                ),
             },
           ]}
         />

@@ -55,6 +55,7 @@ const requiredPaths = [
   '/api/v1/gis/rivers', '/api/v1/gis/interaction-frame', '/api/v1/gis/hydraulic-cross-sections', '/api/v1/rivers', '/api/v1/cross-sections',
   '/api/v1/gates', '/api/v1/pumps', '/api/v1/import/excel',
   '/api/v1/validation/run', '/api/v1/model-data/dataset-versions',
+  '/api/v1/model-data/dataset-versions/{version_id}/approve-for-calculation',
   '/api/v1/model-data/parameters', '/api/v1/model-data/boundary-conditions',
   '/api/v1/model-data/simulation-cases',
   '/api/v1/model/readiness', '/api/v1/model/preview',
@@ -454,6 +455,7 @@ export const getDatasetVersions = (baseUrl = '') => requestJson<Array<DatasetVer
 export const createDatasetVersion = (body: DatasetVersionCreate, baseUrl = '') => requestJson<DatasetVersionRecord>('/api/v1/model-data/dataset-versions', jsonOptions('POST', body), baseUrl);
 export const updateDatasetVersion = (versionId: number, body: DatasetVersionUpdate, baseUrl = '') => requestJson<DatasetVersionRecord>(\`/api/v1/model-data/dataset-versions/\${versionId}\`, jsonOptions('PUT', body), baseUrl);
 export const deleteDatasetVersion = (versionId: number, baseUrl = '') => requestJson<void>(\`/api/v1/model-data/dataset-versions/\${versionId}\`, { method: 'DELETE' }, baseUrl);
+export const approveDatasetVersionForCalculation = (versionId: number, body: DatasetVersionApprovalRequest, baseUrl = '') => requestJson<DatasetVersionRecord>(\`/api/v1/model-data/dataset-versions/\${versionId}/approve-for-calculation\`, jsonOptions('POST', body), baseUrl);
 export const getModelParameters = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<ModelParameterRecord>>(\`/api/v1/model-data/parameters\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
 export const createModelParameter = (body: ModelParameterCreate, baseUrl = '') => requestJson<ModelParameterRecord>('/api/v1/model-data/parameters', jsonOptions('POST', body), baseUrl);
 export const updateModelParameter = (parameterId: number, body: ModelParameterUpdate, baseUrl = '') => requestJson<ModelParameterRecord>(\`/api/v1/model-data/parameters/\${parameterId}\`, jsonOptions('PUT', body), baseUrl);
