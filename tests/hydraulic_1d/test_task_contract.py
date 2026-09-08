@@ -10,6 +10,7 @@ from app.model_engine.hydraulic_1d_service import _with_simulation_identity
 from app.model_engine.service import _validate_result, parse_frozen_task_model, retry_block_reason
 from model.hydraulic_1d.contracts import (
     HYDRAULIC_1D_INPUT_SCHEMA,
+    Hydraulic1DModel,
     HydraulicResult,
     HydraulicResultRecord,
 )
@@ -43,6 +44,19 @@ def test_initial_state_overrides_are_atomic() -> None:
 
     with pytest.raises(ValidationError, match="must be supplied together"):
         SimulationTaskCreate(case_id=7, initial_water_level=2.0)
+
+
+def test_endpoint_chainage_accepts_millimetre_import_rounding_only() -> None:
+    """Decimal import drift must not reject a topologically coincident end profile."""
+
+    payload = model_fixture().model_dump(mode="json")
+    payload["cross_sections"][-1]["chainage_m"] = 999.9995
+    accepted = Hydraulic1DModel.model_validate(payload)
+    assert accepted.cross_sections[-1].chainage_m == 999.9995
+
+    payload["cross_sections"][-1]["chainage_m"] = 999.998
+    with pytest.raises(ValidationError, match="last cross section must coincide"):
+        Hydraulic1DModel.model_validate(payload)
 
 
 def test_historical_custom_solver_task_is_never_retryable() -> None:

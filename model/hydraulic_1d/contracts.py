@@ -13,6 +13,9 @@ from model.hydraulic_1d.errors import Hydraulic1DValidationError
 
 HYDRAULIC_1D_INPUT_SCHEMA = "dayu.hydraulic-1d.input.v1"
 HYDRAULIC_RESULT_SCHEMA = "dayu.hydraulic-result.v1"
+# Imported engineering chainage is commonly rounded to 0.001 m or finer.  Keep
+# endpoint topology strict while allowing harmless decimal serialization drift.
+CHAINAGE_ENDPOINT_TOLERANCE_M = 1e-3
 
 
 class StrictHydraulicModel(BaseModel):
@@ -303,9 +306,10 @@ class Hydraulic1DModel(StrictHydraulicModel):
             if branch is None:
                 raise ValueError("cross section references an unknown branch")
             if (
-                not branch.start_chainage_m
-                <= section.chainage_m
-                <= branch.end_chainage_m
+                section.chainage_m
+                < branch.start_chainage_m - CHAINAGE_ENDPOINT_TOLERANCE_M
+                or section.chainage_m
+                > branch.end_chainage_m + CHAINAGE_ENDPOINT_TOLERANCE_M
             ):
                 raise ValueError("cross-section chainage lies outside its branch")
         for branch in self.branches:
@@ -324,22 +328,25 @@ class Hydraulic1DModel(StrictHydraulicModel):
                 sections[0].chainage_m,
                 branch.start_chainage_m,
                 rel_tol=0.0,
-                abs_tol=1e-6,
+                abs_tol=CHAINAGE_ENDPOINT_TOLERANCE_M,
             ):
                 raise ValueError("first cross section must coincide with branch start")
             if not isclose(
                 sections[-1].chainage_m,
                 branch.end_chainage_m,
                 rel_tol=0.0,
-                abs_tol=1e-6,
+                abs_tol=CHAINAGE_ENDPOINT_TOLERANCE_M,
             ):
                 raise ValueError("last cross section must coincide with branch end")
         for boundary in self.boundaries:
             branch = branch_map.get(boundary.branch_id)
             if branch is None:
                 raise ValueError("boundary references an unknown branch")
-            if boundary.chainage_m is not None and not (
-                branch.start_chainage_m <= boundary.chainage_m <= branch.end_chainage_m
+            if boundary.chainage_m is not None and (
+                boundary.chainage_m
+                < branch.start_chainage_m - CHAINAGE_ENDPOINT_TOLERANCE_M
+                or boundary.chainage_m
+                > branch.end_chainage_m + CHAINAGE_ENDPOINT_TOLERANCE_M
             ):
                 raise ValueError("lateral boundary chainage lies outside its branch")
         state_ids = [
