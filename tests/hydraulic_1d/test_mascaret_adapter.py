@@ -4,7 +4,7 @@ from xml.etree.ElementTree import parse
 
 import pytest
 
-from model.hydraulic_1d import BoundaryCondition, TimeValue
+from model.hydraulic_1d import BoundaryCondition, Hydraulic1DModel, TimeValue
 from model.hydraulic_1d.mascaret.adapter import MascaretModelBuilder
 from tests.benchmark.hydraulic_1d.network.cases import (
     n03_branched_network,
@@ -30,6 +30,25 @@ def test_adapter_builds_isolated_case_and_unique_lateral_law(tmp_path) -> None:
     assert tree.findtext(".//debitsApports/numLoi") == "3"
     assert tree.findtext(".//resultats/fichResultat") == "results.opt"
     assert (workspace / "FichierCas.txt").read_text(encoding="ascii") == "'case.xcas'\n"
+
+
+def test_adapter_aligns_runtime_domain_to_rounded_terminal_profile(tmp_path) -> None:
+    """Accepted import rounding must produce one exact MASCARET geometry domain."""
+
+    payload = model_fixture().model_dump(mode="json")
+    payload["cross_sections"][-1]["chainage_m"] = 999.9995
+    model = Hydraulic1DModel.model_validate(payload)
+    workspace = tmp_path / "rounded-domain"
+    workspace.mkdir()
+
+    prepared = MascaretModelBuilder().build(model, workspace)
+    tree = parse(prepared.case_file)
+
+    assert tree.findtext(".//listeBranches/abscFin") == "999.9995"
+    assert tree.findtext(".//frottement/absFinZone").split()[-1] == "999.9995"
+    assert "PROFIL Bief_1 P0002 999.9995" in prepared.geometry_file.read_text(
+        encoding="ascii"
+    )
 
 
 def test_adapter_converts_manning_n_to_longitudinal_strickler(tmp_path) -> None:
