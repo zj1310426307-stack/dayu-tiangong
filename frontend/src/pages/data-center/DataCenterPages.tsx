@@ -41,6 +41,7 @@ import type {
   GateCreate,
   GateRecord,
   HydraulicBranchRecord,
+  HydraulicNetworkRecord,
   ImportResource,
   ModelParameterCreate,
   ModelParameterRecord,
@@ -2091,6 +2092,61 @@ interface BoundaryFormValues {
   description?: string;
 }
 
+interface HydraulicEndpointOption {
+  value: number;
+  label: string;
+  disabled?: boolean;
+}
+
+/**
+ * Build unambiguous topology endpoint choices for one hydraulic boundary type.
+ *
+ * The backend binds endpoint boundaries by authoritative node ID. Presenting the
+ * branch-relative direction and stable node code prevents operators from copying
+ * opaque numeric IDs from a separate screen. A node used by multiple branches in
+ * the same direction remains visible for diagnosis but is disabled because the
+ * backend intentionally rejects that ambiguous binding.
+ */
+function hydraulicEndpointOptions(
+  networks: HydraulicNetworkRecord[],
+  boundaryType: BoundaryConditionCreate["boundary_type"] | undefined,
+): HydraulicEndpointOption[] {
+  if (
+    boundaryType !== "upstream_discharge" &&
+    boundaryType !== "downstream_water_level"
+  )
+    return [];
+  const direction =
+    boundaryType === "upstream_discharge" ? "上游" : "下游";
+  const nodes = new Map(
+    networks.flatMap((network) => network.nodes ?? []).map((node) => [node.id, node]),
+  );
+  const branchesByNode = new Map<number, string[]>();
+  networks.forEach((network) => {
+    (network.branches ?? []).forEach((branch) => {
+      const nodeId =
+        boundaryType === "upstream_discharge"
+          ? branch.upstream_node_id
+          : branch.downstream_node_id;
+      if (nodeId == null) return;
+      const branches = branchesByNode.get(nodeId) ?? [];
+      branches.push(`${network.code}/${branch.branch_code}`);
+      branchesByNode.set(nodeId, branches);
+    });
+  });
+  return [...branchesByNode.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([nodeId, branches]) => {
+      const node = nodes.get(nodeId);
+      const ambiguous = branches.length !== 1;
+      return {
+        value: nodeId,
+        label: `${direction} · ${node?.node_code ?? "节点编码缺失"} · ID ${nodeId} · ${branches.join("、")}${ambiguous ? " · 多河段共用，不可唯一绑定" : ""}`,
+        disabled: ambiguous || node == null,
+      };
+    });
+}
+
 interface SimulationCaseFormValues {
   name: string;
   description?: string;
@@ -2114,6 +2170,11 @@ export function ModelDataPage() {
   const [boundaryForm] = Form.useForm<BoundaryFormValues>();
   const [caseForm] = Form.useForm<SimulationCaseFormValues>();
   const boundaryType = Form.useWatch("boundary_type", boundaryForm);
+  const hydraulicNetworks = useRemoteList(
+    () => listHydraulicNetworks(datasetVersionId!),
+    [datasetVersionId],
+    Boolean(datasetVersionId),
+  );
   const parameters = useRemoteList(
     () => getModelParameters(datasetVersionId),
     [datasetVersionId],
@@ -2128,6 +2189,10 @@ export function ModelDataPage() {
     () => getSimulationCases(datasetVersionId),
     [datasetVersionId],
     Boolean(datasetVersionId),
+  );
+  const endpointOptions = useMemo(
+    () => hydraulicEndpointOptions(hydraulicNetworks.data ?? [], boundaryType),
+    [boundaryType, hydraulicNetworks.data],
   );
 
   useEffect(() => setSnapshot(undefined), [datasetVersionId]);
@@ -2781,11 +2846,30 @@ export function ModelDataPage() {
             <Form.Item
               preserve={false}
               name="hydraulic_node_id"
-              label="水力端点 ID"
+              label="水力端点"
               rules={[{ required: true }]}
-              extra="上游流量绑定河段上游端点；下游水位绑定河段下游端点。"
+              extra={
+                hydraulicNetworks.error ||
+                "只列出当前数据版本拓扑中与边界类型一致的上游/下游端点。"
+              }
             >
-              <InputNumber min={1} precision={0} style={{ width: "100%" }} />
+              <Select
+                showSearch
+                optionFilterProp="label"
+                loading={hydraulicNetworks.loading}
+                status={hydraulicNetworks.error ? "error" : undefined}
+                placeholder={
+                  boundaryType === "upstream_discharge"
+                    ? "选择上游端点"
+                    : "选择下游端点"
+                }
+                options={endpointOptions}
+                notFoundContent={
+                  hydraulicNetworks.loading
+                    ? "正在加载拓扑节点…"
+                    : "当前版本没有可绑定的定向端点"
+                }
+              />
             </Form.Item>
           )}
           <Form.Item name="unit" label="单位" rules={[{ required: true }]}>
