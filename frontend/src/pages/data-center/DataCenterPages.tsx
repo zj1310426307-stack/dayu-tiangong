@@ -233,6 +233,9 @@ function SectionProfileChart({ section }: { section?: HydraulicSectionDetail }) 
       const marker3 = profilePoints
         .filter((point) => point.marker_type === 'right_levee' || point.marker_type === 'right_bank')
         .map((point) => [point.distance, point.elevation]);
+      const marker2 = profilePoints
+        .filter((point) => point.marker_type === 'main_channel' || point.marker_type === 'thalweg')
+        .map((point) => [point.distance, point.elevation]);
       const activeExtent = marker1[0] && marker3[0]
         ? [[{ name: 'Marker 1–3 有效范围', xAxis: marker1[0][0] }, { xAxis: marker3[0][0] }]]
         : [];
@@ -250,6 +253,7 @@ function SectionProfileChart({ section }: { section?: HydraulicSectionDetail }) 
             markArea: { silent: true, itemStyle: { color: 'rgba(92, 196, 255, .10)' }, data: activeExtent },
           },
           { name: '深泓点', type: 'scatter', data: thalweg, symbolSize: 13, itemStyle: { color: '#ffc85c', borderColor: '#fff2c2', borderWidth: 2 } },
+          { name: 'Marker 2 主槽', type: 'scatter', data: marker2, symbolSize: 13, itemStyle: { color: '#ffd54f', borderColor: '#fff2c2', borderWidth: 2 } },
           { name: 'Marker 1 左堤防', type: 'scatter', data: marker1, symbol: 'triangle', symbolSize: 15, itemStyle: { color: '#5cc4ff' } },
           { name: 'Marker 3 右堤防', type: 'scatter', data: marker3, symbol: 'triangle', symbolRotate: 180, symbolSize: 15, itemStyle: { color: '#ff8f70' } },
         ],
@@ -270,6 +274,7 @@ export function CrossSectionsDatabasePage() {
   const [selected, setSelected] = useState<HydraulicSectionDetail>();
   const [detailLoading, setDetailLoading] = useState(false);
   const [marker1Sequence, setMarker1Sequence] = useState<number>();
+  const [marker2Sequence, setMarker2Sequence] = useState<number>();
   const [marker3Sequence, setMarker3Sequence] = useState<number>();
   const [markerSaving, setMarkerSaving] = useState(false);
   const { data, loading, error, reload } = useRemoteList(() => listHydraulicNetworks(datasetVersionId!), [datasetVersionId], Boolean(datasetVersionId));
@@ -285,6 +290,7 @@ export function CrossSectionsDatabasePage() {
     setSelectedRow(undefined);
     setSelected(undefined);
     setMarker1Sequence(undefined);
+    setMarker2Sequence(undefined);
     setMarker3Sequence(undefined);
   }, [datasetVersionId]);
   const selectSection = async (row: HydraulicSectionRow) => {
@@ -295,6 +301,7 @@ export function CrossSectionsDatabasePage() {
       setSelected(detail);
       const profile = detail.profiles.find((item) => item.is_active) ?? detail.profiles[0];
       setMarker1Sequence(profile?.points.find((point) => point.marker_type === 'left_levee' || point.marker_type === 'left_bank')?.sequence);
+      setMarker2Sequence(profile?.points.find((point) => point.marker_type === 'main_channel' || point.marker_type === 'thalweg')?.sequence);
       setMarker3Sequence(profile?.points.find((point) => point.marker_type === 'right_levee' || point.marker_type === 'right_bank')?.sequence);
     }
     catch (reason) { message.error(reason instanceof Error ? reason.message : '断面详情加载失败'); }
@@ -323,11 +330,19 @@ export function CrossSectionsDatabasePage() {
       message.warning('Marker 1 的横断面点序必须小于 Marker 3');
       return;
     }
+    if (marker2Sequence !== undefined && marker1Sequence !== undefined && marker2Sequence <= marker1Sequence) {
+      message.warning('Marker 2 的点序必须位于 Marker 1 与 Marker 3 之间');
+      return;
+    }
+    if (marker2Sequence !== undefined && marker3Sequence !== undefined && marker2Sequence >= marker3Sequence) {
+      message.warning('Marker 2 的点序必须位于 Marker 1 与 Marker 3 之间');
+      return;
+    }
     setMarkerSaving(true);
     try {
-      const detail = await updateHydraulicSectionMarkers(selected.id, { marker1_sequence: marker1Sequence ?? null, marker3_sequence: marker3Sequence ?? null, actor: 'web-operator' });
+      const detail = await updateHydraulicSectionMarkers(selected.id, { marker1_sequence: marker1Sequence ?? null, marker2_sequence: marker2Sequence ?? null, marker3_sequence: marker3Sequence ?? null, actor: 'web-operator' });
       setSelected(detail);
-      message.success('Marker 1/3 已保存；该断面的水力查算缓存将重新生成');
+      message.success('Marker 1/2/3 已保存；该断面的空间交点将按 Marker 2 重新派生');
     } catch (reason) {
       const detail = reason instanceof Error ? reason.message : 'Marker 1/3 保存失败';
       if (/published.*immutable|immutable.*published/i.test(detail)) {
@@ -341,9 +356,9 @@ export function CrossSectionsDatabasePage() {
   return <div className="data-page">
     <DataPageHeader eyebrow="HYDRAULIC DATABASE / SECTIONS" title="横断面数据库" description="直接读取标准化 Profile / Point 数据；导入列固定为 ID、TOPOID、里程、偏移、高程、river_name。" action={<Space><Button icon={<FileExcelOutlined />} href="/api/v1/hydraulic/templates/cross-section">下载横断面模板</Button><Button type="primary" href="/data-center/hydraulic">导入与校核</Button></Space>} />
     <DatasetWriteNotice />
-    <Alert className="data-alert" type="info" showIcon message="断面点已统一归一化" description="横断面组须按上游到下游、里程非递减依次填写；六列模板自动把最低高程点标为深泓点，同高最低点全部保留并提示复核。纵向深泓线不等于横向断面测线，缺少横向测线时方向仍为待确认。" />
+    <Alert className="data-alert" type="info" showIcon message="断面点已统一归一化" description="横断面组须按上游到下游、里程非递减依次填写；0 点为下游视向左岸，Station 递增至右岸。Marker 1/2/3 分别为左岸、主槽、右岸控制点；缺少实测 XY 时由河段中心线+桩号派生 GIS 测线，水动力计算不受阻断。" />
     {error && <Alert className="data-alert" type="error" showIcon message={error} />}
-    <div className="data-split"><Card className="data-card" title={`断面清单 · ${rows.length} 条`} extra={<Button icon={<ReloadOutlined />} disabled={!datasetVersionId} onClick={() => void reload()} />}><Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={{ pageSize: 10 }} scroll={{ x: 1050 }} rowClassName={(row) => row.id === selectedRow?.id ? 'ant-table-row-selected' : ''} onRow={(row) => ({ onClick: () => void selectSection(row) })} /></Card><Card loading={detailLoading} className="data-card profile-card" title="断面剖面预览">{selected ? <><Descriptions column={1} size="small" items={[{ key: 'name', label: '断面', children: selected.section_name }, { key: 'branch', label: 'river_name', children: selected.branch_code }, { key: 'station', label: '里程', children: `${selected.chainage.toFixed(3)} m` }, { key: 'topography', label: 'TOPOID', children: activeProfile?.topography_id ?? '—' }, { key: 'datum', label: '高程基准', children: activeProfile?.vertical_datum ?? '—' }, { key: 'thalweg', label: '深泓点', children: thalwegPoints.length ? thalwegPoints.map((point) => `${point.distance.toFixed(3)} / ${point.elevation.toFixed(3)} m`).join('；') : '未标记' }, { key: 'roughness', label: '默认糙率', children: activeProfile?.default_manning_n ?? '—' }, { key: 'points', label: '偏移/高程点数', children: activeProfile?.points.length ?? 0 }]} /><Alert style={{ marginTop: 12 }} type="success" showIcon message={`完整剖面：按点序绘制 ${activeProfile?.points.length ?? 0} 个导入点`} description="预览不抽稀、不补点、不使用平滑曲线；折线逐点连接，点数与当前活动剖面的入库点数一致。" /><Card size="small" title="MIKE11 Marker 1/3 有效断面范围" style={{ marginTop: 12 }}><Alert type={isMutable ? 'info' : 'warning'} showIcon message={isMutable ? 'Marker 1 = Left levee bank，Marker 3 = Right levee bank' : `当前版本 ${currentVersion?.version ?? ''} 为只读，Marker 仅可查看`} description={isMutable ? 'Marker 1 到 Marker 3 之间为有效断面范围；未设置时保留全断面并显示复核状态。' : '已发布、已批准或已退役版本不可原地修改；请在顶部选择现有草稿或新建草稿后设置 Marker。'} /><Space wrap style={{ marginTop: 12 }}><span>Marker 1</span><Select allowClear disabled={!isMutable} value={marker1Sequence} options={markerOptions} placeholder="选择左堤防点" onChange={setMarker1Sequence} style={{ minWidth: 250 }} /><span>Marker 3</span><Select allowClear disabled={!isMutable} value={marker3Sequence} options={markerOptions} placeholder="选择右堤防点" onChange={setMarker3Sequence} style={{ minWidth: 250 }} /><Button type="primary" disabled={!isMutable} loading={markerSaving} onClick={() => void saveMarkers()}>保存有效范围</Button></Space></Card><SectionProfileChart section={selected} /></> : <div className="data-empty">从左侧选择一个横断面</div>}</Card></div>
+    <div className="data-split"><Card className="data-card" title={`断面清单 · ${rows.length} 条`} extra={<Button icon={<ReloadOutlined />} disabled={!datasetVersionId} onClick={() => void reload()} />}><Table rowKey="id" loading={loading} columns={columns} dataSource={rows} pagination={{ pageSize: 10 }} scroll={{ x: 1050 }} rowClassName={(row) => row.id === selectedRow?.id ? 'ant-table-row-selected' : ''} onRow={(row) => ({ onClick: () => void selectSection(row) })} /></Card><Card loading={detailLoading} className="data-card profile-card" title="断面剖面预览">{selected ? <><Descriptions column={1} size="small" items={[{ key: 'name', label: '断面', children: selected.section_name }, { key: 'branch', label: 'river_name', children: selected.branch_code }, { key: 'station', label: '里程', children: `${selected.chainage.toFixed(3)} m` }, { key: 'topography', label: 'TOPOID', children: activeProfile?.topography_id ?? '—' }, { key: 'datum', label: '高程基准', children: activeProfile?.vertical_datum ?? '—' }, { key: 'spatial', label: '空间几何', children: `${selected.spatial_geometry_source} / ${selected.spatial_geometry_status}` }, { key: 'anchor', label: 'Branch 交点 Station', children: selected.branch_intersection_station == null ? '—' : `${selected.branch_intersection_station.toFixed(3)} m (${selected.anchor_source})` }, { key: 'thalweg', label: '深泓点', children: thalwegPoints.length ? thalwegPoints.map((point) => `${point.distance.toFixed(3)} / ${point.elevation.toFixed(3)} m`).join('；') : '未标记' }, { key: 'roughness', label: '默认糙率', children: activeProfile?.default_manning_n ?? '—' }, { key: 'points', label: '偏移/高程点数', children: activeProfile?.points.length ?? 0 }]} /><Alert style={{ marginTop: 12 }} type="success" showIcon message={`完整剖面：按点序绘制 ${activeProfile?.points.length ?? 0} 个导入点`} description="预览不抽稀、不补点、不使用平滑曲线；折线逐点连接，点数与当前活动剖面的入库点数一致。" /><Card size="small" title="MIKE11 Marker 1/2/3 控制点" style={{ marginTop: 12 }}><Alert type={isMutable ? 'info' : 'warning'} showIcon message={isMutable ? 'Marker 1 = 左岸，Marker 2 = 主槽，Marker 3 = 右岸' : `当前版本 ${currentVersion?.version ?? ''} 为只读，Marker 仅可查看`} description={isMutable ? 'Marker 2 用于 Branch 交点 anchor；未设置时使用断面 Station 中点并保留 NEEDS_REVIEW。' : '已发布、已批准或已退役版本不可原地修改；请在顶部选择现有草稿或新建草稿后设置 Marker。'} /><Space wrap style={{ marginTop: 12 }}><span>Marker 1</span><Select allowClear disabled={!isMutable} value={marker1Sequence} options={markerOptions} placeholder="选择左岸点" onChange={setMarker1Sequence} style={{ minWidth: 220 }} /><span>Marker 2</span><Select allowClear disabled={!isMutable} value={marker2Sequence} options={markerOptions} placeholder="选择主槽点" onChange={setMarker2Sequence} style={{ minWidth: 220 }} /><span>Marker 3</span><Select allowClear disabled={!isMutable} value={marker3Sequence} options={markerOptions} placeholder="选择右岸点" onChange={setMarker3Sequence} style={{ minWidth: 220 }} /><Button type="primary" disabled={!isMutable} loading={markerSaving} onClick={() => void saveMarkers()}>保存控制点</Button></Space></Card><SectionProfileChart section={selected} /></> : <div className="data-empty">从左侧选择一个横断面</div>}</Card></div>
   </div>;
 }
 

@@ -18,7 +18,7 @@ import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style';
 import type { MapBrowserEvent } from 'ol';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import 'ol/ol.css';
-import { getGISCatalog, getGISFeatureInfo, getPublishedScenarioGeoJSON, type GISCatalogResponse } from '../api/generated/client';
+import { getGISCatalog, getGISFeatureInfo, getHydraulicCrossSections, getPublishedScenarioGeoJSON, type GISCatalogResponse } from '../api/generated/client';
 import { Coordinate } from './Coordinate';
 import { CoordinateLocator, type CgcsCentralMeridian, type CoordinateInputMode } from './CoordinateLocator';
 import { LayerManager, type WebLayerState } from './LayerManager';
@@ -88,6 +88,7 @@ export function MapView({
   const locatorSourceRef = useRef<VectorSource | null>(null);
   const locatorLayerRef = useRef<VectorLayer<VectorSource> | null>(null);
   const scenarioLayerRef = useRef<VectorLayer<VectorSource> | null>(null);
+  const hydraulicSectionLayerRef = useRef<VectorLayer<VectorSource> | null>(null);
   const identifyRef = useRef<(event: MapBrowserEvent<PointerEvent | KeyboardEvent | WheelEvent>) => void>(() => undefined);
   const [catalog, setCatalog] = useState<GISCatalogResponse | null>(null);
   const [layers, setLayers] = useState<WebLayerState[]>([]);
@@ -134,6 +135,24 @@ export function MapView({
     scenarioLayer.setZIndex(9_500);
     scenarioLayerRef.current = scenarioLayer;
     map.addLayer(scenarioLayer);
+    const hydraulicSectionLayer = new VectorLayer({
+      source: new VectorSource(),
+      style: (feature) => {
+        const overlayType = feature.get('overlay_type');
+        if (overlayType === 'intersection') {
+          return new Style({ image: new CircleStyle({ radius: 5, fill: new Fill({ color: '#ffffff' }), stroke: new Stroke({ color: '#00e5ff', width: 2 }) }) });
+        }
+        if (overlayType === 'marker') {
+          const markerKind = feature.get('marker_kind');
+          const color = markerKind === 'marker1' ? '#ff8a65' : markerKind === 'marker3' ? '#ba68c8' : '#ffd54f';
+          return new Style({ image: new CircleStyle({ radius: 5, fill: new Fill({ color }), stroke: new Stroke({ color: '#101923', width: 1.5 }) }) });
+        }
+        return new Style({ stroke: new Stroke({ color: '#00e5ff', width: 2, lineDash: [8, 5] }) });
+      },
+    });
+    hydraulicSectionLayer.setZIndex(9_700);
+    hydraulicSectionLayerRef.current = hydraulicSectionLayer;
+    map.addLayer(hydraulicSectionLayer);
     map.on('pointermove', (event) => {
       const [longitude, latitude] = toLonLat(event.coordinate);
       setLongitudeLatitude([longitude, latitude]);
@@ -147,6 +166,7 @@ export function MapView({
       locatorSourceRef.current = null;
       locatorLayerRef.current = null;
       scenarioLayerRef.current = null;
+      hydraulicSectionLayerRef.current = null;
     };
   }, []);
 
@@ -207,7 +227,53 @@ export function MapView({
     if (locatorLayer) map.addLayer(locatorLayer);
     const scenarioLayer = scenarioLayerRef.current;
     if (scenarioLayer) map.addLayer(scenarioLayer);
+    const hydraulicSectionLayer = hydraulicSectionLayerRef.current;
+    if (hydraulicSectionLayer) map.addLayer(hydraulicSectionLayer);
   }, [catalog, datasetVersionId]);
+
+  useEffect(() => {
+    const layer = hydraulicSectionLayerRef.current;
+    if (!layer) return;
+    const source = layer.getSource();
+    if (!source) return;
+    source.clear();
+    if (!datasetVersionId) return;
+    void getHydraulicCrossSections({ dataset_version_id: datasetVersionId, limit: 1000 })
+      .then((payload) => {
+        const lines = new GeoJSON().readFeatures(payload, {
+          dataProjection: 'EPSG:4490',
+          featureProjection: 'EPSG:3857',
+        });
+        lines.forEach((line) => {
+          line.set('overlay_type', 'cross_section');
+          source.addFeature(line);
+          const properties = line.getProperties() as Record<string, unknown>;
+          const markers = (properties.markers ?? {}) as Record<string, { coordinates?: number[] }>;
+          Object.entries(markers).forEach(([markerKind, marker]) => {
+            const coordinates = marker.coordinates;
+            if (!coordinates || coordinates.length < 2) return;
+            const markerFeature = new Feature({
+              geometry: new Point(transform([coordinates[0], coordinates[1]], 'EPSG:4490', 'EPSG:3857')),
+              overlay_type: 'marker',
+              marker_kind: markerKind,
+              section_code: properties.section_code,
+            });
+            source.addFeature(markerFeature);
+          });
+          const intersection = properties.intersection_geometry as { coordinates?: number[] } | undefined;
+          if (intersection?.coordinates && intersection.coordinates.length >= 2) {
+            source.addFeature(new Feature({
+              geometry: new Point(transform([intersection.coordinates[0], intersection.coordinates[1]], 'EPSG:4490', 'EPSG:3857')),
+              overlay_type: 'intersection',
+              section_code: properties.section_code,
+            }));
+          }
+        });
+      })
+      .catch(() => {
+        // WMS remains available when a draft has no hydraulic spatial overlay yet.
+      });
+  }, [datasetVersionId]);
 
   useEffect(() => {
     const map = mapRef.current;

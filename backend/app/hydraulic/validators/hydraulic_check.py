@@ -149,16 +149,18 @@ def validate_exchange(
                         context={"chainage": section.chainage, "start": start, "end": end},
                     )
                 )
-        if not section.axis_points:
+        if not section.axis_points and section.branch_code in branch_ranges:
             issues.append(
                 HydraulicIssue(
-                    severity="warning",
-                    code="SECTION_AXIS_UNAVAILABLE",
+                    severity="info",
+                    code="SECTION_AXIS_DERIVED_FROM_BRANCH",
                     message=(
-                        "缺少横向断面测线，断面方向保持待确认；纵向深泓线不能替代横向测线"
+                        "未提供实测横断面 XY；提交后按河段中心线+桩号派生空间测线，"
+                        "Station/Offset 与水力计算不受影响"
                     ),
                     entity_type="cross_section",
                     entity_ref=section.section_code,
+                    context={"spatial_geometry_source": "DERIVED_FROM_BRANCH"},
                 )
             )
         thalweg_points = [

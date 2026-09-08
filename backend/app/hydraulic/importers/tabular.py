@@ -139,7 +139,7 @@ def parse_csv(
             points=[HydraulicSectionPointInput(
                 sequence=int(row.get("sequence") or index),
                 distance=_number(row, "distance"), elevation=_number(row, "elevation"),
-                marker_type=(row.get("marker_type") or "none").lower(),
+                marker_type=(row.get("marker_type") or "none").lower().replace(" ", "_"),
                 point_code=row.get("point_code") or None,
                 x=float(row["point_x"]) if row.get("point_x") else None,
                 y=float(row["point_y"]) if row.get("point_y") else None,

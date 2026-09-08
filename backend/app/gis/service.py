@@ -31,6 +31,11 @@ from app.gis.schemas import (
     GeoJSONFeatureCollection,
     PaginationMeta,
 )
+from app.hydraulic.models import (
+    HydraulicCrossSection,
+    HydraulicCrossSectionPoint,
+    HydraulicCrossSectionProfile,
+)
 
 
 BBox: TypeAlias = tuple[float, float, float, float]
@@ -416,6 +421,80 @@ def get_cross_section(session: Session, section_id: int, dataset_version_id: int
             "demo_data": True,
         },
     )
+
+
+def list_hydraulic_cross_sections(
+    session: Session, dataset_version_id: int, bbox: BBox | None, limit: int, offset: int
+) -> GeoJSONFeatureCollection:
+    """Expose effective survey/derived lines and M1/M2/M3 points for GIS overlays."""
+
+    sections = session.scalars(
+        select(HydraulicCrossSection)
+        .where(HydraulicCrossSection.dataset_version_id == dataset_version_id)
+        .order_by(HydraulicCrossSection.branch_id, HydraulicCrossSection.chainage)
+    ).all()
+    features: list[GeoJSONFeature] = []
+    for section in sections[offset : offset + limit]:
+        axis = section.axis_geometry or section.derived_axis_geometry
+        location = section.derived_location_geometry or section.location_geometry
+        if axis is None and location is None:
+            continue
+        geometry_column = axis if axis is not None else location
+        if bbox is not None and not session.scalar(
+            select(func.ST_Intersects(geometry_column, func.ST_MakeEnvelope(*bbox, 4490)))
+        ):
+            continue
+        profile = session.scalar(
+            select(HydraulicCrossSectionProfile)
+            .where(
+                HydraulicCrossSectionProfile.cross_section_id == section.id,
+                HydraulicCrossSectionProfile.is_active.is_(True),
+            )
+            .order_by(HydraulicCrossSectionProfile.id.desc())
+        )
+        marker_points: dict[str, dict[str, Any]] = {}
+        if profile is not None:
+            points = session.scalars(
+                select(HydraulicCrossSectionPoint).where(
+                    HydraulicCrossSectionPoint.profile_id == profile.id
+                )
+            ).all()
+            for point in points:
+                marker_name = {
+                    "left_bank": "marker1", "left_levee": "marker1",
+                    "main_channel": "marker2", "thalweg": "marker2",
+                    "right_bank": "marker3", "right_levee": "marker3",
+                }.get(point.marker_type)
+                marker_geometry = point.geometry or point.derived_geometry
+                if marker_name and marker_geometry is not None:
+                    marker_points[marker_name] = _decode_geometry(
+                        session.scalar(func.ST_AsGeoJSON(marker_geometry, 8))
+                    )
+        geometry = _decode_geometry(session.scalar(func.ST_AsGeoJSON(geometry_column, 8)))
+        features.append(
+            GeoJSONFeature(
+                id=section.id,
+                geometry=geometry,
+                properties={
+                    "feature_type": "hydraulic_cross_section",
+                    "section_code": section.section_code,
+                    "branch_id": section.branch_id,
+                    "chainage": section.chainage,
+                    "branch_intersection_station": section.branch_intersection_station,
+                    "spatial_geometry_source": section.spatial_geometry_source,
+                    "spatial_geometry_status": section.spatial_geometry_status,
+                    "hydraulic_ready": section.hydraulic_ready,
+                    "anchor_source": section.anchor_source,
+                    "review_status": section.review_status,
+                    "intersection_geometry": (
+                        _decode_geometry(session.scalar(func.ST_AsGeoJSON(location, 8)))
+                        if location is not None else None
+                    ),
+                    "markers": marker_points,
+                },
+            )
+        )
+    return _collection(features, len(sections), limit, offset, dataset_version_id, bbox)
 
 
 def get_statistics(session: Session, dataset_version_id: int) -> GISStatisticsResponse:

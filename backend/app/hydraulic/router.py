@@ -261,6 +261,62 @@ def update_cross_section_markers(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@router.post(
+    "/cross-sections/{section_id}/derive-spatial-geometry",
+    response_model=HydraulicSectionDetail,
+    summary="按河段中心线派生横断面空间几何",
+)
+def derive_cross_section_spatial_geometry(
+    section_id: int, session: SessionDependency
+) -> HydraulicSectionDetail:
+    """Regenerate disposable branch-derived geometry without changing raw profile data."""
+
+    try:
+        return commit_or_conflict(
+            session, lambda: service.derive_section_spatial_geometry(session, section_id)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post(
+    "/datasets/{dataset_version_id}/derive-spatial-geometry",
+    response_model=dict[str, int],
+    summary="批量派生数据版本横断面空间几何",
+)
+def derive_dataset_spatial_geometry(
+    dataset_version_id: int, session: SessionDependency
+) -> dict[str, int]:
+    """Regenerate derived geometry for every section in one mutable dataset version."""
+
+    try:
+        count = commit_or_conflict(
+            session,
+            lambda: service.derive_dataset_spatial_geometry(session, dataset_version_id),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"derived_sections": count}
+
+
+@router.delete(
+    "/cross-sections/{section_id}/derived-spatial-geometry",
+    response_model=HydraulicSectionDetail,
+    summary="删除横断面可重建的派生空间几何",
+)
+def clear_cross_section_spatial_geometry(
+    section_id: int, session: SessionDependency
+) -> HydraulicSectionDetail:
+    """Clear disposable derived XY while preserving raw and surveyed geometry."""
+
+    try:
+        return commit_or_conflict(
+            session, lambda: service.clear_section_spatial_geometry(session, section_id)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.get(
     "/imports",
     response_model=list[HydraulicImportJobRecord],

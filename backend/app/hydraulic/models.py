@@ -520,6 +520,22 @@ class HydraulicCrossSection(Base):
             name="ck_hydraulic_cross_section_orientation_status",
         ),
         CheckConstraint(
+            "anchor_source IN ('MEASURED','MANUAL','MARKER_2_DERIVED','MIDPOINT_FALLBACK')",
+            name="ck_hydraulic_cross_section_anchor_source",
+        ),
+        CheckConstraint(
+            "review_status IN ('REVIEWED','NEEDS_REVIEW')",
+            name="ck_hydraulic_cross_section_review_status",
+        ),
+        CheckConstraint(
+            "spatial_geometry_source IN ('SURVEY_XY','DERIVED_FROM_BRANCH','UNAVAILABLE')",
+            name="ck_hydraulic_cross_section_spatial_source",
+        ),
+        CheckConstraint(
+            "spatial_geometry_status IN ('SURVEY','DERIVED','UNAVAILABLE')",
+            name="ck_hydraulic_cross_section_spatial_status",
+        ),
+        CheckConstraint(
             "bed_elevation_source IN ('unconfirmed','surveyed','design','synthetic')",
             name="ck_hydraulic_cross_section_bed_source",
         ),
@@ -575,6 +591,12 @@ class HydraulicCrossSection(Base):
     axis_geometry: Mapped[Any | None] = mapped_column(
         "axis", Geometry("LINESTRING", srid=4490, spatial_index=False)
     )
+    derived_location_geometry: Mapped[Any | None] = mapped_column(
+        "derived_location", Geometry("POINT", srid=4490, spatial_index=False)
+    )
+    derived_axis_geometry: Mapped[Any | None] = mapped_column(
+        "derived_axis", Geometry("LINESTRING", srid=4490, spatial_index=False)
+    )
     left_bank: Mapped[Any | None] = mapped_column(Geometry("POINT", srid=4490, spatial_index=False))
     right_bank: Mapped[Any | None] = mapped_column(
         Geometry("POINT", srid=4490, spatial_index=False)
@@ -582,6 +604,20 @@ class HydraulicCrossSection(Base):
     orientation_status: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="pending"
     )
+    branch_intersection_station: Mapped[float | None] = mapped_column(Float)
+    anchor_source: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default="MIDPOINT_FALLBACK"
+    )
+    review_status: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default="NEEDS_REVIEW"
+    )
+    spatial_geometry_source: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default="UNAVAILABLE"
+    )
+    spatial_geometry_status: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default="UNAVAILABLE"
+    )
+    hydraulic_ready: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="true")
     bed_elevation_m: Mapped[float | None] = mapped_column(Float)
     bed_elevation_source: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="unconfirmed"
@@ -656,7 +692,7 @@ class HydraulicCrossSectionPoint(Base):
         CheckConstraint("offset_m >= 0", name="ck_hydraulic_cross_section_point_offset"),
         CheckConstraint(
             "marker_type IN ('none','left_bank','right_bank','left_levee','right_levee',"
-            "'low_flow_left','low_flow_right','thalweg')",
+            "'low_flow_left','low_flow_right','thalweg','main_channel')",
             name="ck_hydraulic_cross_section_point_marker",
         ),
         ForeignKeyConstraint(
@@ -686,6 +722,9 @@ class HydraulicCrossSectionPoint(Base):
     elevation: Mapped[float] = mapped_column("elevation_m", Float, nullable=False)
     marker_type: Mapped[str] = mapped_column(String(24), nullable=False, server_default="none")
     geometry: Mapped[Any | None] = mapped_column(Geometry("POINT", srid=4490, spatial_index=False))
+    derived_geometry: Mapped[Any | None] = mapped_column(
+        "derived_geometry", Geometry("POINT", srid=4490, spatial_index=False)
+    )
     source_x: Mapped[float | None] = mapped_column(Float)
     source_y: Mapped[float | None] = mapped_column(Float)
     source_z: Mapped[float | None] = mapped_column(Float)

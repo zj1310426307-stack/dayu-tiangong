@@ -65,6 +65,7 @@ HEADER_ALIASES = {
     # continues to use the single, versioned ``marker_type`` enum.
     "marker_type": {"marker_type", "标志类型", "marker", "标记"},
     "marker1": {"marker1", "marker_1", "marker 1", "左堤防", "左堤岸", "left levee bank", "left_bank_marker"},
+    "marker2": {"marker2", "marker_2", "marker 2", "主槽", "主槽控制点", "main channel", "main_channel_marker"},
     "marker3": {"marker3", "marker_3", "marker 3", "右堤防", "右堤岸", "right levee bank", "right_bank_marker"},
     "roughness_zone_order": {"roughness_zone_order", "糙率分区序号"},
     "roughness_start": {"roughness_start", "糙率起点"},
@@ -223,15 +224,18 @@ def _canonical_marker(row: dict[str, object], explicit_thalweg: bool, minimum_el
     marker = str(row.get("marker_type") or "none").strip().lower().replace(" ", "_")
     aliases = {
         "marker_1": "left_levee", "marker1": "left_levee", "left_levee_bank": "left_levee",
+        "marker_2": "main_channel", "marker2": "main_channel", "main_channel_marker": "main_channel",
         "marker_3": "right_levee", "marker3": "right_levee", "right_levee_bank": "right_levee",
         "left_bank_marker": "left_levee", "right_bank_marker": "right_levee",
     }
     marker = aliases.get(marker, marker)
-    if marker not in {"none", "left_bank", "right_bank", "left_levee", "right_levee", "low_flow_left", "low_flow_right", "thalweg"}:
+    if marker not in {"none", "left_bank", "right_bank", "left_levee", "right_levee", "low_flow_left", "low_flow_right", "thalweg", "main_channel"}:
         marker = "none"
     if marker == "none":
         if _marker_flag(row.get("marker1")):
             marker = "left_levee"
+        elif _marker_flag(row.get("marker2")):
+            marker = "main_channel"
         elif _marker_flag(row.get("marker3")):
             marker = "right_levee"
     if marker == "none" and not explicit_thalweg:

@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
+from geoalchemy2.elements import WKTElement
 
 from app.common.spatial import geometry_json
 from app.dataset.lifecycle import assert_dataset_version_mutable
@@ -36,6 +37,7 @@ from app.hydraulic.schemas import (
     HydraulicSectionPointRecord, HydraulicSectionSummary, HydraulicValidationRunRecord,
     HydraulicMarkerUpdate,
 )
+from app.hydraulic.spatial_geometry import derive_section_geometry
 from app.hydraulic.validators import validate_exchange
 
 
@@ -378,9 +380,16 @@ def _upsert_section(
             CrossSection.section_code == source.section_code,
         ))
     location = _section_location(source, branch, spec)
+    surveyed_point_axis = [
+        (point.x, point.y) for point in source.points
+        if point.x is not None and point.y is not None
+    ]
+    axis_coordinates = source.axis_points or (
+        surveyed_point_axis if len(surveyed_point_axis) >= 2 and len(surveyed_point_axis) == len(source.points) else []
+    )
     axis = _source_geometry(
-        {"type": "LineString", "coordinates": [list(v) for v in source.axis_points]}, "LineString", spec
-    ) if source.axis_points else None
+        {"type": "LineString", "coordinates": [list(v) for v in axis_coordinates]}, "LineString", spec
+    ) if axis_coordinates else None
     if legacy is None:
         legacy = CrossSection(
             dataset_version_id=dataset_version_id, river_id=branch.legacy_river_id,
@@ -427,6 +436,14 @@ def _upsert_section(
     section.left_bank = func.ST_StartPoint(axis) if axis is not None else None
     section.right_bank = func.ST_EndPoint(axis) if axis is not None else None
     section.orientation_status = "pending" if axis is None else "confirmed"
+    section.spatial_geometry_source = "SURVEY_XY" if axis is not None else "UNAVAILABLE"
+    section.spatial_geometry_status = "SURVEY" if axis is not None else "UNAVAILABLE"
+    section.derived_location_geometry = None
+    section.derived_axis_geometry = None
+    section.branch_intersection_station = None
+    section.anchor_source = "MIDPOINT_FALLBACK"
+    section.review_status = "REVIEWED" if axis is not None else "NEEDS_REVIEW"
+    section.hydraulic_ready = True
     bed_fields = {
         "bed_elevation_m",
         "bed_elevation_source",
@@ -507,6 +524,209 @@ def _upsert_section(
     return section
 
 
+def _engineering_vertices(session: Session, branch: HydraulicBranch, network: HydraulicNetwork):
+    """Read branch vertices in the network's projected engineering CRS."""
+
+    if not network.engineering_crs or not network.engineering_crs.upper().startswith("EPSG:"):
+        raise ValueError("branch engineering CRS is unavailable")
+    srid = int(network.engineering_crs.split(":", 1)[1])
+    rows = session.execute(
+        select(
+            HydraulicBranchVertex.chainage,
+            func.ST_X(func.ST_Transform(HydraulicBranchVertex.geometry, srid)),
+            func.ST_Y(func.ST_Transform(HydraulicBranchVertex.geometry, srid)),
+        )
+        .where(HydraulicBranchVertex.branch_id == branch.id)
+        .order_by(HydraulicBranchVertex.vertex_order)
+    ).all()
+    vertices = [(float(chainage), float(x), float(y)) for chainage, x, y in rows]
+    if len(vertices) < 2:
+        raise ValueError("branch has no usable ordered vertices")
+    return vertices, srid
+
+
+def _display_geometry(session: Session, x: float, y: float, srid: int) -> tuple[float, float]:
+    """Transform one projected derived point to the platform display CRS."""
+
+    row = session.execute(
+        select(
+            func.ST_X(func.ST_Transform(func.ST_SetSRID(func.ST_MakePoint(x, y), srid), 4490)),
+            func.ST_Y(func.ST_Transform(func.ST_SetSRID(func.ST_MakePoint(x, y), srid), 4490)),
+        )
+    ).one()
+    return float(row[0]), float(row[1])
+
+
+def derive_section_spatial_geometry(
+    session: Session, section_id: int, *, regenerate: bool = True
+) -> HydraulicSectionDetail:
+    """Derive one section line and marker points from branch+chainage.
+
+    Survey ``axis_geometry`` and surveyed point ``geometry`` are authoritative and
+    never overwritten.  Derived columns are disposable and can be regenerated.
+    """
+
+    section = session.get(HydraulicCrossSection, section_id)
+    if section is None:
+        raise ValueError("Hydraulic cross-section does not exist")
+    assert_dataset_version_mutable(session, section.dataset_version_id)
+    branch = session.get(HydraulicBranch, section.branch_id)
+    network = session.get(HydraulicNetwork, branch.network_id) if branch else None
+    if branch is None or network is None:
+        raise ValueError("Cross-section branch or network does not exist")
+    if section.axis_geometry is not None:
+        section.spatial_geometry_source = "SURVEY_XY"
+        section.spatial_geometry_status = "SURVEY"
+        section.hydraulic_ready = True
+        return get_section_detail(session, section.id)  # type: ignore[return-value]
+    profile = session.scalar(
+        select(HydraulicCrossSectionProfile)
+        .where(
+            HydraulicCrossSectionProfile.cross_section_id == section.id,
+            HydraulicCrossSectionProfile.is_active.is_(True),
+        )
+        .order_by(HydraulicCrossSectionProfile.id.desc())
+    )
+    if profile is None:
+        raise ValueError("Active cross-section profile does not exist")
+    points = session.scalars(
+        select(HydraulicCrossSectionPoint)
+        .where(HydraulicCrossSectionPoint.profile_id == profile.id)
+        .order_by(HydraulicCrossSectionPoint.sequence)
+    ).all()
+    if len(points) < 2:
+        raise ValueError("cross-section profile has fewer than two points")
+    # ``thalweg`` is the backwards-compatible imported representation of an
+    # explicit MIKE11 Marker 2 in older workbooks; new imports use main_channel.
+    marker2 = next(
+        (point for point in points if point.marker_type in {"main_channel", "thalweg"}),
+        None,
+    )
+    if marker2 is not None:
+        anchor, anchor_source = marker2.distance, "MARKER_2_DERIVED"
+        review_status = "REVIEWED" if marker2.marker_type == "main_channel" else "NEEDS_REVIEW"
+    else:
+        anchor = (points[0].distance + points[-1].distance) / 2.0
+        anchor_source, review_status = "MIDPOINT_FALLBACK", "NEEDS_REVIEW"
+    vertices, engineering_srid = _engineering_vertices(session, branch, network)
+    derived = derive_section_geometry(
+        vertices,
+        section.chainage,
+        [point.distance for point in points],
+        anchor,
+        {
+            "marker1": next((point.distance for point in points if point.marker_type in {"left_bank", "left_levee"}), points[0].distance),
+            "marker2": marker2.distance if marker2 is not None else anchor,
+            "marker3": next((point.distance for point in points if point.marker_type in {"right_bank", "right_levee"}), points[-1].distance),
+        },
+    )
+    if regenerate:
+        display_points = [_display_geometry(session, x, y, engineering_srid) for x, y in derived.profile_points]
+        intersection = _display_geometry(session, *derived.intersection, engineering_srid)
+        line_wkt = "LINESTRING(" + ",".join(f"{x:.12f} {y:.12f}" for x, y in display_points) + ")"
+        section.derived_location_geometry = WKTElement(
+            f"POINT({intersection[0]:.12f} {intersection[1]:.12f})", srid=4490
+        )
+        section.derived_axis_geometry = WKTElement(line_wkt, srid=4490)
+        section.branch_intersection_station = anchor
+        section.anchor_source = anchor_source
+        section.review_status = review_status
+        section.spatial_geometry_source = "DERIVED_FROM_BRANCH"
+        section.spatial_geometry_status = "DERIVED"
+        section.hydraulic_ready = True
+        for point, xy in zip(points, display_points):
+            # Keep raw/survey geometry intact; only fill the disposable derived field.
+            point.derived_geometry = WKTElement(
+                f"POINT({xy[0]:.12f} {xy[1]:.12f})", srid=4490
+            )
+            point.metadata_json = {
+                **(point.metadata_json or {}),
+                "spatial_geometry_source": "DERIVED_FROM_BRANCH",
+                "branch_intersection_station": anchor,
+            }
+        session.flush()
+    result = get_section_detail(session, section.id)
+    if result is None:
+        raise ValueError("Hydraulic cross-section could not be reloaded")
+    return result
+
+
+def derive_dataset_spatial_geometry(session: Session, dataset_version_id: int) -> int:
+    """Regenerate disposable geometry for every section in one dataset version."""
+
+    assert_dataset_version_mutable(session, dataset_version_id)
+    sections = session.scalars(
+        select(HydraulicCrossSection).where(
+            HydraulicCrossSection.dataset_version_id == dataset_version_id
+        ).order_by(HydraulicCrossSection.id)
+    ).all()
+    for section in sections:
+        try:
+            derive_section_spatial_geometry(session, section.id)
+        except ValueError:
+            # Spatial geometry is a GIS capability, not a hydraulic readiness gate.
+            # Keep the section calculable and expose the missing spatial evidence.
+            section.derived_location_geometry = None
+            section.derived_axis_geometry = None
+            section.branch_intersection_station = None
+            session.execute(
+                update(HydraulicCrossSectionPoint)
+                .where(
+                    HydraulicCrossSectionPoint.profile_id.in_(
+                        select(HydraulicCrossSectionProfile.id).where(
+                            HydraulicCrossSectionProfile.cross_section_id == section.id
+                        )
+                    )
+                )
+                .values(derived_geometry=None)
+            )
+            section.spatial_geometry_source = "UNAVAILABLE"
+            section.spatial_geometry_status = "UNAVAILABLE"
+            section.review_status = "NEEDS_REVIEW"
+            section.hydraulic_ready = True
+    return len(sections)
+
+
+def clear_section_spatial_geometry(session: Session, section_id: int) -> HydraulicSectionDetail:
+    """Remove only disposable branch-derived geometry so it can be regenerated."""
+
+    section = session.get(HydraulicCrossSection, section_id)
+    if section is None:
+        raise ValueError("Hydraulic cross-section does not exist")
+    assert_dataset_version_mutable(session, section.dataset_version_id)
+    if section.axis_geometry is not None:
+        section.spatial_geometry_source = "SURVEY_XY"
+        section.spatial_geometry_status = "SURVEY"
+    else:
+        section.spatial_geometry_source = "UNAVAILABLE"
+        section.spatial_geometry_status = "UNAVAILABLE"
+    section.derived_location_geometry = None
+    section.derived_axis_geometry = None
+    section.branch_intersection_station = None
+    # The schema keeps anchor_source non-null for auditability.  With the
+    # disposable geometry cleared there is no active anchor, so retain the
+    # explicit review-required fallback label rather than inventing a station.
+    section.anchor_source = "MIDPOINT_FALLBACK"
+    section.review_status = "NEEDS_REVIEW"
+    section.hydraulic_ready = True
+    session.execute(
+        update(HydraulicCrossSectionPoint)
+        .where(
+            HydraulicCrossSectionPoint.profile_id.in_(
+                select(HydraulicCrossSectionProfile.id).where(
+                    HydraulicCrossSectionProfile.cross_section_id == section.id
+                )
+            )
+        )
+        .values(derived_geometry=None)
+    )
+    session.flush()
+    result = get_section_detail(session, section.id)
+    if result is None:
+        raise ValueError("Hydraulic cross-section could not be reloaded")
+    return result
+
+
 def _apply_payload(session: Session, job: HydraulicImportJob, payload: HydraulicExchangePayload) -> None:
     """Apply one validated payload inside the caller transaction."""
 
@@ -538,6 +758,9 @@ def _apply_payload(session: Session, job: HydraulicImportJob, payload: Hydraulic
             raise ValueError(f"Branch {source.branch_code} does not exist in target network")
         _upsert_section(session, job.dataset_version_id, source, branch, spec)
     session.flush()
+    # Spatial lines are derived only after all branch vertices and profiles exist.
+    # This keeps import atomic while leaving raw hydraulic values untouched.
+    derive_dataset_spatial_geometry(session, job.dataset_version_id)
 
 
 def commit_import(session: Session, job_code: str, preview_hash: str) -> HydraulicImportJobRecord:
@@ -611,6 +834,10 @@ def _profile_record(session: Session, profile: HydraulicCrossSectionProfile) -> 
             sequence=p.sequence, distance=p.distance, elevation=p.elevation,
             marker_type=p.marker_type, point_code=p.point_code,
             x=p.source_x, y=p.source_y, z=p.source_z,
+            derived_x=(geometry_json(session, p.derived_geometry)["coordinates"][0]
+                       if p.derived_geometry is not None else None),
+            derived_y=(geometry_json(session, p.derived_geometry)["coordinates"][1]
+                       if p.derived_geometry is not None else None),
         ) for p in points],
         roughness_zones=[HydraulicRoughnessZoneRecord.model_validate(z, from_attributes=True) for z in zones],
         processing=_processing_record(session, processing),
@@ -719,8 +946,20 @@ def get_section_detail(session: Session, section_id: int) -> HydraulicSectionDet
         bed_elevation_source=section.bed_elevation_source,
         bed_elevation_confirmed_by=section.bed_elevation_confirmed_by,
         bed_elevation_confirmed_at=section.bed_elevation_confirmed_at,
-        location_geometry=geometry_json(session, section.location_geometry),
-        axis_geometry=geometry_json(session, section.axis_geometry) if section.axis_geometry is not None else None,
+        location_geometry=geometry_json(
+            session, section.derived_location_geometry or section.location_geometry
+        ),
+        axis_geometry=(
+            geometry_json(session, section.axis_geometry or section.derived_axis_geometry)
+            if section.axis_geometry is not None or section.derived_axis_geometry is not None
+            else None
+        ),
+        branch_intersection_station=section.branch_intersection_station,
+        anchor_source=section.anchor_source,
+        review_status=section.review_status,
+        spatial_geometry_source=section.spatial_geometry_source,
+        spatial_geometry_status=section.spatial_geometry_status,
+        hydraulic_ready=section.hydraulic_ready,
         profiles=[_profile_record(session, v) for v in profiles],
     )
 
@@ -765,22 +1004,25 @@ def update_section_markers(
         ).order_by(HydraulicCrossSectionPoint.sequence)
     ).all()
     by_sequence = {point.sequence: point for point in points}
-    for sequence in (payload.marker1_sequence, payload.marker3_sequence):
+    for sequence in (payload.marker1_sequence, payload.marker2_sequence, payload.marker3_sequence):
         if sequence is not None and sequence not in by_sequence:
             raise ValueError(f"Marker sequence {sequence} does not exist in the active profile")
-    # Only the two levee marker classes are replaced.  Thalweg and low-flow
-    # markers remain untouched so this operation is safe for solver inputs.
+    # Replace only explicit MIKE11 control markers.  Raw elevation and station
+    # values remain untouched, and thalweg/low-flow semantics are preserved.
     for point in points:
-        if point.marker_type in {"left_bank", "right_bank", "left_levee", "right_levee"}:
+        if point.marker_type in {"left_bank", "right_bank", "left_levee", "right_levee", "main_channel"}:
             point.marker_type = "none"
     if payload.marker1_sequence is not None:
         by_sequence[payload.marker1_sequence].marker_type = "left_levee"
+    if payload.marker2_sequence is not None:
+        by_sequence[payload.marker2_sequence].marker_type = "main_channel"
     if payload.marker3_sequence is not None:
         by_sequence[payload.marker3_sequence].marker_type = "right_levee"
     profile.metadata_json = {
         **(profile.metadata_json or {}),
         "mike11_marker_policy": "marker_1_to_3_active_extent",
         "marker1_sequence": payload.marker1_sequence,
+        "marker2_sequence": payload.marker2_sequence,
         "marker3_sequence": payload.marker3_sequence,
         "marker_actor": payload.actor,
         "marker_updated_at": datetime.now(UTC).isoformat(),
@@ -788,6 +1030,7 @@ def update_section_markers(
     profile.profile_hash = canonical_hash({
         "profile_hash_before_marker_update": profile.profile_hash,
         "marker1_sequence": payload.marker1_sequence,
+        "marker2_sequence": payload.marker2_sequence,
         "marker3_sequence": payload.marker3_sequence,
         "points": [
             {"sequence": point.sequence, "distance": point.distance,
@@ -796,6 +1039,8 @@ def update_section_markers(
         ],
     })
     session.flush()
+    if section.axis_geometry is None:
+        return derive_section_spatial_geometry(session, section.id)
     result = get_section_detail(session, section.id)
     if result is None:
         raise ValueError("Hydraulic cross-section could not be reloaded")
