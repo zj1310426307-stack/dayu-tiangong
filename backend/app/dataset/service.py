@@ -54,7 +54,15 @@ def _case_record(session: Session, entity: SimulationCase) -> SimulationCaseReco
     )
     if not boundary_ids and entity.boundary_condition_id is not None:
         boundary_ids = [entity.boundary_condition_id]
-    return SimulationCaseRecord(**_dump(entity), boundary_condition_ids=boundary_ids)
+    # Project only fields owned by the public record contract. The ORM still keeps
+    # historical columns such as v4_configuration for audit compatibility; leaking
+    # them through a blanket table dump breaks this strict response model.
+    record_values = {
+        field: getattr(entity, field)
+        for field in SimulationCaseRecord.model_fields
+        if field != "boundary_condition_ids"
+    }
+    return SimulationCaseRecord(**record_values, boundary_condition_ids=boundary_ids)
 
 
 def list_dataset_versions(session: Session) -> list[DatasetVersionRecord]:
