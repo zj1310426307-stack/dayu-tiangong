@@ -1403,6 +1403,17 @@ def _point_xy(session: Session, geometry) -> tuple[float, float]:
     return float(value[0]), float(value[1])
 
 
+def _exchange_section_point(point: HydraulicSectionPointRecord) -> HydraulicSectionPointInput:
+    """Project a stored point into the strict exchange DTO without disposable GIS XY."""
+
+    # derived_x/derived_y describe a regenerable map position, not measured survey XY.
+    # Keeping the projection explicit prevents response-only fields from leaking into
+    # fail-closed hydraulic input schemas as the read model evolves.
+    return HydraulicSectionPointInput.model_validate(
+        point.model_dump(exclude={"derived_x", "derived_y"})
+    )
+
+
 def build_exchange_payload(
     session: Session, dataset_version_id: int, network_id: int | None = None
 ) -> HydraulicExchangePayload:
@@ -1458,7 +1469,7 @@ def build_exchange_payload(
                     bed_elevation_confirmed_at=section.bed_elevation_confirmed_at,
                     location_x=location[0], location_y=location[1], axis_points=axis,
                     roughness_zones=[HydraulicRoughnessZoneInput.model_validate(z.model_dump()) for z in detail.roughness_zones],
-                    points=[HydraulicSectionPointInput.model_validate(p.model_dump()) for p in detail.points],
+                    points=[_exchange_section_point(point) for point in detail.points],
                 ))
     return HydraulicExchangePayload(
         network_code=network.code, network_name=network.name, source_srid=4490,

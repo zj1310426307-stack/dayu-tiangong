@@ -16,13 +16,37 @@ from app.hydraulic.schemas import (
     HydraulicCrossSectionInput,
     HydraulicExchangePayload,
     HydraulicSectionPointInput,
+    HydraulicSectionPointRecord,
 )
-from app.hydraulic.service import capabilities
+from app.hydraulic.service import _exchange_section_point, capabilities
 from app.hydraulic.validators import validate_exchange
 from app.main import app
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_exchange_point_omits_derived_xy_without_promoting_it_to_survey_xy() -> None:
+    """Regenerable map coordinates must not enter the strict hydraulic input DTO."""
+
+    stored = HydraulicSectionPointRecord(
+        sequence=0,
+        distance=0.0,
+        elevation=9.25,
+        marker_type="left_bank",
+        point_code=None,
+        derived_x=112.45285306,
+        derived_y=22.74995779,
+    )
+
+    exchange = _exchange_section_point(stored)
+
+    assert exchange.sequence == 0
+    assert exchange.elevation == 9.25
+    assert exchange.x is None
+    assert exchange.y is None
+    assert "derived_x" not in exchange.model_dump()
+    assert "derived_y" not in exchange.model_dump()
 
 
 def _network_text() -> bytes:
