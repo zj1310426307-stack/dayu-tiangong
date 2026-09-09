@@ -884,13 +884,16 @@ class RiverSegment(Base):
             ["upstream_node_id", "dataset_version_id"],
             ["river_node.id", "river_node.dataset_version_id"],
             name="fk_river_segment_upstream_version",
-            ondelete="RESTRICT",
+            # A version delete cascades RiverSegment and RiverNode together;
+            # NO ACTION keeps direct node deletion protected while allowing
+            # PostgreSQL to validate the complete cascade at statement end.
+            ondelete="NO ACTION",
         ),
         ForeignKeyConstraint(
             ["downstream_node_id", "dataset_version_id"],
             ["river_node.id", "river_node.dataset_version_id"],
             name="fk_river_segment_downstream_version",
-            ondelete="RESTRICT",
+            ondelete="NO ACTION",
         ),
         UniqueConstraint("id", "dataset_version_id", name="uq_river_segment_id_version"),
         UniqueConstraint(
@@ -1111,13 +1114,14 @@ class Gate(Base):
             ["hydraulic_upstream_section_id", "dataset_version_id"],
             ["hydraulic.cross_section.id", "hydraulic.cross_section.dataset_version_id"],
             name="fk_gate_d2_upstream_section_version",
-            ondelete="RESTRICT",
+            # Gate is version-owned and is removed with its Dataset Version.
+            ondelete="NO ACTION",
         ),
         ForeignKeyConstraint(
             ["hydraulic_downstream_section_id", "dataset_version_id"],
             ["hydraulic.cross_section.id", "hydraulic.cross_section.dataset_version_id"],
             name="fk_gate_d2_downstream_section_version",
-            ondelete="RESTRICT",
+            ondelete="NO ACTION",
         ),
         Index("ix_gate_geometry_gist", "geometry", postgresql_using="gist"),
         Index("ix_gate_river_id", "river_id"),
@@ -1130,7 +1134,11 @@ class Gate(Base):
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     gate_code: Mapped[str] = mapped_column(String(64), nullable=False)
-    river_id: Mapped[int] = mapped_column(ForeignKey("river.id", ondelete="RESTRICT"))
+    river_id: Mapped[int] = mapped_column(
+        # Gate is version-owned; NO ACTION preserves direct River protection
+        # while permitting same-version cascade cleanup.
+        ForeignKey("river.id", ondelete="NO ACTION")
+    )
     gate_type: Mapped[str] = mapped_column(String(32), nullable=False)
     opening_direction: Mapped[str] = mapped_column(String(32), nullable=False)
     control_mode: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -1188,7 +1196,7 @@ class Pump(Base):
             ["hydraulic_section_id", "dataset_version_id"],
             ["hydraulic.cross_section.id", "hydraulic.cross_section.dataset_version_id"],
             name="fk_pump_d2_section_version",
-            ondelete="RESTRICT",
+            ondelete="NO ACTION",
         ),
         Index("ix_pump_geometry_gist", "geometry", postgresql_using="gist"),
         Index("ix_pump_river_id", "river_id"),
@@ -1201,7 +1209,11 @@ class Pump(Base):
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     pump_code: Mapped[str] = mapped_column(String(64), nullable=False)
-    river_id: Mapped[int] = mapped_column(ForeignKey("river.id", ondelete="RESTRICT"))
+    river_id: Mapped[int] = mapped_column(
+        # Pump rows are version-owned; preserve standalone River protection
+        # while allowing same-version children to disappear in one cascade.
+        ForeignKey("river.id", ondelete="NO ACTION")
+    )
     design_flow: Mapped[float] = mapped_column(Float, nullable=False)
     head: Mapped[float] = mapped_column(Float, nullable=False)
     power: Mapped[float] = mapped_column(Float, nullable=False)
@@ -1464,13 +1476,13 @@ class BoundaryCondition(Base):
             ["hydraulic_node_id", "dataset_version_id"],
             ["hydraulic.node.id", "hydraulic.node.dataset_version_id"],
             name="fk_boundary_d2_hydraulic_node_version",
-            ondelete="RESTRICT",
+            ondelete="NO ACTION",
         ),
         ForeignKeyConstraint(
             ["branch_id", "dataset_version_id"],
             ["hydraulic.branch.id", "hydraulic.branch.dataset_version_id"],
             name="fk_boundary_hydraulic_branch_version",
-            ondelete="RESTRICT",
+            ondelete="NO ACTION",
         ),
         CheckConstraint(
             "chainage_m IS NULL OR chainage_m >= 0",
