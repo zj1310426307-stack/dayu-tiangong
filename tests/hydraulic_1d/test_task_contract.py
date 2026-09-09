@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from app.model_engine.schemas import SimulationTaskCreate
 from app.model_engine.hydraulic_1d_service import (
     _boundary_derived_initial_condition,
+    _vertical_bank_extended_sections,
     _with_simulation_identity,
 )
 from app.model_engine.service import _validate_result, parse_frozen_task_model, retry_block_reason
@@ -113,6 +114,34 @@ def test_high_discharge_boundary_derives_a_subcritical_cold_start() -> None:
     assert initial is not None
     assert initial.by_section[0].water_level_m > 5.0
     assert initial.by_section[-1].water_level_m > 5.0
+
+
+def test_full_channel_extension_adds_rebuildable_walls_without_changing_raw_profile() -> None:
+    """Derived walls use the hydraulic envelope and preserve source Station/Elevation."""
+
+    source = model_fixture()
+    raw_points = source.cross_sections[0].points
+    initial = _boundary_derived_initial_condition(
+        source.branches,
+        source.cross_sections,
+        source.boundaries,
+    )
+    assert initial is not None
+
+    extended, top = _vertical_bank_extended_sections(
+        source.cross_sections,
+        initial,
+        source.boundaries,
+    )
+
+    first = extended[0]
+    assert first.points[0].station_m == raw_points[0].station_m
+    assert first.points[1:-1] == raw_points
+    assert first.points[0].elevation_m == top
+    assert first.points[-1].station_m == raw_points[-1].station_m
+    assert first.points[-1].elevation_m == top
+    assert source.cross_sections[0].points == raw_points
+    assert top >= max(item.water_level_m for item in initial.by_section) + 1.0
 
 
 def test_historical_custom_solver_task_is_never_retryable() -> None:

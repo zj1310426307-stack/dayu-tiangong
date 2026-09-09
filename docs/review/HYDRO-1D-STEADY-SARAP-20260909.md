@@ -6,6 +6,12 @@ Standard 1D 页面新增 `计算类型`。选择“恒定流（稳态）”后�
 `calculation_mode=steady` 与 `mascaret_kernel=sarap`，由 MASCARET v9.1.1 的
 SARAP（Noyau 1）执行；默认的非恒定流任务仍使用原有内核选择逻辑。
 
+页面同时提供“高水位处理”。选择“全归槽（竖直岸壁）”时，Mapper 以冻结初始
+水位包络和水位边界的最大值加 1.0 m 数值余高，在每个有效断面左右端点生成同站距
+竖直墙。该墙只存在于任务快照，可删除并重建；数据库 Raw Station、Raw Elevation、
+Marker 和已批准 Profile 均不修改。快照在 `vertical_bank_extension` 中记录来源、
+顶高程、余高和原始数据不可变声明。
+
 ## 结果语义
 
 结果解析器对恒定流任务增加端点控制诊断：对恒定上游流量和恒定下游水位，报告
@@ -24,6 +30,7 @@ SARAP（Noyau 1）执行；默认的非恒定流任务仍使用原有内核选�
 ## 验证
 
 - MASCARET Adapter/Parser/Task contract：25 passed。
+- 全归槽派生竖墙回归加入后，上述聚焦测试：26 passed。
 - `tests/hydraulic_1d`：173 passed，2 skipped；4 个 D-Flow/NetCDF 测试仅因当前
   Windows 沙箱无法写入既有 `outputs/dflow-native-io` 而失败，非本次改动回归。
 - 前端 TypeScript 直接检查（关闭增量缓存）通过；Vite 构建在当前沙箱写入

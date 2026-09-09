@@ -128,6 +128,7 @@ function normalizeTaskRequest(values: SimulationTaskCreate): SimulationTaskCreat
   return {
     case_id: values.case_id,
     calculation_mode: values.calculation_mode,
+    overbank_treatment: values.overbank_treatment,
     duration_seconds: values.duration_seconds,
     time_step_seconds: values.time_step_seconds,
     output_interval_seconds: values.output_interval_seconds,
@@ -271,6 +272,7 @@ export function HydraulicConfigPage() {
             input_schema_version: HYDRAULIC_INPUT_SCHEMA,
             storage_level: 'full',
             calculation_mode: 'steady',
+            overbank_treatment: 'vertical_extension',
             duration_seconds: 3600,
             time_step_seconds: 10,
             output_interval_seconds: 60,
@@ -295,12 +297,20 @@ export function HydraulicConfigPage() {
                 ]} />
               </Form.Item>
             </Col>
-            <Col xs={12} md={6}>
+            <Col xs={24} md={4}>
+              <Form.Item name="overbank_treatment" label="高水位处理" rules={[{ required: true }]}>
+                <Select options={[
+                  { value: 'vertical_extension', label: '全归槽（竖直岸壁）' },
+                  { value: 'profile', label: '按现有断面' },
+                ]} />
+              </Form.Item>
+            </Col>
+            <Col xs={12} md={4}>
               <Form.Item name="duration_seconds" label="模拟时长（s）" rules={[{ required: true }]}>
                 <InputNumber min={1} precision={0} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
-            <Col xs={12} md={6}>
+            <Col xs={12} md={4}>
               <Form.Item name="time_step_seconds" label="计算步长（s）" rules={[{ required: true }]}>
                 <InputNumber min={0.001} style={{ width: '100%' }} />
               </Form.Item>

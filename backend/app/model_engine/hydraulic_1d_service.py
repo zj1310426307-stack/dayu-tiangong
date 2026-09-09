@@ -199,6 +199,60 @@ def _boundary_derived_initial_condition(
     return InitialCondition(by_section=tuple(states))
 
 
+def _vertical_bank_extended_sections(
+    cross_sections: Sequence[HydraulicCrossSection],
+    initial: InitialCondition,
+    boundaries: Sequence[BoundaryCondition],
+    *,
+    safety_freeboard_m: float = 1.0,
+) -> tuple[tuple[HydraulicCrossSection, ...], float]:
+    """Build disposable full-channel walls without mutating surveyed profiles."""
+
+    candidate_stages = [
+        float(item.value)
+        for boundary in boundaries
+        if boundary.variable == "water_level"
+        for item in boundary.series
+    ]
+    if initial.by_section:
+        candidate_stages.extend(float(item.water_level_m) for item in initial.by_section)
+    elif initial.water_level_m is not None:
+        candidate_stages.append(float(initial.water_level_m))
+    candidate_stages.extend(
+        max(float(section.points[0].elevation_m), float(section.points[-1].elevation_m))
+        for section in cross_sections
+    )
+    extension_top = max(candidate_stages) + safety_freeboard_m
+    extended: list[HydraulicCrossSection] = []
+    for section in cross_sections:
+        points = list(section.points)
+        if points[0].elevation_m < extension_top:
+            if len(points) > 1 and points[0].station_m == points[1].station_m:
+                points[0] = points[0].model_copy(update={"elevation_m": extension_top})
+            else:
+                points.insert(
+                    0,
+                    CrossSectionPoint(
+                        station_m=points[0].station_m,
+                        elevation_m=extension_top,
+                        zone=points[0].zone,
+                    ),
+                )
+        if points[-1].elevation_m < extension_top:
+            if len(points) > 1 and points[-1].station_m == points[-2].station_m:
+                points[-1] = points[-1].model_copy(update={"elevation_m": extension_top})
+            else:
+                points.append(
+                    CrossSectionPoint(
+                        station_m=points[-1].station_m,
+                        elevation_m=extension_top,
+                        zone=points[-1].zone,
+                    )
+                )
+        extended.append(section.model_copy(update={"points": tuple(points)}))
+    return tuple(extended), extension_top
+
+
 def _time_values(
     row: BoundaryConditionRow,
     *,
@@ -887,6 +941,13 @@ def build_hydraulic_1d_model(
         time_step_seconds=_number(task_config, settings_config, "time_step_seconds"),
         output_interval_seconds=_number(task_config, settings_config, "output_interval_seconds"),
     )
+    extension_top: float | None = None
+    if task_config.get("overbank_treatment") == "vertical_extension":
+        cross_sections, extension_top = _vertical_bank_extended_sections(
+            cross_sections,
+            initial,
+            boundaries,
+        )
     structures = _structures(session, case, case_config, network.id)
     configuration_hash = snapshot_hash(dict(case_config))
     model_metadata: dict[str, Any] = {
@@ -905,7 +966,15 @@ def build_hydraulic_1d_model(
             else "case_or_task"
         ),
         "calculation_mode": task_config.get("calculation_mode", "unsteady"),
+        "overbank_treatment": task_config.get("overbank_treatment", "profile"),
     }
+    if extension_top is not None:
+        model_metadata["vertical_bank_extension"] = {
+            "source": "task_derived_full_channel",
+            "extension_top_elevation_m": extension_top,
+            "safety_freeboard_m": 1.0,
+            "raw_profile_immutable": True,
+        }
     if task_config.get("calculation_mode") == "steady":
         # SARAP is the official MASCARET permanent-flow kernel.  Keep this
         # choice in the frozen solver-neutral snapshot so task replay cannot
