@@ -27,6 +27,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
+  approveDatasetVersionForCalculation,
   cancelHydraulicTask,
   createHydraulicTask,
   enqueueHydraulicTask,
@@ -143,7 +144,7 @@ function normalizeTaskRequest(values: SimulationTaskCreate): SimulationTaskCreat
 /** Configure and validate the single production Standard 1D / MASCARET route. */
 export function HydraulicConfigPage() {
   const navigate = useNavigate();
-  const { datasetVersionId } = useDatasetVersion();
+  const { datasetVersionId, currentVersion, refreshVersions } = useDatasetVersion();
   const [form] = Form.useForm<SimulationTaskCreate>();
   const selectedCaseId = Form.useWatch('case_id', form);
   const [cases, setCases] = useState<Array<{ id: number; name: string }>>([]);
@@ -153,6 +154,7 @@ export function HydraulicConfigPage() {
   const [loadingCases, setLoadingCases] = useState(true);
   const [previewing, setPreviewing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [approving, setApproving] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -229,6 +231,26 @@ export function HydraulicConfigPage() {
       setError(reason instanceof Error ? reason.message : '任务创建或入队失败');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  /** Promote the current editable version after QA so the Standard 1D gate can build an authoritative snapshot. */
+  const approveCurrentVersion = async () => {
+    if (!datasetVersionId || currentVersion?.is_read_only) return;
+    setApproving(true);
+    setError('');
+    try {
+      await approveDatasetVersionForCalculation(datasetVersionId, {
+        reviewer: 'web-operator',
+        reason: '未率定 Standard 1D 方案，已完成核心校核并知悉警告',
+      });
+      await refreshVersions(datasetVersionId);
+      if (selectedCaseId) setReadiness(await getHydraulicReadiness(selectedCaseId));
+      message.success('数据版本已校核并批准，可进入 Standard 1D 计算；编辑权限保持不变');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '数据版本校核并批准失败');
+    } finally {
+      setApproving(false);
     }
   };
 
@@ -365,6 +387,18 @@ export function HydraulicConfigPage() {
                 {(activeReadiness.warnings ?? []).map((item, index) => (
                   <Text type="warning" key={`warning-${index}`}>{issueLabel(item)}</Text>
                 ))}
+                {activeReadiness.blockers?.some((item) => item.code === 'DAYU_DATASET_NOT_AUTHORITATIVE') && (
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<SafetyCertificateOutlined />}
+                    loading={approving}
+                    disabled={!currentVersion || currentVersion.is_read_only}
+                    onClick={() => void approveCurrentVersion()}
+                  >
+                    校核并批准当前版本
+                  </Button>
+                )}
                 {preview?.snapshot_hash && <Text type="secondary">冻结输入：{preview.snapshot_hash}</Text>}
               </Space>
             )}

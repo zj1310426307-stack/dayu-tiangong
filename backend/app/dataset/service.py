@@ -127,9 +127,11 @@ def approve_dataset_version_for_calculation(
         return DatasetVersionRecord(**_dump(entity))
     mutable = assert_dataset_version_mutable(session, entity.id)
     report = run_validation(session, mutable.id)
-    if report.summary.errors or report.summary.warnings or not report.summary.is_model_ready:
+    # Validation errors still block authority; warnings are intentionally
+    # non-blocking for the explicitly uncalibrated Standard 1D workflow.
+    if report.summary.errors or not report.summary.is_model_ready:
         raise ValueError(
-            "数据版本校核未通过：批准前必须为 0 个错误、0 个警告且模型已就绪"
+            "数据版本校核未通过：批准前必须为 0 个错误且模型已就绪；警告将作为未率定提示保留"
         )
     case_ids = list(
         session.scalars(

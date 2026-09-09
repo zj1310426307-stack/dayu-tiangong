@@ -102,8 +102,8 @@ def test_approve_dataset_validates_every_case_before_freezing(monkeypatch: Any) 
     assert record.approved_by == "web-operator"
 
 
-def test_approve_dataset_rejects_validation_warnings(monkeypatch: Any) -> None:
-    """Warnings remain fail closed because approval makes the dataset immutable."""
+def test_approve_dataset_allows_validation_warnings_for_uncalibrated_workflow(monkeypatch: Any) -> None:
+    """Warnings are retained as review information but do not block approval."""
 
     entity = DatasetVersion(
         id=78,
@@ -115,7 +115,7 @@ def test_approve_dataset_rejects_validation_warnings(monkeypatch: Any) -> None:
         created_time=datetime(2026, 9, 9, tzinfo=UTC),
     )
     validation = SimpleNamespace(
-        summary=SimpleNamespace(errors=0, warnings=1, is_model_ready=False)
+        summary=SimpleNamespace(errors=0, warnings=1, is_model_ready=True)
     )
     monkeypatch.setattr(
         "app.dataset.service.assert_dataset_version_mutable",
@@ -126,13 +126,20 @@ def test_approve_dataset_rejects_validation_warnings(monkeypatch: Any) -> None:
         lambda _session, _version_id: validation,
     )
 
-    try:
-        approve_dataset_version_for_calculation(
-            cast(Session, _CaseSession()),
-            entity,
-            DatasetVersionApprovalRequest(reviewer="operator", reason="premature approval"),
-        )
-    except ValueError as exc:
-        assert "0 个错误、0 个警告" in str(exc)
-    else:
-        raise AssertionError("validation warnings must block approval")
+    monkeypatch.setattr(
+        "app.dataset.service.build_hydraulic_1d_model",
+        lambda _session, _case_id, _config, *, allow_draft_for_approval: None,
+    )
+    monkeypatch.setattr(
+        "app.dataset.service.dataset_core_content_hash",
+        lambda _session, _version_id: "b" * 64,
+    )
+
+    record = approve_dataset_version_for_calculation(
+        cast(Session, _CaseSession()),
+        entity,
+        DatasetVersionApprovalRequest(reviewer="operator", reason="未率定方案，已知悉校核警告"),
+    )
+
+    assert record.status == "approved"
+    assert record.content_hash == "b" * 64
