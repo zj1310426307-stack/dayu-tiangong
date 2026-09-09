@@ -18,6 +18,7 @@ from app.model_engine.schemas import (
     Hydraulic1DReadinessResponse,
     PublishedScenarioBundle,
     SimulationResultResponse,
+    SimulationResultOverviewResponse,
     SimulationTaskCreate,
     SimulationTaskRecord,
     TaskSnapshotResponse,
@@ -331,5 +332,22 @@ def get_result(
 
     try:
         return service.get_result(session, task_id, section_id)
+    except (service.TaskNotFoundError, service.TaskStateError) as exc:
+        raise _map_error(exc) from exc
+
+
+@router.get(
+    "/results/{task_id}/overview",
+    response_model=SimulationResultOverviewResponse,
+    summary="Read the final-state overview for a successful Standard 1D task",
+)
+def get_result_overview(
+    task_id: int,
+    session: SessionDependency,
+) -> SimulationResultOverviewResponse:
+    """Return all final Cross Section values for direct scheme-result display."""
+
+    try:
+        return service.get_result_overview(session, task_id)
     except (service.TaskNotFoundError, service.TaskStateError) as exc:
         raise _map_error(exc) from exc

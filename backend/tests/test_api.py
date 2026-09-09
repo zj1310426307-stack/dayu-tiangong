@@ -63,5 +63,6 @@ def test_openapi_contains_system_and_gis_routes() -> None:
         "/api/v1/model/tasks/{task_id}/run",
         "/api/v1/model/tasks/{task_id}",
         "/api/v1/model/results/{task_id}",
+        "/api/v1/model/results/{task_id}/overview",
     ]:
         assert path in schema["paths"]

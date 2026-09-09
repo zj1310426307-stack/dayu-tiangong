@@ -64,6 +64,7 @@ const requiredPaths = [
   '/api/v1/model/scenario-results/{bundle_id}/case-manifest', '/api/v1/model/scenario-results/{bundle_id}/artifacts/{filename}',
   '/api/v1/model/tasks', '/api/v1/model/tasks/{task_id}/run',
   '/api/v1/model/tasks/{task_id}', '/api/v1/model/results/{task_id}',
+  '/api/v1/model/results/{task_id}/overview',
   '/api/v1/model/tasks/{task_id}/enqueue', '/api/v1/model/tasks/{task_id}/cancel',
   '/api/v1/model/tasks/{task_id}/retry', '/api/v1/model/tasks/{task_id}/snapshot',
   '/api/v1/dispatch/plans', '/api/v1/dispatch/plans/{plan_id}',
@@ -588,6 +589,7 @@ export const cancelHydraulicTask = (taskId: number, baseUrl = '') => requestJson
 export const retryHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(\`/api/v1/model/tasks/\${taskId}/retry\`, { method: 'POST' }, baseUrl);
 export const getHydraulicTaskSnapshot = (taskId: number, baseUrl = '') => requestJson<TaskSnapshotResponse>(\`/api/v1/model/tasks/\${taskId}/snapshot\`, {}, baseUrl);
 export const getHydraulicResult = (taskId: number, sectionId?: number, baseUrl = '') => requestJson<SimulationResultResponse>(\`/api/v1/model/results/\${taskId}\${toQuery({ section_id: sectionId })}\`, {}, baseUrl);
+export const getHydraulicResultOverview = (taskId: number, baseUrl = '') => requestJson<SimulationResultOverviewResponse>(\`/api/v1/model/results/\${taskId}/overview\`, {}, baseUrl);
 
 export const listDispatchPlans = (params: DispatchListQuery = {}, baseUrl = '') => requestJson<PageResult<DispatchPlanRecord>>(\`/api/v1/dispatch/plans\${toQuery(params)}\`, {}, baseUrl);
 export const createDispatchPlan = (body: DispatchPlanCreate, baseUrl = '') => requestJson<DispatchPlanRecord>('/api/v1/dispatch/plans', jsonOptions('POST', body), baseUrl);

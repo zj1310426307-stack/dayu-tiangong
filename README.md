@@ -15,6 +15,8 @@
 
 2026-09-09：数据版本删除已补齐版本所有河网/水力拓扑级联：内部拓扑外键使用 `NO ACTION DEFERRABLE INITIALLY DEFERRED`，整版删除在提交时统一校验，单独删除仍被引用的节点仍受保护；数据库迁移头为 `20260909_0034`，当前修复提交：`348dbee08843935c0466b703bf4fe34a29fd4a37`。
 
+2026-09-09：成功的 Standard 1D 水动力任务会自动进入“方案成果”，按上游至下游直接展示全断面末时刻水面线、河底、流量、流速、Froude 和运行警告；无需先制作独立成果包。独立发布成果包继续保留，并与任务成功、率定和生产验收状态分开表达。
+
 - [MASCARET 1D Adapter](docs/model/MASCARET-1D-ADAPTER.md)
 - [复杂一维河网工程合同](docs/hydraulics/hydraulic-network.md)
 - [统一水工建筑物模型](docs/hydraulics/hydraulic-structures.md)

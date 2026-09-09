@@ -33,6 +33,7 @@ import {
   enqueueHydraulicTask,
   getHydraulicReadiness,
   getHydraulicResult,
+  getHydraulicResultOverview,
   getSimulationCases,
   listHydraulicTasks,
   listPublishedScenarioResults,
@@ -43,6 +44,8 @@ import {
   type PublishedScenarioResult,
   type ScenarioResultSection,
   type SimulationResultResponse,
+  type SimulationResultOverviewResponse,
+  type SimulationResultOverviewSection,
   type SimulationTaskCreate,
   type SimulationTaskRecord,
 } from '../../api/generated/client';
@@ -542,7 +545,7 @@ export function HydraulicTasksPage() {
             <Button size="small" title={task.retry_block_reason ?? undefined} onClick={async () => { await retryHydraulicTask(task.id); await reload(); }}>重试</Button>
           )}
           {task.status === 'success' && (
-            <Button size="small" icon={<AreaChartOutlined />} onClick={() => navigate(`/hydraulic/results?taskId=${task.id}`)}>结果</Button>
+            <Button size="small" icon={<AreaChartOutlined />} onClick={() => navigate(`/hydraulic/scenario-results?taskId=${task.id}`)}>方案成果</Button>
           )}
         </Space>
       ),
@@ -637,6 +640,79 @@ function HydraulicResultChart({ result }: { result?: HydraulicChartSeries }) {
   }, [result]);
 
   return <div ref={element} className="hydraulic-result-chart" />;
+}
+
+/** Draw final water level, riverbed, and discharge directly from one successful task. */
+function TaskResultOverviewChart({ result }: { result: SimulationResultOverviewResponse }) {
+  const element = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!element.current) return undefined;
+    let disposed = false;
+    let dispose: (() => void) | undefined;
+    void import('echarts').then((echarts) => {
+      if (disposed || !element.current) return;
+      const container = element.current;
+      echarts.getInstanceByDom(container)?.dispose();
+      const chart = echarts.init(container);
+      chart.setOption({
+        animationDuration: 500,
+        tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+        legend: { top: 4, textStyle: { color: '#9bb7c6' } },
+        grid: [
+          { left: 62, right: 34, top: 56, height: '48%' },
+          { left: 62, right: 34, top: '72%', height: '19%' },
+        ],
+        xAxis: [0, 1].map((gridIndex) => ({
+          type: 'value',
+          gridIndex,
+          min: 0,
+          name: '上游 → 下游桩号 / m',
+          axisLabel: { color: '#7898aa' },
+          axisLine: { lineStyle: { color: 'rgba(102,145,168,.28)' } },
+        })),
+        yAxis: [
+          {
+            type: 'value', gridIndex: 0, name: '1985 高程 / m', scale: true,
+            nameTextStyle: { color: '#9bb7c6' }, axisLabel: { color: '#7898aa' }, splitLine: { lineStyle: { color: 'rgba(100,151,183,.10)' } },
+          },
+          {
+            type: 'value', gridIndex: 1, name: '流量 / m³/s', scale: true,
+            nameTextStyle: { color: '#9bb7c6' }, axisLabel: { color: '#7898aa' }, splitLine: { lineStyle: { color: 'rgba(100,151,183,.10)' } },
+          },
+        ],
+        series: [
+          {
+            name: '河底高程', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+            data: result.section_summary.filter((item) => item.bed_elevation_m !== null && item.bed_elevation_m !== undefined).map((item) => [item.chainage_m, item.bed_elevation_m]),
+            showSymbol: false, lineStyle: { color: '#8a735f', width: 3 }, areaStyle: { color: 'rgba(117,86,59,.20)' }, z: 2,
+          },
+          {
+            name: '末时刻水位', type: 'line', xAxisIndex: 0, yAxisIndex: 0,
+            data: result.section_summary.map((item) => [item.chainage_m, item.water_level_m]),
+            showSymbol: true, symbolSize: 6, lineStyle: { color: '#2fe6d6', width: 3 }, itemStyle: { color: '#2fe6d6' }, z: 4,
+          },
+          {
+            name: '末时刻流量', type: 'bar', xAxisIndex: 1, yAxisIndex: 1,
+            data: result.section_summary.map((item) => [item.chainage_m, item.flow_m3s]),
+            barMaxWidth: 18, itemStyle: { color: '#38a8ff', borderRadius: [4, 4, 0, 0] },
+          },
+        ],
+      });
+      const resize = () => chart.resize();
+      window.addEventListener('resize', resize);
+      dispose = () => {
+        window.removeEventListener('resize', resize);
+        chart.dispose();
+      };
+    });
+    return () => {
+      disposed = true;
+      dispose?.();
+    };
+  }, [result]);
+
+  return <div ref={element} className="scenario-longitudinal-chart" />;
 }
 
 const scenarioColors = ['#2fe6d6', '#38a8ff', '#f3b85b', '#a291ff'];
@@ -737,11 +813,19 @@ function ScenarioLongitudinalChart({
 /** Present locally published engineering results without implying calibration or production approval. */
 export function HydraulicScenarioResultsPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { datasetVersionId } = useDatasetVersion();
   const [bundles, setBundles] = useState<PublishedScenarioBundle[]>([]);
   const [bundleId, setBundleId] = useState('');
   const [scenarioId, setScenarioId] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [successfulTasks, setSuccessfulTasks] = useState<SimulationTaskRecord[]>([]);
+  const [taskResult, setTaskResult] = useState<SimulationResultOverviewResponse>();
+  const [taskLoading, setTaskLoading] = useState(true);
+  const [taskError, setTaskError] = useState('');
+
+  const taskId = Number(searchParams.get('taskId') || 0);
 
   useEffect(() => {
     let cancelled = false;
@@ -760,6 +844,52 @@ export function HydraulicScenarioResultsPage() {
     return () => { cancelled = true; };
   }, []);
 
+  const reloadTaskResults = useCallback(async () => {
+    setTaskLoading(true);
+    setTaskError('');
+    setTaskResult(undefined);
+    if (!datasetVersionId) {
+      setSuccessfulTasks([]);
+      setTaskLoading(false);
+      return;
+    }
+    try {
+      const items = await listHydraulicTasks({ dataset_version_id: datasetVersionId });
+      const successful = items.filter((item) => item.status === 'success');
+      setSuccessfulTasks(successful);
+      if (!successful.some((item) => item.id === taskId)) {
+        setSearchParams((current) => {
+          const next = new URLSearchParams(current);
+          if (successful[0]) next.set('taskId', String(successful[0].id));
+          else next.delete('taskId');
+          return next;
+        }, { replace: true });
+      }
+    } catch (reason) {
+      setTaskError(reason instanceof Error ? reason.message : '水动力模拟成果加载失败');
+    } finally {
+      setTaskLoading(false);
+    }
+  }, [datasetVersionId, setSearchParams, taskId]);
+
+  useEffect(() => {
+    void reloadTaskResults();
+  }, [reloadTaskResults]);
+
+  useEffect(() => {
+    if (!taskId || !successfulTasks.some((item) => item.id === taskId)) return;
+    let cancelled = false;
+    setTaskLoading(true);
+    setTaskError('');
+    void getHydraulicResultOverview(taskId)
+      .then((value) => { if (!cancelled) setTaskResult(value); })
+      .catch((reason: unknown) => {
+        if (!cancelled) setTaskError(reason instanceof Error ? reason.message : '水动力模拟成果加载失败');
+      })
+      .finally(() => { if (!cancelled) setTaskLoading(false); });
+    return () => { cancelled = true; };
+  }, [successfulTasks, taskId]);
+
   const bundle = useMemo(
     () => bundles.find((item) => item.bundle_id === bundleId) ?? bundles[0],
     [bundleId, bundles],
@@ -768,12 +898,41 @@ export function HydraulicScenarioResultsPage() {
     () => bundle?.scenarios.find((item) => item.scenario_id === scenarioId) ?? bundle?.scenarios[0],
     [bundle, scenarioId],
   );
+  const selectedTask = useMemo(
+    () => successfulTasks.find((item) => item.id === taskId),
+    [successfulTasks, taskId],
+  );
+  const taskStats = useMemo(() => {
+    const rows = taskResult?.section_summary ?? [];
+    if (rows.length === 0) return undefined;
+    const depths = rows.flatMap((item) => item.depth_m === null || item.depth_m === undefined ? [] : [item.depth_m]);
+    const froudeNumbers = rows.flatMap((item) => item.froude_number === null || item.froude_number === undefined ? [] : [item.froude_number]);
+    return {
+      maximumWaterLevel: Math.max(...rows.map((item) => item.water_level_m)),
+      minimumDepth: depths.length > 0 ? Math.min(...depths) : undefined,
+      maximumVelocity: Math.max(...rows.map((item) => Math.abs(item.velocity_m_s))),
+      maximumFroude: froudeNumbers.length > 0 ? Math.max(...froudeNumbers) : undefined,
+    };
+  }, [taskResult]);
+  const taskBoundaryWarnings = taskResult?.diagnostics
+    && Array.isArray(taskResult.diagnostics.boundary_control_warnings)
+    ? taskResult.diagnostics.boundary_control_warnings
+    : [];
 
   /** Keep scenario selection valid when the operator switches result bundles. */
   const changeBundle = (value: string) => {
     const next = bundles.find((item) => item.bundle_id === value);
     setBundleId(value);
     setScenarioId(next?.scenarios[0]?.scenario_id ?? '');
+  };
+
+  /** Keep the selected successful task in the URL for direct links from task monitoring. */
+  const changeTaskResult = (value: number) => {
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set('taskId', String(value));
+      return next;
+    });
   };
 
   const columns: ColumnsType<ScenarioResultSection> = [
@@ -786,18 +945,106 @@ export function HydraulicScenarioResultsPage() {
     { title: '流速 (m/s)', dataIndex: 'final_velocity_ms', width: 115, render: (value: number) => value.toFixed(3) },
     { title: '过流面积 (m²)', dataIndex: 'flow_area_m2', width: 130, render: (value: number) => value.toFixed(2) },
   ];
+  const taskColumns: ColumnsType<SimulationResultOverviewSection> = [
+    { title: '断面', dataIndex: 'section_code', fixed: 'left', width: 90 },
+    { title: '桩号 (m)', dataIndex: 'chainage_m', width: 110, render: (value: number) => value.toFixed(1) },
+    { title: '河底高程 (m)', dataIndex: 'bed_elevation_m', width: 130, render: (value: number | null | undefined) => value?.toFixed(3) ?? '—' },
+    { title: '水位 (m)', dataIndex: 'water_level_m', width: 105, render: (value: number) => value.toFixed(3) },
+    { title: '水深 (m)', dataIndex: 'depth_m', width: 105, render: (value: number | null | undefined) => value?.toFixed(3) ?? '—' },
+    { title: '流量 (m³/s)', dataIndex: 'flow_m3s', width: 125, render: (value: number) => value.toFixed(3) },
+    { title: '流速 (m/s)', dataIndex: 'velocity_m_s', width: 115, render: (value: number) => value.toFixed(3) },
+    { title: '过流面积 (m²)', dataIndex: 'flow_area_m2', width: 130, render: (value: number | null | undefined) => value?.toFixed(2) ?? '—' },
+    { title: 'Froude', dataIndex: 'froude_number', width: 95, render: (value: number | null | undefined) => value?.toFixed(4) ?? '—' },
+  ];
 
   return (
     <div className="data-page hydraulic-page scenario-results-page">
       <HydraulicHeader
-        eyebrow="PUBLISHED SCENARIO RESULTS"
+        eyebrow="HYDRAULIC SCHEME RESULTS"
         title="工程方案成果"
-        description="沿河道上游到下游查看已发布的准恒定水面线、河底高程、流速与数值质量证据。"
-        action={<Space><Button onClick={() => navigate('/hydraulic/results')}>任务结果</Button><Button onClick={() => navigate(`/gis?scenarioBundleId=${encodeURIComponent(bundle?.bundle_id ?? '')}&scenarioId=${encodeURIComponent(selectedScenario?.scenario_id ?? '')}`)}>GIS 一张图</Button></Space>}
+        description="成功的水动力模拟会自动进入本页，可直接查看全河断面成果；独立发布的受控成果包继续保留。"
+        action={<Space><Button onClick={() => navigate('/hydraulic/tasks')}>任务监控</Button><Button type="primary" onClick={() => navigate('/hydraulic/config')}>新建模拟</Button></Space>}
       />
+      {taskError && <Alert className="data-alert" type="error" showIcon message={taskError} />}
+      <Card
+        className="data-card scenario-selector"
+        title="水动力模拟成果（自动归档）"
+        loading={taskLoading && !taskResult}
+        extra={<Button icon={<ReloadOutlined />} onClick={() => void reloadTaskResults()}>刷新</Button>}
+      >
+        <Row gutter={[18, 18]} align="middle">
+          <Col xs={24} lg={12}>
+            <Text type="secondary">成功任务</Text>
+            <Select
+              className="hydraulic-select"
+              value={selectedTask?.id}
+              onChange={changeTaskResult}
+              placeholder="暂无成功任务"
+              options={successfulTasks.map((task) => ({
+                value: task.id,
+                label: `任务 #${task.id} · 方案 #${task.case_id} · ${new Date(task.created_time).toLocaleString()}`,
+              }))}
+            />
+          </Col>
+          <Col xs={24} lg={12} className="scenario-classification">
+            {taskResult && <Tag color="success">计算完成</Tag>}
+            {taskResult?.calculation_mode && <Tag color="cyan">{taskResult.calculation_mode === 'steady' ? '恒定流' : '非恒定流'}</Tag>}
+            {taskResult && <Tag>{taskResult.engine} {taskResult.engine_version}</Tag>}
+            {taskResult && <Button size="small" onClick={() => navigate(`/hydraulic/results?taskId=${taskResult.task_id}`)}>查看单断面时序</Button>}
+          </Col>
+        </Row>
+      </Card>
+      {!taskLoading && successfulTasks.length === 0 && (
+        <Alert
+          className="data-alert"
+          type="info"
+          showIcon
+          message="当前数据版本暂无成功的水动力模拟"
+          description="模拟任务成功后会自动出现在本页，无需另行发布成果包。"
+          action={<Button onClick={() => navigate('/hydraulic/config')}>新建模拟</Button>}
+        />
+      )}
+      {taskResult && taskStats && (
+        <>
+          {taskBoundaryWarnings.length > 0 && (
+            <Alert
+              className="data-alert"
+              type="warning"
+              showIcon
+              message={`任务 #${taskResult.task_id} 存在边界控制警告`}
+              description="计算已完成并保留成果，但至少一个边界未在当前流态下控制结果。该警告不会被误写为率定或生产验收通过。"
+            />
+          )}
+          <Row gutter={[16, 16]} className="hydraulic-stats scenario-kpis">
+            <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="断面数量" value={taskResult.section_summary.length} suffix="个" /></Card></Col>
+            <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="成果时刻" value={taskResult.final_time_seconds} precision={0} suffix="s" /></Card></Col>
+            <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="最高水位" value={taskStats.maximumWaterLevel} precision={3} suffix="m" /></Card></Col>
+            <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="最小水深" value={taskStats.minimumDepth} precision={3} suffix="m" /></Card></Col>
+            <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="最大流速" value={taskStats.maximumVelocity} precision={3} suffix="m/s" /></Card></Col>
+            <Col xs={12} md={8} xl={4}><Card className="data-card"><Statistic title="最大 Froude" value={taskStats.maximumFroude} precision={4} /></Card></Col>
+          </Row>
+          <Card
+            className="data-card scenario-chart-card"
+            title={`任务 #${taskResult.task_id} · 沿程水面线与流量`}
+            extra={<Space><Tag color="cyan">上游 → 下游</Tag><Tag>{taskResult.section_summary.length} 个断面</Tag></Space>}
+          >
+            <TaskResultOverviewChart result={taskResult} />
+          </Card>
+          <Card className="data-card" title={`任务 #${taskResult.task_id} · 全断面末时刻成果`}>
+            <Table
+              rowKey="section_id"
+              size="small"
+              columns={taskColumns}
+              dataSource={taskResult.section_summary}
+              pagination={false}
+              scroll={{ x: 1050, y: 520 }}
+            />
+          </Card>
+        </>
+      )}
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}
-      {!loading && !bundle && <Alert type="info" showIcon message="暂无已发布方案成果" description="请先把受控成果包放入平台本地运行存储。" />}
-      <Card className="data-card scenario-selector" loading={loading}>
+      {!loading && !bundle && <Alert type="info" showIcon message="暂无独立发布的受控成果包" description="上方成功任务成果仍可直接查看；受控成果包用于独立归档和发布。" />}
+      {bundle && <Card className="data-card scenario-selector" loading={loading} title="独立发布成果包" extra={<Button onClick={() => navigate(`/gis?scenarioBundleId=${encodeURIComponent(bundle.bundle_id)}&scenarioId=${encodeURIComponent(selectedScenario?.scenario_id ?? '')}`)}>GIS 一张图</Button>}>
         <Row gutter={[18, 18]} align="middle">
           <Col xs={24} lg={9}>
             <Text type="secondary">成果包</Text>
@@ -812,7 +1059,7 @@ export function HydraulicScenarioResultsPage() {
             <Tag color="success">数值 QA 通过</Tag>
           </Col>
         </Row>
-      </Card>
+      </Card>}
       {bundle && selectedScenario && (
         <>
           <Alert

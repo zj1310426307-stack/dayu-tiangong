@@ -2950,6 +2950,40 @@ export interface SimulationLayerRecord {
   "created_time": string;
 }
 
+export interface SimulationResultOverviewResponse {
+  "task_id": number;
+  "case_id": number;
+  "dataset_version_id": number;
+  "status": "pending" | "queued" | "running" | "cancel_requested" | "cancelled" | "success" | "failed";
+  "simulation_id": string;
+  "scenario_id": string;
+  "engine": string;
+  "engine_version": string;
+  "calculation_mode"?: "steady" | "unsteady" | null;
+  "evidence_class"?: string | null;
+  "final_time_seconds": number;
+  "created_time": string;
+  "end_time": string | null;
+  "section_summary": Array<SimulationResultOverviewSection>;
+  "diagnostics": Record<string, unknown> | null;
+}
+
+export interface SimulationResultOverviewSection {
+  "section_id": number;
+  "section_code": string;
+  "branch_id": number;
+  "chainage_m": number;
+  "time_seconds": number;
+  "water_level_m": number;
+  "bed_elevation_m"?: number | null;
+  "depth_m"?: number | null;
+  "flow_m3s": number;
+  "velocity_m_s": number;
+  "flow_area_m2"?: number | null;
+  "top_width_m"?: number | null;
+  "froude_number"?: number | null;
+}
+
 export interface SimulationResultResponse {
   "task_id": number;
   "status": "pending" | "queued" | "running" | "cancel_requested" | "cancelled" | "success" | "failed";
@@ -3648,6 +3682,7 @@ export const cancelHydraulicTask = (taskId: number, baseUrl = '') => requestJson
 export const retryHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(`/api/v1/model/tasks/${taskId}/retry`, { method: 'POST' }, baseUrl);
 export const getHydraulicTaskSnapshot = (taskId: number, baseUrl = '') => requestJson<TaskSnapshotResponse>(`/api/v1/model/tasks/${taskId}/snapshot`, {}, baseUrl);
 export const getHydraulicResult = (taskId: number, sectionId?: number, baseUrl = '') => requestJson<SimulationResultResponse>(`/api/v1/model/results/${taskId}${toQuery({ section_id: sectionId })}`, {}, baseUrl);
+export const getHydraulicResultOverview = (taskId: number, baseUrl = '') => requestJson<SimulationResultOverviewResponse>(`/api/v1/model/results/${taskId}/overview`, {}, baseUrl);
 
 export const listDispatchPlans = (params: DispatchListQuery = {}, baseUrl = '') => requestJson<PageResult<DispatchPlanRecord>>(`/api/v1/dispatch/plans${toQuery(params)}`, {}, baseUrl);
 export const createDispatchPlan = (body: DispatchPlanCreate, baseUrl = '') => requestJson<DispatchPlanRecord>('/api/v1/dispatch/plans', jsonOptions('POST', body), baseUrl);

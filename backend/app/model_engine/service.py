@@ -27,6 +27,8 @@ from app.model_engine.schemas import (
     Hydraulic1DPreviewResponse,
     Hydraulic1DReadinessResponse,
     ResultSectionOption,
+    SimulationResultOverviewResponse,
+    SimulationResultOverviewSection,
     SimulationResultResponse,
     SimulationTaskCreate,
     SimulationTaskRecord,
@@ -687,6 +689,78 @@ def get_result(
     )
 
 
+def get_result_overview(session: Session, task_id: int) -> SimulationResultOverviewResponse:
+    """Read every Cross Section at the final common time for scheme-level display."""
+
+    task = session.get(SimulationTask, task_id)
+    if task is None:
+        raise TaskNotFoundError("simulation task does not exist")
+    if task.status != "success":
+        raise TaskStateError("task result is available only after success")
+    if task.input_schema_version != HYDRAULIC_1D_INPUT_SCHEMA:
+        raise TaskStateError("LEGACY_ENGINE_RETIRED")
+    rows = list(
+        session.scalars(
+            select(HydraulicTaskSectionResult)
+            .where(HydraulicTaskSectionResult.task_id == task_id)
+            .order_by(
+                HydraulicTaskSectionResult.chainage_m,
+                HydraulicTaskSectionResult.hydraulic_cross_section_id,
+                HydraulicTaskSectionResult.time_seconds,
+            )
+        ).all()
+    )
+    if not rows:
+        raise TaskStateError("successful task has no authoritative Section result")
+    final_time = max(float(row.time_seconds) for row in rows)
+    all_section_ids = {row.hydraulic_cross_section_id for row in rows}
+    final_rows = [row for row in rows if float(row.time_seconds) == final_time]
+    if {row.hydraulic_cross_section_id for row in final_rows} != all_section_ids:
+        raise TaskStateError("task result does not share one complete final Section time")
+    final_rows.sort(
+        key=lambda row: (row.chainage_m, row.hydraulic_cross_section_id)
+    )
+    snapshot = parse_frozen_task_model(task)
+    configured_mode = task.config.get("calculation_mode") if isinstance(task.config, Mapping) else None
+    calculation_mode = configured_mode if configured_mode in {"steady", "unsteady"} else None
+    return SimulationResultOverviewResponse(
+        task_id=task.id,
+        case_id=task.case_id,
+        dataset_version_id=task.dataset_version_id,
+        status=task.status,
+        simulation_id=snapshot.simulation_id,
+        scenario_id=snapshot.scenario_id,
+        engine=DEFAULT_HYDRAULIC_1D_ENGINE_ID,
+        engine_version=DEFAULT_HYDRAULIC_1D_ENGINE_VERSION,
+        calculation_mode=calculation_mode,
+        evidence_class=task.evidence_class,
+        final_time_seconds=final_time,
+        created_time=task.created_time,
+        end_time=task.end_time,
+        section_summary=[
+            SimulationResultOverviewSection(
+                section_id=row.hydraulic_cross_section_id,
+                section_code=row.section_code,
+                branch_id=row.branch_id,
+                chainage_m=row.chainage_m,
+                time_seconds=row.time_seconds,
+                water_level_m=row.water_level_m,
+                bed_elevation_m=(
+                    row.water_level_m - row.depth_m if row.depth_m is not None else None
+                ),
+                depth_m=row.depth_m,
+                flow_m3s=row.flow_m3s,
+                velocity_m_s=row.velocity_m_s,
+                flow_area_m2=row.flow_area_m2,
+                top_width_m=row.top_width_m,
+                froude_number=row.froude_number,
+            )
+            for row in final_rows
+        ],
+        diagnostics=task.diagnostics,
+    )
+
+
 __all__ = [
     "SimulationTask",
     "TaskNotFoundError",
@@ -696,6 +770,7 @@ __all__ = [
     "build_task_entity",
     "create_task",
     "get_result",
+    "get_result_overview",
     "get_task",
     "list_tasks",
     "persist_hydraulic_1d_result",

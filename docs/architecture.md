@@ -120,6 +120,12 @@ GIS 晋级只保证空间核心数据的治理与发布，不伪造模型参数�
 Standard 1D 任务在入队前冻结 solver-neutral `Hydraulic1DModel`，再由独立
 `hydraulic-1d` Worker 调用 Adapter。任务、引擎版本、构建身份、输入摘要和结果来源继续可追溯。
 
+成功任务的逐断面时序继续保存在 `hydraulic_task_section_result`。方案成果页通过
+`GET /api/v1/model/results/{task_id}/overview` 一次读取共同末时刻的全部断面，按 Branch
+上游至下游桩号展示河底、水位、流量、流速和 Froude；任务监控的“方案成果”入口直接定位
+到对应任务。该自动展示不等于发布、率定或生产验收，运行诊断中的边界控制警告必须原样保留。
+独立发布成果包仍作为另一类受控归档存在，不与动态任务结果混写。
+
 ## 9. 文件基础边界
 
 `app.files` 是当前唯一的 HTTP 文件基础原语：四类上传执行 `limit + 1` 有界读取；imports、conversions、ai-reports 派生自同一根；受控路径拒绝逃逸；文件在同目录临时路径完成后原子替换。Compose 将 backend 和 worker 的容器根固定为 `/app/backend/storage`，宿主路径独立配置。

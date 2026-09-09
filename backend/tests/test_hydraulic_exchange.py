@@ -545,6 +545,7 @@ def test_openapi_exposes_complete_hydraulic_management_surface() -> None:
         "/api/v1/model/preview",
         "/api/v1/model/tasks",
         "/api/v1/model/results/{task_id}",
+        "/api/v1/model/results/{task_id}/overview",
     }
     assert required <= paths.keys()
 

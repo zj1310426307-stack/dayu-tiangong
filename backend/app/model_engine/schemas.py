@@ -158,6 +158,46 @@ class ResultSectionOption(BaseModel):
     chainage_m: float
 
 
+class SimulationResultOverviewSection(BaseModel):
+    """Expose one final-state Cross Section sample for scheme-level review."""
+
+    section_id: int
+    section_code: str
+    branch_id: int
+    chainage_m: FiniteFloat = Field(ge=0)
+    time_seconds: FiniteFloat = Field(ge=0)
+    water_level_m: FiniteFloat
+    bed_elevation_m: FiniteFloat | None = None
+    depth_m: FiniteFloat | None = Field(default=None, ge=0)
+    flow_m3s: FiniteFloat
+    velocity_m_s: FiniteFloat
+    flow_area_m2: FiniteFloat | None = Field(default=None, ge=0)
+    top_width_m: FiniteFloat | None = Field(default=None, ge=0)
+    froude_number: FiniteFloat | None = Field(default=None, ge=0)
+
+
+class SimulationResultOverviewResponse(BaseModel):
+    """Return a successful task as a directly viewable engineering scheme result."""
+
+    task_id: int
+    case_id: int
+    dataset_version_id: int
+    status: TaskStatus
+    simulation_id: str
+    scenario_id: str
+    engine: str
+    engine_version: str
+    calculation_mode: Literal["steady", "unsteady"] | None = None
+    evidence_class: str | None = None
+    final_time_seconds: FiniteFloat = Field(ge=0)
+    created_time: datetime
+    end_time: datetime | None
+    section_summary: list[SimulationResultOverviewSection] = Field(
+        min_length=1, max_length=5000
+    )
+    diagnostics: dict[str, Any] | None
+
+
 class SimulationResultResponse(BaseModel):
     """Return aligned Standard 1D series without exposing MASCARET files."""
 
