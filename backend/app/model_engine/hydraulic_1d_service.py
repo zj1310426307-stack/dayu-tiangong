@@ -28,6 +28,7 @@ from app.hydraulic.models import (
     HydraulicStructure as HydraulicStructureRow,
     HydraulicStructureScenario,
 )
+from app.hydraulic.rating_curve import interpolate_rating_curve
 from model.hydraulic_1d import (
     DEFAULT_HYDRAULIC_1D_ENGINE_ID,
     BoundaryCondition,
@@ -257,6 +258,7 @@ def _time_values(
     row: BoundaryConditionRow,
     *,
     variable: str,
+    boundary_rows: Sequence[BoundaryConditionRow] | None = None,
 ) -> tuple[TimeValue, ...]:
     """Normalize legacy constants and current Q(t)/H(t) JSON without extrapolation."""
 
@@ -268,6 +270,66 @@ def _time_values(
             f"boundary_condition[{row.id}].values",
         )
     mode = str(values.get("mode", "")).lower()
+    if mode == "rating_curve":
+        if variable != "water_level":
+            _reject(
+                "DAYU_RATING_CURVE_VARIABLE_INVALID",
+                "rating_curve mode is only valid for downstream water level",
+                f"boundary_condition[{row.id}].values.mode",
+            )
+        curve = values.get("curve")
+        if not isinstance(curve, Sequence) or isinstance(curve, (str, bytes)):
+            _reject(
+                "DAYU_RATING_CURVE_INVALID",
+                "rating curve must contain an ordered curve array",
+                f"boundary_condition[{row.id}].values.curve",
+            )
+        source_id = values.get("source_discharge_boundary_id")
+        if source_id is not None:
+            source = next(
+                (
+                    item
+                    for item in boundary_rows or ()
+                    if item.id == source_id and item.boundary_type == "upstream_discharge"
+                ),
+                None,
+            )
+            if source is None:
+                _reject(
+                    "DAYU_RATING_CURVE_SOURCE_MISSING",
+                    "rating curve source discharge must be selected in the same Case",
+                    f"boundary_condition[{row.id}].values.source_discharge_boundary_id",
+                )
+            if values.get("source_discharge_values_hash") != snapshot_hash(source.values):
+                _reject(
+                    "DAYU_RATING_CURVE_SOURCE_STALE",
+                    "source discharge changed; regenerate the downstream rating curve",
+                    f"boundary_condition[{row.id}].values.source_discharge_values_hash",
+                )
+            discharge_series = _time_values(source, variable="discharge")
+        else:
+            reference = values.get("reference_discharge_m3_s")
+            if isinstance(reference, bool) or not isinstance(reference, (int, float)):
+                _reject(
+                    "DAYU_RATING_CURVE_SOURCE_MISSING",
+                    "rating curve requires a source boundary or numeric reference discharge",
+                    f"boundary_condition[{row.id}].values",
+                )
+            discharge_series = (TimeValue(time_seconds=0.0, value=float(reference)),)
+        try:
+            return tuple(
+                TimeValue(
+                    time_seconds=sample.time_seconds,
+                    value=interpolate_rating_curve(curve, sample.value),
+                )
+                for sample in discharge_series
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            _reject(
+                "DAYU_RATING_CURVE_INVALID",
+                str(exc),
+                f"boundary_condition[{row.id}].values.curve",
+            )
     if mode == "constant" or (
         "value" in values and "time_seconds" not in values and "series" not in values
     ):
@@ -316,6 +378,7 @@ def _time_values(
 def _boundary(
     row: BoundaryConditionRow,
     branches: list[HydraulicBranchRow],
+    boundary_rows: Sequence[BoundaryConditionRow] | None = None,
 ) -> BoundaryCondition:
     """Bind endpoint boundaries to hydraulic nodes and lateral points to Branch/chainage."""
 
@@ -377,7 +440,7 @@ def _boundary(
         location=location,  # type: ignore[arg-type]
         variable=variable,  # type: ignore[arg-type]
         chainage_m=float(chainage) if chainage is not None else None,
-        series=_time_values(row, variable=variable),
+        series=_time_values(row, variable=variable, boundary_rows=boundary_rows),
     )
 
 
@@ -876,7 +939,9 @@ def build_hydraulic_1d_model(
         legacy_boundary = session.get(BoundaryConditionRow, case.boundary_condition_id)
         if legacy_boundary is not None:
             boundary_rows = [legacy_boundary]
-    boundaries = tuple(_boundary(row, branch_rows) for row in boundary_rows)
+    boundaries = tuple(
+        _boundary(row, branch_rows, boundary_rows=boundary_rows) for row in boundary_rows
+    )
     if task_config.get("calculation_mode") == "steady":
         varying = [
             boundary.id

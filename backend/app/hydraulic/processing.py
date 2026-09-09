@@ -97,6 +97,32 @@ def _roughness_intervals(
     return intervals or [(lower, upper, default_manning_n)]
 
 
+def section_hydraulic_metrics(
+    points: list[tuple[float, float]],
+    intervals: list[tuple[float, float, float]],
+    stage_m: float,
+) -> tuple[float, float, float, float]:
+    """Return area, top width, wetted perimeter, and segmented Manning conveyance.
+
+    This is the shared geometry kernel for persisted Section tables and derived
+    downstream rating curves.  Keeping one implementation prevents the model-data
+    preview from drifting away from the hydraulic table used elsewhere.
+    """
+
+    area = top_width = perimeter = conveyance = 0.0
+    for left, right, manning_n in intervals:
+        zone_area, zone_width, zone_perimeter = _submerged_interval_metrics(
+            points, stage_m, left, right
+        )
+        area += zone_area
+        top_width += zone_width
+        perimeter += zone_perimeter
+        zone_radius = zone_area / max(zone_perimeter, 1.0e-12)
+        if zone_area > 0:
+            conveyance += zone_area * zone_radius ** (2.0 / 3.0) / manning_n
+    return area, top_width, perimeter, conveyance
+
+
 def _processing_record(
     session: Session, value: HydraulicCrossSectionProcessing
 ) -> HydraulicProcessingRecord:
@@ -188,17 +214,9 @@ def process_profile(
     session.add(processing)
     session.flush()
     for stage in stages:
-        area = top_width = perimeter = conveyance = 0.0
-        for left, right, manning_n in intervals:
-            zone_area, zone_width, zone_perimeter = _submerged_interval_metrics(
-                profile_points, stage, left, right
-            )
-            area += zone_area
-            top_width += zone_width
-            perimeter += zone_perimeter
-            zone_radius = zone_area / max(zone_perimeter, 1.0e-12)
-            if zone_area > 0:
-                conveyance += zone_area * zone_radius ** (2.0 / 3.0) / manning_n
+        area, top_width, perimeter, conveyance = section_hydraulic_metrics(
+            profile_points, intervals, stage
+        )
         radius = area / max(perimeter, 1.0e-12)
         session.add(
             HydraulicCrossSectionHydraulicRow(

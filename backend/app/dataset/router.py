@@ -9,6 +9,8 @@ from app.common.http import commit_or_conflict, not_found
 from app.database.session import get_database_session
 from app.dataset import service
 from app.dataset.schemas import (
+    BoundaryRatingCurveGenerateRequest,
+    BoundaryRatingCurveGenerateResponse,
     BoundaryConditionCreate,
     BoundaryConditionRecord,
     BoundaryConditionUpdate,
@@ -134,6 +136,23 @@ def read_boundaries(session: SessionDependency, dataset_version_id: int | None =
     """按版本查询边界条件。"""
 
     return service.list_boundaries(session, dataset_version_id)
+
+
+@router.post(
+    "/boundary-conditions/rating-curve/generate",
+    response_model=BoundaryRatingCurveGenerateResponse,
+    summary="根据下游断面自动生成水位流量关系曲线",
+)
+def generate_boundary_rating_curve(
+    payload: BoundaryRatingCurveGenerateRequest,
+    session: SessionDependency,
+) -> BoundaryRatingCurveGenerateResponse:
+    """Generate a read-only Manning Q-H preview for a downstream boundary."""
+
+    try:
+        return service.generate_boundary_rating_curve(session, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/boundary-conditions", response_model=BoundaryConditionRecord, status_code=201, summary="新增边界条件")

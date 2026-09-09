@@ -38,6 +38,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   BoundaryConditionCreate,
   BoundaryConditionRecord,
+  BoundaryRatingCurveGenerateResponse,
   DatasetVersionRecord,
   GateCreate,
   GateRecord,
@@ -72,6 +73,7 @@ import {
   deletePumpRecord,
   deleteSimulationCase,
   getBoundaryConditions,
+  generateBoundaryRatingCurve,
   getModelParameters,
   getSimulationCases,
   getHydraulicSection,
@@ -2092,6 +2094,8 @@ interface BoundaryFormValues {
   values_json: string;
   unit: string;
   description?: string;
+  source_discharge_boundary_id?: number;
+  rating_curve_friction_slope?: number;
 }
 
 interface HydraulicEndpointOption {
@@ -2169,6 +2173,9 @@ export function ModelDataPage() {
   const [caseOpen, setCaseOpen] = useState(false);
   const [caseEditing, setCaseEditing] = useState<SimulationCaseRecord>();
   const [submitting, setSubmitting] = useState(false);
+  const [ratingCurveLoading, setRatingCurveLoading] = useState(false);
+  const [ratingCurvePreview, setRatingCurvePreview] =
+    useState<BoundaryRatingCurveGenerateResponse>();
   const [approvingVersionId, setApprovingVersionId] = useState<number>();
   const [parameterForm] = Form.useForm<ModelParameterFormValues>();
   const [boundaryForm] = Form.useForm<BoundaryFormValues>();
@@ -2271,6 +2278,8 @@ export function ModelDataPage() {
   const editBoundary = (record?: BoundaryConditionRecord) => {
     if (!datasetVersionId || !isMutable) return;
     setBoundaryEditing(record);
+    setRatingCurvePreview(undefined);
+    const storedValues = record?.values as Record<string, unknown> | undefined;
     boundaryForm.setFieldsValue(
       record
         ? {
@@ -2282,6 +2291,14 @@ export function ModelDataPage() {
             values_json: jsonText(record.values),
             unit: record.unit,
             description: record.description ?? undefined,
+            source_discharge_boundary_id:
+              typeof storedValues?.source_discharge_boundary_id === "number"
+                ? storedValues.source_discharge_boundary_id
+                : undefined,
+            rating_curve_friction_slope:
+              typeof storedValues?.friction_slope === "number"
+                ? storedValues.friction_slope
+                : undefined,
           }
         : {
             boundary_type: "upstream_discharge",
@@ -2290,6 +2307,46 @@ export function ModelDataPage() {
           },
     );
     setBoundaryOpen(true);
+  };
+
+  /** Generate a traceable downstream Q-H curve and place its JSON in the editor. */
+  const generateRatingCurve = async () => {
+    if (!datasetVersionId || boundaryType !== "downstream_water_level") return;
+    try {
+      await boundaryForm.validateFields([
+        "hydraulic_node_id",
+        "source_discharge_boundary_id",
+        "rating_curve_friction_slope",
+      ]);
+      const hydraulicNodeId = boundaryForm.getFieldValue("hydraulic_node_id");
+      const sourceBoundaryId = boundaryForm.getFieldValue(
+        "source_discharge_boundary_id",
+      );
+      const frictionSlope = boundaryForm.getFieldValue(
+        "rating_curve_friction_slope",
+      );
+      setRatingCurveLoading(true);
+      const preview = await generateBoundaryRatingCurve({
+        dataset_version_id: datasetVersionId,
+        hydraulic_node_id: hydraulicNodeId,
+        source_discharge_boundary_id: sourceBoundaryId,
+        friction_slope: frictionSlope,
+        vertical_step_m: 0.05,
+        maximum_depth_m: 50,
+      });
+      boundaryForm.setFieldsValue({
+        values_json: jsonText(preview.values),
+        unit: "m",
+      });
+      setRatingCurvePreview(preview);
+      message.success(
+        `已由 ${preview.cross_section_code} 生成关系曲线，下游水位 ${preview.resolved_water_level_m.toFixed(3)} m`,
+      );
+    } catch (reason) {
+      if (reason instanceof Error) message.error(reason.message);
+    } finally {
+      setRatingCurveLoading(false);
+    }
   };
 
   /** 保存边界条件并拒绝非对象 JSON。 */
@@ -2846,14 +2903,17 @@ export function ModelDataPage() {
                 rules={[{ required: true }]}
               >
                 <Select
-                  onChange={(value: BoundaryFormValues["boundary_type"]) =>
+                  onChange={(value: BoundaryFormValues["boundary_type"]) => {
+                    setRatingCurvePreview(undefined);
                     boundaryForm.setFieldsValue({
                       hydraulic_node_id: undefined,
                       branch_id: undefined,
                       chainage_m: undefined,
+                      source_discharge_boundary_id: undefined,
+                      rating_curve_friction_slope: undefined,
                       unit: value === "downstream_water_level" ? "m" : "m³/s",
-                    })
-                  }
+                    });
+                  }}
                   options={[
                     { value: "upstream_discharge", label: "上游流量" },
                     { value: "downstream_water_level", label: "下游水位" },
@@ -2920,6 +2980,57 @@ export function ModelDataPage() {
               />
             </Form.Item>
           )}
+          {boundaryType === "downstream_water_level" && (
+            <Card size="small" title="自动生成水位—流量关系曲线" style={{ marginBottom: 16 }}>
+              <Row gutter={12}>
+                <Col span={14}>
+                  <Form.Item
+                    name="source_discharge_boundary_id"
+                    label="对应上游流量边界"
+                    rules={[{ required: true, message: "请选择上游流量边界" }]}
+                  >
+                    <Select
+                      showSearch
+                      optionFilterProp="label"
+                      placeholder="选择本方案采用的上游流量"
+                      options={(boundaries.data ?? [])
+                        .filter((item) => item.boundary_type === "upstream_discharge")
+                        .map((item) => ({
+                          value: item.id,
+                          label: `${item.name} · ID ${item.id}`,
+                        }))}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={10}>
+                  <Form.Item
+                    name="rating_curve_friction_slope"
+                    label="摩阻坡降（可选）"
+                    rules={[{ type: "number", min: 0.000000001, max: 1 }]}
+                    extra="留空时由末两个断面深泓高程推算"
+                  >
+                    <InputNumber style={{ width: "100%" }} precision={8} />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Button
+                type="primary"
+                loading={ratingCurveLoading}
+                onClick={() => void generateRatingCurve()}
+              >
+                根据下游断面自动生成
+              </Button>
+              {ratingCurvePreview && (
+                <Alert
+                  style={{ marginTop: 12 }}
+                  type="warning"
+                  showIcon
+                  message={`生成完成：${ratingCurvePreview.curve.length} 点，H=${ratingCurvePreview.resolved_water_level_m.toFixed(3)} m`}
+                  description={`${ratingCurvePreview.cross_section_code} · 坡降 ${ratingCurvePreview.friction_slope.toPrecision(6)} · ${(ratingCurvePreview.warnings ?? []).join("；")}`}
+                />
+              )}
+            </Card>
+          )}
           <Form.Item name="unit" label="单位" rules={[{ required: true }]}>
             <Input />
           </Form.Item>
@@ -2927,7 +3038,7 @@ export function ModelDataPage() {
             name="values_json"
             label="边界值 JSON"
             rules={[{ required: true }]}
-            extra="只填写定值或时间—数值序列；水力位置由上方独立字段保存。"
+            extra="支持定值、时间序列或上方生成的 Q–H 关系曲线；水力位置由独立字段保存。"
           >
             <Input.TextArea rows={6} />
           </Form.Item>

@@ -36,6 +36,9 @@ def test_boundary_crud_openapi_exposes_only_current_hydraulic_semantics() -> Non
     assert {"hydraulic_node_id", "branch_id", "chainage_m"} <= {
         column.name for column in BoundaryConditionRow.__table__.columns
     }
+    assert "/api/v1/model-data/boundary-conditions/rating-curve/generate" in api.openapi()[
+        "paths"
+    ]
 
     BoundaryConditionCreate(
         dataset_version_id=1,

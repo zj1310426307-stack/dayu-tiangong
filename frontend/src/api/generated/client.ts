@@ -401,6 +401,33 @@ export interface BoundaryConditionUpdate {
   "description"?: string | null;
 }
 
+export interface BoundaryRatingCurveGenerateRequest {
+  "dataset_version_id": number;
+  "hydraulic_node_id": number;
+  "source_discharge_boundary_id"?: number | null;
+  "reference_discharge_m3s"?: number | null;
+  "friction_slope"?: number | null;
+  "vertical_step_m"?: number;
+  "maximum_depth_m"?: number;
+}
+
+export interface BoundaryRatingCurveGenerateResponse {
+  "dataset_version_id": number;
+  "hydraulic_node_id": number;
+  "branch_id": number;
+  "cross_section_id": number;
+  "cross_section_code": string;
+  "profile_id": number;
+  "vertical_datum": string;
+  "friction_slope": number;
+  "friction_slope_source": "DERIVED_TERMINAL_THALWEG" | "MANUAL";
+  "reference_discharge_m3s": number;
+  "resolved_water_level_m": number;
+  "curve": Array<RatingCurvePoint>;
+  "values": Record<string, unknown>;
+  "warnings"?: Array<string>;
+}
+
 export interface BufferAnalysisRequest {
   "dataset_version_id": number;
   "object_type": "river" | "gate" | "pump" | "cross_section";
@@ -2679,6 +2706,11 @@ export interface QAThresholds {
   "maximum_reverse_bed_slope"?: number;
 }
 
+export interface RatingCurvePoint {
+  "discharge_m3_s": number;
+  "water_level_m": number;
+}
+
 export interface RecommendationResponse {
   "task_id": number;
   "candidate": ParetoCandidateRecord | null;
@@ -3487,6 +3519,7 @@ export const createModelParameter = (body: ModelParameterCreate, baseUrl = '') =
 export const updateModelParameter = (parameterId: number, body: ModelParameterUpdate, baseUrl = '') => requestJson<ModelParameterRecord>(`/api/v1/model-data/parameters/${parameterId}`, jsonOptions('PUT', body), baseUrl);
 export const deleteModelParameter = (parameterId: number, baseUrl = '') => requestJson<void>(`/api/v1/model-data/parameters/${parameterId}`, { method: 'DELETE' }, baseUrl);
 export const getBoundaryConditions = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<BoundaryConditionRecord>>(`/api/v1/model-data/boundary-conditions${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
+export const generateBoundaryRatingCurve = (body: BoundaryRatingCurveGenerateRequest, baseUrl = '') => requestJson<BoundaryRatingCurveGenerateResponse>('/api/v1/model-data/boundary-conditions/rating-curve/generate', jsonOptions('POST', body), baseUrl);
 export const createBoundaryCondition = (body: BoundaryConditionCreate, baseUrl = '') => requestJson<BoundaryConditionRecord>('/api/v1/model-data/boundary-conditions', jsonOptions('POST', body), baseUrl);
 export const updateBoundaryCondition = (boundaryId: number, body: BoundaryConditionUpdate, baseUrl = '') => requestJson<BoundaryConditionRecord>(`/api/v1/model-data/boundary-conditions/${boundaryId}`, jsonOptions('PUT', body), baseUrl);
 export const deleteBoundaryCondition = (boundaryId: number, baseUrl = '') => requestJson<void>(`/api/v1/model-data/boundary-conditions/${boundaryId}`, { method: 'DELETE' }, baseUrl);

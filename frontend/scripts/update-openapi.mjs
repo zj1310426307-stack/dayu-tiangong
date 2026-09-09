@@ -57,6 +57,7 @@ const requiredPaths = [
   '/api/v1/validation/run', '/api/v1/model-data/dataset-versions',
   '/api/v1/model-data/dataset-versions/{version_id}/approve-for-calculation',
   '/api/v1/model-data/parameters', '/api/v1/model-data/boundary-conditions',
+  '/api/v1/model-data/boundary-conditions/rating-curve/generate',
   '/api/v1/model-data/simulation-cases',
   '/api/v1/model/readiness', '/api/v1/model/preview',
   '/api/v1/model/scenario-results', '/api/v1/model/scenario-results/{bundle_id}/geojson',
@@ -461,6 +462,7 @@ export const createModelParameter = (body: ModelParameterCreate, baseUrl = '') =
 export const updateModelParameter = (parameterId: number, body: ModelParameterUpdate, baseUrl = '') => requestJson<ModelParameterRecord>(\`/api/v1/model-data/parameters/\${parameterId}\`, jsonOptions('PUT', body), baseUrl);
 export const deleteModelParameter = (parameterId: number, baseUrl = '') => requestJson<void>(\`/api/v1/model-data/parameters/\${parameterId}\`, { method: 'DELETE' }, baseUrl);
 export const getBoundaryConditions = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<BoundaryConditionRecord>>(\`/api/v1/model-data/boundary-conditions\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const generateBoundaryRatingCurve = (body: BoundaryRatingCurveGenerateRequest, baseUrl = '') => requestJson<BoundaryRatingCurveGenerateResponse>('/api/v1/model-data/boundary-conditions/rating-curve/generate', jsonOptions('POST', body), baseUrl);
 export const createBoundaryCondition = (body: BoundaryConditionCreate, baseUrl = '') => requestJson<BoundaryConditionRecord>('/api/v1/model-data/boundary-conditions', jsonOptions('POST', body), baseUrl);
 export const updateBoundaryCondition = (boundaryId: number, body: BoundaryConditionUpdate, baseUrl = '') => requestJson<BoundaryConditionRecord>(\`/api/v1/model-data/boundary-conditions/\${boundaryId}\`, jsonOptions('PUT', body), baseUrl);
 export const deleteBoundaryCondition = (boundaryId: number, baseUrl = '') => requestJson<void>(\`/api/v1/model-data/boundary-conditions/\${boundaryId}\`, { method: 'DELETE' }, baseUrl);
