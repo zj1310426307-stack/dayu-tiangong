@@ -32,14 +32,20 @@ SARAP 会先在 `t=0` 写稳态解，再从前一计算步开始应用输出存�
 流量和有效断面宽度的临界控制要求。该组合应作为“计算完成、边界需复核”处理，
 不作为率定或边界满足的证据。
 
+平台持久化任务 `#434` 已成功：22 个断面 × 61 个展示时刻，共 1342 条统一
+结果记录；原生输出 1586 行，求解运行时间约 1.543 s。任务快照哈希为
+`71b01b8a05f0c91e41a8a288e007bff8fd23f1ad7d2fbb6df194114e2025f2ef`，运行的平台代码
+提交为 `c3892e5fe483fdf78b2ae6d7ccb0bffb7223b282`。结果页已可按任务和断面切换，
+并显式呈现下游水位边界未控制告警。
+
 ## 验证
 
 - MASCARET Adapter/Parser/Task contract：25 passed。
 - 全归槽派生竖墙与 SARAP 稳态时标回归加入后，上述聚焦测试：27 passed。
 - `tests/hydraulic_1d`：173 passed，2 skipped；4 个 D-Flow/NetCDF 测试仅因当前
   Windows 沙箱无法写入既有 `outputs/dflow-native-io` 而失败，非本次改动回归。
-- 前端 TypeScript 直接检查（关闭增量缓存）通过；Vite 构建在当前沙箱写入
-  `node_modules/.vite-temp` 时被 Windows 权限拒绝，需在 Docker/开发机容器内重建。
+- 前端 TypeScript 检查通过；Docker 生产构建通过（3932 个模块，仅保留既有的
+  chunk-size 提示），重建后结果页在 Chrome 中实机校验通过。
 
 ## 风险与后续
 
