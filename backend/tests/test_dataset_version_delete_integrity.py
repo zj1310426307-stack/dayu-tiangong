@@ -13,6 +13,10 @@ MIGRATION = (
     REPOSITORY_ROOT
     / "database/migrations/versions/20260909_0033_dataset_version_topology_delete.py"
 )
+DEFERRED_MIGRATION = (
+    REPOSITORY_ROOT
+    / "database/migrations/versions/20260909_0034_deferred_topology_delete.py"
+)
 
 
 def _foreign_key(table: object, name: str) -> ForeignKeyConstraint:
@@ -65,10 +69,16 @@ def test_version_owned_topology_uses_statement_end_no_action() -> None:
 
     for table, names in expected.items():
         for name in names:
-            assert _foreign_key(table, name).ondelete == "NO ACTION"
+            foreign_key = _foreign_key(table, name)
+            assert foreign_key.ondelete == "NO ACTION"
+            assert foreign_key.deferrable is True
+            assert foreign_key.initially == "DEFERRED"
 
-    assert _column_foreign_key(Gate.__table__, "river_id").ondelete == "NO ACTION"
-    assert _column_foreign_key(Pump.__table__, "river_id").ondelete == "NO ACTION"
+    for table in (Gate.__table__, Pump.__table__):
+        foreign_key = _column_foreign_key(table, "river_id")
+        assert foreign_key.ondelete == "NO ACTION"
+        assert foreign_key.deferrable is True
+        assert foreign_key.initially == "DEFERRED"
 
 
 def test_topology_delete_migration_reverses_each_constraint() -> None:
@@ -95,3 +105,13 @@ def test_topology_delete_migration_reverses_each_constraint() -> None:
         assert source.count(f'"{name}"') == 1
     assert 'ondelete="NO ACTION"' in source
     assert 'ondelete="RESTRICT"' in source
+
+
+def test_deferred_topology_migration_contains_commit_time_contract() -> None:
+    """The follow-up migration must add deferred checks to the live 0033 schema."""
+
+    source = DEFERRED_MIGRATION.read_text(encoding="utf-8")
+    assert "20260909_0033" in source
+    assert "deferrable=deferred" in source
+    assert 'initially="DEFERRED"' in source
+    assert 'ondelete="NO ACTION"' in source

@@ -888,12 +888,16 @@ class RiverSegment(Base):
             # NO ACTION keeps direct node deletion protected while allowing
             # PostgreSQL to validate the complete cascade at statement end.
             ondelete="NO ACTION",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         ForeignKeyConstraint(
             ["downstream_node_id", "dataset_version_id"],
             ["river_node.id", "river_node.dataset_version_id"],
             name="fk_river_segment_downstream_version",
             ondelete="NO ACTION",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         UniqueConstraint("id", "dataset_version_id", name="uq_river_segment_id_version"),
         UniqueConstraint(
@@ -1116,12 +1120,16 @@ class Gate(Base):
             name="fk_gate_d2_upstream_section_version",
             # Gate is version-owned and is removed with its Dataset Version.
             ondelete="NO ACTION",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         ForeignKeyConstraint(
             ["hydraulic_downstream_section_id", "dataset_version_id"],
             ["hydraulic.cross_section.id", "hydraulic.cross_section.dataset_version_id"],
             name="fk_gate_d2_downstream_section_version",
             ondelete="NO ACTION",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         Index("ix_gate_geometry_gist", "geometry", postgresql_using="gist"),
         Index("ix_gate_river_id", "river_id"),
@@ -1137,7 +1145,7 @@ class Gate(Base):
     river_id: Mapped[int] = mapped_column(
         # Gate is version-owned; NO ACTION preserves direct River protection
         # while permitting same-version cascade cleanup.
-        ForeignKey("river.id", ondelete="NO ACTION")
+        ForeignKey("river.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED")
     )
     gate_type: Mapped[str] = mapped_column(String(32), nullable=False)
     opening_direction: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -1197,6 +1205,8 @@ class Pump(Base):
             ["hydraulic.cross_section.id", "hydraulic.cross_section.dataset_version_id"],
             name="fk_pump_d2_section_version",
             ondelete="NO ACTION",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         Index("ix_pump_geometry_gist", "geometry", postgresql_using="gist"),
         Index("ix_pump_river_id", "river_id"),
@@ -1212,7 +1222,7 @@ class Pump(Base):
     river_id: Mapped[int] = mapped_column(
         # Pump rows are version-owned; preserve standalone River protection
         # while allowing same-version children to disappear in one cascade.
-        ForeignKey("river.id", ondelete="NO ACTION")
+        ForeignKey("river.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED")
     )
     design_flow: Mapped[float] = mapped_column(Float, nullable=False)
     head: Mapped[float] = mapped_column(Float, nullable=False)
@@ -1477,12 +1487,16 @@ class BoundaryCondition(Base):
             ["hydraulic.node.id", "hydraulic.node.dataset_version_id"],
             name="fk_boundary_d2_hydraulic_node_version",
             ondelete="NO ACTION",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         ForeignKeyConstraint(
             ["branch_id", "dataset_version_id"],
             ["hydraulic.branch.id", "hydraulic.branch.dataset_version_id"],
             name="fk_boundary_hydraulic_branch_version",
             ondelete="NO ACTION",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         CheckConstraint(
             "chainage_m IS NULL OR chainage_m >= 0",
