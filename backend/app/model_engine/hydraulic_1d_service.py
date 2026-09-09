@@ -904,7 +904,13 @@ def build_hydraulic_1d_model(
             if initial.by_section and not by_section
             else "case_or_task"
         ),
+        "calculation_mode": task_config.get("calculation_mode", "unsteady"),
     }
+    if task_config.get("calculation_mode") == "steady":
+        # SARAP is the official MASCARET permanent-flow kernel.  Keep this
+        # choice in the frozen solver-neutral snapshot so task replay cannot
+        # silently fall back to a transient kernel.
+        model_metadata["mascaret_kernel"] = "sarap"
     if engine_id == DFLOW_FM_ENGINE_ID:
         dflow_config = case_config.get("dflow_fm")
         if not isinstance(dflow_config, Mapping):

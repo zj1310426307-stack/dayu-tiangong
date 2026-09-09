@@ -2942,6 +2942,7 @@ export interface SimulationResultResponse {
 
 export interface SimulationTaskCreate {
   "case_id": number;
+  "calculation_mode"?: "steady" | "unsteady";
   "duration_seconds"?: number | null;
   "time_step_seconds"?: number | null;
   "output_interval_seconds"?: number | null;

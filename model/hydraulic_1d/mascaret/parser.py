@@ -242,6 +242,10 @@ class MascaretResultParser:
         native_mass_balance = self._native_mass_balance(
             prepared.workspace / "results.lis"
         )
+        boundary_controls = self._constant_endpoint_boundary_controls(model, records)
+        boundary_control_warnings = [
+            item for item in boundary_controls if not item["satisfied"]
+        ]
         return HydraulicResult(
             simulation_id=model.simulation_id,
             scenario_id=model.scenario_id,
@@ -254,6 +258,14 @@ class MascaretResultParser:
                 "mapped_result_rows": len(records),
                 "variable_abbreviations": list(variables),
                 "source_format": "opthyca-opt",
+                "calculation_mode": model.metadata.get(
+                    "calculation_mode", "unsteady"
+                ),
+                "mascaret_kernel": model.metadata.get(
+                    "mascaret_kernel", "mascaret"
+                ),
+                "boundary_controls": boundary_controls,
+                "boundary_control_warnings": boundary_control_warnings,
                 **native_mass_balance,
                 # The official native executable stores the first solved time
                 # step, then the requested interval; it cannot store t=0.
@@ -263,6 +275,83 @@ class MascaretResultParser:
             # after parsing. Durable artifacts require a separate object-store path.
             artifacts=(),
         )
+
+    @staticmethod
+    def _constant_endpoint_boundary_controls(
+        model: Hydraulic1DModel,
+        records: list[HydraulicResultRecord],
+    ) -> list[dict[str, object]]:
+        """Report whether constant endpoint controls survived the native solve.
+
+        A supercritical steady solution can make a prescribed downstream stage
+        hydraulically inactive.  The native solver is still a valid calculation,
+        but the platform must expose that engineering fact instead of presenting
+        the requested boundary value as satisfied.
+        """
+
+        if model.metadata.get("calculation_mode") != "steady":
+            return []
+        sections_by_branch = {
+            branch.id: sorted(
+                (
+                    item
+                    for item in model.cross_sections
+                    if item.branch_id == branch.id
+                ),
+                key=lambda item: item.chainage_m,
+            )
+            for branch in model.branches
+        }
+        observations: list[dict[str, object]] = []
+        for boundary in model.boundaries:
+            if boundary.location == "lateral" or len(boundary.series) != 1:
+                continue
+            branch_sections = sections_by_branch[boundary.branch_id]
+            section = (
+                branch_sections[0]
+                if boundary.location == "upstream"
+                else branch_sections[-1]
+            )
+            field = (
+                "discharge_m3s"
+                if boundary.variable == "discharge"
+                else "water_level_m"
+            )
+            values = [
+                float(getattr(record, field))
+                for record in records
+                if record.cross_section_id == section.id
+            ]
+            if not values:
+                continue
+            expected = float(boundary.series[0].value)
+            tolerance = (
+                max(0.002, abs(expected) * 1e-6)
+                if boundary.variable == "discharge"
+                else 0.002
+            )
+            maximum_deviation = max(abs(value - expected) for value in values)
+            observations.append(
+                {
+                    "code": (
+                        "BOUNDARY_CONTROL_SATISFIED"
+                        if maximum_deviation <= tolerance
+                        else "BOUNDARY_CONTROL_NOT_SATISFIED"
+                    ),
+                    "boundary_id": boundary.id,
+                    "location": boundary.location,
+                    "variable": boundary.variable,
+                    "cross_section_id": section.id,
+                    "expected": expected,
+                    "observed_last": values[-1],
+                    "observed_min": min(values),
+                    "observed_max": max(values),
+                    "max_abs_deviation": maximum_deviation,
+                    "tolerance": tolerance,
+                    "satisfied": maximum_deviation <= tolerance,
+                }
+            )
+        return observations
 
     @staticmethod
     def _native_mass_balance(listing_file: Path) -> dict[str, object]:

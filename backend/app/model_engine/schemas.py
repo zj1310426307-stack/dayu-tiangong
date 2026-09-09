@@ -54,6 +54,7 @@ class SimulationTaskCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     case_id: int = Field(gt=0)
+    calculation_mode: Literal["steady", "unsteady"] = "unsteady"
     duration_seconds: FiniteFloat | None = Field(default=None, gt=0)
     time_step_seconds: FiniteFloat | None = Field(default=None, gt=0)
     output_interval_seconds: FiniteFloat | None = Field(default=None, gt=0)

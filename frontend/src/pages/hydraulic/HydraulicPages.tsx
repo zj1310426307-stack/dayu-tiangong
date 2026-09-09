@@ -127,6 +127,7 @@ function pairedInitialRule(peer: 'initial_water_level' | 'initial_flow', label: 
 function normalizeTaskRequest(values: SimulationTaskCreate): SimulationTaskCreate {
   return {
     case_id: values.case_id,
+    calculation_mode: values.calculation_mode,
     duration_seconds: values.duration_seconds,
     time_step_seconds: values.time_step_seconds,
     output_interval_seconds: values.output_interval_seconds,
@@ -269,6 +270,7 @@ export function HydraulicConfigPage() {
             engine: HYDRAULIC_ENGINE,
             input_schema_version: HYDRAULIC_INPUT_SCHEMA,
             storage_level: 'full',
+            calculation_mode: 'steady',
             duration_seconds: 3600,
             time_step_seconds: 10,
             output_interval_seconds: 60,
@@ -277,12 +279,20 @@ export function HydraulicConfigPage() {
           onFinish={(values) => void submit(values)}
         >
           <Row gutter={16}>
-            <Col xs={24} md={12}>
+            <Col xs={24} md={8}>
               <Form.Item name="case_id" label="计算方案" rules={[{ required: true, message: '请选择计算方案' }]}>
                 <Select
                   loading={loadingCases}
                   options={cases.map((item) => ({ value: item.id, label: `${item.name} · #${item.id}` }))}
                 />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={4}>
+              <Form.Item name="calculation_mode" label="计算类型" rules={[{ required: true }]}>
+                <Select options={[
+                  { value: 'steady', label: '恒定流（稳态）' },
+                  { value: 'unsteady', label: '非恒定流' },
+                ]} />
               </Form.Item>
             </Col>
             <Col xs={12} md={6}>
@@ -927,6 +937,9 @@ export function HydraulicResultsPage() {
     topWidth: result.top_width[latestIndex],
     froude: result.froude_number[latestIndex],
   } : undefined;
+  const boundaryWarnings = result && Array.isArray(result.diagnostics.boundary_control_warnings)
+    ? result.diagnostics.boundary_control_warnings
+    : [];
   const chartResult = result ? {
     time: result.time,
     water_level: result.water_level,
@@ -994,6 +1007,15 @@ export function HydraulicResultsPage() {
           </Card>
           {result && (
             <>
+              {boundaryWarnings.length > 0 && (
+                <Alert
+                  className="data-alert"
+                  type="warning"
+                  showIcon
+                  message="稳态计算存在未被控制的边界"
+                  description="MASCARET 已完成数值求解，但某个端点边界在当前流态下未能控制结果；请结合 Froude 数和断面能力复核边界组合。详情见下方运行与结果诊断。"
+                />
+              )}
               <Row gutter={[16, 16]} className="hydraulic-stats">
                 <Col xs={12} md={8} xl={6}><Card className="data-card"><Statistic prefix={<CheckCircleOutlined />} title="末时刻水位" value={latest?.waterLevel} precision={3} suffix="m" /></Card></Col>
                 <Col xs={12} md={8} xl={6}><Card className="data-card"><Statistic title="末时刻水深" value={latest?.depth ?? undefined} precision={3} suffix="m" /></Card></Col>

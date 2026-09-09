@@ -32,6 +32,27 @@ def test_adapter_builds_isolated_case_and_unique_lateral_law(tmp_path) -> None:
     assert (workspace / "FichierCas.txt").read_text(encoding="ascii") == "'case.xcas'\n"
 
 
+def test_adapter_selects_official_sarap_kernel_for_steady_flow(tmp_path) -> None:
+    """Map an explicit steady task to MASCARET's permanent-flow kernel."""
+
+    workspace = tmp_path / "steady-job"
+    workspace.mkdir()
+    source = model_fixture()
+    model = source.model_copy(
+        update={
+            "metadata": {
+                **source.metadata,
+                "calculation_mode": "steady",
+                "mascaret_kernel": "sarap",
+            }
+        }
+    )
+
+    prepared = MascaretModelBuilder().build(model, workspace)
+
+    assert parse(prepared.case_file).findtext(".//parametresGeneraux/code") == "1"
+
+
 def test_adapter_aligns_runtime_domain_to_rounded_terminal_profile(tmp_path) -> None:
     """Accepted import rounding must produce one exact MASCARET geometry domain."""
 

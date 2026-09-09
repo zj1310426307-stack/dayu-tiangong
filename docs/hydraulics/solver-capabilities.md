@@ -17,7 +17,7 @@ Adapter：`dayu-mascaret-adapter-v2`
 | Feature | 状态 | 证据 | Benchmark / 限制 |
 |---|---|---|---|
 | UNSTEADY_1D | VERIFIED_NATIVE | 官方 runtime + 统一结果链 | B01–B05；31/31 |
-| STEADY_1D | UNVERIFIED | 官方上游存在 steady kernel | 当前 Adapter 不生成正式 steady case |
+| STEADY_1D | VERIFIED (SARAP path) | MASCARET v9.1.1 SARAP permanent-flow kernel | 通过 Standard 1D `calculation_mode=steady` 选择；端点控制仍需查看结果诊断 |
 | BRANCHED_NETWORK | VERIFIED_NATIVE | native `listeBranches/listeNoeuds` | N01–N03；内部 native node 当前要求恰好三条 extremity |
 | LATERAL_INFLOW | VERIFIED_NATIVE | native `debitsApports` | N04–N05；支持 constant Q 与 Q(t) |
 | COMBINED_BOUNDARIES | VERIFIED_NATIVE | 多 Q(t)+H(t)+lateral | N05 |
