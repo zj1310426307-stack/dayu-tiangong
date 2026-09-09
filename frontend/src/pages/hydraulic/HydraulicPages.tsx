@@ -245,6 +245,7 @@ export function HydraulicConfigPage() {
         reason: '未率定 Standard 1D 方案，已完成核心校核并知悉警告',
       });
       await refreshVersions(datasetVersionId);
+      setPreview(undefined);
       if (selectedCaseId) setReadiness(await getHydraulicReadiness(selectedCaseId));
       message.success('数据版本已校核并批准，可进入 Standard 1D 计算；编辑权限保持不变');
     } catch (reason) {
@@ -276,7 +277,7 @@ export function HydraulicConfigPage() {
           type="warning"
           showIcon
           message="当前版本没有可运行的计算方案"
-          description="请切换到包含完整河网、断面、糙率及上下游边界的已发布数据版本。"
+          description="请切换到包含完整河网、断面、糙率及上下游边界的已批准或已发布数据版本。"
         />
       )}
       <Card className="data-card hydraulic-config-card" title="计算参数">

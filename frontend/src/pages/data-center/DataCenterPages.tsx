@@ -2458,19 +2458,19 @@ export function ModelDataPage() {
     }
   };
 
-  /** 用核心 QA 与真实 Standard 1D 映射校核草稿，通过后冻结为权威计算版本。 */
+  /** 用核心 QA 与真实 Standard 1D 映射校核草稿，通过后批准为权威计算版本；编辑权限保持独立。 */
   const approveForCalculation = async (record: DatasetVersionRecord) => {
     setApprovingVersionId(record.id);
     try {
       await approveDatasetVersionForCalculation(record.id, {
         reviewer: "web-operator",
-        reason: "核心数据校核和全部 Standard 1D 方案映射通过，冻结用于计算",
+        reason: "未率定 Standard 1D 方案，核心数据校核和模型映射通过，已知悉校核警告",
       });
       await refreshVersions(record.id);
       message.success(`${record.version} 已校核并批准，可用于一维水动力计算；编辑权限保持不变`);
     } catch (reason) {
       message.error(
-        reason instanceof Error ? reason.message : "数据版本校核冻结失败",
+        reason instanceof Error ? reason.message : "数据版本校核并批准失败",
       );
     } finally {
       setApprovingVersionId(undefined);
