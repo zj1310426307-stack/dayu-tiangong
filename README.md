@@ -13,6 +13,8 @@
 
 2026-09-09：Standard 1D 已支持在可编辑 Dataset Version 上完成校核后批准计算；批准不等于只读，后续编辑会自动回到 draft 并要求重新批准。模型就绪检查与计算表单使用一致的默认时长、步长和输出间隔，避免已有方案因未持久化可选配置被错误阻断。当前实现提交：`d25cae43cf946e8023c41995fcdac2296350cf41`。
 
+2026-09-09：数据版本删除已补齐版本所有河网/水力拓扑级联：内部拓扑外键使用 `NO ACTION DEFERRABLE INITIALLY DEFERRED`，整版删除在提交时统一校验，单独删除仍被引用的节点仍受保护；数据库迁移头为 `20260909_0034`，当前修复提交：`348dbee08843935c0466b703bf4fe34a29fd4a37`。
+
 - [MASCARET 1D Adapter](docs/model/MASCARET-1D-ADAPTER.md)
 - [复杂一维河网工程合同](docs/hydraulics/hydraulic-network.md)
 - [统一水工建筑物模型](docs/hydraulics/hydraulic-structures.md)
