@@ -246,7 +246,12 @@ export function HydraulicConfigPage() {
       });
       await refreshVersions(datasetVersionId);
       setPreview(undefined);
-      if (selectedCaseId) setReadiness(await getHydraulicReadiness(selectedCaseId));
+      if (selectedCaseId) {
+        const values = await form.validateFields();
+        const checked = await previewHydraulicModel(normalizeTaskRequest(values));
+        setReadiness(checked.readiness);
+        setPreview(checked);
+      }
       message.success('数据版本已校核并批准，可进入 Standard 1D 计算；编辑权限保持不变');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '数据版本校核并批准失败');

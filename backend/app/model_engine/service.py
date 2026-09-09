@@ -65,6 +65,16 @@ class TaskStateError(RuntimeError):
     """Raised when a request conflicts with immutable task lifecycle state."""
 
 
+# Keep the GET readiness endpoint aligned with the form's initial values. A
+# caller that supplies an explicit task configuration still overrides these
+# defaults during preview and task creation.
+DEFAULT_READINESS_TASK_CONFIG: dict[str, float] = {
+    "duration_seconds": 3600.0,
+    "time_step_seconds": 10.0,
+    "output_interval_seconds": 60.0,
+}
+
+
 def parse_frozen_task_model(task: SimulationTask) -> Hydraulic1DModel:
     """Verify the persisted snapshot digest before exposing it to any runtime."""
 
@@ -288,7 +298,11 @@ def assess_readiness(
     blockers: list[dict[str, Any]] = []
     model: Hydraulic1DModel | None = None
     try:
-        model = build_hydraulic_1d_model(session, case_id, task_config or {})
+        model = build_hydraulic_1d_model(
+            session,
+            case_id,
+            task_config or DEFAULT_READINESS_TASK_CONFIG,
+        )
     except (LookupError, Hydraulic1DError, ValueError) as exc:
         blockers.append(_blocker(exc))
     if not runtime_available:
