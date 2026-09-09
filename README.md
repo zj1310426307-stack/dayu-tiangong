@@ -11,6 +11,8 @@
 
 自 2026-08-31 起，生产级 Standard 1D 正式采用“Dayu 统一水力模型 → MASCARET Adapter → 外部 MASCARET v9.1.1 → 统一结果”路线；旧自研 1D Solver 已退出生产代码、API、Worker、前端和 CI。HYDRO-DATA-01 的 Network → Branch → Chainage → Cross Section 权威数据结构保持不变。
 
+2026-09-09：Standard 1D 已支持在可编辑 Dataset Version 上完成校核后批准计算；批准不等于只读，后续编辑会自动回到 draft 并要求重新批准。模型就绪检查与计算表单使用一致的默认时长、步长和输出间隔，避免已有方案因未持久化可选配置被错误阻断。当前实现提交：`d25cae43cf946e8023c41995fcdac2296350cf41`。
+
 - [MASCARET 1D Adapter](docs/model/MASCARET-1D-ADAPTER.md)
 - [复杂一维河网工程合同](docs/hydraulics/hydraulic-network.md)
 - [统一水工建筑物模型](docs/hydraulics/hydraulic-structures.md)
