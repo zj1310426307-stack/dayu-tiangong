@@ -937,7 +937,7 @@ export function HydraulicResultsPage() {
     topWidth: result.top_width[latestIndex],
     froude: result.froude_number[latestIndex],
   } : undefined;
-  const boundaryWarnings = result && Array.isArray(result.diagnostics.boundary_control_warnings)
+  const boundaryWarnings = result?.diagnostics && Array.isArray(result.diagnostics.boundary_control_warnings)
     ? result.diagnostics.boundary_control_warnings
     : [];
   const chartResult = result ? {
