@@ -133,6 +133,44 @@ def test_parser_accepts_the_official_native_first_step_time_axis(tmp_path) -> No
     assert result.diagnostics["time_axis_mode"] == "mascaret-native"
 
 
+def test_parser_normalizes_complete_sarap_steady_storage_axis(tmp_path) -> None:
+    """Map SARAP's 0, dt-shifted cadence to the requested steady presentation axis."""
+
+    workspace = tmp_path / "sarap-axis"
+    workspace.mkdir()
+    source = model_fixture()
+    model = source.model_copy(
+        update={
+            "metadata": {
+                **source.metadata,
+                "calculation_mode": "steady",
+                "mascaret_kernel": "sarap",
+            }
+        }
+    )
+    prepared = MascaretModelBuilder().build(model, workspace)
+    lines = FIXTURE.read_text(encoding="iso-8859-1").splitlines()
+    shifted: list[str] = []
+    for line in lines:
+        if not line or not line[0].isdigit():
+            shifted.append(line)
+            continue
+        raw_time, remainder = line.split(";", 1)
+        time = float(raw_time)
+        shifted.append(f"{0.0 if time == 0.0 else time - 10.0:.1f};{remainder}")
+    prepared.result_file.write_text(
+        "\n".join(shifted) + "\n",
+        encoding="iso-8859-1",
+    )
+
+    result = MascaretResultParser().parse(model, prepared, runtime_seconds=0.1)
+
+    assert sorted({float(item.timestamp) for item in result.records}) == list(
+        model.settings.expected_output_times()
+    )
+    assert result.diagnostics["time_axis_mode"] == "sarap-steady-normalized"
+
+
 def test_parser_matches_native_four_decimal_chainage_without_accepting_mesh_rows() -> None:
     """Respect Opthyca rounding while keeping interpolated mesh nodes excluded."""
 

@@ -19,6 +19,11 @@ Marker 和已批准 Profile 均不修改。快照在 `vertical_bank_extension` �
 控制能力，任务仍保留真实 MASCARET 结果，但结果页显示校核警告，不把未实现的
 边界条件伪装为已满足。
 
+SARAP 会先在 `t=0` 写稳态解，再从前一计算步开始应用输出存储间隔，因此原生时标
+可能为 `0, 50, 110, ...`。仅当任务明确为 SARAP 稳态、全部边界值恒定、原生输出
+数量完整时，Parser 才按顺序映射为请求的 `0, 60, 120, ...` 展示轴，并记录
+`time_axis_mode=sarap-steady-normalized`；其他不完整或非恒定情形继续失败关闭。
+
 ## 高明河当前工况
 
 使用已批准数据版本 `高明河2`、方案 `P=5%2`、上游流量 405.43 m³/s、下游水位
@@ -30,7 +35,7 @@ Marker 和已批准 Profile 均不修改。快照在 `vertical_bank_extension` �
 ## 验证
 
 - MASCARET Adapter/Parser/Task contract：25 passed。
-- 全归槽派生竖墙回归加入后，上述聚焦测试：26 passed。
+- 全归槽派生竖墙与 SARAP 稳态时标回归加入后，上述聚焦测试：27 passed。
 - `tests/hydraulic_1d`：173 passed，2 skipped；4 个 D-Flow/NetCDF 测试仅因当前
   Windows 沙箱无法写入既有 `outputs/dflow-native-io` 而失败，非本次改动回归。
 - 前端 TypeScript 直接检查（关闭增量缓存）通过；Vite 构建在当前沙箱写入

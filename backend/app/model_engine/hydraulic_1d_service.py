@@ -877,6 +877,21 @@ def build_hydraulic_1d_model(
         if legacy_boundary is not None:
             boundary_rows = [legacy_boundary]
     boundaries = tuple(_boundary(row, branch_rows) for row in boundary_rows)
+    if task_config.get("calculation_mode") == "steady":
+        varying = [
+            boundary.id
+            for boundary in boundaries
+            if any(
+                sample.value != boundary.series[0].value
+                for sample in boundary.series[1:]
+            )
+        ]
+        if varying:
+            _reject(
+                "DAYU_STEADY_BOUNDARY_TIME_VARIATION",
+                "steady calculation requires constant boundary values",
+                "boundary_conditions[" + ",".join(varying) + "]",
+            )
     initial_config = case_config.get("initial_condition", {})
     if not isinstance(initial_config, Mapping):
         _reject(

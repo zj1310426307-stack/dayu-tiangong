@@ -227,6 +227,28 @@ class MascaretResultParser:
             native_expected_times,
             tolerance=time_tolerance,
         )
+        sarap_steady_axis = False
+        if (
+            not platform_axis
+            and not native_axis
+            and model.metadata.get("calculation_mode") == "steady"
+            and model.metadata.get("mascaret_kernel") == "sarap"
+            and len(observed_times) == len(expected_times)
+        ):
+            # SARAP writes the initial permanent solution at t=0, then applies
+            # the storage cadence from the preceding calculation step.  For
+            # constant-boundary steady tasks, time is only a presentation axis;
+            # map the complete ordered native snapshots to the requested axis.
+            normalized_time = dict(zip(observed_times, expected_times))
+            records = [
+                record.model_copy(
+                    update={"timestamp": normalized_time[float(record.timestamp)]}
+                )
+                for record in records
+            ]
+            observed_times = list(expected_times)
+            platform_axis = True
+            sarap_steady_axis = True
         if not platform_axis and not native_axis:
             raise Hydraulic1DResultError(
                 "MASCARET result does not cover the complete expected output time axis"
@@ -269,7 +291,13 @@ class MascaretResultParser:
                 **native_mass_balance,
                 # The official native executable stores the first solved time
                 # step, then the requested interval; it cannot store t=0.
-                "time_axis_mode": "platform-t0" if platform_axis else "mascaret-native",
+                "time_axis_mode": (
+                    "sarap-steady-normalized"
+                    if sarap_steady_axis
+                    else "platform-t0"
+                    if platform_axis
+                    else "mascaret-native"
+                ),
             },
             # Raw engine files stay private to the job workspace and are deleted
             # after parsing. Durable artifacts require a separate object-store path.
