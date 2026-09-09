@@ -6,7 +6,7 @@ from typing import Any, TypeVar
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.dataset.lifecycle import assert_dataset_version_mutable
+from app.dataset.lifecycle import assert_dataset_version_mutable, lock_dataset_version
 from app.dataset.schemas import (
     BoundaryRatingCurveGenerateRequest,
     BoundaryRatingCurveGenerateResponse,
@@ -99,10 +99,19 @@ def create_dataset_version(session: Session, payload: DatasetVersionCreate) -> D
 
 
 def update_dataset_version(session: Session, entity: DatasetVersion, payload: DatasetVersionUpdate) -> DatasetVersionRecord:
-    """修改数据集版本说明性字段。"""
+    """修改版本说明或由用户显式切换只读状态。
 
-    mutable = assert_dataset_version_mutable(session, entity.id)
-    _apply(mutable, payload.model_dump(exclude_unset=True))
+    已设为只读的版本仍允许执行唯一的解锁动作；其他修改必须先解锁。
+    """
+
+    values = payload.model_dump(exclude_unset=True)
+    read_only_toggle = set(values) == {"is_read_only"}
+    mutable = (
+        lock_dataset_version(session, entity.id)
+        if read_only_toggle
+        else assert_dataset_version_mutable(session, entity.id)
+    )
+    _apply(mutable, values)
     session.flush()
     return DatasetVersionRecord(**_dump(mutable))
 
@@ -112,7 +121,7 @@ def approve_dataset_version_for_calculation(
     entity: DatasetVersion,
     payload: DatasetVersionApprovalRequest,
 ) -> DatasetVersionRecord:
-    """Validate and freeze one draft for traceable Standard 1D calculations."""
+    """Validate and approve one version for traceable Standard 1D calculations."""
 
     if entity.status in {"approved", "published"}:
         return DatasetVersionRecord(**_dump(entity))
@@ -632,7 +641,11 @@ def update_case(session: Session, entity: SimulationCase, payload: SimulationCas
 
 
 def delete_entity(session: Session, entity: Any) -> None:
-    """删除版本配置类对象并刷新约束。"""
+    """删除版本配置类对象并刷新约束。
+
+    Dataset Version 的直属业务数据由数据库级联清理；计算任务、发布
+    记录等审计引用继续通过外键拒绝删除，避免历史成果被静默抹除。
+    """
 
     if isinstance(entity, DatasetVersion):
         assert_dataset_version_mutable(session, entity.id)

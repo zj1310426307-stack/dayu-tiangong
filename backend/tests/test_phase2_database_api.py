@@ -60,21 +60,32 @@ def test_phase2_lists_topology_validation_and_model_input() -> None:
 
 
 def test_river_crud_round_trip_and_conflict_contract() -> None:
-    """河道 CRUD 在临时 draft 闭环，并证明 published DEMO 不可写。"""
+    """河道 CRUD 闭环，并证明只有显式只读开关会阻止写入。"""
 
-    frozen = client.post(
-        "/api/v1/rivers",
-        json={
-            "dataset_version_id": 1,
-            "name": "不得写入已发布版本",
-            "code": "TEST-FROZEN-VERSION",
-            "length": 1,
-            "level": "channel",
-            "status": "planned",
-            "geometry": {"type": "LineString", "coordinates": [[120.6, 30.1], [120.61, 30.11]]},
-        },
-    )
-    assert frozen.status_code == 422
+    assert client.put(
+        "/api/v1/model-data/dataset-versions/1", json={"is_read_only": True}
+    ).status_code == 200
+    try:
+        frozen = client.post(
+            "/api/v1/rivers",
+            json={
+                "dataset_version_id": 1,
+                "name": "不得写入人工只读版本",
+                "code": "TEST-FROZEN-VERSION",
+                "length": 1,
+                "level": "channel",
+                "status": "planned",
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[120.6, 30.1], [120.61, 30.11]],
+                },
+            },
+        )
+        assert frozen.status_code == 422
+    finally:
+        assert client.put(
+            "/api/v1/model-data/dataset-versions/1", json={"is_read_only": False}
+        ).status_code == 200
 
     draft = client.post(
         "/api/v1/model-data/dataset-versions",
@@ -122,49 +133,57 @@ def test_river_crud_round_trip_and_conflict_contract() -> None:
     assert client.delete(f"/api/v1/model-data/dataset-versions/{draft_id}").status_code == 204
 
 
-def test_published_model_configuration_is_immutable() -> None:
-    """Freeze model parameters, boundaries, and cases together with GIS core data."""
+def test_user_read_only_blocks_model_configuration_writes() -> None:
+    """The explicit read-only switch blocks parameters, boundaries, and cases."""
 
-    parameter = client.get(
-        "/api/v1/model-data/parameters", params={"dataset_version_id": 1}
-    ).json()[0]
-    boundary = client.get(
-        "/api/v1/model-data/boundary-conditions", params={"dataset_version_id": 1}
-    ).json()[0]
-    case = client.get(
-        "/api/v1/model-data/simulation-cases", params={"dataset_version_id": 1}
-    ).json()[0]
+    assert client.put(
+        "/api/v1/model-data/dataset-versions/1", json={"is_read_only": True}
+    ).status_code == 200
+    try:
+        parameter = client.get(
+            "/api/v1/model-data/parameters", params={"dataset_version_id": 1}
+        ).json()[0]
+        boundary = client.get(
+            "/api/v1/model-data/boundary-conditions", params={"dataset_version_id": 1}
+        ).json()[0]
+        case = client.get(
+            "/api/v1/model-data/simulation-cases", params={"dataset_version_id": 1}
+        ).json()[0]
 
-    assert client.post(
-        "/api/v1/model-data/parameters",
-        json={
-            "dataset_version_id": 1,
-            "parameter_type": "solver",
-            "parameter_name": "forbidden-published-write",
-            "value": 1,
-            "unit": "1",
-        },
-    ).status_code == 422
-    assert client.put(
-        f"/api/v1/model-data/parameters/{parameter['id']}", json={"value": 999}
-    ).status_code == 422
-    assert client.delete(
-        f"/api/v1/model-data/parameters/{parameter['id']}"
-    ).status_code == 422
-    assert client.put(
-        f"/api/v1/model-data/boundary-conditions/{boundary['id']}",
-        json={"description": "forbidden"},
-    ).status_code == 422
-    assert client.delete(
-        f"/api/v1/model-data/boundary-conditions/{boundary['id']}"
-    ).status_code == 422
-    assert client.put(
-        f"/api/v1/model-data/simulation-cases/{case['id']}",
-        json={"description": "forbidden"},
-    ).status_code == 422
-    assert client.delete(
-        f"/api/v1/model-data/simulation-cases/{case['id']}"
-    ).status_code == 422
+        assert client.post(
+            "/api/v1/model-data/parameters",
+            json={
+                "dataset_version_id": 1,
+                "parameter_type": "solver",
+                "parameter_name": "forbidden-read-only-write",
+                "value": 1,
+                "unit": "1",
+            },
+        ).status_code == 422
+        assert client.put(
+            f"/api/v1/model-data/parameters/{parameter['id']}", json={"value": 999}
+        ).status_code == 422
+        assert client.delete(
+            f"/api/v1/model-data/parameters/{parameter['id']}"
+        ).status_code == 422
+        assert client.put(
+            f"/api/v1/model-data/boundary-conditions/{boundary['id']}",
+            json={"description": "forbidden"},
+        ).status_code == 422
+        assert client.delete(
+            f"/api/v1/model-data/boundary-conditions/{boundary['id']}"
+        ).status_code == 422
+        assert client.put(
+            f"/api/v1/model-data/simulation-cases/{case['id']}",
+            json={"description": "forbidden"},
+        ).status_code == 422
+        assert client.delete(
+            f"/api/v1/model-data/simulation-cases/{case['id']}"
+        ).status_code == 422
+    finally:
+        assert client.put(
+            "/api/v1/model-data/dataset-versions/1", json={"is_read_only": False}
+        ).status_code == 200
 
 
 def test_phase2_physical_tables_revision_and_spatial_indexes() -> None:

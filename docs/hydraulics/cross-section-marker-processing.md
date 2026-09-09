@@ -84,9 +84,10 @@ when present and falls back to raw points only for backward compatibility.
 The section editor displays raw, processed and virtual geometry separately,
 Marker provenance/confidence/review/lock state, review-only filtering, manual
 selection and lock controls, forced redetection, import-default restoration, and
-the Vertical Extension warning. Dataset-version drafts can be deleted from the
-global version selector after confirmation; immutable/referenced versions remain
-protected by the existing backend lifecycle gate.
+the Vertical Extension warning. Dataset workflow status is independent from the
+operator-controlled read-only switch. Any non-read-only version can be deleted
+after confirmation; calculation, publication, derived-version and production-audit
+references remain protected by database relationship gates.
 
 ## Migration and compatibility
 

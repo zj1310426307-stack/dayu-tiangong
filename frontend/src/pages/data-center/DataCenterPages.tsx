@@ -155,7 +155,7 @@ function useRemoteList<T>(
   return { data, loading, error, reload };
 }
 
-/** 明确提示当前版本的编辑能力，避免已发布版本继续展示为可写工作区。 */
+/** 明确提示由用户只读开关决定的编辑能力。 */
 function DatasetWriteNotice() {
   const { currentVersion, isMutable, loading } = useDatasetVersion();
   if (loading)
@@ -174,7 +174,7 @@ function DatasetWriteNotice() {
         type="warning"
         showIcon
         message="尚未选择数据版本"
-        description="请先在顶部选择版本，或新建可编辑草稿。"
+        description="请先在顶部选择或新建数据版本。"
       />
     );
   if (isMutable)
@@ -183,8 +183,8 @@ function DatasetWriteNotice() {
         className="data-alert"
         type="success"
         showIcon
-        message={`当前草稿 ${currentVersion.version} 可编辑`}
-        description="所有新增、修改、删除和导入都会写入当前草稿。"
+        message={`当前版本 ${currentVersion.version} 可编辑`}
+        description={`业务状态为“${datasetVersionStatusLabel(currentVersion.status)}”；只有您点击“设为只读”后才会禁止修改。`}
       />
     );
   return (
@@ -193,7 +193,7 @@ function DatasetWriteNotice() {
       type="info"
       showIcon
       message={`当前版本 ${currentVersion.version} 为只读`}
-      description="已发布、已批准或已退役版本不可原地修改；请点击顶部“新建草稿”进入独立编辑工作区。"
+      description="该版本由您手动设为只读；点击顶部“解除只读”即可恢复编辑。"
     />
   );
 }
@@ -726,7 +726,7 @@ export function CrossSectionsDatabasePage() {
     if (!selected) return;
     if (!isMutable) {
       message.warning(
-        `当前版本 ${currentVersion?.version ?? ""} 为只读，请在顶部选择或新建草稿后再设置 Marker 1/3`,
+        `当前版本 ${currentVersion?.version ?? ""} 为只读，请先在顶部解除只读再设置 Marker 1/3`,
       );
       return;
     }
@@ -1039,7 +1039,7 @@ export function CrossSectionsDatabasePage() {
                   description={
                     isMutable
                       ? "自动识别只生成候选；复杂河段应结合测量成果、堤防轴线、DEM、GIS 和现场调查复核。"
-                      : "已发布、已批准或已退役版本不可原地修改；请切换草稿。"
+                      : "该版本已由您设为只读；请先在顶部解除只读。"
                   }
                 />
                 <Space wrap style={{ marginTop: 12 }}>
@@ -1309,7 +1309,7 @@ function StructureDatabasePage({ kind }: { kind: StructureKind }) {
   );
   const showEditor = (record?: StructureRecord) => {
     if (!datasetVersionId || !isMutable) {
-      message.warning("请选择可编辑的草稿版本");
+      message.warning("请选择可编辑版本，或先解除当前版本只读状态");
       return;
     }
     setEditing(record);
@@ -1777,7 +1777,7 @@ export function DataImportPage() {
       return;
     }
     if (!datasetVersionId || !isMutable) {
-      message.warning("请选择可编辑的草稿版本");
+      message.warning("请选择可编辑版本，或先解除当前版本只读状态");
       return;
     }
     setLoading(true);
@@ -2243,7 +2243,7 @@ export function ModelDataPage() {
     setParameterOpen(true);
   };
 
-  /** 保存当前草稿的模型参数。 */
+  /** 保存当前可编辑版本的模型参数。 */
   const saveParameter = async (values: ModelParameterFormValues) => {
     if (!datasetVersionId || !isMutable) return;
     setSubmitting(true);
@@ -2467,7 +2467,7 @@ export function ModelDataPage() {
         reason: "核心数据校核和全部 Standard 1D 方案映射通过，冻结用于计算",
       });
       await refreshVersions(record.id);
-      message.success(`${record.version} 已校核并冻结，可用于一维水动力计算`);
+      message.success(`${record.version} 已校核并批准，可用于一维水动力计算；编辑权限保持不变`);
     } catch (reason) {
       message.error(
         reason instanceof Error ? reason.message : "数据版本校核冻结失败",
@@ -2506,6 +2506,13 @@ export function ModelDataPage() {
                 </Tag>
               ),
             },
+            {
+              title: "编辑权限",
+              dataIndex: "is_read_only",
+              render: (value: boolean) => (
+                <Tag color={value ? "red" : "green"}>{value ? "只读" : "可编辑"}</Tag>
+              ),
+            },
             { title: "创建者", dataIndex: "creator" },
             {
               title: "创建时间",
@@ -2518,9 +2525,9 @@ export function ModelDataPage() {
               render: (_, record: DatasetVersionRecord) =>
                 record.status === "draft" ? (
                   <Popconfirm
-                    title="校核并冻结该数据版本？"
-                    description="将检查全部数据规则和计算方案映射；通过后版本不可再编辑。"
-                    okText="校核并冻结"
+                    title="校核并批准该数据版本？"
+                    description="将检查全部数据规则和计算方案映射；批准状态不改变编辑权限。"
+                    okText="校核并批准"
                     cancelText="取消"
                     onConfirm={() => approveForCalculation(record)}
                   >
@@ -2530,11 +2537,11 @@ export function ModelDataPage() {
                       icon={<SafetyCertificateOutlined />}
                       loading={approvingVersionId === record.id}
                     >
-                      校核并冻结
+                      校核并批准
                     </Button>
                   </Popconfirm>
                 ) : (
-                  <Text type="secondary">已冻结</Text>
+                  <Text type="secondary">已批准/发布</Text>
                 ),
             },
           ]}

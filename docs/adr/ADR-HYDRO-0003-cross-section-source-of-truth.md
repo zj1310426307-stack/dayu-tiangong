@@ -42,4 +42,4 @@ Branch 的 `centerline_role=thalweg` 表示所给中心线是沿河纵向深泓�
 
 横断面数据库的剖面图必须读取当前 active profile 的全部 `cross_section_point`，按 `sequence` 排序后逐点直线连接。预览不得抽稀、补点或使用平滑插值；显示点数必须与该活动剖面的入库点数一致。深泓点、Marker 1（左堤防）和 Marker 3（右堤防）作为同一组原始点上的标记叠加展示，不生成新的测量点。
 
-Marker 1/3 属于 Dataset Version 的受治理内容。只有 `draft` 状态允许修改；`published`、`approved`、`retired` 等只读版本只能查看。前端必须在发出写请求前禁用 Marker 选择与保存，并给出中文草稿指引；后端继续以不可变门禁作为最终权威，不能因前端状态失效而放宽已发布版本。
+Marker 1/3 属于 Dataset Version 的受治理内容。自 ADR-HYDRO-0004 起，`status` 只表达业务流程，编辑权限由用户控制的 `is_read_only` 独立决定。前端必须在只读时禁用 Marker 选择与保存并提供解除只读入口；后端仍是最终权限门。编辑已批准或已发布内容会撤销原认证并回到 `draft`，但不会改写既有计算任务的冻结快照。

@@ -59,6 +59,7 @@ def test_approve_dataset_validates_every_case_before_freezing(monkeypatch: Any) 
         name="Gaoming River",
         creator="web-operator",
         status="draft",
+        is_read_only=False,
         created_time=datetime(2026, 9, 9, tzinfo=UTC),
     )
     validation = SimpleNamespace(
@@ -110,6 +111,7 @@ def test_approve_dataset_rejects_validation_warnings(monkeypatch: Any) -> None:
         name="Gaoming River",
         creator="web-operator",
         status="draft",
+        is_read_only=False,
         created_time=datetime(2026, 9, 9, tzinfo=UTC),
     )
     validation = SimpleNamespace(

@@ -21,11 +21,11 @@ const DatasetVersionContext = createContext<DatasetVersionContextValue | null>(n
 const STORAGE_KEY = 'dayu.datasetVersionId';
 
 const STATUS_LABELS: Record<string, string> = {
-  draft: '草稿可编辑',
+  draft: '草稿',
   review: '审核中',
   approved: '已批准',
-  published: '已发布只读',
-  retired: '已退役只读',
+  published: '已发布',
+  retired: '已退役',
   rejected: '已驳回',
 };
 
@@ -125,7 +125,8 @@ export function DatasetVersionProvider({ children }: { children: ReactNode }) {
     () => versions.find((item) => item.id === datasetVersionId),
     [datasetVersionId, versions],
   );
-  const isMutable = currentVersion?.status === 'draft';
+  // 业务状态只表达审批/发布进度；是否允许写入只由用户控制的只读开关决定。
+  const isMutable = Boolean(currentVersion && !currentVersion.is_read_only);
   const contextValue = useMemo(
     () => ({
       versions,

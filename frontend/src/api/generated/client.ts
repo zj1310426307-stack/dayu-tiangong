@@ -765,6 +765,7 @@ export interface DatasetVersionCreate {
   "name": string;
   "description"?: string | null;
   "creator": string;
+  "is_read_only"?: boolean;
 }
 
 export interface DatasetVersionRecord {
@@ -772,6 +773,7 @@ export interface DatasetVersionRecord {
   "name": string;
   "description"?: string | null;
   "creator": string;
+  "is_read_only"?: boolean;
   "id": number;
   "status"?: string;
   "parent_version_id"?: number | null;
@@ -790,6 +792,7 @@ export interface DatasetVersionRecord {
 export interface DatasetVersionUpdate {
   "name"?: string | null;
   "description"?: string | null;
+  "is_read_only"?: boolean | null;
 }
 
 export interface DatasetWindow {

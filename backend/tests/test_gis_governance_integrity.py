@@ -23,6 +23,7 @@ from app.gis.models import (
     GISReview,
     GISValidationIssue,
     GISValidationRun,
+    River,
 )
 
 
@@ -66,6 +67,7 @@ def test_dataset_version_update_uses_locked_mutability_guard(monkeypatch: pytest
         name="locked name",
         creator="pytest",
         status="draft",
+        is_read_only=False,
         created_time=datetime(2026, 8, 14, tzinfo=UTC),
     )
     session = MagicMock()
@@ -93,7 +95,7 @@ def test_dataset_version_update_uses_locked_mutability_guard(monkeypatch: pytest
 def test_mutability_guard_selects_dataset_version_for_update() -> None:
     """The shared guard must issue a row-locking query, not a race-prone plain read."""
 
-    version = DatasetVersion(id=23, status="draft")
+    version = DatasetVersion(id=23, status="approved", is_read_only=False)
     session = MagicMock()
 
     def scalar(statement: object) -> DatasetVersion:
@@ -109,6 +111,85 @@ def test_mutability_guard_selects_dataset_version_for_update() -> None:
     session.scalar.side_effect = scalar
 
     assert assert_dataset_version_mutable(session, 23) is version
+    assert version.status == "draft"
+
+
+def test_mutability_guard_only_blocks_explicit_user_read_only() -> None:
+    """Workflow status is editable, while the explicit user switch is authoritative."""
+
+    read_only = DatasetVersion(id=24, status="draft", is_read_only=True)
+    session = MagicMock()
+    session.scalar.return_value = read_only
+
+    with pytest.raises(ValueError, match="解除只读"):
+        assert_dataset_version_mutable(session, 24)
+
+
+def test_editing_approved_version_invalidates_approval_metadata() -> None:
+    """A content edit reopens approval without rewriting completed task snapshots."""
+
+    approved = DatasetVersion(
+        id=25,
+        status="approved",
+        is_read_only=False,
+        content_hash="a" * 64,
+        change_summary="approved",
+        reviewed_by="reviewer",
+        reviewed_at=datetime(2026, 9, 9, tzinfo=UTC),
+        approved_by="reviewer",
+        approved_at=datetime(2026, 9, 9, tzinfo=UTC),
+    )
+    session = MagicMock()
+    session.scalar.return_value = approved
+
+    assert_dataset_version_mutable(session, 25)
+
+    assert approved.status == "draft"
+    assert approved.content_hash is None
+    assert approved.reviewed_by is None
+    assert approved.approved_by is None
+
+
+def test_read_only_toggle_can_unlock_without_mutability_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The only allowed change on a read-only version is the explicit unlock."""
+
+    version = DatasetVersion(
+        id=26,
+        version="V-READ-ONLY",
+        name="read only",
+        creator="pytest",
+        status="published",
+        is_read_only=True,
+        created_time=datetime(2026, 9, 9, tzinfo=UTC),
+    )
+    session = MagicMock()
+    monkeypatch.setattr(
+        dataset_service, "lock_dataset_version", lambda _session, _id: version
+    )
+    guard = MagicMock(side_effect=AssertionError("guard must not block unlock"))
+    monkeypatch.setattr(dataset_service, "assert_dataset_version_mutable", guard)
+
+    record = dataset_service.update_dataset_version(
+        session, version, DatasetVersionUpdate(is_read_only=False)
+    )
+
+    assert record.is_read_only is False
+    assert record.status == "published"
+    guard.assert_not_called()
+
+
+def test_version_owned_river_uses_database_cascade() -> None:
+    """Deleting an unreferenced version must also remove its owned River rows."""
+
+    foreign_keys = [
+        foreign_key
+        for foreign_key in River.__table__.foreign_keys
+        if foreign_key.parent.name == "dataset_version_id"
+    ]
+    assert len(foreign_keys) == 1
+    assert foreign_keys[0].ondelete == "CASCADE"
 
 
 def test_import_batch_orm_binds_parent_hash_and_promoted_version() -> None:

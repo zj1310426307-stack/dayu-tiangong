@@ -69,14 +69,14 @@ def update_dataset_version(version_id: int, payload: DatasetVersionUpdate, sessi
 @router.post(
     "/dataset-versions/{version_id}/approve-for-calculation",
     response_model=DatasetVersionRecord,
-    summary="校核并冻结 Standard 1D 计算数据版本",
+    summary="校核并批准 Standard 1D 计算数据版本",
 )
 def approve_dataset_version_for_calculation(
     version_id: int,
     payload: DatasetVersionApprovalRequest,
     session: SessionDependency,
 ) -> DatasetVersionRecord:
-    """Approve only a fully validated draft and make it immutable for calculation."""
+    """批准通过校核的数据；编辑权限由独立只读开关控制。"""
 
     entity = session.get(DatasetVersion, version_id)
     if entity is None:
@@ -87,9 +87,9 @@ def approve_dataset_version_for_calculation(
     )
 
 
-@router.delete("/dataset-versions/{version_id}", status_code=204, summary="删除草稿箱数据版本")
+@router.delete("/dataset-versions/{version_id}", status_code=204, summary="删除数据版本")
 def delete_dataset_version(version_id: int, session: SessionDependency) -> Response:
-    """删除草稿版本；非草稿和被生产运行引用的版本由后端拒绝。"""
+    """删除非只读版本；被计算或发布审计引用时仍由后端拒绝。"""
 
     entity = session.get(DatasetVersion, version_id)
     if entity is None:

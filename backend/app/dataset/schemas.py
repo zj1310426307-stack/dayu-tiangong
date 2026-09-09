@@ -14,25 +14,27 @@ BoundaryType = Literal[
 
 
 class DatasetVersionCreate(BaseModel):
-    """新增不可混用的数据集版本。"""
+    """新增不可混用且默认可编辑的数据集版本。"""
 
     model_config = ConfigDict(extra="forbid")
     version: str = Field(min_length=1, max_length=32)
     name: str = Field(min_length=1, max_length=128)
     description: str | None = None
     creator: str = Field(min_length=1, max_length=64)
+    is_read_only: bool = False
 
 
 class DatasetVersionUpdate(BaseModel):
-    """允许修改数据集版本说明性字段。"""
+    """允许修改说明字段或切换由用户控制的只读状态。"""
 
     model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=128)
     description: str | None = None
+    is_read_only: bool | None = None
 
 
 class DatasetVersionApprovalRequest(BaseModel):
-    """Record the operator decision that freezes a validated calculation dataset."""
+    """Record the operator decision that approves a validated calculation dataset."""
 
     model_config = ConfigDict(extra="forbid")
     reviewer: str = Field(min_length=1, max_length=64)

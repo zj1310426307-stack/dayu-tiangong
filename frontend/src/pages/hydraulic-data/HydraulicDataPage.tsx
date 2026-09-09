@@ -586,7 +586,7 @@ export function HydraulicDataPage() {
         type={isMutable ? 'info' : 'warning'}
         showIcon
         message={`当前版本：${currentVersion?.version ?? '—'} · ${datasetVersionStatusLabel(currentVersion?.status)}`}
-        description={isMutable ? '草稿版本允许确认提交；预览和读取不会修改河网核心数据。' : '当前版本为只读，仍可浏览、校核和导出，但不能确认导入。'}
+        description={isMutable ? '当前版本允许编辑和确认提交；业务状态不会自动锁定数据。' : '该版本由您手动设为只读；解除只读后即可确认导入和修改。'}
       />
 
       <Row gutter={[16, 16]} className="hydraulic-data-stats">
@@ -732,7 +732,7 @@ export function HydraulicDataPage() {
               type="info"
               showIcon
               message="横断面导入依赖当前数据版本已有对应河道中心线"
-              description="横断面文件本身显示“河段 0”是正常的；请先在同一草稿版本提交河道中心线，再提交 river_name/branch_code 相同的横断面。若当前版本没有匹配河段，预检会以 SECTION_BRANCH_MISSING 拒绝，不会写入半成品。"
+              description="横断面文件本身显示“河段 0”是正常的；请先在同一数据版本提交河道中心线，再提交 river_name/branch_code 相同的横断面。若当前版本没有匹配河段，预检会以 SECTION_BRANCH_MISSING 拒绝，不会写入半成品。"
             />
             {preview && <div className="hydraulic-preview-panel">
               <Alert

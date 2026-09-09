@@ -181,7 +181,7 @@ def test_dgis_postgis_ui_forwards_governance_provenance() -> None:
 
 
 def test_frontend_dataset_lifecycle_is_reachable_and_fail_safe() -> None:
-    """The web app must expose a draft workflow while keeping frozen versions read-only."""
+    """The web app must separate workflow status from user-controlled read-only."""
 
     context_source = (
         REPOSITORY_ROOT / "frontend/src/context/DatasetVersionContext.tsx"
@@ -223,10 +223,13 @@ def test_frontend_dataset_lifecycle_is_reachable_and_fail_safe() -> None:
         REPOSITORY_ROOT / "docker/nginx.conf"
     ).read_text(encoding="utf-8")
 
-    for token in ["currentVersion", "isMutable", "refreshVersions", "item.status === 'published'"]:
+    for token in ["currentVersion", "isMutable", "refreshVersions", "!currentVersion.is_read_only"]:
         assert token in context_source
     assert "createDatasetVersion(values)" in layout_source
-    assert "新建草稿" in layout_source
+    assert "updateDatasetVersion" in layout_source
+    assert "设为只读" in layout_source
+    assert "解除只读" in layout_source
+    assert "新建版本" in layout_source
     assert "datasetVersionId ?? 1" not in data_pages
     assert "DatasetWriteNotice" in data_pages
     assert "Boolean(datasetVersionId)" in data_pages

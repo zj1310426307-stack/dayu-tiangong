@@ -116,7 +116,7 @@ class SimulationLayer(Base):
 
 
 class DatasetVersion(Base):
-    """标识一组不可混用的河网、断面、建筑物和模型参数数据。"""
+    """标识一组不可混用的数据，并独立记录人工只读选择。"""
 
     __tablename__ = "dataset_version"
     __table_args__ = (
@@ -138,6 +138,9 @@ class DatasetVersion(Base):
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="draft"
     )
+    is_read_only: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
     parent_version_id: Mapped[int | None] = mapped_column(
         ForeignKey("dataset_version.id", ondelete="RESTRICT")
     )
@@ -156,13 +159,17 @@ class DatasetVersion(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    rivers: Mapped[list["River"]] = relationship(back_populates="dataset_version")
-    parameters: Mapped[list["ModelParameter"]] = relationship(back_populates="dataset_version")
+    rivers: Mapped[list["River"]] = relationship(
+        back_populates="dataset_version", passive_deletes=True
+    )
+    parameters: Mapped[list["ModelParameter"]] = relationship(
+        back_populates="dataset_version", passive_deletes=True
+    )
     boundary_conditions: Mapped[list["BoundaryCondition"]] = relationship(
-        back_populates="dataset_version"
+        back_populates="dataset_version", passive_deletes=True
     )
     simulation_cases: Mapped[list["SimulationCase"]] = relationship(
-        back_populates="dataset_version"
+        back_populates="dataset_version", passive_deletes=True
     )
     annotations: Mapped[list["MapAnnotation"]] = relationship(
         back_populates="dataset_version", cascade="all, delete-orphan"
@@ -807,7 +814,7 @@ class River(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     dataset_version_id: Mapped[int] = mapped_column(
-        ForeignKey("dataset_version.id", ondelete="RESTRICT"), nullable=False
+        ForeignKey("dataset_version.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     code: Mapped[str] = mapped_column(String(64), nullable=False)
