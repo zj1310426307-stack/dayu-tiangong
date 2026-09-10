@@ -82,9 +82,12 @@ def _validate_action_template(template: dict[str, Any]) -> dict[str, Any]:
 
     required = {"structure_type", "structure_id", "command_type", "target_value"}
     allowed = required | {"asset_source"}
-    if set(template) not in {required, allowed}:
+    # Sets are mutable and therefore cannot be members of another set.  Compare
+    # the key set explicitly so this remains a strict, non-executable contract.
+    template_keys = set(template)
+    if template_keys != required and template_keys != allowed:
         raise ValueError(
-            "action_template must contain structure_type, structure_id, command_type, "
+            "action_template may contain only structure_type, structure_id, command_type, "
             "target_value and optional asset_source"
         )
     structure_type = template.get("structure_type")
