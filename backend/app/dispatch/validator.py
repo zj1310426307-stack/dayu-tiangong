@@ -167,7 +167,11 @@ def validate_plan(session: Session, plan: DispatchPlan) -> ValidationReport:
 
         template = rule.action_template
         required = {"structure_type", "structure_id", "command_type", "target_value"}
-        if not isinstance(template, dict) or set(template) not in {required, required | {"asset_source"}}:
+        allowed = required | {"asset_source"}
+        template_keys = set(template) if isinstance(template, dict) else set()
+        if not isinstance(template, dict) or (
+            template_keys != required and template_keys != allowed
+        ):
             errors.append(f"规则 {rule.id} 的动作模板字段不完整或含未授权字段")
             continue
         structure_type = template.get("structure_type")
