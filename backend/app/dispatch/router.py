@@ -209,6 +209,28 @@ def start_hydraulic_preview(
         raise _hydraulic_error(exc) from exc
 
 
+@router.post(
+    "/plans/{plan_id}/hydraulic-run",
+    response_model=HydraulicPreviewJobRecord,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Run a frozen Gate/Pump hydraulic calculation",
+)
+def start_frozen_hydraulic_calculation(
+    plan_id: int,
+    session: SessionDependency,
+) -> HydraulicPreviewJobRecord:
+    """Start the exact immutable D-Flow FM + D-RTC/FBC calculation contract."""
+
+    try:
+        return hydraulic_service.start_frozen_hydraulic_calculation(session, plan_id)
+    except (
+        hydraulic_service.HydraulicDispatchNotFoundError,
+        hydraulic_service.HydraulicDispatchStateError,
+    ) as exc:
+        session.rollback()
+        raise _hydraulic_error(exc) from exc
+
+
 @router.post("/plans/{plan_id}/validate", response_model=ValidationReport)
 def validate_plan(plan_id: int, session: SessionDependency) -> ValidationReport:
     """校验计划及跨版本引用。"""

@@ -33,7 +33,7 @@ hydraulic_v3 draft -- POST .../validate --> hydraulic_v3 validated
                                                v
                                      frozen hydraulic_v3
                                                |
-                                               | POST .../hydraulic-preview
+                                               | POST .../hydraulic-run
                                                v
                                异步 queued/running/success
 ```
@@ -83,6 +83,18 @@ Runtime unavailable 可以与静态合同已冻结同时存在：这是可审计
 运行时缺失时仍返回 HTTP 409 `DFLOW_RUNTIME_BLOCKED`；registry 漂移时返回 `DRTC_COMPILER_BLOCKED`。门禁通过后创建不可变 `controlled_hydraulic_preview` 任务与 `hydraulic_preview` 运行记录，交给现有 Celery `hydraulic-1d` 队列。Worker 用执行 lease/CAS 处理 heartbeat、取消、超时、重投和孤儿恢复；成功时原子持久化 H/Q、Gate requested/resolved/applied、Pump requested/resolved/native Capacity/actual Q/intake/outlet/head、控制事件、四组件 provenance 与质量平衡。
 
 前端轮询任务状态并链接到运行详情；规则兼容逐条展示，能力表直接展示后端返回的 supported/unsupported subset，且固定显示 `Multi-rule priority: Not verified`。Pump Capacity target 与 actual Q 分图展示，结果 KPI 以 actual Q 积分转输水量，不计算无证据的 kWh。任何失败都不得降级到 MASCARET、静态 replay 或 Python 自制水力方程。
+
+### 方案工作区的一键运行
+
+`POST /api/v1/dispatch/plans/{plan_id}/hydraulic-run` 是水动力模拟工作区的无请求体便捷入口。
+它只接受已冻结、完整性通过的 `hydraulic_v3` 计划，从快照读取初始执行器状态、Observation
+binding、采样间隔、runtime mode 和 timeout，再交给同一 `hydraulic-preview` 服务逐项复核。
+因此页面不能借此修改开度、启停、规则、观测点、运行模式或超时；任何快照不完整、hash 不符、
+Runtime 不可用或已超出受控子集的情形都继续返回明确的 fail-closed 错误。
+
+成功任务会同时写入统一断面 H/Q 和 Gate/Pump `StructureResult`。方案成果页按共同末时刻显示
+沿程断面与结构响应，但首屏固定标注 `SYNTHETIC_NUMERICAL_ONLY`。这一入口不是正式 Dispatch
+`/runs`，也不构成真实工程验证、生产发布或设备控制授权。
 
 ## 正式 Dispatch `/runs` 继续关闭
 

@@ -16,6 +16,7 @@ from app.gis.models import (
     HydraulicTaskSectionResult,
     SimulationCase,
     SimulationTask,
+    StructureResult,
 )
 from app.hydraulic.models import HydraulicCrossSection, HydraulicProductionRun
 from app.hydraulic.production.gate import assert_production_gate
@@ -29,6 +30,7 @@ from app.model_engine.schemas import (
     ResultSectionOption,
     SimulationResultOverviewResponse,
     SimulationResultOverviewSection,
+    SimulationResultOverviewStructure,
     SimulationResultResponse,
     SimulationTaskCreate,
     SimulationTaskRecord,
@@ -49,13 +51,18 @@ from model.hydraulic_1d import (
     DEFAULT_HYDRAULIC_1D_ENGINE_VERSION,
 )
 from model.hydraulic_1d.engine import Hydraulic1DExecutionContext
+from model.hydraulic_1d.controlled import ControlledHydraulic1DRun
 from model.hydraulic_1d.errors import (
     Hydraulic1DCancelled,
     Hydraulic1DError,
     Hydraulic1DValidationError,
 )
 from model.hydraulic_1d.factory import create_hydraulic_1d_engine
-from model.hydraulic_1d.registry import task_engine_provenance
+from model.hydraulic_1d.registry import (
+    CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA,
+    DFLOW_FM_ENGINE_ID,
+    task_engine_provenance,
+)
 from model.provenance import snapshot_hash
 
 
@@ -96,6 +103,31 @@ def parse_frozen_task_model(task: SimulationTask) -> Hydraulic1DModel:
             field_path="simulation_task.input_snapshot_hash",
         )
     return Hydraulic1DModel.parse_snapshot(task.input_snapshot)
+
+
+def parse_result_task_model(task: SimulationTask) -> Hydraulic1DModel:
+    """Return the hydraulic model behind either supported result-producing route."""
+
+    if task.input_schema_version == HYDRAULIC_1D_INPUT_SCHEMA:
+        return parse_frozen_task_model(task)
+    if task.input_schema_version != CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA:
+        raise TaskStateError("LEGACY_ENGINE_RETIRED")
+    if not isinstance(task.input_snapshot, Mapping) or not isinstance(
+        task.input_snapshot_hash, str
+    ):
+        raise TaskStateError("controlled task snapshot or digest is missing")
+    observed_hash = snapshot_hash(task.input_snapshot)
+    if not compare_digest(observed_hash, task.input_snapshot_hash):
+        raise TaskStateError("controlled task snapshot digest mismatch")
+    return ControlledHydraulic1DRun.model_validate(task.input_snapshot).hydraulic_model
+
+
+def _result_engine(task: SimulationTask) -> tuple[str, str]:
+    """Resolve the public engine identity without exposing internal solver IDs."""
+
+    if task.input_schema_version == CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA:
+        return DFLOW_FM_ENGINE_ID, task.engine_version or "unknown"
+    return DEFAULT_HYDRAULIC_1D_ENGINE_ID, DEFAULT_HYDRAULIC_1D_ENGINE_VERSION
 
 
 def _snapshot_summary(snapshot: Mapping[str, Any]) -> dict[str, Any]:
@@ -631,7 +663,10 @@ def get_result(
         raise TaskNotFoundError("simulation task does not exist")
     if task.status != "success":
         raise TaskStateError("task result is available only after success")
-    if task.input_schema_version != HYDRAULIC_1D_INPUT_SCHEMA:
+    if task.input_schema_version not in {
+        HYDRAULIC_1D_INPUT_SCHEMA,
+        CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA,
+    }:
         raise TaskStateError("LEGACY_ENGINE_RETIRED")
     options_query = (
         select(HydraulicTaskSectionResult)
@@ -661,15 +696,16 @@ def get_result(
         raise TaskNotFoundError("selected Cross Section has no result for this task")
     rows = [row for row in all_rows if row.hydraulic_cross_section_id == selected_id]
     rows.sort(key=lambda item: item.time_seconds)
-    snapshot = parse_frozen_task_model(task)
+    snapshot = parse_result_task_model(task)
+    engine, engine_version = _result_engine(task)
     option = option_by_id[selected_id]
     return SimulationResultResponse(
         task_id=task.id,
         status=task.status,
         simulation_id=snapshot.simulation_id,
         scenario_id=snapshot.scenario_id,
-        engine=DEFAULT_HYDRAULIC_1D_ENGINE_ID,
-        engine_version=DEFAULT_HYDRAULIC_1D_ENGINE_VERSION,
+        engine=engine,
+        engine_version=engine_version,
         section_id=option.section_id,
         section_code=option.section_code,
         branch_id=option.branch_id,
@@ -697,7 +733,10 @@ def get_result_overview(session: Session, task_id: int) -> SimulationResultOverv
         raise TaskNotFoundError("simulation task does not exist")
     if task.status != "success":
         raise TaskStateError("task result is available only after success")
-    if task.input_schema_version != HYDRAULIC_1D_INPUT_SCHEMA:
+    if task.input_schema_version not in {
+        HYDRAULIC_1D_INPUT_SCHEMA,
+        CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA,
+    }:
         raise TaskStateError("LEGACY_ENGINE_RETIRED")
     rows = list(
         session.scalars(
@@ -720,18 +759,80 @@ def get_result_overview(session: Session, task_id: int) -> SimulationResultOverv
     final_rows.sort(
         key=lambda row: (row.chainage_m, row.hydraulic_cross_section_id)
     )
-    snapshot = parse_frozen_task_model(task)
-    configured_mode = task.config.get("calculation_mode") if isinstance(task.config, Mapping) else None
-    calculation_mode = configured_mode if configured_mode in {"steady", "unsteady"} else None
+    snapshot = parse_result_task_model(task)
+    engine, engine_version = _result_engine(task)
+    controlled = task.input_schema_version == CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA
+    task_config = getattr(task, "config", None)
+    configured_mode = (
+        task_config.get("calculation_mode") if isinstance(task_config, Mapping) else None
+    )
+    calculation_mode = (
+        "unsteady"
+        if controlled
+        else configured_mode if configured_mode in {"steady", "unsteady"} else None
+    )
+    structure_summary: list[SimulationResultOverviewStructure] = []
+    if controlled:
+        structure_rows = list(
+            session.scalars(
+                select(StructureResult)
+                .where(StructureResult.task_id == task_id)
+                .order_by(
+                    StructureResult.structure_type,
+                    StructureResult.structure_id,
+                    StructureResult.time_seconds,
+                )
+            ).all()
+        )
+        if not structure_rows:
+            raise TaskStateError(
+                "controlled task has no authoritative Gate/Pump result"
+            )
+        if any(row.structure_type not in {"gate", "pump"} for row in structure_rows):
+            raise TaskStateError("controlled task has an unsupported Structure result type")
+        structure_ids = {
+            (row.structure_type, row.structure_id) for row in structure_rows
+        }
+        final_structure_rows = [
+            row for row in structure_rows if float(row.time_seconds) == final_time
+        ]
+        if {
+            (row.structure_type, row.structure_id) for row in final_structure_rows
+        } != structure_ids:
+            raise TaskStateError(
+                "controlled result does not share one complete final Structure time"
+            )
+        structure_summary = [
+            SimulationResultOverviewStructure(
+                structure_type=row.structure_type,
+                structure_id=row.structure_id,
+                time_seconds=row.time_seconds,
+                requested_value=row.requested_value,
+                resolved_value=row.resolved_value,
+                applied_value=row.actual_value,
+                flow_m3s=row.flow,
+                upstream_water_level_m=row.upstream_level,
+                downstream_water_level_m=row.downstream_level,
+                head_difference_m=row.head_difference,
+                native_applied_capacity_m3s=row.native_applied_capacity,
+                actual_discharge_m3s=row.actual_discharge,
+                pump_head_m=row.pump_head,
+                pump_reduction_factor=row.pump_reduction_factor,
+                pump_actual_stage=row.pump_actual_stage,
+                regime=row.regime,
+            )
+            for row in final_structure_rows
+        ]
     return SimulationResultOverviewResponse(
         task_id=task.id,
         case_id=task.case_id,
         dataset_version_id=task.dataset_version_id,
         status=task.status,
+        task_kind=getattr(task, "task_kind", "standard_1d"),
         simulation_id=snapshot.simulation_id,
         scenario_id=snapshot.scenario_id,
-        engine=DEFAULT_HYDRAULIC_1D_ENGINE_ID,
-        engine_version=DEFAULT_HYDRAULIC_1D_ENGINE_VERSION,
+        engine=engine,
+        engine_version=engine_version,
         calculation_mode=calculation_mode,
         evidence_class=task.evidence_class,
         final_time_seconds=final_time,
@@ -757,6 +858,7 @@ def get_result_overview(session: Session, task_id: int) -> SimulationResultOverv
             )
             for row in final_rows
         ],
+        structure_summary=structure_summary,
         diagnostics=task.diagnostics,
     )
 
@@ -775,6 +877,7 @@ __all__ = [
     "list_tasks",
     "persist_hydraulic_1d_result",
     "parse_frozen_task_model",
+    "parse_result_task_model",
     "preview_model",
     "reset_task_for_manual_retry",
     "retry_block_reason",

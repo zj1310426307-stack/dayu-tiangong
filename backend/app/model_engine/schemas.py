@@ -176,6 +176,27 @@ class SimulationResultOverviewSection(BaseModel):
     froude_number: FiniteFloat | None = Field(default=None, ge=0)
 
 
+class SimulationResultOverviewStructure(BaseModel):
+    """Expose one Gate/Pump state at the common final hydraulic time."""
+
+    structure_type: Literal["gate", "pump"]
+    structure_id: int = Field(gt=0)
+    time_seconds: FiniteFloat = Field(ge=0)
+    requested_value: FiniteFloat | None = None
+    resolved_value: FiniteFloat | None = None
+    applied_value: FiniteFloat | None = None
+    flow_m3s: FiniteFloat
+    upstream_water_level_m: FiniteFloat | None = None
+    downstream_water_level_m: FiniteFloat | None = None
+    head_difference_m: FiniteFloat | None = None
+    native_applied_capacity_m3s: FiniteFloat | None = None
+    actual_discharge_m3s: FiniteFloat | None = None
+    pump_head_m: FiniteFloat | None = None
+    pump_reduction_factor: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    pump_actual_stage: int | None = Field(default=None, ge=0)
+    regime: str | None = None
+
+
 class SimulationResultOverviewResponse(BaseModel):
     """Return a successful task as a directly viewable engineering scheme result."""
 
@@ -183,6 +204,7 @@ class SimulationResultOverviewResponse(BaseModel):
     case_id: int
     dataset_version_id: int
     status: TaskStatus
+    task_kind: Literal["standard_1d", "controlled_hydraulic_preview"] = "standard_1d"
     simulation_id: str
     scenario_id: str
     engine: str
@@ -194,6 +216,9 @@ class SimulationResultOverviewResponse(BaseModel):
     end_time: datetime | None
     section_summary: list[SimulationResultOverviewSection] = Field(
         min_length=1, max_length=5000
+    )
+    structure_summary: list[SimulationResultOverviewStructure] = Field(
+        default_factory=list, max_length=1000
     )
     diagnostics: dict[str, Any] | None
 

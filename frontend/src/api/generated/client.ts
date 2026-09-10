@@ -2955,6 +2955,7 @@ export interface SimulationResultOverviewResponse {
   "case_id": number;
   "dataset_version_id": number;
   "status": "pending" | "queued" | "running" | "cancel_requested" | "cancelled" | "success" | "failed";
+  "task_kind"?: "standard_1d" | "controlled_hydraulic_preview";
   "simulation_id": string;
   "scenario_id": string;
   "engine": string;
@@ -2965,6 +2966,7 @@ export interface SimulationResultOverviewResponse {
   "created_time": string;
   "end_time": string | null;
   "section_summary": Array<SimulationResultOverviewSection>;
+  "structure_summary"?: Array<SimulationResultOverviewStructure>;
   "diagnostics": Record<string, unknown> | null;
 }
 
@@ -2982,6 +2984,25 @@ export interface SimulationResultOverviewSection {
   "flow_area_m2"?: number | null;
   "top_width_m"?: number | null;
   "froude_number"?: number | null;
+}
+
+export interface SimulationResultOverviewStructure {
+  "structure_type": "gate" | "pump";
+  "structure_id": number;
+  "time_seconds": number;
+  "requested_value"?: number | null;
+  "resolved_value"?: number | null;
+  "applied_value"?: number | null;
+  "flow_m3s": number;
+  "upstream_water_level_m"?: number | null;
+  "downstream_water_level_m"?: number | null;
+  "head_difference_m"?: number | null;
+  "native_applied_capacity_m3s"?: number | null;
+  "actual_discharge_m3s"?: number | null;
+  "pump_head_m"?: number | null;
+  "pump_reduction_factor"?: number | null;
+  "pump_actual_stage"?: number | null;
+  "regime"?: string | null;
 }
 
 export interface SimulationResultResponse {
@@ -3698,6 +3719,7 @@ export const previewDispatchSchedule = (planId: number, body: DispatchSchedulePr
 export const compileDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPlanCompileReport>(`/api/v1/dispatch/plans/${planId}/hydraulic-compile-check`, jsonOptions('POST', body), baseUrl);
 export const freezeDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPlanFreezeResponse>(`/api/v1/dispatch/plans/${planId}/hydraulic-freeze`, jsonOptions('POST', body), baseUrl);
 export const previewDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPreviewJobRecord>(`/api/v1/dispatch/plans/${planId}/hydraulic-preview`, jsonOptions('POST', body), baseUrl);
+export const runFrozenDispatchHydraulicPlan = (planId: number, baseUrl = '') => requestJson<HydraulicPreviewJobRecord>(`/api/v1/dispatch/plans/${planId}/hydraulic-run`, { method: 'POST' }, baseUrl);
 export const listDispatchActions = (planId: number, baseUrl = '') => requestJson<Array<DispatchActionRecord>>(`/api/v1/dispatch/plans/${planId}/actions`, {}, baseUrl);
 export const createDispatchAction = (planId: number, body: DispatchActionCreate, baseUrl = '') => requestJson<DispatchActionRecord>(`/api/v1/dispatch/plans/${planId}/actions`, jsonOptions('POST', body), baseUrl);
 export const updateDispatchAction = (actionId: number, body: DispatchActionUpdate, baseUrl = '') => requestJson<DispatchActionRecord>(`/api/v1/dispatch/actions/${actionId}`, jsonOptions('PATCH', body), baseUrl);

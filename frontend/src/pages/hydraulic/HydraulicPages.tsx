@@ -35,10 +35,13 @@ import {
   getHydraulicResult,
   getHydraulicResultOverview,
   getSimulationCases,
+  listDispatchPlans,
   listHydraulicTasks,
   listPublishedScenarioResults,
   previewHydraulicModel,
   retryHydraulicTask,
+  runFrozenDispatchHydraulicPlan,
+  type DispatchPlanRecord,
   type Hydraulic1DReadinessResponse,
   type PublishedScenarioBundle,
   type PublishedScenarioResult,
@@ -46,6 +49,7 @@ import {
   type SimulationResultResponse,
   type SimulationResultOverviewResponse,
   type SimulationResultOverviewSection,
+  type SimulationResultOverviewStructure,
   type SimulationTaskCreate,
   type SimulationTaskRecord,
 } from '../../api/generated/client';
@@ -158,6 +162,9 @@ export function HydraulicConfigPage() {
   const [previewing, setPreviewing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [approving, setApproving] = useState(false);
+  const [controlledPlans, setControlledPlans] = useState<DispatchPlanRecord[]>([]);
+  const [selectedControlledPlanId, setSelectedControlledPlanId] = useState<number>();
+  const [controlledSubmitting, setControlledSubmitting] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -182,6 +189,28 @@ export function HydraulicConfigPage() {
       .finally(() => { if (!cancelled) setLoadingCases(false); });
     return () => { cancelled = true; };
   }, [datasetVersionId, form]);
+
+  useEffect(() => {
+    if (!datasetVersionId) {
+      setControlledPlans([]);
+      setSelectedControlledPlanId(undefined);
+      return;
+    }
+    let cancelled = false;
+    void listDispatchPlans({ dataset_version_id: datasetVersionId, limit: 200 })
+      .then((page) => {
+        if (cancelled) return;
+        const eligible = page.items.filter(
+          (item) => item.snapshot_target === 'hydraulic_v3' && item.status === 'frozen',
+        );
+        setControlledPlans(eligible);
+        setSelectedControlledPlanId(eligible[0]?.id);
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) setError(reason instanceof Error ? reason.message : '闸泵水力方案加载失败');
+      });
+    return () => { cancelled = true; };
+  }, [datasetVersionId]);
 
   useEffect(() => {
     setReadiness(undefined);
@@ -237,6 +266,22 @@ export function HydraulicConfigPage() {
     }
   };
 
+  /** Start only the exact Gate/Pump contract already frozen by the operator. */
+  const submitControlledHydraulic = async () => {
+    if (!selectedControlledPlanId) return;
+    setControlledSubmitting(true);
+    setError('');
+    try {
+      const job = await runFrozenDispatchHydraulicPlan(selectedControlledPlanId);
+      message.success(`闸泵联合水动力任务 #${job.job_id} 已进入计算队列`);
+      navigate(`/dispatch/runs/${job.run_id}?datasetVersionId=${datasetVersionId}`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '闸泵联合水动力任务创建失败');
+    } finally {
+      setControlledSubmitting(false);
+    }
+  };
+
   /** Promote the current editable version after QA so the Standard 1D gate can build an authoritative snapshot. */
   const approveCurrentVersion = async () => {
     if (!datasetVersionId || currentVersion?.is_read_only) return;
@@ -273,9 +318,9 @@ export function HydraulicConfigPage() {
   return (
     <div className="data-page hydraulic-page">
       <HydraulicHeader
-        eyebrow="STANDARD 1D / MASCARET"
-        title="标准一维水动力模拟"
-        description="使用大禹统一河网、断面、糙率与边界数据建模，通过 MASCARET Adapter 独立运行并回写统一结果。"
+        eyebrow="HYDRAULIC 1D / MULTI-ENGINE"
+        title="一维水动力模拟"
+        description="标准河道计算使用 MASCARET；含闸泵控制的联合计算使用冻结的 D-Flow FM + DIMR/FBC 合同，结果统一回写并进入方案成果。"
         action={<Button onClick={() => navigate('/hydraulic/tasks')}>查看任务监控</Button>}
       />
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}
@@ -456,6 +501,60 @@ export function HydraulicConfigPage() {
           </Space>
         </Form>
       </Card>
+      <Card
+        className="data-card hydraulic-config-card"
+        title="闸泵联合水动力计算"
+        extra={<Tag color="processing">D-Flow FM · DIMR/FBC</Tag>}
+      >
+        <Alert
+          className="data-alert"
+          showIcon
+          type="warning"
+          message="闸泵会作为原生水工结构进入水动力方程"
+          description="当前开放的是已通过合成数值门禁的受控子集：一个闸门、一个泵站或闸泵各一个。必须先在闸泵调度中完成参数、初始状态、动作/规则、观测绑定、校验和冻结；真实工程率定及设备控制仍未开放。"
+        />
+        <Row gutter={[16, 16]} align="bottom">
+          <Col xs={24} lg={14}>
+            <Text type="secondary">已冻结的闸泵水力方案</Text>
+            <Select
+              className="hydraulic-select"
+              value={selectedControlledPlanId}
+              onChange={setSelectedControlledPlanId}
+              placeholder="当前数据版本暂无可运行的闸泵水力方案"
+              options={controlledPlans.map((plan) => ({
+                value: plan.id,
+                label: `${plan.name} · v${plan.version} · #${plan.id} · ${plan.action_count} 动作 / ${plan.rule_count} 规则`,
+              }))}
+            />
+          </Col>
+          <Col xs={24} lg={10}>
+            <Space wrap>
+              <Button onClick={() => navigate(`/dispatch/plans?datasetVersionId=${datasetVersionId}`)}>
+                配置闸泵方案
+              </Button>
+              <Button
+                type="primary"
+                size="large"
+                icon={<PlayCircleOutlined />}
+                loading={controlledSubmitting}
+                disabled={!selectedControlledPlanId}
+                onClick={() => void submitControlledHydraulic()}
+              >
+                运行闸泵联合水动力
+              </Button>
+            </Space>
+          </Col>
+        </Row>
+        {controlledPlans.length === 0 && (
+          <Alert
+            className="data-alert"
+            type="info"
+            showIcon
+            message="尚无已冻结的 hydraulic_v3 闸泵方案"
+            description="平台不会猜测闸门初始开度、泵站启停状态或控制观测点；请先建立并冻结明确的闸泵水力方案。"
+          />
+        )}
+      </Card>
     </div>
   );
 }
@@ -512,7 +611,7 @@ export function HydraulicTasksPage() {
       width: 220,
       render: (_, task) => (
         <Space direction="vertical" size={0}>
-          <Text>Standard 1D</Text>
+          <Text>{task.task_kind === 'controlled_hydraulic_preview' ? '闸泵联合 1D' : 'Standard 1D'}</Text>
           <Text type="secondary">{task.solver_id ?? HYDRAULIC_ENGINE} {task.engine_version ?? 'v9.1.1'} · {task.runtime_adapter_id ?? '—'}</Text>
         </Space>
       ),
@@ -555,9 +654,9 @@ export function HydraulicTasksPage() {
   return (
     <div className="data-page hydraulic-page">
       <HydraulicHeader
-        eyebrow="STANDARD 1D / TASKS"
-        title="Standard 1D 任务监控"
-        description="跟踪 MASCARET 任务的排队、执行、取消、成功与失败状态，保留冻结输入和运行来源。"
+        eyebrow="HYDRAULIC 1D / TASKS"
+        title="一维水动力任务监控"
+        description="统一跟踪 MASCARET 标准计算与 D-Flow FM 闸泵联合计算，保留冻结输入、引擎身份和完整运行来源。"
         action={(
           <Space>
             <Button type="primary" onClick={() => navigate('/hydraulic/config')}>新建模拟</Button>
@@ -956,6 +1055,20 @@ export function HydraulicScenarioResultsPage() {
     { title: '过流面积 (m²)', dataIndex: 'flow_area_m2', width: 130, render: (value: number | null | undefined) => value?.toFixed(2) ?? '—' },
     { title: 'Froude', dataIndex: 'froude_number', width: 95, render: (value: number | null | undefined) => value?.toFixed(4) ?? '—' },
   ];
+  const structureColumns: ColumnsType<SimulationResultOverviewStructure> = [
+    { title: '类型', dataIndex: 'structure_type', width: 90, render: (value: string) => value === 'gate' ? '闸门' : '泵站' },
+    { title: '结构 ID', dataIndex: 'structure_id', width: 100, render: (value: number) => `#${value}` },
+    { title: '请求值', dataIndex: 'requested_value', width: 105, render: (value: number | null | undefined) => value?.toFixed(3) ?? '—' },
+    { title: '约束后值', dataIndex: 'resolved_value', width: 110, render: (value: number | null | undefined) => value?.toFixed(3) ?? '—' },
+    { title: '原生应用值', dataIndex: 'applied_value', width: 115, render: (value: number | null | undefined) => value?.toFixed(3) ?? '—' },
+    { title: '实际流量 (m³/s)', dataIndex: 'flow_m3s', width: 145, render: (value: number) => value.toFixed(3) },
+    { title: '上游/进水水位 (m)', dataIndex: 'upstream_water_level_m', width: 155, render: (value: number | null | undefined) => value?.toFixed(3) ?? '—' },
+    { title: '下游/出水水位 (m)', dataIndex: 'downstream_water_level_m', width: 155, render: (value: number | null | undefined) => value?.toFixed(3) ?? '—' },
+    { title: '水头差 (m)', dataIndex: 'head_difference_m', width: 115, render: (value: number | null | undefined) => value?.toFixed(3) ?? '—' },
+    { title: '泵扬程 (m)', dataIndex: 'pump_head_m', width: 115, render: (value: number | null | undefined) => value?.toFixed(3) ?? '—' },
+    { title: '原生级数', dataIndex: 'pump_actual_stage', width: 100, render: (value: number | null | undefined) => value ?? '—' },
+    { title: '流态', dataIndex: 'regime', width: 120, render: (value: string | null | undefined) => value ?? '—' },
+  ];
 
   return (
     <div className="data-page hydraulic-page scenario-results-page">
@@ -982,12 +1095,13 @@ export function HydraulicScenarioResultsPage() {
               placeholder="暂无成功任务"
               options={successfulTasks.map((task) => ({
                 value: task.id,
-                label: `任务 #${task.id} · 方案 #${task.case_id} · ${new Date(task.created_time).toLocaleString()}`,
+                label: `任务 #${task.id} · ${task.task_kind === 'controlled_hydraulic_preview' ? '闸泵联合' : '标准一维'} · 方案 #${task.case_id} · ${new Date(task.created_time).toLocaleString()}`,
               }))}
             />
           </Col>
           <Col xs={24} lg={12} className="scenario-classification">
             {taskResult && <Tag color="success">计算完成</Tag>}
+            {taskResult?.task_kind === 'controlled_hydraulic_preview' && <Tag color="processing">闸泵联合水动力</Tag>}
             {taskResult?.calculation_mode && <Tag color="cyan">{taskResult.calculation_mode === 'steady' ? '恒定流' : '非恒定流'}</Tag>}
             {taskResult && <Tag>{taskResult.engine} {taskResult.engine_version}</Tag>}
             {taskResult && <Button size="small" onClick={() => navigate(`/hydraulic/results?taskId=${taskResult.task_id}`)}>查看单断面时序</Button>}
@@ -1006,6 +1120,15 @@ export function HydraulicScenarioResultsPage() {
       )}
       {taskResult && taskStats && (
         <>
+          {taskResult.task_kind === 'controlled_hydraulic_preview' && (
+            <Alert
+              className="data-alert"
+              type="warning"
+              showIcon
+              message="D-Flow FM 闸泵联合计算 · 合成数值证据"
+              description="断面 H/Q 与闸泵实际响应来自同一次 DIMR/FBC 耦合运行；结果可用于软件与方案预演，但尚不代表真实工程率定、生产资格或设备控制授权。"
+            />
+          )}
           {taskBoundaryWarnings.length > 0 && (
             <Alert
               className="data-alert"
@@ -1040,6 +1163,18 @@ export function HydraulicScenarioResultsPage() {
               scroll={{ x: 1050, y: 520 }}
             />
           </Card>
+          {(taskResult.structure_summary ?? []).length > 0 && (
+            <Card className="data-card" title={`任务 #${taskResult.task_id} · 闸泵末时刻水力响应`}>
+              <Table
+                rowKey={(row) => `${row.structure_type}-${row.structure_id}`}
+                size="small"
+                columns={structureColumns}
+                dataSource={taskResult.structure_summary}
+                pagination={false}
+                scroll={{ x: 1420 }}
+              />
+            </Card>
+          )}
         </>
       )}
       {error && <Alert className="data-alert" type="error" showIcon message={error} />}

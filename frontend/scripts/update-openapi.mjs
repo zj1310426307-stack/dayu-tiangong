@@ -75,6 +75,7 @@ const requiredPaths = [
   '/api/v1/dispatch/plans/{plan_id}/hydraulic-compile-check',
   '/api/v1/dispatch/plans/{plan_id}/hydraulic-freeze',
   '/api/v1/dispatch/plans/{plan_id}/hydraulic-preview',
+  '/api/v1/dispatch/plans/{plan_id}/hydraulic-run',
   '/api/v1/dispatch/plans/{plan_id}/runs', '/api/v1/dispatch/runs',
   '/api/v1/dispatch/runs/{run_id}', '/api/v1/dispatch/runs/{run_id}/comparison',
   '/api/v1/optimization/tasks', '/api/v1/optimization/tasks/{task_id}',
@@ -605,6 +606,7 @@ export const previewDispatchSchedule = (planId: number, body: DispatchSchedulePr
 export const compileDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPlanCompileReport>(\`/api/v1/dispatch/plans/\${planId}/hydraulic-compile-check\`, jsonOptions('POST', body), baseUrl);
 export const freezeDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPlanFreezeResponse>(\`/api/v1/dispatch/plans/\${planId}/hydraulic-freeze\`, jsonOptions('POST', body), baseUrl);
 export const previewDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPreviewJobRecord>(\`/api/v1/dispatch/plans/\${planId}/hydraulic-preview\`, jsonOptions('POST', body), baseUrl);
+export const runFrozenDispatchHydraulicPlan = (planId: number, baseUrl = '') => requestJson<HydraulicPreviewJobRecord>(\`/api/v1/dispatch/plans/\${planId}/hydraulic-run\`, { method: 'POST' }, baseUrl);
 export const listDispatchActions = (planId: number, baseUrl = '') => requestJson<Array<DispatchActionRecord>>(\`/api/v1/dispatch/plans/\${planId}/actions\`, {}, baseUrl);
 export const createDispatchAction = (planId: number, body: DispatchActionCreate, baseUrl = '') => requestJson<DispatchActionRecord>(\`/api/v1/dispatch/plans/\${planId}/actions\`, jsonOptions('POST', body), baseUrl);
 export const updateDispatchAction = (actionId: number, body: DispatchActionUpdate, baseUrl = '') => requestJson<DispatchActionRecord>(\`/api/v1/dispatch/actions/\${actionId}\`, jsonOptions('PATCH', body), baseUrl);
