@@ -18,7 +18,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from app.dispatch.assets import AssetKey, dispatch_asset_keys
+from app.dispatch.assets import (
+    AssetKey,
+    action_asset_id,
+    dispatch_asset_keys,
+    template_uses_unified_structure,
+)
 from app.gis.models import DispatchAction, DispatchPlan, DispatchRule, Gate, Pump
 from app.hydraulic.models import (
     HydraulicBranch,
@@ -183,6 +188,21 @@ class _LocatedValue:
     invalid_provenance: str | None = None
 
 
+@dataclass(frozen=True)
+class _UnifiedDispatchAsset:
+    """Compatibility shell for a direct unified structure.
+
+    It intentionally exposes no legacy engineering values.  The normalizer can
+    therefore reuse the legacy-path parser while requiring every value from the
+    solver-neutral structure or its scenario override.
+    """
+
+    id: int
+
+    def __getattr__(self, _name: str) -> None:
+        return None
+
+
 _GENERAL_GEOMETRY_FIELDS = (
     "upstream_1_width_m",
     "upstream_1_level_m",
@@ -236,19 +256,32 @@ def normalize_plan_hydraulic_assets(
     gates = _load_legacy_rows(session, Gate, gate_ids, plan.dataset_version_id)
     pumps = _load_legacy_rows(session, Pump, pump_ids, plan.dataset_version_id)
 
+    direct_structure_ids = {
+        int(item.hydraulic_structure_id)
+        for item in actions
+        if getattr(item, "hydraulic_structure_id", None) is not None
+    } | {
+        int(item.action_template["structure_id"])
+        for item in rules
+        if template_uses_unified_structure(item.action_template)
+        and isinstance(item.action_template.get("structure_id"), int)
+    }
     mapping_filters = []
     if gate_ids:
         mapping_filters.append(HydraulicStructure.legacy_gate_id.in_(gate_ids))
     if pump_ids:
         mapping_filters.append(HydraulicStructure.legacy_pump_id.in_(pump_ids))
     structures: list[HydraulicStructure] = []
-    if mapping_filters:
+    if mapping_filters or direct_structure_ids:
+        filters = [*mapping_filters]
+        if direct_structure_ids:
+            filters.append(HydraulicStructure.id.in_(direct_structure_ids))
         structures = list(
             session.scalars(
                 select(HydraulicStructure)
                 .where(
                     HydraulicStructure.dataset_version_id == plan.dataset_version_id,
-                    or_(*mapping_filters),
+                    or_(*filters),
                 )
                 .order_by(HydraulicStructure.id)
             ).all()
@@ -359,6 +392,21 @@ def _normalize_loaded_assets(
             mapped_rows[("gate", int(row.legacy_gate_id))].append(row)
         if row.legacy_pump_id is not None:
             mapped_rows[("pump", int(row.legacy_pump_id))].append(row)
+    direct_structure_ids = {
+        int(item.hydraulic_structure_id)
+        for item in actions
+        if getattr(item, "hydraulic_structure_id", None) is not None
+    } | {
+        int(item.action_template["structure_id"])
+        for item in rules
+        if template_uses_unified_structure(item.action_template)
+        and isinstance(item.action_template.get("structure_id"), int)
+    }
+    for row in structures:
+        if int(row.id) in direct_structure_ids and row.structure_type in {"gate", "pump"}:
+            key = (str(row.structure_type), int(row.id))
+            mapped_rows[key].append(row)
+            legacy_rows[key].append(_UnifiedDispatchAsset(id=int(row.id)))
 
     scenario_rows: dict[int, list[HydraulicStructureScenario]] = defaultdict(list)
     for row in scenarios:
@@ -554,7 +602,7 @@ def _command_types(
 ) -> dict[AssetKey, tuple[str, ...]]:
     values: dict[AssetKey, set[str]] = defaultdict(set)
     for action in actions:
-        asset_id = action.gate_id if action.structure_type == "gate" else action.pump_id
+        asset_id = action_asset_id(action)
         if asset_id is not None:
             values[(action.structure_type, int(asset_id))].add(str(action.command_type))
     for rule in rules:
@@ -876,7 +924,11 @@ def _gate_control_asset(
         )
         if parsed is not None:
             values[field_name], provenance[field_name] = parsed
+    availability_location = _located_parameter(operation_sources, "availability")
     status = getattr(legacy, "status", None)
+    if availability_location is not None:
+        raw = _plain_value(availability_location)
+        status = raw if isinstance(raw, str) else status
     if status not in {"online", "offline", "maintenance", "fault"}:
         _add_issue(
             issues,
@@ -888,7 +940,10 @@ def _gate_control_asset(
         )
     else:
         values["availability"] = status
-        provenance["availability"] = f"SOURCE_DATA:gate[{legacy.id}].status"
+        provenance["availability"] = (
+            f"SOURCE_DATA:gate[{legacy.id}].status"
+            if availability_location is None else f"{availability_location.status.value}:{availability_location.evidence}"
+        )
     if len(values) != 6:
         return None
     minimum_opening = float(values["minimum_opening_m"])

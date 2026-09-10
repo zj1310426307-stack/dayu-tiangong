@@ -839,6 +839,7 @@ export interface DispatchActionCreate {
   "structure_type": "gate" | "pump";
   "gate_id"?: number | null;
   "pump_id"?: number | null;
+  "hydraulic_structure_id"?: number | null;
   "command_type": "gate_opening_m" | "gate_opening_ratio" | "pump_enabled" | "pump_unit_count" | "pump_target_flow";
   "target_value": number;
   "interpolation"?: "step" | "linear";
@@ -852,6 +853,7 @@ export interface DispatchActionRecord {
   "structure_type": "gate" | "pump";
   "gate_id"?: number | null;
   "pump_id"?: number | null;
+  "hydraulic_structure_id"?: number | null;
   "command_type": "gate_opening_m" | "gate_opening_ratio" | "pump_enabled" | "pump_unit_count" | "pump_target_flow";
   "target_value": number;
   "interpolation"?: "step" | "linear";

@@ -49,6 +49,18 @@ hydraulic_v3 draft -- POST .../validate --> hydraulic_v3 validated
 
 `POST /api/v1/dispatch/plans/{plan_id}/hydraulic-compile-check` 只接受已校验的显式 v3 clone。请求使用严格白名单合同，包括每个执行器的显式初始状态、观测绑定、观测采样间隔、运行模式、超时与固定为 `true` 的 `synthetic_fixture`。重复设施初态、重复观测身份或额外字段均被拒绝。
 
+### 统一水工建筑物输入
+
+水动力数据管理模块中的 `hydraulic.structure` 是新建调度动作和规则的唯一资产来源：页面只列出
+`structure_type=gate|pump` 的记录，并把 `hydraulic_structure_id` 写入人工动作；规则模板带
+`asset_source=hydraulic_structure`。该 ID 同时用于显式初态、控制绑定、冻结快照和结果审计。
+运行时按计划的 `SimulationCase` 应用 `hydraulic.structure_scenario` 覆盖。旧 `gate_id` / `pump_id`
+路径仅兼容已存在的历史计划，不能作为新建统一建筑物的必填前置条件。
+
+统一建筑物必须处于 `active`，类型须与命令匹配；Gate/Pump 所需的水力和运行参数必须在统一记录
+或其 scenario 覆盖中明确给出。缺少开度限值、Pump capacity、曲线、方向、端点或初态时，编译
+返回可定位的阻断项；不会回退到 MASCARET、旧资产字段或隐式默认值。
+
 报告把下列状态分开，不允许前端自行合并推断：
 
 - 计划、水力模型、能力门、闸泵映射、Manual control、D-RTC 和 Observation contract 各自的布尔状态及精确 issue；

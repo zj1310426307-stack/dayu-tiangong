@@ -2135,10 +2135,10 @@ class DispatchAction(Base):
             name="ck_dispatch_action_command_type",
         ),
         CheckConstraint(
-            "(structure_type = 'gate' AND gate_id IS NOT NULL "
+            "(structure_type = 'gate' AND (gate_id IS NOT NULL OR hydraulic_structure_id IS NOT NULL) "
             "AND pump_id IS NULL AND command_type IN "
             "('gate_opening_m', 'gate_opening_ratio')) OR "
-            "(structure_type = 'pump' AND pump_id IS NOT NULL "
+            "(structure_type = 'pump' AND (pump_id IS NOT NULL OR hydraulic_structure_id IS NOT NULL) "
             "AND gate_id IS NULL AND command_type IN "
             "('pump_enabled', 'pump_unit_count', 'pump_target_flow'))",
             name="ck_dispatch_action_structure_command_asset",
@@ -2149,8 +2149,9 @@ class DispatchAction(Base):
             name="ck_dispatch_action_discrete_step",
         ),
         CheckConstraint(
-            "(gate_id IS NOT NULL AND pump_id IS NULL) OR "
-            "(gate_id IS NULL AND pump_id IS NOT NULL)",
+            "(gate_id IS NOT NULL AND pump_id IS NULL AND hydraulic_structure_id IS NULL) OR "
+            "(gate_id IS NULL AND pump_id IS NOT NULL AND hydraulic_structure_id IS NULL) OR "
+            "(gate_id IS NULL AND pump_id IS NULL AND hydraulic_structure_id IS NOT NULL)",
             name="ck_dispatch_action_single_asset",
         ),
         Index(
@@ -2160,6 +2161,14 @@ class DispatchAction(Base):
             "gate_id",
             unique=True,
             postgresql_where=text("gate_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_dispatch_action_hydraulic_structure_time",
+            "plan_id",
+            "time_seconds",
+            "hydraulic_structure_id",
+            unique=True,
+            postgresql_where=text("hydraulic_structure_id IS NOT NULL"),
         ),
         Index(
             "uq_dispatch_action_pump_time",
@@ -2181,6 +2190,11 @@ class DispatchAction(Base):
     structure_type: Mapped[str] = mapped_column(String(16), nullable=False)
     gate_id: Mapped[int | None] = mapped_column(ForeignKey("gate.id", ondelete="RESTRICT"))
     pump_id: Mapped[int | None] = mapped_column(ForeignKey("pump.id", ondelete="RESTRICT"))
+    # New plans reference the solver-neutral structure directly.  The legacy
+    # gate/pump identities remain only for replaying historical plans.
+    hydraulic_structure_id: Mapped[int | None] = mapped_column(
+        ForeignKey("hydraulic.structure.id", ondelete="RESTRICT")
+    )
     command_type: Mapped[str] = mapped_column(String(32), nullable=False)
     target_value: Mapped[float] = mapped_column(Float, nullable=False)
     interpolation: Mapped[str] = mapped_column(String(16), nullable=False, server_default="step")

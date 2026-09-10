@@ -8,7 +8,12 @@
 - 操作符：`>`、`>=`、`<`、`<=`
 - 动作模板：`structure_type/structure_id/command_type/target_value`
 
-动作模板只允许上述四个键；Gate 只能使用 `gate_opening_m/gate_opening_ratio`，Pump 只能使用 `pump_enabled/pump_unit_count/pump_target_flow`。冻结前校验观测对象、动作设施和统一结构映射均属于计划数据版本，且设施为 `online`、统一结构为 `active`。
+动作模板使用上述四个键，或额外声明 `asset_source`。新建统一建筑物规则必须使用
+`asset_source=hydraulic_structure`，此时 `structure_id` 即 `hydraulic.structure.id`；缺省时按历史
+`gate` / `pump` 资产解释以保持旧快照可读。Gate 只能使用
+`gate_opening_m/gate_opening_ratio`，Pump 只能使用
+`pump_enabled/pump_unit_count/pump_target_flow`。冻结前校验观测对象、动作设施和统一结构映射均属于
+计划数据版本，且统一结构为 `active`。
 
 ## 确定性语义
 

@@ -81,10 +81,11 @@ def _validate_action_template(template: dict[str, Any]) -> dict[str, Any]:
     """Validate the complete, non-executable action payload used by a rule."""
 
     required = {"structure_type", "structure_id", "command_type", "target_value"}
-    if set(template) != required:
+    allowed = required | {"asset_source"}
+    if set(template) not in {required, allowed}:
         raise ValueError(
-            "action_template must contain only structure_type, structure_id, "
-            "command_type and target_value"
+            "action_template must contain structure_type, structure_id, command_type, "
+            "target_value and optional asset_source"
         )
     structure_type = template.get("structure_type")
     structure_id = template.get("structure_id")
@@ -92,6 +93,10 @@ def _validate_action_template(template: dict[str, Any]) -> dict[str, Any]:
     target_value = template.get("target_value")
     if structure_type not in {"gate", "pump"}:
         raise ValueError("unsupported action_template structure_type")
+    if "asset_source" in template and template.get("asset_source") not in {
+        "legacy", "hydraulic_structure"
+    }:
+        raise ValueError("action_template asset_source is invalid")
     if isinstance(structure_id, bool) or not isinstance(structure_id, int) or structure_id <= 0:
         raise ValueError("action_template structure_id must be a positive integer")
     if not isinstance(command_type, str):
@@ -198,6 +203,7 @@ class DispatchActionCreate(BaseModel):
     structure_type: Literal["gate", "pump"]
     gate_id: int | None = Field(default=None, gt=0)
     pump_id: int | None = Field(default=None, gt=0)
+    hydraulic_structure_id: int | None = Field(default=None, gt=0)
     command_type: Literal[
         "gate_opening_m", "gate_opening_ratio", "pump_enabled",
         "pump_unit_count", "pump_target_flow",
@@ -211,13 +217,17 @@ class DispatchActionCreate(BaseModel):
     def validate_asset(self) -> "DispatchActionCreate":
         """确保结构物类型与唯一非空外键一致。"""
 
-        valid = (
-            self.structure_type == "gate" and self.gate_id is not None and self.pump_id is None
+        direct = self.hydraulic_structure_id is not None
+        valid = direct and self.gate_id is None and self.pump_id is None
+        valid = valid or (
+            self.structure_type == "gate" and self.gate_id is not None
+            and self.pump_id is None and not direct
         ) or (
-            self.structure_type == "pump" and self.pump_id is not None and self.gate_id is None
+            self.structure_type == "pump" and self.pump_id is not None
+            and self.gate_id is None and not direct
         )
         if not valid:
-            raise ValueError("structure_type 与 gate_id/pump_id 必须唯一对应")
+            raise ValueError("必须唯一指定 legacy gate/pump 或统一 hydraulic_structure_id")
         from model.control.constraints import (
             command_matches_structure,
             validate_command_value,

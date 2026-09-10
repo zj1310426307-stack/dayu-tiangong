@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.dispatch.assets import lock_plan_asset_rows
+from app.dispatch.assets import action_asset_id, lock_plan_asset_rows
 from app.dispatch.hydraulic_assets import (
     HydraulicAssetNormalization,
     HydraulicControlAsset,
@@ -144,14 +144,14 @@ def _scheduled_actions(rows: list[DispatchAction]) -> tuple[ScheduledAction, ...
             id=item.id,
             time_seconds=float(item.time_seconds),
             structure_type=item.structure_type,
-            structure_id=int(item.gate_id if item.structure_type == "gate" else item.pump_id),
+            structure_id=int(action_asset_id(item)),
             command_type=item.command_type,
             target_value=float(item.target_value),
             interpolation=item.interpolation,
             priority=int(item.priority),
         )
         for item in rows
-        if (item.gate_id if item.structure_type == "gate" else item.pump_id) is not None
+        if action_asset_id(item) is not None
     )
 
 

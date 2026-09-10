@@ -177,3 +177,8 @@ Gate/Pump 不通过 MASCARET Adapter。它们使用独立的 `hydraulic_v3` → 
 路径；`POST /api/v1/dispatch/plans/{plan_id}/hydraulic-run` 没有请求体，只能重放已冻结的
 受控合同。结果仍采用统一 Section Result，并附加 Gate/Pump 的权威 Structure Result；详见
 `docs/dispatch/hydraulic-dispatch.md`。
+
+调度的新建 Gate/Pump 动作直接引用 `hydraulic.structure.id`，该记录是水动力数据管理模块中
+唯一的运行身份，并按当前 `SimulationCase` 叠加 `hydraulic.structure_scenario`。旧 `gate` /
+`pump` 外键仅为既有调度快照与历史案例兼容保留。统一结构物必须为 `active`，且其 Branch、
+Chainage、参数和显式初始状态均可解析；缺项只会阻断 D-Flow 编译，不会从旧表或默认值猜测。

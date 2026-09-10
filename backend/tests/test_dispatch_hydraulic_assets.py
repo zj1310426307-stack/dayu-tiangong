@@ -41,6 +41,7 @@ def _action(*, asset_id: int, kind: str, command_type: str, sequence: int) -> Si
         structure_type=kind,
         gate_id=asset_id if kind == "gate" else None,
         pump_id=asset_id if kind == "pump" else None,
+        hydraulic_structure_id=None,
         command_type=command_type,
     )
 
@@ -235,6 +236,77 @@ def test_successful_fixture_builds_typed_specs_and_exact_bmi_bindings() -> None:
     assert (
         result.pump_specs[0].head_reduction_curve.status == HydraulicDataStatus.SYNTHETIC_ASSUMPTION
     )
+
+
+def test_direct_unified_gate_needs_no_legacy_gate_row() -> None:
+    """New dispatch contracts bind directly to hydraulic.structure.id."""
+
+    structure_id = 3011
+    action = SimpleNamespace(
+        id=1, plan_id=41, sequence=1, structure_type="gate", gate_id=None,
+        pump_id=None, hydraulic_structure_id=structure_id,
+        command_type="gate_opening_m",
+    )
+    structure = _gate_structure(
+        99,
+        row_id=structure_id,
+        operation_parameters={
+            "availability": "online",
+            "minimum_opening_m": 0.1,
+            "maximum_opening_m": 2.0,
+            "opening_rate_limit_m_per_s": 0.2,
+            "minimum_hold_seconds": 5.0,
+        },
+    )
+    structure.legacy_gate_id = None
+    structure.hydraulic_parameters["correction_coefficient"] = 0.72
+    result = normalize_plan_hydraulic_assets(
+        _session(actions=[action], structures=[structure]),
+        _plan(),
+        (_gate_state(structure_id),),
+    )
+
+    assert result.ready
+    assert result.control_assets[0].structure_id == structure_id
+    assert result.control_bindings[0].structure_id == structure_id
+
+
+def test_direct_unified_pump_needs_no_legacy_pump_row() -> None:
+    """A direct Pump keeps its complete explicit operation contract."""
+
+    structure_id = 3022
+    action = SimpleNamespace(
+        id=2, plan_id=41, sequence=1, structure_type="pump", gate_id=None,
+        pump_id=None, hydraulic_structure_id=structure_id,
+        command_type="pump_target_flow",
+    )
+    structure = _pump_structure(88)
+    structure.id = structure_id
+    structure.legacy_pump_id = None
+    structure.hydraulic_parameters.update({
+        "transfer_type": "inline_branch",
+        "intake_id": "inlet",
+        "outlet_id": "outlet",
+        "aggregate_capacity_m3s": 4.0,
+        "availability": True,
+    })
+    structure.operation_parameters = {
+        "unit_count": 3,
+        "minimum_running_units": 1,
+        "maximum_running_units": 3,
+        "minimum_run_seconds": 30.0,
+        "minimum_stop_seconds": 45.0,
+        "maximum_starts_per_replay": 4,
+    }
+    result = normalize_plan_hydraulic_assets(
+        _session(actions=[action], structures=[structure]),
+        _plan(),
+        (_pump_state(structure_id),),
+    )
+
+    assert result.ready
+    assert result.control_assets[0].structure_id == structure_id
+    assert result.control_bindings[0].structure_id == structure_id
 
 
 def test_missing_gate_coefficient_stays_unknown_and_blocks_mapping() -> None:
