@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.dataset.lifecycle import assert_dataset_version_mutable
 from app.gis.models import BoundaryCondition as BoundaryConditionRow
-from app.gis.models import SimulationCase
+from app.gis.models import Gate, Pump, SimulationCase
 from app.hydraulic.location import locate_geometry_on_branch
 from app.hydraulic.models import (
     HydraulicBranch,
@@ -40,6 +40,148 @@ from model.hydraulic_1d.registry import (
 
 STRUCTURE_SNAP_TOLERANCE_M = 5.0
 STRUCTURE_CHAINAGE_TOLERANCE_M = 5.0
+
+
+def _required_number(values: dict[str, Any], field: str, *, label: str) -> float:
+    """Read one legacy-mirror input without manufacturing an engineering value."""
+
+    value = values.get(field)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"STRUCTURE_LEGACY_SYNC_REQUIRED: {label} must be explicitly supplied")
+    return float(value)
+
+
+def _legacy_status(value: HydraulicStructure, parameters: dict[str, Any]) -> str:
+    """Map the solver-neutral active state to the legacy catalogue state."""
+
+    if value.status != "active":
+        return "offline"
+    raw = parameters.get("availability")
+    if isinstance(raw, bool):
+        return "online" if raw else "offline"
+    if raw in {"online", "offline", "maintenance", "fault"}:
+        return str(raw)
+    raise ValueError(
+        "STRUCTURE_LEGACY_SYNC_REQUIRED: active Gate/Pump requires explicit availability"
+    )
+
+
+def _sync_legacy_gate_or_pump(
+    session: Session,
+    value: HydraulicStructure,
+    branch: HydraulicBranch,
+) -> None:
+    """Mirror active unified Gate/Pump rows into the legacy catalogue atomically.
+
+    The unified record remains authoritative.  Draft rows intentionally do not
+    create incomplete legacy assets; activation therefore becomes the explicit
+    engineering completeness boundary shared by all three modules.
+    """
+
+    if value.structure_type not in {"gate", "pump"}:
+        return
+    if value.status != "active":
+        legacy = (
+            session.get(Gate, value.legacy_gate_id)
+            if value.structure_type == "gate" and value.legacy_gate_id
+            else session.get(Pump, value.legacy_pump_id)
+            if value.legacy_pump_id
+            else None
+        )
+        if legacy is not None:
+            legacy.status = "offline"
+        return
+    if branch.legacy_river_id is None:
+        raise ValueError(
+            "STRUCTURE_LEGACY_SYNC_REQUIRED: Branch has no linked river for Gate/Pump catalogue sync"
+        )
+    hydraulic = dict(value.hydraulic_parameters or {})
+    operation = dict(value.operation_parameters or {})
+    if value.structure_type == "gate":
+        if value.width_m is None or value.height_m is None or value.invert_elevation_m is None:
+            raise ValueError(
+                "STRUCTURE_LEGACY_SYNC_REQUIRED: active Gate requires width_m, height_m and invert_elevation_m"
+            )
+        target = session.get(Gate, value.legacy_gate_id) if value.legacy_gate_id else None
+        if target is None:
+            target = Gate(
+                dataset_version_id=value.dataset_version_id,
+                name=value.structure_name,
+                gate_code=value.structure_code,
+                river_id=branch.legacy_river_id,
+                gate_type=value.hydraulic_law_type,
+                opening_direction=str(hydraulic.get("maximum_opening_axis") or "vertical"),
+                control_mode=value.operation_rule_type,
+                width=value.width_m,
+                height=value.height_m,
+                max_flow=_required_number(hydraulic, "max_flow_m3s", label="gate max_flow_m3s"),
+                bottom_elevation=value.invert_elevation_m,
+                geometry=value.location,
+            )
+            session.add(target)
+            session.flush()
+            value.legacy_gate_id = target.id
+        target.name = value.structure_name
+        target.gate_code = value.structure_code
+        target.river_id = branch.legacy_river_id
+        target.gate_type = value.hydraulic_law_type
+        target.opening_direction = str(hydraulic.get("maximum_opening_axis") or "vertical")
+        target.control_mode = value.operation_rule_type
+        target.width = value.width_m
+        target.height = value.height_m
+        target.max_flow = _required_number(hydraulic, "max_flow_m3s", label="gate max_flow_m3s")
+        target.bottom_elevation = value.invert_elevation_m
+        target.crest_elevation = value.crest_elevation_m
+        target.discharge_coefficient = hydraulic.get("correction_coefficient")
+        target.minimum_opening = operation.get("minimum_opening_m")
+        target.maximum_opening = operation.get("maximum_opening_m")
+        target.opening_rate_limit = operation.get("opening_rate_limit_m_per_s")
+        target.minimum_hold_seconds = operation.get("minimum_hold_seconds")
+        target.allow_reverse_flow = hydraulic.get("allowed_flow_direction") == "both"
+        target.status = _legacy_status(value, operation)
+        target.geometry = value.location
+        return
+
+    target = session.get(Pump, value.legacy_pump_id) if value.legacy_pump_id else None
+    design_flow = _required_number(hydraulic, "aggregate_capacity_m3s", label="pump aggregate_capacity_m3s")
+    head = _required_number(hydraulic, "design_head_m", label="pump design_head_m")
+    power = _required_number(hydraulic, "power_kw", label="pump power_kw")
+    efficiency_curve = hydraulic.get("efficiency_curve")
+    if not isinstance(efficiency_curve, dict):
+        raise ValueError("STRUCTURE_LEGACY_SYNC_REQUIRED: pump efficiency_curve must be explicitly supplied")
+    if target is None:
+        target = Pump(
+            dataset_version_id=value.dataset_version_id,
+            name=value.structure_name,
+            pump_code=value.structure_code,
+            river_id=branch.legacy_river_id,
+            design_flow=design_flow,
+            head=head,
+            power=power,
+            efficiency_curve=efficiency_curve,
+            control_mode=value.operation_rule_type,
+            geometry=value.location,
+        )
+        session.add(target)
+        session.flush()
+        value.legacy_pump_id = target.id
+    target.name = value.structure_name
+    target.pump_code = value.structure_code
+    target.river_id = branch.legacy_river_id
+    target.design_flow = design_flow
+    target.head = head
+    target.power = power
+    target.efficiency_curve = efficiency_curve
+    target.control_mode = value.operation_rule_type
+    target.transfer_type = "internal_transfer" if hydraulic.get("transfer_type") == "inline_branch" else None
+    target.unit_count = operation.get("unit_count")
+    target.minimum_running_units = operation.get("minimum_running_units")
+    target.maximum_running_units = operation.get("maximum_running_units")
+    target.minimum_run_seconds = operation.get("minimum_run_seconds")
+    target.minimum_stop_seconds = operation.get("minimum_stop_seconds")
+    target.maximum_starts_per_run = operation.get("maximum_starts_per_replay")
+    target.status = _legacy_status(value, hydraulic)
+    target.geometry = value.location
 
 
 def engine_capabilities() -> list[SolverCapabilityRecord]:
@@ -242,6 +384,8 @@ def create_structure(
     )
     session.add(value)
     session.flush()
+    _sync_legacy_gate_or_pump(session, value, branch)
+    session.flush()
     return _record(session, value)
 
 
@@ -307,6 +451,8 @@ def update_structure(
     }
     for key, item in updates.items():
         setattr(value, field_map.get(key, key), item)
+    session.flush()
+    _sync_legacy_gate_or_pump(session, value, branch)
     session.flush()
     return _record(session, value)
 

@@ -76,7 +76,74 @@ const ENGINEERING_SRIDS = [4546, 4547, 4548, 4549];
 const CENTRAL_MERIDIANS: Record<number, number> = {
   4546: 111, 4547: 114, 4548: 117, 4549: 120,
 };
-type StructureFormValues = HydraulicStructureCreate & { discharge_coefficient?: number };
+type StructureFormValues = HydraulicStructureCreate & {
+  discharge_coefficient?: number;
+  gate_allowed_flow_direction?: 'positive' | 'negative' | 'both';
+  gate_use_velocity_height?: boolean;
+  gate_maximum_opening_axis?: 'vertical' | 'horizontal';
+  gate_correction_coefficient?: number;
+  gate_max_flow_m3s?: number;
+  gate_availability?: 'online' | 'offline' | 'maintenance' | 'fault';
+  gate_minimum_opening_m?: number;
+  gate_maximum_opening_m?: number;
+  gate_opening_rate_limit_m_per_s?: number;
+  gate_minimum_hold_seconds?: number;
+  pump_transfer_type?: 'inline_branch';
+  pump_intake_id?: string;
+  pump_outlet_id?: string;
+  pump_orientation?: 'positive' | 'negative';
+  pump_aggregate_capacity_m3s?: number;
+  pump_design_head_m?: number;
+  pump_power_kw?: number;
+  pump_available?: boolean;
+  pump_head_reduction_curve_json?: string;
+  pump_efficiency_curve_json?: string;
+  pump_unit_count?: number;
+  pump_minimum_running_units?: number;
+  pump_maximum_running_units?: number;
+  pump_minimum_run_seconds?: number;
+  pump_minimum_stop_seconds?: number;
+  pump_maximum_starts_per_replay?: number;
+};
+
+const GATE_PARAMETER_KEYS = [
+  'gate_subtype', 'allowed_flow_direction', 'use_velocity_height',
+  'maximum_opening_axis', 'correction_coefficient', 'max_flow_m3s',
+] as const;
+const PUMP_PARAMETER_KEYS = [
+  'transfer_type', 'intake_id', 'outlet_id', 'orientation',
+  'aggregate_capacity_m3s', 'design_head_m', 'power_kw', 'availability',
+  'head_reduction_curve', 'efficiency_curve',
+] as const;
+const GATE_OPERATION_KEYS = [
+  'availability', 'minimum_opening_m', 'maximum_opening_m',
+  'opening_rate_limit_m_per_s', 'minimum_hold_seconds',
+] as const;
+const PUMP_OPERATION_KEYS = [
+  'unit_count', 'minimum_running_units', 'maximum_running_units',
+  'minimum_run_seconds', 'minimum_stop_seconds', 'maximum_starts_per_replay',
+] as const;
+
+function withoutKeys(values: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(values).filter(([key]) => !keys.includes(key)));
+}
+
+function optionalFields(values: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined && value !== null && value !== ''));
+}
+
+function parseCurve(value: string | undefined): Record<string, unknown> | undefined {
+  if (!value?.trim()) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('曲线必须是 JSON 对象');
+    }
+    return parsed as Record<string, unknown>;
+  } catch (reason) {
+    throw new Error(`泵站扬程—折减曲线格式无效：${reason instanceof Error ? reason.message : 'JSON 解析失败'}`);
+  }
+}
 
 /** Trigger a browser download for a blob returned through the generated API client. */
 function saveBlob(blob: Blob, filename: string): void {
@@ -211,6 +278,7 @@ export function HydraulicDataPage() {
   const [structureModalOpen, setStructureModalOpen] = useState(false);
   const [editingStructure, setEditingStructure] = useState<HydraulicStructureRecord>();
   const [structureForm] = Form.useForm<StructureFormValues>();
+  const watchedStructureType = Form.useWatch('structure_type', structureForm);
   const [section, setSection] = useState<HydraulicSectionDetail>();
   const [selectedNetworkId, setSelectedNetworkId] = useState<number>();
   const [selectedBranchId, setSelectedBranchId] = useState<number>();
@@ -466,6 +534,34 @@ export function HydraulicDataPage() {
       height_m: record.height_m ?? undefined,
       hydraulic_law_type: record.hydraulic_law_type,
       discharge_coefficient: Number(record.hydraulic_parameters.discharge_coefficient ?? 0.435),
+      gate_allowed_flow_direction: record.hydraulic_parameters.allowed_flow_direction as StructureFormValues['gate_allowed_flow_direction'],
+      gate_use_velocity_height: record.hydraulic_parameters.use_velocity_height as boolean | undefined,
+      gate_maximum_opening_axis: record.hydraulic_parameters.maximum_opening_axis as StructureFormValues['gate_maximum_opening_axis'],
+      gate_correction_coefficient: record.hydraulic_parameters.correction_coefficient as number | undefined,
+      gate_max_flow_m3s: record.hydraulic_parameters.max_flow_m3s as number | undefined,
+      gate_availability: record.operation_parameters.availability as StructureFormValues['gate_availability'],
+      gate_minimum_opening_m: record.operation_parameters.minimum_opening_m as number | undefined,
+      gate_maximum_opening_m: record.operation_parameters.maximum_opening_m as number | undefined,
+      gate_opening_rate_limit_m_per_s: record.operation_parameters.opening_rate_limit_m_per_s as number | undefined,
+      gate_minimum_hold_seconds: record.operation_parameters.minimum_hold_seconds as number | undefined,
+      pump_transfer_type: record.hydraulic_parameters.transfer_type as 'inline_branch' | undefined,
+      pump_intake_id: record.hydraulic_parameters.intake_id as string | undefined,
+      pump_outlet_id: record.hydraulic_parameters.outlet_id as string | undefined,
+      pump_orientation: record.hydraulic_parameters.orientation as StructureFormValues['pump_orientation'],
+      pump_aggregate_capacity_m3s: record.hydraulic_parameters.aggregate_capacity_m3s as number | undefined,
+      pump_design_head_m: record.hydraulic_parameters.design_head_m as number | undefined,
+      pump_power_kw: record.hydraulic_parameters.power_kw as number | undefined,
+      pump_available: record.hydraulic_parameters.availability as boolean | undefined,
+      pump_head_reduction_curve_json: record.hydraulic_parameters.head_reduction_curve
+        ? JSON.stringify(record.hydraulic_parameters.head_reduction_curve, null, 2) : undefined,
+      pump_efficiency_curve_json: record.hydraulic_parameters.efficiency_curve
+        ? JSON.stringify(record.hydraulic_parameters.efficiency_curve, null, 2) : undefined,
+      pump_unit_count: record.operation_parameters.unit_count as number | undefined,
+      pump_minimum_running_units: record.operation_parameters.minimum_running_units as number | undefined,
+      pump_maximum_running_units: record.operation_parameters.maximum_running_units as number | undefined,
+      pump_minimum_run_seconds: record.operation_parameters.minimum_run_seconds as number | undefined,
+      pump_minimum_stop_seconds: record.operation_parameters.minimum_stop_seconds as number | undefined,
+      pump_maximum_starts_per_replay: record.operation_parameters.maximum_starts_per_replay as number | undefined,
       operation_rule_type: record.operation_rule_type,
       status: record.status,
     });
@@ -475,12 +571,44 @@ export function HydraulicDataPage() {
   const saveStructure = async () => {
     try {
       const values = await structureForm.validateFields();
-      const { discharge_coefficient: coefficient, dataset_version_id, network_id, ...mutable } = values;
+      const {
+        discharge_coefficient: coefficient, dataset_version_id, network_id,
+        gate_allowed_flow_direction, gate_use_velocity_height, gate_maximum_opening_axis,
+        gate_correction_coefficient, gate_max_flow_m3s, gate_availability, gate_minimum_opening_m,
+        gate_maximum_opening_m, gate_opening_rate_limit_m_per_s, gate_minimum_hold_seconds,
+        pump_transfer_type, pump_intake_id, pump_outlet_id, pump_orientation,
+        pump_aggregate_capacity_m3s, pump_design_head_m, pump_power_kw, pump_available, pump_head_reduction_curve_json, pump_efficiency_curve_json,
+        pump_unit_count, pump_minimum_running_units, pump_maximum_running_units,
+        pump_minimum_run_seconds, pump_minimum_stop_seconds, pump_maximum_starts_per_replay,
+        ...mutable
+      } = values;
       const existingHydraulicParameters = editingStructure?.hydraulic_parameters ?? {};
-      const hydraulicParameters = values.structure_type === 'weir'
-        ? { ...existingHydraulicParameters, discharge_coefficient: coefficient }
-        : existingHydraulicParameters;
-      mutable.operation_parameters = editingStructure?.operation_parameters ?? {};
+      const existingOperationParameters = editingStructure?.operation_parameters ?? {};
+      let hydraulicParameters = { ...existingHydraulicParameters };
+      let operationParameters = { ...existingOperationParameters };
+      if (values.structure_type === 'weir') {
+        hydraulicParameters = { ...withoutKeys(hydraulicParameters, [...GATE_PARAMETER_KEYS, ...PUMP_PARAMETER_KEYS]), discharge_coefficient: coefficient };
+        operationParameters = withoutKeys(operationParameters, [...GATE_OPERATION_KEYS, ...PUMP_OPERATION_KEYS]);
+      } else if (values.structure_type === 'gate') {
+        hydraulicParameters = {
+          ...withoutKeys(hydraulicParameters, PUMP_PARAMETER_KEYS),
+          ...optionalFields({ gate_subtype: values.hydraulic_law_type, allowed_flow_direction: gate_allowed_flow_direction, use_velocity_height: gate_use_velocity_height, maximum_opening_axis: gate_maximum_opening_axis, correction_coefficient: gate_correction_coefficient, max_flow_m3s: gate_max_flow_m3s }),
+        };
+        operationParameters = {
+          ...withoutKeys(operationParameters, PUMP_OPERATION_KEYS),
+          ...optionalFields({ availability: gate_availability, minimum_opening_m: gate_minimum_opening_m, maximum_opening_m: gate_maximum_opening_m, opening_rate_limit_m_per_s: gate_opening_rate_limit_m_per_s, minimum_hold_seconds: gate_minimum_hold_seconds }),
+        };
+      } else if (values.structure_type === 'pump') {
+        hydraulicParameters = {
+          ...withoutKeys(hydraulicParameters, GATE_PARAMETER_KEYS),
+          ...optionalFields({ transfer_type: pump_transfer_type, intake_id: pump_intake_id, outlet_id: pump_outlet_id, orientation: pump_orientation, aggregate_capacity_m3s: pump_aggregate_capacity_m3s, design_head_m: pump_design_head_m, power_kw: pump_power_kw, availability: pump_available, head_reduction_curve: parseCurve(pump_head_reduction_curve_json), efficiency_curve: parseCurve(pump_efficiency_curve_json) }),
+        };
+        operationParameters = {
+          ...withoutKeys(operationParameters, GATE_OPERATION_KEYS),
+          ...optionalFields({ unit_count: pump_unit_count, minimum_running_units: pump_minimum_running_units, maximum_running_units: pump_maximum_running_units, minimum_run_seconds: pump_minimum_run_seconds, minimum_stop_seconds: pump_minimum_stop_seconds, maximum_starts_per_replay: pump_maximum_starts_per_replay }),
+        };
+      }
+      mutable.operation_parameters = operationParameters;
       mutable.metadata = editingStructure?.metadata ?? {};
       if (editingStructure) {
         await updateHydraulicStructure(editingStructure.id, {
@@ -787,7 +915,7 @@ export function HydraulicDataPage() {
       <Modal
         title={editingStructure ? `编辑 ${editingStructure.structure_name}` : '创建统一水工建筑物'}
         open={structureModalOpen}
-        width={760}
+        width={980}
         onCancel={() => setStructureModalOpen(false)}
         onOk={() => void saveStructure()}
         okText="保存"
@@ -798,7 +926,7 @@ export function HydraulicDataPage() {
           <Row gutter={12}>
             <Col xs={24} md={12}><Form.Item name="structure_code" label="编码" rules={[{ required: true }]}><Input /></Form.Item></Col>
             <Col xs={24} md={12}><Form.Item name="structure_name" label="名称" rules={[{ required: true }]}><Input /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="structure_type" label="类型" rules={[{ required: true }]}><Select onChange={(value) => structureForm.setFieldValue('hydraulic_law_type', value === 'weir' ? 'broad_crested_weir' : 'none')} options={['weir', 'culvert', 'bridge', 'gate', 'sluice', 'pump', 'orifice', 'dam', 'storage_link', 'compound'].map((value) => ({ value, label: value.toUpperCase() }))} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="structure_type" label="类型" rules={[{ required: true }]}><Select onChange={(value) => structureForm.setFieldsValue({ hydraulic_law_type: value === 'weir' ? 'broad_crested_weir' : value === 'gate' ? 'vertical_underflow_gate' : value === 'pump' ? 'pump' : 'none' })} options={['weir', 'culvert', 'bridge', 'gate', 'sluice', 'pump', 'orifice', 'dam', 'storage_link', 'compound'].map((value) => ({ value, label: value === 'gate' ? '水闸' : value === 'pump' ? '泵站' : value.toUpperCase() }))} /></Form.Item></Col>
             <Col xs={24} md={8}><Form.Item name="branch_id" label="河段" rules={[{ required: true }]}><Select options={networks.flatMap((network) => (network.branches ?? []).map((branch) => ({ value: branch.id, label: `${network.code} / ${branch.branch_code}` })))} /></Form.Item></Col>
             <Col xs={24} md={8}><Form.Item name="status" label="模型状态" rules={[{ required: true }]}><Select options={['draft', 'active', 'inactive', 'retired'].map((value) => ({ value, label: value }))} /></Form.Item></Col>
             <Col xs={24} md={8}><Form.Item name="chainage_m" label="桩号（m）" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
@@ -811,7 +939,51 @@ export function HydraulicDataPage() {
             <Col xs={24} md={8}><Form.Item name="discharge_coefficient" label="堰流量系数"><InputNumber min={0.001} style={{ width: '100%' }} /></Form.Item></Col>
             <Col xs={24} md={8}><Form.Item name="operation_rule_type" label="运行规则" rules={[{ required: true }]}><Select options={['fixed', 'time_series', 'water_level_controlled', 'scenario_specific'].map((value) => ({ value, label: value }))} /></Form.Item></Col>
           </Row>
-          <Form.Item name="hydraulic_law_type" label="水力规律" rules={[{ required: true }]}><Input /></Form.Item>
+          {watchedStructureType === 'gate' && <>
+            <Alert type="info" showIcon message="水闸水力要素" description="以下字段用于统一水闸、闸门数据库和后续 D-Flow 水动力计算。草稿可暂存；设为 active 前请补齐带“计算必需”标记的工程参数。" />
+            <Row gutter={12} style={{ marginTop: 12 }}>
+              <Col xs={24} md={8}><Form.Item name="hydraulic_law_type" label="闸门型式" rules={[{ required: true }]}><Select options={[{ value: 'vertical_underflow_gate', label: '平板闸 / 垂直底流' }, { value: 'general_opening', label: '通用孔口' }]} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="gate_max_flow_m3s" label="最大过闸流量（m³/s，计算必需）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="gate_correction_coefficient" label="流量/修正系数（计算必需）"><InputNumber min={0.000001} style={{ width: '100%' }} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="gate_allowed_flow_direction" label="允许过流方向（计算必需）"><Select options={[{ value: 'positive', label: '顺河向' }, { value: 'negative', label: '逆河向' }, { value: 'both', label: '双向' }]} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="gate_maximum_opening_axis" label="开度轴向（计算必需）"><Select options={[{ value: 'vertical', label: '垂直开度' }, { value: 'horizontal', label: '水平开度' }]} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="gate_use_velocity_height" label="是否计入流速水头"><Select options={[{ value: true, label: '计入' }, { value: false, label: '不计入' }]} /></Form.Item></Col>
+            </Row>
+            <Title level={5}>闸门运行约束</Title>
+            <Row gutter={12}>
+              <Col xs={24} md={8}><Form.Item name="gate_availability" label="设备可用状态（计算必需）"><Select options={['online', 'offline', 'maintenance', 'fault'].map((value) => ({ value, label: value }))} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="gate_minimum_opening_m" label="最小开度（m）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="gate_maximum_opening_m" label="最大开度（m，计算必需）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="gate_opening_rate_limit_m_per_s" label="开度变化率上限（m/s）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="gate_minimum_hold_seconds" label="最短保持时间（s）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+            </Row>
+          </>}
+          {watchedStructureType === 'pump' && <>
+            <Alert type="info" showIcon message="泵站水力要素" description="以下字段同步服务于统一泵站、泵站数据库和后续 D-Flow 水动力计算。扬程—折减曲线与效率曲线使用 JSON 对象，保存前会验证 JSON 格式。" />
+            <Row gutter={12} style={{ marginTop: 12 }}>
+              <Col xs={24} md={8}><Form.Item name="hydraulic_law_type" label="泵站水力规律" rules={[{ required: true }]}><Input disabled /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="pump_transfer_type" label="输水方式（计算必需）"><Select options={[{ value: 'inline_branch', label: '同河段串联泵' }]} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="pump_orientation" label="扬水方向（计算必需）"><Select options={[{ value: 'positive', label: '顺河向' }, { value: 'negative', label: '逆河向' }]} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="pump_intake_id" label="取水端标识（计算必需）"><Input /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="pump_outlet_id" label="出水端标识（计算必需）"><Input /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="pump_available" label="泵站可用（计算必需）"><Select options={[{ value: true, label: '可用' }, { value: false, label: '不可用' }]} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="pump_aggregate_capacity_m3s" label="总设计流量（m³/s，计算必需）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="pump_design_head_m" label="设计扬程（m，泵站库必需）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="pump_power_kw" label="额定功率（kW，泵站库必需）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+              <Col span={24}><Form.Item name="pump_head_reduction_curve_json" label="扬程—流量折减曲线（JSON，计算必需）" extra={'示例：{"provenance":"SYNTHETIC_ASSUMPTION","points":[{"head_m":0,"reduction_factor":1},{"head_m":6,"reduction_factor":0.65}]}'}><Input.TextArea rows={3} /></Form.Item></Col>
+              <Col span={24}><Form.Item name="pump_efficiency_curve_json" label="效率曲线（JSON，泵站库必需）" extra={'示例：{"points":[[0,0.6],[1,0.85]]}'}><Input.TextArea rows={3} /></Form.Item></Col>
+            </Row>
+            <Title level={5}>泵站运行约束</Title>
+            <Row gutter={12}>
+              <Col xs={24} md={8}><Form.Item name="pump_unit_count" label="机组数量"><InputNumber min={1} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="pump_minimum_running_units" label="最少运行机组"><InputNumber min={0} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="pump_maximum_running_units" label="最多运行机组"><InputNumber min={0} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="pump_minimum_run_seconds" label="最短运行时间（s）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="pump_minimum_stop_seconds" label="最短停机时间（s）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+              <Col xs={24} md={8}><Form.Item name="pump_maximum_starts_per_replay" label="最大启动次数"><InputNumber min={0} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
+            </Row>
+          </>}
+          {watchedStructureType !== 'gate' && watchedStructureType !== 'pump' && <Form.Item name="hydraulic_law_type" label="水力规律" rules={[{ required: true }]}><Input /></Form.Item>}
         </Form>
       </Modal>
     </div>
