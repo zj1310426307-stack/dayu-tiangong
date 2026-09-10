@@ -6,10 +6,15 @@ import pytest
 from pydantic import ValidationError
 
 from app.model_engine.schemas import SimulationTaskCreate
-from app.model_engine.hydraulic_1d_service import _with_simulation_identity
+from app.model_engine.hydraulic_1d_service import (
+    _boundary_derived_initial_condition,
+    _vertical_bank_extended_sections,
+    _with_simulation_identity,
+)
 from app.model_engine.service import _validate_result, parse_frozen_task_model, retry_block_reason
 from model.hydraulic_1d.contracts import (
     HYDRAULIC_1D_INPUT_SCHEMA,
+    Hydraulic1DModel,
     HydraulicResult,
     HydraulicResultRecord,
 )
@@ -43,6 +48,100 @@ def test_initial_state_overrides_are_atomic() -> None:
 
     with pytest.raises(ValidationError, match="must be supplied together"):
         SimulationTaskCreate(case_id=7, initial_water_level=2.0)
+
+
+def test_endpoint_chainage_accepts_millimetre_import_rounding_only() -> None:
+    """Decimal import drift must not reject a topologically coincident end profile."""
+
+    payload = model_fixture().model_dump(mode="json")
+    payload["cross_sections"][-1]["chainage_m"] = 999.9995
+    accepted = Hydraulic1DModel.model_validate(payload)
+    assert accepted.cross_sections[-1].chainage_m == 999.9995
+
+    payload["cross_sections"][-1]["chainage_m"] = 999.998
+    with pytest.raises(ValidationError, match="last cross section must coincide"):
+        Hydraulic1DModel.model_validate(payload)
+
+
+def test_single_branch_boundaries_derive_a_wet_section_initial_state() -> None:
+    """Optional initial fields use a traceable wet-bed envelope, not downstream H uniformly."""
+
+    source = model_fixture()
+    raised_upstream = source.cross_sections[0].model_copy(
+        update={
+            "points": tuple(
+                point.model_copy(update={"elevation_m": point.elevation_m + 3.0})
+                for point in source.cross_sections[0].points
+            )
+        }
+    )
+    initial = _boundary_derived_initial_condition(
+        source.branches,
+        (raised_upstream, source.cross_sections[1]),
+        source.boundaries,
+    )
+
+    assert initial is not None
+    assert initial.water_level_m is None
+    assert initial.by_section[0].water_level_m == 3.5
+    assert initial.by_section[-1].water_level_m == 2.0
+    assert {item.discharge_m3s for item in initial.by_section} == {11.0}
+
+
+def test_high_discharge_boundary_derives_a_subcritical_cold_start() -> None:
+    """A design flood must not reuse the fixed minimum depth at a narrow profile."""
+
+    source = model_fixture()
+    high_flow_boundaries = tuple(
+        boundary.model_copy(
+            update={
+                "series": (
+                    boundary.series[0].model_copy(update={"value": 405.43}),
+                )
+            }
+        )
+        if boundary.variable == "discharge"
+        else boundary
+        for boundary in source.boundaries
+    )
+
+    initial = _boundary_derived_initial_condition(
+        source.branches,
+        source.cross_sections,
+        high_flow_boundaries,
+    )
+
+    assert initial is not None
+    assert initial.by_section[0].water_level_m > 5.0
+    assert initial.by_section[-1].water_level_m > 5.0
+
+
+def test_full_channel_extension_adds_rebuildable_walls_without_changing_raw_profile() -> None:
+    """Derived walls use the hydraulic envelope and preserve source Station/Elevation."""
+
+    source = model_fixture()
+    raw_points = source.cross_sections[0].points
+    initial = _boundary_derived_initial_condition(
+        source.branches,
+        source.cross_sections,
+        source.boundaries,
+    )
+    assert initial is not None
+
+    extended, top = _vertical_bank_extended_sections(
+        source.cross_sections,
+        initial,
+        source.boundaries,
+    )
+
+    first = extended[0]
+    assert first.points[0].station_m == raw_points[0].station_m
+    assert first.points[1:-1] == raw_points
+    assert first.points[0].elevation_m == top
+    assert first.points[-1].station_m == raw_points[-1].station_m
+    assert first.points[-1].elevation_m == top
+    assert source.cross_sections[0].points == raw_points
+    assert top >= max(item.water_level_m for item in initial.by_section) + 1.0
 
 
 def test_historical_custom_solver_task_is_never_retryable() -> None:

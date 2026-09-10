@@ -80,13 +80,15 @@ def parse_csv(
             raise ValueError(f"CSV row {index} record_type must be branch_point or section_point")
     branches: list[HydraulicBranchInput] = []
     for code, group in branch_rows.items():
-        ordered = sorted(group, key=lambda row: _number(row, "chainage"))
+        # Branch points are an ordered engineering observation, not an unordered set.
+        ordered = group
         first = ordered[0]
         branches.append(HydraulicBranchInput(
             code=code,
             river_name=(first.get("river_name") or first.get("branch_name") or code)[:128],
             branch_name=(first.get("branch_name") or code)[:128],
             flow_direction=(first.get("flow_direction") or "unknown").lower(),
+            centerline_role=(first.get("centerline_role") or "unknown").lower(),
             source_revision=first.get("source_revision") or None,
             points=[HydraulicChainageInput(
                 chainage=_number(row, "chainage"), x=_number(row, "x"), y=_number(row, "y"),
@@ -137,7 +139,7 @@ def parse_csv(
             points=[HydraulicSectionPointInput(
                 sequence=int(row.get("sequence") or index),
                 distance=_number(row, "distance"), elevation=_number(row, "elevation"),
-                marker_type=(row.get("marker_type") or "none").lower(),
+                marker_type=(row.get("marker_type") or "none").lower().replace(" ", "_"),
                 point_code=row.get("point_code") or None,
                 x=float(row["point_x"]) if row.get("point_x") else None,
                 y=float(row["point_y"]) if row.get("point_y") else None,

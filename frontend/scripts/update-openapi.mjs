@@ -52,14 +52,19 @@ const openapi = await response.json();
 const schemas = openapi.components?.schemas ?? {};
 
 const requiredPaths = [
-  '/api/v1/gis/rivers', '/api/v1/gis/interaction-frame', '/api/v1/rivers', '/api/v1/cross-sections',
+  '/api/v1/gis/rivers', '/api/v1/gis/interaction-frame', '/api/v1/gis/hydraulic-cross-sections', '/api/v1/rivers', '/api/v1/cross-sections',
   '/api/v1/gates', '/api/v1/pumps', '/api/v1/import/excel',
   '/api/v1/validation/run', '/api/v1/model-data/dataset-versions',
+  '/api/v1/model-data/dataset-versions/{version_id}/approve-for-calculation',
   '/api/v1/model-data/parameters', '/api/v1/model-data/boundary-conditions',
+  '/api/v1/model-data/boundary-conditions/rating-curve/generate',
   '/api/v1/model-data/simulation-cases',
   '/api/v1/model/readiness', '/api/v1/model/preview',
+  '/api/v1/model/scenario-results', '/api/v1/model/scenario-results/{bundle_id}/geojson',
+  '/api/v1/model/scenario-results/{bundle_id}/case-manifest', '/api/v1/model/scenario-results/{bundle_id}/artifacts/{filename}',
   '/api/v1/model/tasks', '/api/v1/model/tasks/{task_id}/run',
   '/api/v1/model/tasks/{task_id}', '/api/v1/model/results/{task_id}',
+  '/api/v1/model/results/{task_id}/overview',
   '/api/v1/model/tasks/{task_id}/enqueue', '/api/v1/model/tasks/{task_id}/cancel',
   '/api/v1/model/tasks/{task_id}/retry', '/api/v1/model/tasks/{task_id}/snapshot',
   '/api/v1/dispatch/plans', '/api/v1/dispatch/plans/{plan_id}',
@@ -70,6 +75,7 @@ const requiredPaths = [
   '/api/v1/dispatch/plans/{plan_id}/hydraulic-compile-check',
   '/api/v1/dispatch/plans/{plan_id}/hydraulic-freeze',
   '/api/v1/dispatch/plans/{plan_id}/hydraulic-preview',
+  '/api/v1/dispatch/plans/{plan_id}/hydraulic-run',
   '/api/v1/dispatch/plans/{plan_id}/runs', '/api/v1/dispatch/runs',
   '/api/v1/dispatch/runs/{run_id}', '/api/v1/dispatch/runs/{run_id}/comparison',
   '/api/v1/optimization/tasks', '/api/v1/optimization/tasks/{task_id}',
@@ -115,7 +121,7 @@ const requiredPaths = [
   '/api/v1/hydraulic/networks', '/api/v1/hydraulic/networks/{network_id}/graph',
   '/api/v1/hydraulic/structures', '/api/v1/hydraulic/structures/{structure_id}',
   '/api/v1/hydraulic/structures/{structure_id}/scenarios/{case_id}',
-  '/api/v1/hydraulic/cross-sections/{section_id}', '/api/v1/hydraulic/imports',
+  '/api/v1/hydraulic/cross-sections/{section_id}', '/api/v1/hydraulic/cross-sections/{section_id}/markers', '/api/v1/hydraulic/cross-sections/{section_id}/marker-detection', '/api/v1/hydraulic/profiles/{profile_id}/marker-workflow', '/api/v1/hydraulic/marker-detection/batch', '/api/v1/hydraulic/cross-sections/{section_id}/derive-spatial-geometry', '/api/v1/hydraulic/cross-sections/{section_id}/derived-spatial-geometry', '/api/v1/hydraulic/datasets/{dataset_version_id}/derive-spatial-geometry', '/api/v1/hydraulic/imports',
   '/api/v1/hydraulic/imports/preview', '/api/v1/hydraulic/imports/commit',
   '/api/v1/hydraulic/networks/{network_id}/topology',
   '/api/v1/hydraulic/branches/{branch_id}/reverse',
@@ -333,6 +339,7 @@ export const getPumps = (params: GISListQuery, baseUrl = '') => requestJson<GeoJ
 export const getPump = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<GeoJSONFeature>(\`/api/v1/gis/pumps/\${id}\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
 export const getCrossSections = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/cross_sections\${toQuery(params)}\`, {}, baseUrl);
 export const getCrossSection = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<GeoJSONFeature>(\`/api/v1/gis/cross_sections/\${id}\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const getHydraulicCrossSections = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(\`/api/v1/gis/hydraulic-cross-sections\${toQuery(params)}\`, {}, baseUrl);
 export const getGISInteractionFrame = (params: GISInteractionQuery, baseUrl = '') => requestJson<GISInteractionFrame>(\`/api/v1/gis/interaction-frame\${toQuery(params)}\`, {}, baseUrl);
 export const getGISLayerCatalog = (baseUrl = '') => requestJson<Array<LayerCatalogItem>>('/api/v1/gis-analysis/layers', {}, baseUrl);
 export const searchGISLocations = (params: GISLocationSearchQuery, baseUrl = '') => requestJson<LocationSearchResponse>(\`/api/v1/gis-analysis/search\${toQuery(params)}\`, {}, baseUrl);
@@ -451,11 +458,13 @@ export const getDatasetVersions = (baseUrl = '') => requestJson<Array<DatasetVer
 export const createDatasetVersion = (body: DatasetVersionCreate, baseUrl = '') => requestJson<DatasetVersionRecord>('/api/v1/model-data/dataset-versions', jsonOptions('POST', body), baseUrl);
 export const updateDatasetVersion = (versionId: number, body: DatasetVersionUpdate, baseUrl = '') => requestJson<DatasetVersionRecord>(\`/api/v1/model-data/dataset-versions/\${versionId}\`, jsonOptions('PUT', body), baseUrl);
 export const deleteDatasetVersion = (versionId: number, baseUrl = '') => requestJson<void>(\`/api/v1/model-data/dataset-versions/\${versionId}\`, { method: 'DELETE' }, baseUrl);
+export const approveDatasetVersionForCalculation = (versionId: number, body: DatasetVersionApprovalRequest, baseUrl = '') => requestJson<DatasetVersionRecord>(\`/api/v1/model-data/dataset-versions/\${versionId}/approve-for-calculation\`, jsonOptions('POST', body), baseUrl);
 export const getModelParameters = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<ModelParameterRecord>>(\`/api/v1/model-data/parameters\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
 export const createModelParameter = (body: ModelParameterCreate, baseUrl = '') => requestJson<ModelParameterRecord>('/api/v1/model-data/parameters', jsonOptions('POST', body), baseUrl);
 export const updateModelParameter = (parameterId: number, body: ModelParameterUpdate, baseUrl = '') => requestJson<ModelParameterRecord>(\`/api/v1/model-data/parameters/\${parameterId}\`, jsonOptions('PUT', body), baseUrl);
 export const deleteModelParameter = (parameterId: number, baseUrl = '') => requestJson<void>(\`/api/v1/model-data/parameters/\${parameterId}\`, { method: 'DELETE' }, baseUrl);
 export const getBoundaryConditions = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<BoundaryConditionRecord>>(\`/api/v1/model-data/boundary-conditions\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
+export const generateBoundaryRatingCurve = (body: BoundaryRatingCurveGenerateRequest, baseUrl = '') => requestJson<BoundaryRatingCurveGenerateResponse>('/api/v1/model-data/boundary-conditions/rating-curve/generate', jsonOptions('POST', body), baseUrl);
 export const createBoundaryCondition = (body: BoundaryConditionCreate, baseUrl = '') => requestJson<BoundaryConditionRecord>('/api/v1/model-data/boundary-conditions', jsonOptions('POST', body), baseUrl);
 export const updateBoundaryCondition = (boundaryId: number, body: BoundaryConditionUpdate, baseUrl = '') => requestJson<BoundaryConditionRecord>(\`/api/v1/model-data/boundary-conditions/\${boundaryId}\`, jsonOptions('PUT', body), baseUrl);
 export const deleteBoundaryCondition = (boundaryId: number, baseUrl = '') => requestJson<void>(\`/api/v1/model-data/boundary-conditions/\${boundaryId}\`, { method: 'DELETE' }, baseUrl);
@@ -476,6 +485,13 @@ export const deleteHydraulicStructure = (structureId: number, baseUrl = '') => r
 export const upsertHydraulicStructureScenario = (structureId: number, caseId: number, body: HydraulicStructureScenarioUpsert, baseUrl = '') => requestJson<HydraulicStructureScenarioRecord>(\`/api/v1/hydraulic/structures/\${structureId}/scenarios/\${caseId}\`, jsonOptions('PUT', body), baseUrl);
 export const listHydraulicNetworks = (datasetVersionId: number, baseUrl = '') => requestJson<Array<HydraulicNetworkRecord>>(\`/api/v1/hydraulic/networks\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
 export const getHydraulicSection = (sectionId: number, baseUrl = '') => requestJson<HydraulicSectionDetail>(\`/api/v1/hydraulic/cross-sections/\${sectionId}\`, {}, baseUrl);
+export const updateHydraulicSectionMarkers = (sectionId: number, body: HydraulicMarkerUpdate, baseUrl = '') => requestJson<HydraulicSectionDetail>(\`/api/v1/hydraulic/cross-sections/\${sectionId}/markers\`, jsonOptions('PUT', body), baseUrl);
+export const detectHydraulicSectionMarkers = (sectionId: number, body: HydraulicMarkerDetectionRequest, baseUrl = '') => requestJson<HydraulicSectionDetail>(\`/api/v1/hydraulic/cross-sections/\${sectionId}/marker-detection\`, jsonOptions('POST', body), baseUrl);
+export const updateHydraulicMarkerWorkflow = (profileId: number, body: HydraulicMarkerWorkflowUpdate, baseUrl = '') => requestJson<HydraulicMarkerWorkflowRecord>(\`/api/v1/hydraulic/profiles/\${profileId}/marker-workflow\`, jsonOptions('PUT', body), baseUrl);
+export const batchDetectHydraulicMarkers = (body: HydraulicBatchMarkerDetectionRequest, baseUrl = '') => requestJson<HydraulicBatchMarkerDetectionRecord>('/api/v1/hydraulic/marker-detection/batch', jsonOptions('POST', body), baseUrl);
+export const deriveHydraulicSectionSpatialGeometry = (sectionId: number, baseUrl = '') => requestJson<HydraulicSectionDetail>(\`/api/v1/hydraulic/cross-sections/\${sectionId}/derive-spatial-geometry\`, jsonOptions('POST', {}), baseUrl);
+export const clearHydraulicSectionSpatialGeometry = (sectionId: number, baseUrl = '') => requestJson<HydraulicSectionDetail>(\`/api/v1/hydraulic/cross-sections/\${sectionId}/derived-spatial-geometry\`, { method: 'DELETE' }, baseUrl);
+export const deriveHydraulicDatasetSpatialGeometry = (datasetVersionId: number, baseUrl = '') => requestJson<Record<string, number>>(\`/api/v1/hydraulic/datasets/\${datasetVersionId}/derive-spatial-geometry\`, jsonOptions('POST', {}), baseUrl);
 export const listHydraulicImportJobs = (datasetVersionId: number, baseUrl = '') => requestJson<Array<HydraulicImportJobRecord>>(\`/api/v1/hydraulic/imports\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);
 export const commitHydraulicImport = (jobCode: string, previewConfigHash: string, baseUrl = '') => requestJson<HydraulicImportJobRecord>('/api/v1/hydraulic/imports/commit', jsonOptions('POST', { job_code: jobCode, preview_config_hash: previewConfigHash }), baseUrl);
 export const buildHydraulicTopology = (networkId: number, body: HydraulicTopologyBuildRequest, baseUrl = '') => requestJson<HydraulicTopologyReport>(\`/api/v1/hydraulic/networks/\${networkId}/topology\`, jsonOptions('POST', body), baseUrl);
@@ -558,6 +574,10 @@ export async function importProductionExternal(datasetVersionId: number, resultC
 
 export const createHydraulicTask = (body: SimulationTaskCreate, baseUrl = '') => requestJson<SimulationTaskRecord>('/api/v1/model/tasks', jsonOptions('POST', body), baseUrl);
 export const getHydraulicReadiness = (caseId: number, baseUrl = '') => requestJson<Hydraulic1DReadinessResponse>(\`/api/v1/model/readiness\${toQuery({ case_id: caseId })}\`, {}, baseUrl);
+export const listPublishedScenarioResults = (baseUrl = '') => requestJson<Array<PublishedScenarioBundle>>('/api/v1/model/scenario-results', {}, baseUrl);
+export const getPublishedScenarioGeoJSON = (bundleId: string, scenarioId?: string, baseUrl = '') => requestJson<Record<string, unknown>>(\`/api/v1/model/scenario-results/\${encodeURIComponent(bundleId)}/geojson\${toQuery({ scenario_id: scenarioId })}\`, {}, baseUrl);
+export const getPublishedScenarioCaseManifest = (bundleId: string, baseUrl = '') => requestJson<Record<string, unknown>>(\`/api/v1/model/scenario-results/\${encodeURIComponent(bundleId)}/case-manifest\`, {}, baseUrl);
+export const downloadPublishedScenarioArtifact = (bundleId: string, filename: string, baseUrl = '') => requestBlob(\`/api/v1/model/scenario-results/\${encodeURIComponent(bundleId)}/artifacts/\${encodeURIComponent(filename)}\`, {}, baseUrl);
 export const previewHydraulicModel = (body: SimulationTaskCreate, baseUrl = '') => requestJson<Hydraulic1DPreviewResponse>('/api/v1/model/preview', jsonOptions('POST', body), baseUrl);
 export const listHydraulicTasks = (paramsOrBaseUrl: DatasetTaskListQuery | string = {}, baseUrl = '') => {
   const [params, resolvedBaseUrl] = datasetTaskListArgs(paramsOrBaseUrl, baseUrl);
@@ -570,6 +590,7 @@ export const cancelHydraulicTask = (taskId: number, baseUrl = '') => requestJson
 export const retryHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(\`/api/v1/model/tasks/\${taskId}/retry\`, { method: 'POST' }, baseUrl);
 export const getHydraulicTaskSnapshot = (taskId: number, baseUrl = '') => requestJson<TaskSnapshotResponse>(\`/api/v1/model/tasks/\${taskId}/snapshot\`, {}, baseUrl);
 export const getHydraulicResult = (taskId: number, sectionId?: number, baseUrl = '') => requestJson<SimulationResultResponse>(\`/api/v1/model/results/\${taskId}\${toQuery({ section_id: sectionId })}\`, {}, baseUrl);
+export const getHydraulicResultOverview = (taskId: number, baseUrl = '') => requestJson<SimulationResultOverviewResponse>(\`/api/v1/model/results/\${taskId}/overview\`, {}, baseUrl);
 
 export const listDispatchPlans = (params: DispatchListQuery = {}, baseUrl = '') => requestJson<PageResult<DispatchPlanRecord>>(\`/api/v1/dispatch/plans\${toQuery(params)}\`, {}, baseUrl);
 export const createDispatchPlan = (body: DispatchPlanCreate, baseUrl = '') => requestJson<DispatchPlanRecord>('/api/v1/dispatch/plans', jsonOptions('POST', body), baseUrl);
@@ -585,6 +606,7 @@ export const previewDispatchSchedule = (planId: number, body: DispatchSchedulePr
 export const compileDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPlanCompileReport>(\`/api/v1/dispatch/plans/\${planId}/hydraulic-compile-check\`, jsonOptions('POST', body), baseUrl);
 export const freezeDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPlanFreezeResponse>(\`/api/v1/dispatch/plans/\${planId}/hydraulic-freeze\`, jsonOptions('POST', body), baseUrl);
 export const previewDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPreviewJobRecord>(\`/api/v1/dispatch/plans/\${planId}/hydraulic-preview\`, jsonOptions('POST', body), baseUrl);
+export const runFrozenDispatchHydraulicPlan = (planId: number, baseUrl = '') => requestJson<HydraulicPreviewJobRecord>(\`/api/v1/dispatch/plans/\${planId}/hydraulic-run\`, { method: 'POST' }, baseUrl);
 export const listDispatchActions = (planId: number, baseUrl = '') => requestJson<Array<DispatchActionRecord>>(\`/api/v1/dispatch/plans/\${planId}/actions\`, {}, baseUrl);
 export const createDispatchAction = (planId: number, body: DispatchActionCreate, baseUrl = '') => requestJson<DispatchActionRecord>(\`/api/v1/dispatch/plans/\${planId}/actions\`, jsonOptions('POST', body), baseUrl);
 export const updateDispatchAction = (actionId: number, body: DispatchActionUpdate, baseUrl = '') => requestJson<DispatchActionRecord>(\`/api/v1/dispatch/actions/\${actionId}\`, jsonOptions('PATCH', body), baseUrl);

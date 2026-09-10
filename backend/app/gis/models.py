@@ -116,7 +116,7 @@ class SimulationLayer(Base):
 
 
 class DatasetVersion(Base):
-    """标识一组不可混用的河网、断面、建筑物和模型参数数据。"""
+    """标识一组不可混用的数据，并独立记录人工只读选择。"""
 
     __tablename__ = "dataset_version"
     __table_args__ = (
@@ -138,6 +138,9 @@ class DatasetVersion(Base):
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="draft"
     )
+    is_read_only: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
     parent_version_id: Mapped[int | None] = mapped_column(
         ForeignKey("dataset_version.id", ondelete="RESTRICT")
     )
@@ -156,13 +159,17 @@ class DatasetVersion(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
-    rivers: Mapped[list["River"]] = relationship(back_populates="dataset_version")
-    parameters: Mapped[list["ModelParameter"]] = relationship(back_populates="dataset_version")
+    rivers: Mapped[list["River"]] = relationship(
+        back_populates="dataset_version", passive_deletes=True
+    )
+    parameters: Mapped[list["ModelParameter"]] = relationship(
+        back_populates="dataset_version", passive_deletes=True
+    )
     boundary_conditions: Mapped[list["BoundaryCondition"]] = relationship(
-        back_populates="dataset_version"
+        back_populates="dataset_version", passive_deletes=True
     )
     simulation_cases: Mapped[list["SimulationCase"]] = relationship(
-        back_populates="dataset_version"
+        back_populates="dataset_version", passive_deletes=True
     )
     annotations: Mapped[list["MapAnnotation"]] = relationship(
         back_populates="dataset_version", cascade="all, delete-orphan"
@@ -807,7 +814,7 @@ class River(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     dataset_version_id: Mapped[int] = mapped_column(
-        ForeignKey("dataset_version.id", ondelete="RESTRICT"), nullable=False
+        ForeignKey("dataset_version.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     code: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -877,13 +884,20 @@ class RiverSegment(Base):
             ["upstream_node_id", "dataset_version_id"],
             ["river_node.id", "river_node.dataset_version_id"],
             name="fk_river_segment_upstream_version",
-            ondelete="RESTRICT",
+            # A version delete cascades RiverSegment and RiverNode together;
+            # NO ACTION keeps direct node deletion protected while allowing
+            # PostgreSQL to validate the complete cascade at statement end.
+            ondelete="NO ACTION",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         ForeignKeyConstraint(
             ["downstream_node_id", "dataset_version_id"],
             ["river_node.id", "river_node.dataset_version_id"],
             name="fk_river_segment_downstream_version",
-            ondelete="RESTRICT",
+            ondelete="NO ACTION",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         UniqueConstraint("id", "dataset_version_id", name="uq_river_segment_id_version"),
         UniqueConstraint(
@@ -1104,13 +1118,18 @@ class Gate(Base):
             ["hydraulic_upstream_section_id", "dataset_version_id"],
             ["hydraulic.cross_section.id", "hydraulic.cross_section.dataset_version_id"],
             name="fk_gate_d2_upstream_section_version",
-            ondelete="RESTRICT",
+            # Gate is version-owned and is removed with its Dataset Version.
+            ondelete="NO ACTION",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         ForeignKeyConstraint(
             ["hydraulic_downstream_section_id", "dataset_version_id"],
             ["hydraulic.cross_section.id", "hydraulic.cross_section.dataset_version_id"],
             name="fk_gate_d2_downstream_section_version",
-            ondelete="RESTRICT",
+            ondelete="NO ACTION",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         Index("ix_gate_geometry_gist", "geometry", postgresql_using="gist"),
         Index("ix_gate_river_id", "river_id"),
@@ -1123,7 +1142,11 @@ class Gate(Base):
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     gate_code: Mapped[str] = mapped_column(String(64), nullable=False)
-    river_id: Mapped[int] = mapped_column(ForeignKey("river.id", ondelete="RESTRICT"))
+    river_id: Mapped[int] = mapped_column(
+        # Gate is version-owned; NO ACTION preserves direct River protection
+        # while permitting same-version cascade cleanup.
+        ForeignKey("river.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED")
+    )
     gate_type: Mapped[str] = mapped_column(String(32), nullable=False)
     opening_direction: Mapped[str] = mapped_column(String(32), nullable=False)
     control_mode: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -1181,7 +1204,9 @@ class Pump(Base):
             ["hydraulic_section_id", "dataset_version_id"],
             ["hydraulic.cross_section.id", "hydraulic.cross_section.dataset_version_id"],
             name="fk_pump_d2_section_version",
-            ondelete="RESTRICT",
+            ondelete="NO ACTION",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         Index("ix_pump_geometry_gist", "geometry", postgresql_using="gist"),
         Index("ix_pump_river_id", "river_id"),
@@ -1194,7 +1219,11 @@ class Pump(Base):
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     pump_code: Mapped[str] = mapped_column(String(64), nullable=False)
-    river_id: Mapped[int] = mapped_column(ForeignKey("river.id", ondelete="RESTRICT"))
+    river_id: Mapped[int] = mapped_column(
+        # Pump rows are version-owned; preserve standalone River protection
+        # while allowing same-version children to disappear in one cascade.
+        ForeignKey("river.id", ondelete="NO ACTION", deferrable=True, initially="DEFERRED")
+    )
     design_flow: Mapped[float] = mapped_column(Float, nullable=False)
     head: Mapped[float] = mapped_column(Float, nullable=False)
     power: Mapped[float] = mapped_column(Float, nullable=False)
@@ -1457,13 +1486,17 @@ class BoundaryCondition(Base):
             ["hydraulic_node_id", "dataset_version_id"],
             ["hydraulic.node.id", "hydraulic.node.dataset_version_id"],
             name="fk_boundary_d2_hydraulic_node_version",
-            ondelete="RESTRICT",
+            ondelete="NO ACTION",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         ForeignKeyConstraint(
             ["branch_id", "dataset_version_id"],
             ["hydraulic.branch.id", "hydraulic.branch.dataset_version_id"],
             name="fk_boundary_hydraulic_branch_version",
-            ondelete="RESTRICT",
+            ondelete="NO ACTION",
+            deferrable=True,
+            initially="DEFERRED",
         ),
         CheckConstraint(
             "chainage_m IS NULL OR chainage_m >= 0",
@@ -2102,10 +2135,10 @@ class DispatchAction(Base):
             name="ck_dispatch_action_command_type",
         ),
         CheckConstraint(
-            "(structure_type = 'gate' AND gate_id IS NOT NULL "
+            "(structure_type = 'gate' AND (gate_id IS NOT NULL OR hydraulic_structure_id IS NOT NULL) "
             "AND pump_id IS NULL AND command_type IN "
             "('gate_opening_m', 'gate_opening_ratio')) OR "
-            "(structure_type = 'pump' AND pump_id IS NOT NULL "
+            "(structure_type = 'pump' AND (pump_id IS NOT NULL OR hydraulic_structure_id IS NOT NULL) "
             "AND gate_id IS NULL AND command_type IN "
             "('pump_enabled', 'pump_unit_count', 'pump_target_flow'))",
             name="ck_dispatch_action_structure_command_asset",
@@ -2116,8 +2149,9 @@ class DispatchAction(Base):
             name="ck_dispatch_action_discrete_step",
         ),
         CheckConstraint(
-            "(gate_id IS NOT NULL AND pump_id IS NULL) OR "
-            "(gate_id IS NULL AND pump_id IS NOT NULL)",
+            "(gate_id IS NOT NULL AND pump_id IS NULL AND hydraulic_structure_id IS NULL) OR "
+            "(gate_id IS NULL AND pump_id IS NOT NULL AND hydraulic_structure_id IS NULL) OR "
+            "(gate_id IS NULL AND pump_id IS NULL AND hydraulic_structure_id IS NOT NULL)",
             name="ck_dispatch_action_single_asset",
         ),
         Index(
@@ -2127,6 +2161,14 @@ class DispatchAction(Base):
             "gate_id",
             unique=True,
             postgresql_where=text("gate_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_dispatch_action_hydraulic_structure_time",
+            "plan_id",
+            "time_seconds",
+            "hydraulic_structure_id",
+            unique=True,
+            postgresql_where=text("hydraulic_structure_id IS NOT NULL"),
         ),
         Index(
             "uq_dispatch_action_pump_time",
@@ -2148,6 +2190,11 @@ class DispatchAction(Base):
     structure_type: Mapped[str] = mapped_column(String(16), nullable=False)
     gate_id: Mapped[int | None] = mapped_column(ForeignKey("gate.id", ondelete="RESTRICT"))
     pump_id: Mapped[int | None] = mapped_column(ForeignKey("pump.id", ondelete="RESTRICT"))
+    # New plans reference the solver-neutral structure directly.  The legacy
+    # gate/pump identities remain only for replaying historical plans.
+    hydraulic_structure_id: Mapped[int | None] = mapped_column(
+        ForeignKey("hydraulic.structure.id", ondelete="RESTRICT")
+    )
     command_type: Mapped[str] = mapped_column(String(32), nullable=False)
     target_value: Mapped[float] = mapped_column(Float, nullable=False)
     interpolation: Mapped[str] = mapped_column(String(16), nullable=False, server_default="step")

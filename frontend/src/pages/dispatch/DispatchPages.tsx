@@ -58,8 +58,7 @@ import {
   listDispatchPlans,
   listDispatchRules,
   listDispatchRuns,
-  listGateRecords,
-  listPumpRecords,
+  listHydraulicStructures,
   previewDispatchHydraulicPlan,
   previewDispatchSchedule,
   updateDispatchPlan,
@@ -77,8 +76,7 @@ import {
   type DispatchRunRecord,
   type DispatchSchedulePreview,
   type DispatchSchedulePreviewRequest,
-  type GateRecord,
-  type PumpRecord,
+  type HydraulicStructureRecord,
   type SimulationTaskRecord,
   type DispatchValidationReport,
   type HydraulicPlanCompileReport,
@@ -450,7 +448,7 @@ export function DispatchPlanListPage() {
   );
 }
 
-type ActionForm = DispatchActionCreate & { asset_id: number };
+type ActionForm = Omit<DispatchActionCreate, 'hydraulic_structure_id'> & { asset_id: number };
 type RuleForm = Omit<DispatchRuleCreate, 'action_template'> & {
   structure_type: 'gate' | 'pump';
   structure_id: number;
@@ -471,8 +469,7 @@ export function DispatchPlanEditorPage() {
   const [plan, setPlan] = useState<DispatchPlanRecord>();
   const [actions, setActions] = useState<DispatchActionRecord[]>([]);
   const [rules, setRules] = useState<DispatchRuleRecord[]>([]);
-  const [gates, setGates] = useState<GateRecord[]>([]);
-  const [pumps, setPumps] = useState<PumpRecord[]>([]);
+  const [structures, setStructures] = useState<HydraulicStructureRecord[]>([]);
   const [report, setReport] = useState<DispatchValidationReport>();
   const [readiness, setReadiness] = useState<DispatchExecutionReadiness>();
   const [preview, setPreview] = useState<DispatchSchedulePreview>();
@@ -503,10 +500,9 @@ export function DispatchPlanEditorPage() {
       if (datasetVersionId && record.dataset_version_id !== datasetVersionId) {
         throw new Error('计划与当前数据版本不一致，请切换数据版本');
       }
-      const [actionRows, ruleRows, gatePage, pumpPage, readinessValue, capabilityRows] = await Promise.all([
+      const [actionRows, ruleRows, structureRows, readinessValue, capabilityRows] = await Promise.all([
         listDispatchActions(id), listDispatchRules(id),
-        listGateRecords({ dataset_version_id: record.dataset_version_id, limit: 200 }),
-        listPumpRecords({ dataset_version_id: record.dataset_version_id, limit: 200 }),
+        listHydraulicStructures({ dataset_version_id: record.dataset_version_id }),
         getDispatchExecutionReadiness(id),
         getHydraulicEngineCapabilities().catch((reason) => {
           setHydraulicIssue(hydraulicError(reason, '能力矩阵加载失败'));
@@ -514,7 +510,7 @@ export function DispatchPlanEditorPage() {
         }),
       ]);
       setPlan(record); setActions(actionRows); setRules(ruleRows);
-      setGates(gatePage.items); setPumps(pumpPage.items); setReadiness(readinessValue);
+      setStructures(structureRows.filter((item) => item.structure_type === 'gate' || item.structure_type === 'pump')); setReadiness(readinessValue);
       setHydraulicCapabilities(capabilityRows.filter(
         (item) => item.engine === 'd-flow-fm' && item.engine_version === 'DIMRset_2026.02',
       ));
@@ -528,8 +524,9 @@ export function DispatchPlanEditorPage() {
     const { asset_id, ...rest } = values;
     const payload: DispatchActionCreate = {
       ...rest,
-      gate_id: values.structure_type === 'gate' ? asset_id : null,
-      pump_id: values.structure_type === 'pump' ? asset_id : null,
+      gate_id: null,
+      pump_id: null,
+      hydraulic_structure_id: asset_id,
     };
     await createDispatchAction(id, payload);
     setActionOpen(false); actionForm.resetFields(); await reload();
@@ -538,7 +535,7 @@ export function DispatchPlanEditorPage() {
     const { structure_type, structure_id, command_type, target_value, ...rule } = values;
     await createDispatchRule(id, {
       ...rule,
-      action_template: { structure_type, structure_id, command_type, target_value },
+      action_template: { structure_type, structure_id, command_type, target_value, asset_source: 'hydraulic_structure' },
     });
     setRuleOpen(false); ruleForm.resetFields(); await reload();
   };
@@ -554,7 +551,7 @@ export function DispatchPlanEditorPage() {
   const hydraulicAssets = useMemo(() => {
     const unique = new Map<string, HydraulicAssetRef>();
     actions.forEach((action) => {
-      const assetId = action.structure_type === 'gate' ? action.gate_id : action.pump_id;
+      const assetId = action.hydraulic_structure_id ?? (action.structure_type === 'gate' ? action.gate_id : action.pump_id);
       if (assetId != null) {
         unique.set(`${action.structure_type}:${assetId}`, { kind: action.structure_type, id: assetId });
       }
@@ -571,8 +568,8 @@ export function DispatchPlanEditorPage() {
   }, [actions, rules]);
   /** Resolve a display name without changing the legacy numeric actuator identity. */
   const hydraulicAssetLabel = (asset: HydraulicAssetRef) => {
-    const record = (asset.kind === 'gate' ? gates : pumps).find((item) => item.id === asset.id);
-    return `${record?.name ?? asset.kind} #${asset.id}`;
+    const record = structures.find((item) => item.id === asset.id && item.structure_type === asset.kind);
+    return `${record?.structure_code ?? asset.kind} · ${record?.structure_name ?? `#${asset.id}`} (${record?.chainage_m ?? '—'} m)`;
   };
   const observationRequirements = useMemo(() => {
     const unique = new Map<string, HydraulicObservationRequirement>();
@@ -751,7 +748,7 @@ export function DispatchPlanEditorPage() {
 
   const actionColumns: ColumnsType<DispatchActionRecord> = [
     { title: '时刻（s）', dataIndex: 'time_seconds', width: 100 },
-    { title: '设施', width: 130, render: (_, row) => `${row.structure_type} #${row.gate_id ?? row.pump_id}` },
+    { title: '设施', width: 180, render: (_, row) => hydraulicAssetLabel({ kind: row.structure_type, id: row.hydraulic_structure_id ?? row.gate_id ?? row.pump_id ?? 0 }) },
     { title: '命令', dataIndex: 'command_type', width: 180 },
     { title: '目标值', dataIndex: 'target_value', width: 100 },
     { title: '插值', dataIndex: 'interpolation', width: 90 },
@@ -975,14 +972,14 @@ export function DispatchPlanEditorPage() {
         </Card>
         <div className="dispatch-timeline" aria-label="动作时间轴">
           <span>0 s</span>
-          <div>{actions.map((item) => <i key={item.id} title={`${item.structure_type} #${item.gate_id ?? item.pump_id} @ ${item.time_seconds}s`} style={{ left: `${Math.min(100, item.time_seconds / plan.duration_seconds * 100)}%` }} />)}</div>
+          <div>{actions.map((item) => <i key={item.id} title={`${item.structure_type} #${item.hydraulic_structure_id ?? item.gate_id ?? item.pump_id} @ ${item.time_seconds}s`} style={{ left: `${Math.min(100, item.time_seconds / plan.duration_seconds * 100)}%` }} />)}</div>
           <span>{plan.duration_seconds} s</span>
         </div>
         <Card className="data-card" title="人工动作时间轴" extra={editable && <Button icon={<PlusOutlined />} onClick={() => { actionForm.setFieldsValue({ sequence: actions.length + 1, time_seconds: 0, structure_type: 'gate', command_type: 'gate_opening_m', target_value: 0, interpolation: 'step', priority: 10 }); setActionOpen(true); }}>新增动作</Button>}><Table rowKey="id" dataSource={actions} columns={actionColumns} pagination={false} scroll={{ x: 900 }} /></Card>
         <Card className="data-card" title="白名单阈值规则" extra={editable && <Button icon={<PlusOutlined />} onClick={() => { ruleForm.setFieldsValue({ enabled: true, observation_type: 'elapsed_time', operator: '>=', threshold: 0, hysteresis: 0, minimum_hold_seconds: 0, cooldown_seconds: 0, priority: 5, structure_type: 'gate', command_type: 'gate_opening_m', target_value: 0 }); setRuleOpen(true); }}>新增规则</Button>}><Table rowKey="id" dataSource={rules} columns={ruleColumns} pagination={false} scroll={{ x: 1000 }} /></Card>
         <Row gutter={16}>
-          <Col xs={24} lg={12}><Card className="data-card" title="闸门约束摘要"><Table rowKey="id" size="small" pagination={false} dataSource={gates} columns={[{ title: '设施', dataIndex: 'name' }, { title: '状态', dataIndex: 'status', render: stateTag }, { title: '宽×高（m）', render: (_, row) => `${row.width} × ${row.height}` }, { title: '最大流量', dataIndex: 'max_flow' }, { title: '定位', render: (_, row) => <Button size="small" icon={<AimOutlined />} onClick={() => navigate(`/gis?datasetVersionId=${datasetVersionId}&selectedAsset=gate:${row.id}`)}>GIS</Button> }]} /></Card></Col>
-          <Col xs={24} lg={12}><Card className="data-card" title="泵站约束摘要"><Table rowKey="id" size="small" pagination={false} dataSource={pumps} columns={[{ title: '设施', dataIndex: 'name' }, { title: '状态', dataIndex: 'status', render: stateTag }, { title: '设计流量', dataIndex: 'design_flow' }, { title: '扬程（m）', dataIndex: 'head' }, { title: '功率（kW）', dataIndex: 'power' }, { title: '定位', render: (_, row) => <Button size="small" icon={<AimOutlined />} onClick={() => navigate(`/gis?datasetVersionId=${datasetVersionId}&selectedAsset=pump:${row.id}`)}>GIS</Button> }]} /></Card></Col>
+          <Col xs={24} lg={12}><Card className="data-card" title="统一闸门摘要"><Table rowKey="id" size="small" pagination={false} dataSource={structures.filter((item) => item.structure_type === 'gate')} columns={[{ title: '设施', render: (_, row) => `${row.structure_code} · ${row.structure_name}` }, { title: '状态', dataIndex: 'status', render: stateTag }, { title: '宽×高（m）', render: (_, row) => `${row.width_m ?? '—'} × ${row.height_m ?? '—'}` }, { title: '桩号', dataIndex: 'chainage_m' }]} /></Card></Col>
+          <Col xs={24} lg={12}><Card className="data-card" title="统一泵站摘要"><Table rowKey="id" size="small" pagination={false} dataSource={structures.filter((item) => item.structure_type === 'pump')} columns={[{ title: '设施', render: (_, row) => `${row.structure_code} · ${row.structure_name}` }, { title: '状态', dataIndex: 'status', render: stateTag }, { title: '桩号', dataIndex: 'chainage_m' }, { title: '水力规则', dataIndex: 'hydraulic_law_type' }]} /></Card></Col>
         </Row>
         <Card className="data-card" title="计划校验报告" extra={editable && <Button type="primary" icon={<SafetyCertificateOutlined />} onClick={() => void validate()}>运行校验</Button>}>
           {report ? <Alert type={report.valid ? 'success' : 'error'} showIcon message={report.valid ? '校验通过，可冻结' : '校验未通过'} description={[...report.errors, ...report.warnings].join('；') || '未发现问题'} /> : <div className="data-empty">运行校验后显示拓扑、跨版本、命令和规则检查结果。</div>}
@@ -1132,7 +1129,7 @@ export function DispatchPlanEditorPage() {
       </Modal>
       <Modal open={actionOpen} title="新增人工动作" onCancel={() => setActionOpen(false)} onOk={() => actionForm.submit()} destroyOnHidden>
         <Form form={actionForm} layout="vertical" onFinish={(values) => void submitAction(values)}>
-          <Row gutter={12}><Col span={12}><Form.Item name="structure_type" label="设施类型" rules={[{ required: true }]}><Select options={[{ value: 'gate', label: '闸门' }, { value: 'pump', label: '泵站' }]} /></Form.Item></Col><Col span={12}><Form.Item name="asset_id" label="设施" rules={[{ required: true }]}><Select options={(watchedActionType === 'gate' ? gates : pumps).map((item) => ({ value: item.id, label: item.name }))} /></Form.Item></Col></Row>
+          <Row gutter={12}><Col span={12}><Form.Item name="structure_type" label="设施类型" rules={[{ required: true }]}><Select options={[{ value: 'gate', label: '闸门' }, { value: 'pump', label: '泵站' }]} /></Form.Item></Col><Col span={12}><Form.Item name="asset_id" label="统一水工建筑物" rules={[{ required: true }]}><Select options={structures.filter((item) => item.structure_type === watchedActionType).map((item) => ({ value: item.id, label: `${item.structure_code} · ${item.structure_name} · ${item.chainage_m}m` }))} /></Form.Item></Col></Row>
           <Row gutter={12}><Col span={12}><Form.Item name="time_seconds" label="时刻（s）" rules={[{ required: true }]}><InputNumber min={0} max={plan?.duration_seconds} style={{ width: '100%' }} /></Form.Item></Col><Col span={12}><Form.Item name="sequence" label="序号" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col></Row>
           <Form.Item name="command_type" label="命令（单位由命令确定）" rules={[{ required: true }]}><Select onChange={(value) => { if (value === 'pump_enabled' || value === 'pump_unit_count') actionForm.setFieldValue('interpolation', 'step'); }} options={(watchedActionType === 'gate' ? ['gate_opening_m', 'gate_opening_ratio'] : ['pump_enabled', 'pump_unit_count', 'pump_target_flow']).map((value) => ({ value, label: value }))} /></Form.Item>
           <Row gutter={12}><Col span={12}><Form.Item name="target_value" label="目标值" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col><Col span={12}><Form.Item name="priority" label="优先级"><InputNumber style={{ width: '100%' }} /></Form.Item></Col></Row>
@@ -1144,7 +1141,7 @@ export function DispatchPlanEditorPage() {
           <Form.Item name="name" label="规则名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Row gutter={12}><Col span={10}><Form.Item name="observation_type" label="观测类型" rules={[{ required: true }]}><Select options={['elapsed_time', 'node_water_level', 'section_water_level', 'gate_head_difference', 'pump_intake_level'].map((value) => ({ value, label: value }))} /></Form.Item></Col><Col span={7}><Form.Item name="observation_object_id" label="观测对象 ID"><InputNumber style={{ width: '100%' }} /></Form.Item></Col><Col span={7}><Form.Item name="operator" label="操作符"><Select options={['>', '>=', '<', '<='].map((value) => ({ value, label: value }))} /></Form.Item></Col></Row>
           <Row gutter={12}><Col span={6}><Form.Item name="threshold" label="阈值"><InputNumber style={{ width: '100%' }} /></Form.Item></Col><Col span={6}><Form.Item name="hysteresis" label="滞回"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col><Col span={6}><Form.Item name="minimum_hold_seconds" label="保持（s）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col><Col span={6}><Form.Item name="cooldown_seconds" label="冷却（s）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col></Row>
-          <Row gutter={12}><Col span={8}><Form.Item name="structure_type" label="动作设施类型"><Select options={[{ value: 'gate', label: '闸门' }, { value: 'pump', label: '泵站' }]} /></Form.Item></Col><Col span={8}><Form.Item name="structure_id" label="动作设施"><Select options={(watchedRuleType === 'gate' ? gates : pumps).map((item) => ({ value: item.id, label: item.name }))} /></Form.Item></Col><Col span={8}><Form.Item name="priority" label="优先级"><InputNumber style={{ width: '100%' }} /></Form.Item></Col></Row>
+          <Row gutter={12}><Col span={8}><Form.Item name="structure_type" label="动作设施类型"><Select options={[{ value: 'gate', label: '闸门' }, { value: 'pump', label: '泵站' }]} /></Form.Item></Col><Col span={8}><Form.Item name="structure_id" label="统一水工建筑物"><Select options={structures.filter((item) => item.structure_type === watchedRuleType).map((item) => ({ value: item.id, label: `${item.structure_code} · ${item.structure_name}` }))} /></Form.Item></Col><Col span={8}><Form.Item name="priority" label="优先级"><InputNumber style={{ width: '100%' }} /></Form.Item></Col></Row>
           <Row gutter={12}><Col span={12}><Form.Item name="command_type" label="执行命令"><Select options={(watchedRuleType === 'gate' ? ['gate_opening_m', 'gate_opening_ratio'] : ['pump_enabled', 'pump_unit_count', 'pump_target_flow']).map((value) => ({ value, label: value }))} /></Form.Item></Col><Col span={12}><Form.Item name="target_value" label="命令目标值"><InputNumber style={{ width: '100%' }} /></Form.Item></Col></Row>
         </Form>
       </Modal>

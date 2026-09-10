@@ -1,6 +1,6 @@
 # 大禹·天工当前架构
 
-更新日期：2026-08-31
+更新日期：2026-09-10
 架构基线：GIS-RESET-01 + CONTINUOUS-OPT-01 + HYDRO-1D-RESET-01
 
 ## 1. 总体结构
@@ -21,8 +21,10 @@ flowchart LR
   OPENLAYERS --> IMAGERY["FastAPI 影像代理<br/>Esri 高分辨率 / NASA 后备"]
   GEOSERVER --> PUBLISH
   CORE --> MODEL["Dayu Unified Hydraulic Model"]
-  MODEL --> ADAPTER["MASCARET Adapter<br/>官方 v9.1.1 CLI"]
-  ADAPTER --> RESULT["Dayu Unified Hydraulic Result"]
+  MODEL --> MASCARET["MASCARET Adapter<br/>官方 v9.1.1 CLI"]
+  MODEL --> DFLOW["D-Flow FM Adapter<br/>DIMR/FBC 受控闸泵子集"]
+  MASCARET --> RESULT["Dayu Unified Hydraulic Result"]
+  DFLOW --> RESULT
   MODEL --> REDIS["Redis / hydraulic-1d Worker"]
   RESULT --> CORE
 ```
@@ -117,8 +119,20 @@ GIS 晋级只保证空间核心数据的治理与发布，不伪造模型参数�
 
 水动力任务经 Simulation Case、调度运行经 Dispatch Plan、优化任务经自身字段获得 Dataset Version 身份。监控列表可在数据库查询层按版本过滤，前端必须显式传当前版本；不传参数仍保留历史全量合同。该查询边界不是授权，详情、结果和 mutation 仍需未来 Principal/RBAC 门。
 
-Standard 1D 任务在入队前冻结 solver-neutral `Hydraulic1DModel`，再由独立
-`hydraulic-1d` Worker 调用 Adapter。任务、引擎版本、构建身份、输入摘要和结果来源继续可追溯。
+无闸泵的 Standard 1D 任务在入队前冻结 solver-neutral `Hydraulic1DModel`，再由独立
+`hydraulic-1d` Worker 调用 MASCARET Adapter。闸泵联合任务只能从已冻结的 `hydraulic_v3`
+Dispatch Plan 创建：平台从快照重放初始状态、观测绑定、运行模式与超时，不接受运行时可变
+闸泵参数，并由同一 Worker 调用 D-Flow FM + DIMR/FBC 受控子集。两条路径的任务、引擎版本、
+构建身份、输入摘要和结果来源均继续可追溯。
+
+成功任务的逐断面时序继续保存在 `hydraulic_task_section_result`；闸泵联合任务还在
+`structure_result` 保存同一最终时刻的请求值、约束后值、原生应用值、实际流量与泵扬程。
+方案成果页通过
+`GET /api/v1/model/results/{task_id}/overview` 一次读取共同末时刻的全部断面，按 Branch
+上游至下游桩号展示河底、水位、流量、流速和 Froude；闸泵联合结果同时显示 Gate/Pump 响应。
+任务监控的“方案成果”入口直接定位到对应任务。该自动展示不等于发布、率定或生产验收；
+`SYNTHETIC_NUMERICAL_ONLY` 结果必须保留证据警示，运行诊断中的边界控制警告必须原样保留。
+独立发布成果包仍作为另一类受控归档存在，不与动态任务结果混写。
 
 ## 9. 文件基础边界
 
@@ -137,6 +151,7 @@ Standard 1D 任务在入队前冻结 solver-neutral `Hydraulic1DModel`，再由�
 - 本地文件根与 bind mount 不是 HA/集群文件平台；multipart 解析前的全请求体限制仍待补齐。
 - 默认 Dayu 镜像只包含 MASCARET Adapter，不包含 MASCARET 执行文件；未提供官方 v9.1.1 运行时时任务必须 fail closed。
 - 当前 MASCARET Adapter 不支持 Pump，不得将 Pump 转换为横向入流/出流；实例包含 Pump 时必须返回显式验证错误。
+- D-Flow FM 闸泵联合计算仅开放已验证的合成数值子集（单 Gate、单 Pump 或各一个）；不代表真实工程率定、生产资格、PLC/SCADA 连接或设备命令授权。
 
 ## 11. HYDRO-DATA-01 语义层
 
@@ -157,3 +172,13 @@ Adapter。Dayu Network/Branch/Cross Section/Roughness/Boundary/Initial Condition
 常数边界、点横向入/出流、初始条件、计算时段与输出间隔。多 Branch、横向粗糙率
 变化、分布横向流、Gate 与 Pump 在完成真实 MASCARET runtime benchmark 前全部
 fail closed。详见 `docs/model/MASCARET-1D-ADAPTER.md`。
+
+Gate/Pump 不通过 MASCARET Adapter。它们使用独立的 `hydraulic_v3` → D-Flow FM + DIMR/FBC
+路径；`POST /api/v1/dispatch/plans/{plan_id}/hydraulic-run` 没有请求体，只能重放已冻结的
+受控合同。结果仍采用统一 Section Result，并附加 Gate/Pump 的权威 Structure Result；详见
+`docs/dispatch/hydraulic-dispatch.md`。
+
+调度的新建 Gate/Pump 动作直接引用 `hydraulic.structure.id`，该记录是水动力数据管理模块中
+唯一的运行身份，并按当前 `SimulationCase` 叠加 `hydraulic.structure_scenario`。旧 `gate` /
+`pump` 外键仅为既有调度快照与历史案例兼容保留。统一结构物必须为 `active`，且其 Branch、
+Chainage、参数和显式初始状态均可解析；缺项只会阻断 D-Flow 编译，不会从旧表或默认值猜测。

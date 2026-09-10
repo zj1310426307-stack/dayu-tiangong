@@ -15,6 +15,7 @@ sys.path.insert(0, str(REPOSITORY_ROOT / "backend"))
 
 from app.database.session import SessionLocal  # noqa: E402
 from app.gis.models import BasemapRegistry, GISCatalogLayer  # noqa: E402
+from app.hydraulic import models as _hydraulic_models  # noqa: E402,F401
 
 
 CATALOG_LAYERS = (

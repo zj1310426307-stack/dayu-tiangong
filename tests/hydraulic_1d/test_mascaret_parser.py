@@ -35,6 +35,38 @@ def test_opthyca_fixture_maps_to_unified_result(tmp_path) -> None:
     assert first.flow_area_m2 == pytest.approx(22.0)
     assert first.velocity_m_s == pytest.approx(0.5)
     assert first.top_width_m == pytest.approx(12.0)
+    assert result.diagnostics["boundary_controls"] == []
+    assert result.diagnostics["boundary_control_warnings"] == []
+
+
+def test_parser_reports_a_constant_endpoint_boundary_that_is_not_controlling(
+    tmp_path,
+) -> None:
+    """Keep a valid native result but expose an inactive endpoint control."""
+
+    workspace = tmp_path / "inactive-boundary"
+    workspace.mkdir()
+    source = model_fixture()
+    model = source.model_copy(
+        update={"metadata": {**source.metadata, "calculation_mode": "steady"}}
+    )
+    prepared = MascaretModelBuilder().build(model, workspace)
+    prepared.result_file.write_text(
+        FIXTURE.read_text(encoding="iso-8859-1")
+        .replace(";0.0;2.0;", ";0.0;1.5;")
+        .replace(";0.0;3.0;", ";0.0;1.5;")
+        .replace(";17.25;", ";11.0;"),
+        encoding="iso-8859-1",
+    )
+
+    result = MascaretResultParser().parse(model, prepared, runtime_seconds=0.1)
+
+    warnings = result.diagnostics["boundary_control_warnings"]
+    assert len(warnings) == 1
+    assert warnings[0]["code"] == "BOUNDARY_CONTROL_NOT_SATISFIED"
+    assert warnings[0]["variable"] == "water_level"
+    assert warnings[0]["expected"] == pytest.approx(2.0)
+    assert warnings[0]["observed_last"] == pytest.approx(1.5)
 
 
 def test_parser_rejects_an_unexpected_reach_or_partial_time_axis(tmp_path) -> None:
@@ -99,6 +131,54 @@ def test_parser_accepts_the_official_native_first_step_time_axis(tmp_path) -> No
 
     assert result.records[0].timestamp == 10.0
     assert result.diagnostics["time_axis_mode"] == "mascaret-native"
+
+
+def test_parser_normalizes_complete_sarap_steady_storage_axis(tmp_path) -> None:
+    """Map SARAP's 0, dt-shifted cadence to the requested steady presentation axis."""
+
+    workspace = tmp_path / "sarap-axis"
+    workspace.mkdir()
+    source = model_fixture()
+    model = source.model_copy(
+        update={
+            "metadata": {
+                **source.metadata,
+                "calculation_mode": "steady",
+                "mascaret_kernel": "sarap",
+            }
+        }
+    )
+    prepared = MascaretModelBuilder().build(model, workspace)
+    lines = FIXTURE.read_text(encoding="iso-8859-1").splitlines()
+    shifted: list[str] = []
+    for line in lines:
+        if not line or not line[0].isdigit():
+            shifted.append(line)
+            continue
+        raw_time, remainder = line.split(";", 1)
+        time = float(raw_time)
+        shifted.append(f"{0.0 if time == 0.0 else time - 10.0:.1f};{remainder}")
+    prepared.result_file.write_text(
+        "\n".join(shifted) + "\n",
+        encoding="iso-8859-1",
+    )
+
+    result = MascaretResultParser().parse(model, prepared, runtime_seconds=0.1)
+
+    assert sorted({float(item.timestamp) for item in result.records}) == list(
+        model.settings.expected_output_times()
+    )
+    assert result.diagnostics["time_axis_mode"] == "sarap-steady-normalized"
+
+
+def test_parser_matches_native_four_decimal_chainage_without_accepting_mesh_rows() -> None:
+    """Respect Opthyca rounding while keeping interpolated mesh nodes excluded."""
+
+    source = model_fixture().cross_sections[0]
+    section = source.model_copy(update={"chainage_m": 274.17282})
+
+    assert MascaretResultParser._match_section([section], 274.1728) is section
+    assert MascaretResultParser._match_section([section], 274.1727) is None
 
 
 def test_parser_normalizes_signed_rezo_froude_magnitude(tmp_path) -> None:

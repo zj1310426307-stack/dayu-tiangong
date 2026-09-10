@@ -9,10 +9,13 @@ from app.common.http import commit_or_conflict, not_found
 from app.database.session import get_database_session
 from app.dataset import service
 from app.dataset.schemas import (
+    BoundaryRatingCurveGenerateRequest,
+    BoundaryRatingCurveGenerateResponse,
     BoundaryConditionCreate,
     BoundaryConditionRecord,
     BoundaryConditionUpdate,
     DatasetVersionCreate,
+    DatasetVersionApprovalRequest,
     DatasetVersionRecord,
     DatasetVersionUpdate,
     ModelParameterCreate,
@@ -63,9 +66,30 @@ def update_dataset_version(version_id: int, payload: DatasetVersionUpdate, sessi
     return commit_or_conflict(session, lambda: service.update_dataset_version(session, entity, payload))
 
 
-@router.delete("/dataset-versions/{version_id}", status_code=204, summary="删除空数据集版本")
+@router.post(
+    "/dataset-versions/{version_id}/approve-for-calculation",
+    response_model=DatasetVersionRecord,
+    summary="校核并批准 Standard 1D 计算数据版本",
+)
+def approve_dataset_version_for_calculation(
+    version_id: int,
+    payload: DatasetVersionApprovalRequest,
+    session: SessionDependency,
+) -> DatasetVersionRecord:
+    """批准通过校核的数据；编辑权限由独立只读开关控制。"""
+
+    entity = session.get(DatasetVersion, version_id)
+    if entity is None:
+        raise not_found("数据集版本")
+    return _commit_value_error(
+        session,
+        lambda: service.approve_dataset_version_for_calculation(session, entity, payload),
+    )
+
+
+@router.delete("/dataset-versions/{version_id}", status_code=204, summary="删除数据版本")
 def delete_dataset_version(version_id: int, session: SessionDependency) -> Response:
-    """删除无关联资产的数据集版本。"""
+    """删除非只读版本；被计算或发布审计引用时仍由后端拒绝。"""
 
     entity = session.get(DatasetVersion, version_id)
     if entity is None:
@@ -112,6 +136,23 @@ def read_boundaries(session: SessionDependency, dataset_version_id: int | None =
     """按版本查询边界条件。"""
 
     return service.list_boundaries(session, dataset_version_id)
+
+
+@router.post(
+    "/boundary-conditions/rating-curve/generate",
+    response_model=BoundaryRatingCurveGenerateResponse,
+    summary="根据下游断面自动生成水位流量关系曲线",
+)
+def generate_boundary_rating_curve(
+    payload: BoundaryRatingCurveGenerateRequest,
+    session: SessionDependency,
+) -> BoundaryRatingCurveGenerateResponse:
+    """Generate a read-only Manning Q-H preview for a downstream boundary."""
+
+    try:
+        return service.generate_boundary_rating_curve(session, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.post("/boundary-conditions", response_model=BoundaryConditionRecord, status_code=201, summary="新增边界条件")

@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.dispatch import repository
-from app.dispatch.assets import lock_plan_asset_rows
+from app.dispatch.assets import action_asset_id, lock_plan_asset_rows
 from app.dispatch.comparison import build_comparison
 from app.dispatch.schemas import (
     DispatchActionCreate, DispatchActionRecord, DispatchActionUpdate,
@@ -391,10 +391,12 @@ def create_action(
     if payload.time_seconds > plan.duration_seconds:
         raise DispatchStateError("action time exceeds plan duration")
     asset_column = (
-        DispatchAction.gate_id if payload.structure_type == "gate"
-        else DispatchAction.pump_id
+        DispatchAction.hydraulic_structure_id if payload.hydraulic_structure_id is not None
+        else DispatchAction.gate_id if payload.structure_type == "gate" else DispatchAction.pump_id
     )
-    asset_id = payload.gate_id if payload.structure_type == "gate" else payload.pump_id
+    asset_id = payload.hydraulic_structure_id if payload.hydraulic_structure_id is not None else (
+        payload.gate_id if payload.structure_type == "gate" else payload.pump_id
+    )
     conflict = session.scalar(
         select(DispatchAction.id).where(
             DispatchAction.plan_id == plan_id,
@@ -444,10 +446,10 @@ def update_action(
         session.rollback()
         raise DispatchStateError("action time exceeds plan duration")
     asset_column = (
-        DispatchAction.gate_id if action.structure_type == "gate"
-        else DispatchAction.pump_id
+        DispatchAction.hydraulic_structure_id if action.hydraulic_structure_id is not None
+        else DispatchAction.gate_id if action.structure_type == "gate" else DispatchAction.pump_id
     )
-    asset_id = action.gate_id if action.structure_type == "gate" else action.pump_id
+    asset_id = action_asset_id(action)
     # The ORM row already carries the candidate PATCH values.  Suppress
     # autoflush so the partial unique index cannot turn this deliberate domain
     # check into an IntegrityError before we return the stable conflict reason.

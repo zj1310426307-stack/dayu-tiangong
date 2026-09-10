@@ -7,8 +7,9 @@ import json
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session
+from geoalchemy2.elements import WKTElement
 
 from app.common.spatial import geometry_json
 from app.dataset.lifecycle import assert_dataset_version_mutable
@@ -34,7 +35,16 @@ from app.hydraulic.schemas import (
     HydraulicProfileRecord, HydraulicReachRecord, HydraulicRoughnessZoneInput,
     HydraulicRoughnessZoneRecord, HydraulicSectionDetail, HydraulicSectionPointInput,
     HydraulicSectionPointRecord, HydraulicSectionSummary, HydraulicValidationRunRecord,
+    HydraulicMarkerUpdate,
+    HydraulicBatchMarkerDetectionRecord, HydraulicBatchMarkerDetectionRequest,
+    HydraulicMarkerDetectionRequest, HydraulicMarkerRecord, HydraulicMarkerWorkflowRecord,
+    HydraulicMarkerWorkflowUpdate, HydraulicProcessedPointRecord,
 )
+from app.hydraulic.marker_processing import (
+    ALGORITHM_VERSION, SectionPoint, build_processed_geometry,
+    detect_markers, marker_dict,
+)
+from app.hydraulic.spatial_geometry import derive_section_geometry
 from app.hydraulic.validators import validate_exchange
 
 
@@ -88,13 +98,98 @@ def _record_counts(payload: HydraulicExchangePayload | None) -> dict[str, int]:
     """Return bounded entity counts for preview display."""
 
     if payload is None:
-        return {"branches": 0, "branch_vertices": 0, "cross_sections": 0, "profiles": 0, "profile_points": 0}
+        return {
+            "branches": 0, "branch_vertices": 0, "cross_sections": 0,
+            "profiles": 0, "profile_points": 0, "thalweg_points": 0,
+        }
     return {
         "branches": len(payload.branches),
         "branch_vertices": sum(len(v.points) for v in payload.branches),
         "cross_sections": len({v.section_code for v in payload.sections}),
         "profiles": len(payload.sections),
         "profile_points": sum(len(v.points) for v in payload.sections),
+        "thalweg_points": sum(
+            point.marker_type == "thalweg"
+            for section in payload.sections
+            for point in section.points
+        ),
+    }
+
+
+def _initial_marker_workflow(
+    points: list[HydraulicSectionPointInput],
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Create legacy-safe FULL_EXTENT markers and a raw-equivalent processed profile."""
+
+    raw = [
+        SectionPoint(
+            sequence=value.sequence, offset=value.distance, elevation=value.elevation,
+            x=value.x, y=value.y, point_code=value.point_code,
+        )
+        for value in points
+    ]
+    result = detect_markers(raw, "FULL_EXTENT")
+    markers = marker_dict(result)
+    explicit = {
+        "M1": next((value for value in points if value.marker_type in {"left_bank", "left_levee"}), None),
+        "M2": next((value for value in points if value.marker_type in {"main_channel", "thalweg"}), None),
+        "M3": next((value for value in points if value.marker_type in {"right_bank", "right_levee"}), None),
+    }
+    for marker_type, value in explicit.items():
+        if value is None:
+            continue
+        markers[marker_type] = {
+            **markers[marker_type],
+            "sequence": value.sequence,
+            "offset": value.distance,
+            "elevation": value.elevation,
+            "x": value.x,
+            "y": value.y,
+            "source": "IMPORT_DEFAULT",
+        }
+    marker_config: dict[str, object] = {
+        "markers": markers,
+        "warnings": list(result.warnings),
+        "review_status": result.review_status,
+        "algorithm_version": ALGORITHM_VERSION,
+    }
+    processed: dict[str, object] = {
+        "algorithm_version": ALGORITHM_VERSION,
+        "points": [
+            {
+                "offset": value.distance, "elevation": value.elevation,
+                "virtual": False, "source_sequence": value.sequence,
+            }
+            for value in points
+        ],
+        "warnings": [],
+    }
+    return marker_config, processed
+
+
+def _known_branch_ranges(
+    session: Session, dataset_version_id: int
+) -> dict[str, tuple[float, float]]:
+    """Return persisted adopted chainage limits for cross-section-only imports."""
+
+    rows = session.execute(select(
+        HydraulicBranch.branch_code,
+        HydraulicBranch.start_chainage,
+        HydraulicBranch.end_chainage,
+    ).where(HydraulicBranch.dataset_version_id == dataset_version_id)).all()
+    return {code: (float(start), float(end)) for code, start, end in rows}
+
+
+def _known_branch_roles(session: Session, dataset_version_id: int) -> dict[str, str]:
+    """Return persisted centerline semantics for section-only imports."""
+
+    rows = session.execute(select(
+        HydraulicBranch.branch_code,
+        HydraulicBranch.metadata_json,
+    ).where(HydraulicBranch.dataset_version_id == dataset_version_id)).all()
+    return {
+        code: str((metadata or {}).get("centerline_role", "unknown"))
+        for code, metadata in rows
     }
 
 
@@ -114,10 +209,13 @@ def preview_import(
             filename, content, coordinate_reference.source_srid
         )
         payload.coordinate_reference = coordinate_reference
-        known_codes = set(session.scalars(select(HydraulicBranch.branch_code).where(
-            HydraulicBranch.dataset_version_id == dataset_version_id
-        )).all())
-        issues = validate_exchange(payload, known_codes)
+        known_ranges = _known_branch_ranges(session, dataset_version_id)
+        issues = validate_exchange(
+            payload,
+            set(known_ranges),
+            known_ranges,
+            _known_branch_roles(session, dataset_version_id),
+        )
     except (HydraulicParseError, ValueError) as exc:
         issues = [HydraulicIssue(
             severity="error", code="IMPORT_PARSE_FAILED", message=str(exc)[:500],
@@ -231,7 +329,10 @@ def _upsert_branch(
                 "confirmed" if source.flow_direction in {"forward", "reverse"} else "unknown"
             ),
             geometry=geometry, source_revision=source.source_revision,
-            metadata_json={"source_flow_direction": source.flow_direction},
+            metadata_json={
+                "source_flow_direction": source.flow_direction,
+                "centerline_role": source.centerline_role,
+            },
         )
         session.add(branch)
         session.flush()
@@ -247,7 +348,11 @@ def _upsert_branch(
     branch.direction_status = "confirmed" if source.flow_direction in {"forward", "reverse"} else "unknown"
     branch.geometry = geometry
     branch.source_revision = source.source_revision
-    branch.metadata_json = {"source_flow_direction": source.flow_direction}
+    branch.metadata_json = {
+        **(branch.metadata_json or {}),
+        "source_flow_direction": source.flow_direction,
+        "centerline_role": source.centerline_role,
+    }
     pipeline = f"axis:{spec.axis_mapping};EPSG:{spec.source_srid}->EPSG:4490"
     for order, point in enumerate(source.points):
         session.add(HydraulicBranchVertex(
@@ -333,9 +438,16 @@ def _upsert_section(
             CrossSection.section_code == source.section_code,
         ))
     location = _section_location(source, branch, spec)
+    surveyed_point_axis = [
+        (point.x, point.y) for point in source.points
+        if point.x is not None and point.y is not None
+    ]
+    axis_coordinates = source.axis_points or (
+        surveyed_point_axis if len(surveyed_point_axis) >= 2 and len(surveyed_point_axis) == len(source.points) else []
+    )
     axis = _source_geometry(
-        {"type": "LineString", "coordinates": [list(v) for v in source.axis_points]}, "LineString", spec
-    ) if source.axis_points else None
+        {"type": "LineString", "coordinates": [list(v) for v in axis_coordinates]}, "LineString", spec
+    ) if axis_coordinates else None
     if legacy is None:
         legacy = CrossSection(
             dataset_version_id=dataset_version_id, river_id=branch.legacy_river_id,
@@ -382,6 +494,14 @@ def _upsert_section(
     section.left_bank = func.ST_StartPoint(axis) if axis is not None else None
     section.right_bank = func.ST_EndPoint(axis) if axis is not None else None
     section.orientation_status = "pending" if axis is None else "confirmed"
+    section.spatial_geometry_source = "SURVEY_XY" if axis is not None else "UNAVAILABLE"
+    section.spatial_geometry_status = "SURVEY" if axis is not None else "UNAVAILABLE"
+    section.derived_location_geometry = None
+    section.derived_axis_geometry = None
+    section.branch_intersection_station = None
+    section.anchor_source = "MIDPOINT_FALLBACK"
+    section.review_status = "REVIEWED" if axis is not None else "NEEDS_REVIEW"
+    section.hydraulic_ready = True
     bed_fields = {
         "bed_elevation_m",
         "bed_elevation_source",
@@ -428,8 +548,32 @@ def _upsert_section(
     profile.vertical_datum = spec.vertical_datum
     profile.vertical_unit = spec.vertical_unit
     profile.default_manning_n = source.default_manning_n
-    profile.profile_hash = _profile_digest(source, spec)
+    raw_profile_hash = _profile_digest(source, spec)
+    profile.profile_hash = raw_profile_hash
+    initial_marker_config, initial_processed_geometry = _initial_marker_workflow(source.points)
+    profile.marker_detection_mode = "FULL_EXTENT"
+    profile.active_extent_mode = "FULL_EXTENT"
+    profile.overbank_treatment = "REAL_GEOMETRY"
+    profile.extension_top_elevation_m = None
+    profile.design_max_water_level_m = None
+    profile.safety_freeboard_m = 0.0
+    profile.marker_config_json = initial_marker_config
+    profile.processed_geometry_json = initial_processed_geometry
+    profile.processing_config_version = ALGORITHM_VERSION
+    profile.metadata_json = {
+        **(profile.metadata_json or {}),
+        "raw_profile_hash": raw_profile_hash,
+    }
     profile.is_active = True
+    # Bulk-clearing the previous active row can leave an existing ORM instance
+    # stale in long-lived import transactions.  Write the active flag directly
+    # as the final profile-state assertion so downstream Marker/processing APIs
+    # always see exactly one active profile for this section.
+    session.execute(
+        update(HydraulicCrossSectionProfile)
+        .where(HydraulicCrossSectionProfile.id == profile.id)
+        .values(is_active=True)
+    )
     for point in source.points:
         point_geometry = None
         if point.x is not None and point.y is not None:
@@ -451,6 +595,210 @@ def _upsert_section(
             dataset_version_id=dataset_version_id, profile_id=profile.id, **zone.model_dump()
         ))
     return section
+
+
+def _engineering_vertices(session: Session, branch: HydraulicBranch, network: HydraulicNetwork):
+    """Read branch vertices in the network's projected engineering CRS."""
+
+    if not network.engineering_crs or not network.engineering_crs.upper().startswith("EPSG:"):
+        raise ValueError("branch engineering CRS is unavailable")
+    srid = int(network.engineering_crs.split(":", 1)[1])
+    rows = session.execute(
+        select(
+            HydraulicBranchVertex.chainage,
+            func.ST_X(func.ST_Transform(HydraulicBranchVertex.geometry, srid)),
+            func.ST_Y(func.ST_Transform(HydraulicBranchVertex.geometry, srid)),
+        )
+        .where(HydraulicBranchVertex.branch_id == branch.id)
+        .order_by(HydraulicBranchVertex.vertex_order)
+    ).all()
+    vertices = [(float(chainage), float(x), float(y)) for chainage, x, y in rows]
+    if len(vertices) < 2:
+        raise ValueError("branch has no usable ordered vertices")
+    return vertices, srid
+
+
+def _display_geometry(session: Session, x: float, y: float, srid: int) -> tuple[float, float]:
+    """Transform one projected derived point to the platform display CRS."""
+
+    row = session.execute(
+        select(
+            func.ST_X(func.ST_Transform(func.ST_SetSRID(func.ST_MakePoint(x, y), srid), 4490)),
+            func.ST_Y(func.ST_Transform(func.ST_SetSRID(func.ST_MakePoint(x, y), srid), 4490)),
+        )
+    ).one()
+    return float(row[0]), float(row[1])
+
+
+def derive_section_spatial_geometry(
+    session: Session, section_id: int, *, regenerate: bool = True
+) -> HydraulicSectionDetail:
+    """Derive one section line and marker points from branch+chainage.
+
+    Survey ``axis_geometry`` and surveyed point ``geometry`` are authoritative and
+    never overwritten.  Derived columns are disposable and can be regenerated.
+    """
+
+    section = session.get(HydraulicCrossSection, section_id)
+    if section is None:
+        raise ValueError("Hydraulic cross-section does not exist")
+    assert_dataset_version_mutable(session, section.dataset_version_id)
+    branch = session.get(HydraulicBranch, section.branch_id)
+    network = session.get(HydraulicNetwork, branch.network_id) if branch else None
+    if branch is None or network is None:
+        raise ValueError("Cross-section branch or network does not exist")
+    if section.axis_geometry is not None:
+        section.spatial_geometry_source = "SURVEY_XY"
+        section.spatial_geometry_status = "SURVEY"
+        section.hydraulic_ready = True
+        return get_section_detail(session, section.id)  # type: ignore[return-value]
+    profile = session.scalar(
+        select(HydraulicCrossSectionProfile)
+        .where(
+            HydraulicCrossSectionProfile.cross_section_id == section.id,
+            HydraulicCrossSectionProfile.is_active.is_(True),
+        )
+        .order_by(HydraulicCrossSectionProfile.id.desc())
+    )
+    if profile is None:
+        raise ValueError("Active cross-section profile does not exist")
+    points = session.scalars(
+        select(HydraulicCrossSectionPoint)
+        .where(HydraulicCrossSectionPoint.profile_id == profile.id)
+        .order_by(HydraulicCrossSectionPoint.sequence)
+    ).all()
+    if len(points) < 2:
+        raise ValueError("cross-section profile has fewer than two points")
+    # ``thalweg`` is the backwards-compatible imported representation of an
+    # explicit MIKE11 Marker 2 in older workbooks; new imports use main_channel.
+    marker2 = next(
+        (point for point in points if point.marker_type in {"main_channel", "thalweg"}),
+        None,
+    )
+    if marker2 is not None:
+        anchor, anchor_source = marker2.distance, "MARKER_2_DERIVED"
+        review_status = "REVIEWED" if marker2.marker_type == "main_channel" else "NEEDS_REVIEW"
+    else:
+        anchor = (points[0].distance + points[-1].distance) / 2.0
+        anchor_source, review_status = "MIDPOINT_FALLBACK", "NEEDS_REVIEW"
+    vertices, engineering_srid = _engineering_vertices(session, branch, network)
+    derived = derive_section_geometry(
+        vertices,
+        section.chainage,
+        [point.distance for point in points],
+        anchor,
+        {
+            "marker1": next((point.distance for point in points if point.marker_type in {"left_bank", "left_levee"}), points[0].distance),
+            "marker2": marker2.distance if marker2 is not None else anchor,
+            "marker3": next((point.distance for point in points if point.marker_type in {"right_bank", "right_levee"}), points[-1].distance),
+        },
+    )
+    if regenerate:
+        display_points = [_display_geometry(session, x, y, engineering_srid) for x, y in derived.profile_points]
+        intersection = _display_geometry(session, *derived.intersection, engineering_srid)
+        line_wkt = "LINESTRING(" + ",".join(f"{x:.12f} {y:.12f}" for x, y in display_points) + ")"
+        section.derived_location_geometry = WKTElement(
+            f"POINT({intersection[0]:.12f} {intersection[1]:.12f})", srid=4490
+        )
+        section.derived_axis_geometry = WKTElement(line_wkt, srid=4490)
+        section.branch_intersection_station = anchor
+        section.anchor_source = anchor_source
+        section.review_status = review_status
+        section.spatial_geometry_source = "DERIVED_FROM_BRANCH"
+        section.spatial_geometry_status = "DERIVED"
+        section.orientation_status = "confirmed"
+        section.hydraulic_ready = True
+        for point, xy in zip(points, display_points):
+            # Keep raw/survey geometry intact; only fill the disposable derived field.
+            point.derived_geometry = WKTElement(
+                f"POINT({xy[0]:.12f} {xy[1]:.12f})", srid=4490
+            )
+            point.metadata_json = {
+                **(point.metadata_json or {}),
+                "spatial_geometry_source": "DERIVED_FROM_BRANCH",
+                "branch_intersection_station": anchor,
+            }
+        session.flush()
+    result = get_section_detail(session, section.id)
+    if result is None:
+        raise ValueError("Hydraulic cross-section could not be reloaded")
+    return result
+
+
+def derive_dataset_spatial_geometry(session: Session, dataset_version_id: int) -> int:
+    """Regenerate disposable geometry for every section in one dataset version."""
+
+    assert_dataset_version_mutable(session, dataset_version_id)
+    sections = session.scalars(
+        select(HydraulicCrossSection).where(
+            HydraulicCrossSection.dataset_version_id == dataset_version_id
+        ).order_by(HydraulicCrossSection.id)
+    ).all()
+    for section in sections:
+        try:
+            derive_section_spatial_geometry(session, section.id)
+        except ValueError:
+            # Spatial geometry is a GIS capability, not a hydraulic readiness gate.
+            # Keep the section calculable and expose the missing spatial evidence.
+            section.derived_location_geometry = None
+            section.derived_axis_geometry = None
+            section.branch_intersection_station = None
+            session.execute(
+                update(HydraulicCrossSectionPoint)
+                .where(
+                    HydraulicCrossSectionPoint.profile_id.in_(
+                        select(HydraulicCrossSectionProfile.id).where(
+                            HydraulicCrossSectionProfile.cross_section_id == section.id
+                        )
+                    )
+                )
+                .values(derived_geometry=None)
+            )
+            section.spatial_geometry_source = "UNAVAILABLE"
+            section.spatial_geometry_status = "UNAVAILABLE"
+            section.review_status = "NEEDS_REVIEW"
+            section.hydraulic_ready = True
+    return len(sections)
+
+
+def clear_section_spatial_geometry(session: Session, section_id: int) -> HydraulicSectionDetail:
+    """Remove only disposable branch-derived geometry so it can be regenerated."""
+
+    section = session.get(HydraulicCrossSection, section_id)
+    if section is None:
+        raise ValueError("Hydraulic cross-section does not exist")
+    assert_dataset_version_mutable(session, section.dataset_version_id)
+    if section.axis_geometry is not None:
+        section.spatial_geometry_source = "SURVEY_XY"
+        section.spatial_geometry_status = "SURVEY"
+    else:
+        section.spatial_geometry_source = "UNAVAILABLE"
+        section.spatial_geometry_status = "UNAVAILABLE"
+    section.derived_location_geometry = None
+    section.derived_axis_geometry = None
+    section.branch_intersection_station = None
+    # The schema keeps anchor_source non-null for auditability.  With the
+    # disposable geometry cleared there is no active anchor, so retain the
+    # explicit review-required fallback label rather than inventing a station.
+    section.anchor_source = "MIDPOINT_FALLBACK"
+    section.review_status = "NEEDS_REVIEW"
+    section.hydraulic_ready = True
+    session.execute(
+        update(HydraulicCrossSectionPoint)
+        .where(
+            HydraulicCrossSectionPoint.profile_id.in_(
+                select(HydraulicCrossSectionProfile.id).where(
+                    HydraulicCrossSectionProfile.cross_section_id == section.id
+                )
+            )
+        )
+        .values(derived_geometry=None)
+    )
+    session.flush()
+    result = get_section_detail(session, section.id)
+    if result is None:
+        raise ValueError("Hydraulic cross-section could not be reloaded")
+    return result
 
 
 def _apply_payload(session: Session, job: HydraulicImportJob, payload: HydraulicExchangePayload) -> None:
@@ -484,6 +832,9 @@ def _apply_payload(session: Session, job: HydraulicImportJob, payload: Hydraulic
             raise ValueError(f"Branch {source.branch_code} does not exist in target network")
         _upsert_section(session, job.dataset_version_id, source, branch, spec)
     session.flush()
+    # Spatial lines are derived only after all branch vertices and profiles exist.
+    # This keeps import atomic while leaving raw hydraulic values untouched.
+    derive_dataset_spatial_geometry(session, job.dataset_version_id)
 
 
 def commit_import(session: Session, job_code: str, preview_hash: str) -> HydraulicImportJobRecord:
@@ -501,9 +852,13 @@ def commit_import(session: Session, job_code: str, preview_hash: str) -> Hydraul
     if preview_hash != job.config_hash:
         raise ValueError("Preview configuration changed; run preview again before commit")
     payload = HydraulicExchangePayload.model_validate(job.normalized_payload)
-    issues = validate_exchange(payload, set(session.scalars(select(HydraulicBranch.branch_code).where(
-        HydraulicBranch.dataset_version_id == job.dataset_version_id
-    )).all()))
+    known_ranges = _known_branch_ranges(session, job.dataset_version_id)
+    issues = validate_exchange(
+        payload,
+        set(known_ranges),
+        known_ranges,
+        _known_branch_roles(session, job.dataset_version_id),
+    )
     job.issues = [v.model_dump(mode="json") for v in issues]
     if any(v.severity == "error" for v in issues):
         job.status, job.completed_at = "rejected", datetime.now(UTC)
@@ -531,6 +886,34 @@ def _processing_record(session: Session, value: HydraulicCrossSectionProcessing 
     )
 
 
+def _marker_workflow_record(profile: HydraulicCrossSectionProfile) -> HydraulicMarkerWorkflowRecord:
+    """Serialize the independent Marker/Processed layer without touching raw points."""
+
+    config = profile.marker_config_json or {}
+    geometry = profile.processed_geometry_json or {}
+    markers = config.get("markers", {})
+    return HydraulicMarkerWorkflowRecord(
+        profile_id=profile.id,
+        marker_detection_mode=profile.marker_detection_mode,
+        active_extent_mode=profile.active_extent_mode,
+        overbank_treatment=profile.overbank_treatment,
+        extension_top_elevation_m=profile.extension_top_elevation_m,
+        design_max_water_level_m=profile.design_max_water_level_m,
+        safety_freeboard_m=profile.safety_freeboard_m,
+        processing_config_version=profile.processing_config_version,
+        review_status=str(config.get("review_status", "NEEDS_REVIEW")),
+        warnings=[str(value) for value in config.get("warnings", [])],
+        markers=[
+            HydraulicMarkerRecord.model_validate(markers[key])
+            for key in ("M1", "M2", "M3") if key in markers
+        ],
+        processed_points=[
+            HydraulicProcessedPointRecord.model_validate(value)
+            for value in geometry.get("points", [])
+        ],
+    )
+
+
 def _profile_record(session: Session, profile: HydraulicCrossSectionProfile) -> HydraulicProfileRecord:
     """Return ordered profile points, roughness, and newest matching processing cache."""
 
@@ -553,9 +936,14 @@ def _profile_record(session: Session, profile: HydraulicCrossSectionProfile) -> 
             sequence=p.sequence, distance=p.distance, elevation=p.elevation,
             marker_type=p.marker_type, point_code=p.point_code,
             x=p.source_x, y=p.source_y, z=p.source_z,
+            derived_x=(geometry_json(session, p.derived_geometry)["coordinates"][0]
+                       if p.derived_geometry is not None else None),
+            derived_y=(geometry_json(session, p.derived_geometry)["coordinates"][1]
+                       if p.derived_geometry is not None else None),
         ) for p in points],
         roughness_zones=[HydraulicRoughnessZoneRecord.model_validate(z, from_attributes=True) for z in zones],
         processing=_processing_record(session, processing),
+        marker_workflow=_marker_workflow_record(profile),
     )
 
 
@@ -574,6 +962,9 @@ def list_networks(session: Session, dataset_version_id: int) -> list[HydraulicNe
         for branch in session.scalars(select(HydraulicBranch).where(
             HydraulicBranch.network_id == network.id
         ).order_by(HydraulicBranch.branch_code)).all():
+            vertex_count = int(session.scalar(select(func.count(HydraulicBranchVertex.id)).where(
+                HydraulicBranchVertex.branch_id == branch.id
+            )) or 0)
             reaches = session.scalars(select(HydraulicReach).where(
                 HydraulicReach.branch_id == branch.id
             ).order_by(HydraulicReach.start_chainage_m)).all()
@@ -596,6 +987,10 @@ def list_networks(session: Session, dataset_version_id: int) -> list[HydraulicNe
                         HydraulicCrossSectionPoint.profile_id == profile.id
                     )) or 0) if profile else 0,
                     orientation_status=section.orientation_status,
+                    marker_review_status=(
+                        str((profile.marker_config_json or {}).get("review_status", "NEEDS_REVIEW"))
+                        if profile else "NEEDS_REVIEW"
+                    ),
                     bed_elevation_m=section.bed_elevation_m,
                     bed_elevation_source=section.bed_elevation_source,
                 ))
@@ -610,10 +1005,13 @@ def list_networks(session: Session, dataset_version_id: int) -> list[HydraulicNe
                 branch_code=branch.branch_code, river_name=branch.river_name,
                 branch_name=branch.branch_name, start_chainage=branch.start_chainage,
                 end_chainage=branch.end_chainage, length_m=branch.length_m,
+                flow_direction=(branch.metadata_json or {}).get("source_flow_direction", "unknown"),
+                centerline_role=(branch.metadata_json or {}).get("centerline_role", "unknown"),
                 direction_status=branch.direction_status,
+                source_revision=branch.source_revision,
                 upstream_node_id=branch.upstream_node_id,
                 downstream_node_id=branch.downstream_node_id,
-                section_count=len(summaries), reach_count=len(reaches),
+                vertex_count=vertex_count, section_count=len(summaries), reach_count=len(reaches),
                 reaches=reach_records, sections=summaries,
             ))
         records.append(HydraulicNetworkRecord(
@@ -655,15 +1053,365 @@ def get_section_detail(session: Session, section_id: int) -> HydraulicSectionDet
         bed_elevation_source=section.bed_elevation_source,
         bed_elevation_confirmed_by=section.bed_elevation_confirmed_by,
         bed_elevation_confirmed_at=section.bed_elevation_confirmed_at,
-        location_geometry=geometry_json(session, section.location_geometry),
-        axis_geometry=geometry_json(session, section.axis_geometry) if section.axis_geometry is not None else None,
+        location_geometry=geometry_json(
+            session, section.derived_location_geometry or section.location_geometry
+        ),
+        axis_geometry=(
+            geometry_json(session, section.axis_geometry or section.derived_axis_geometry)
+            if section.axis_geometry is not None or section.derived_axis_geometry is not None
+            else None
+        ),
+        branch_intersection_station=section.branch_intersection_station,
+        anchor_source=section.anchor_source,
+        review_status=section.review_status,
+        spatial_geometry_source=section.spatial_geometry_source,
+        spatial_geometry_status=section.spatial_geometry_status,
+        hydraulic_ready=section.hydraulic_ready,
         profiles=[_profile_record(session, v) for v in profiles],
     )
+
+
+def _raw_marker_points(points: list[HydraulicCrossSectionPoint]) -> list[SectionPoint]:
+    """Project ORM points to immutable pure-algorithm inputs."""
+
+    return [
+        SectionPoint(
+            sequence=point.sequence,
+            offset=point.distance,
+            elevation=point.elevation,
+            x=point.source_x,
+            y=point.source_y,
+            point_code=point.point_code,
+        )
+        for point in points
+    ]
+
+
+def _persist_processed_geometry(
+    profile: HydraulicCrossSectionProfile,
+    points: list[HydraulicCrossSectionPoint],
+) -> None:
+    """Regenerate disposable processed geometry from persisted workflow state."""
+
+    config = profile.marker_config_json or {}
+    processed, warnings = build_processed_geometry(
+        _raw_marker_points(points),
+        config.get("markers", {}),
+        profile.active_extent_mode,
+        profile.overbank_treatment,
+        profile.extension_top_elevation_m,
+        profile.design_max_water_level_m,
+        profile.safety_freeboard_m,
+    )
+    raw_profile_hash = str(
+        (profile.metadata_json or {}).get("raw_profile_hash")
+        or (profile.processed_geometry_json or {}).get("raw_profile_hash")
+        or profile.profile_hash
+    )
+    profile.metadata_json = {
+        **(profile.metadata_json or {}),
+        "raw_profile_hash": raw_profile_hash,
+    }
+    profile.processed_geometry_json = {
+        "algorithm_version": ALGORITHM_VERSION,
+        "raw_profile_hash": raw_profile_hash,
+        "points": [
+            {
+                "offset": value.offset,
+                "elevation": value.elevation,
+                "virtual": value.virtual,
+                "source_sequence": value.source_sequence,
+            }
+            for value in processed
+        ],
+        "warnings": warnings,
+    }
+    if warnings:
+        profile.marker_config_json = {
+            **config,
+            "warnings": list(dict.fromkeys([*config.get("warnings", []), *warnings])),
+            "review_status": "NEEDS_REVIEW",
+        }
+
+
+def _active_profile_and_points(
+    session: Session, section: HydraulicCrossSection
+) -> tuple[HydraulicCrossSectionProfile, list[HydraulicCrossSectionPoint]]:
+    """Load one active profile and its stable raw point order."""
+
+    profile = session.scalar(
+        select(HydraulicCrossSectionProfile).where(
+            HydraulicCrossSectionProfile.cross_section_id == section.id,
+            HydraulicCrossSectionProfile.is_active.is_(True),
+        ).order_by(HydraulicCrossSectionProfile.id.desc())
+    )
+    if profile is None:
+        raise ValueError("Active cross-section profile does not exist")
+    points = list(session.scalars(
+        select(HydraulicCrossSectionPoint).where(
+            HydraulicCrossSectionPoint.profile_id == profile.id
+        ).order_by(HydraulicCrossSectionPoint.sequence)
+    ).all())
+    return profile, points
+
+
+def detect_section_markers(
+    session: Session, section_id: int, payload: HydraulicMarkerDetectionRequest
+) -> HydraulicSectionDetail:
+    """Run a deterministic marker strategy while preserving locked/manual markers."""
+
+    section = session.get(HydraulicCrossSection, section_id)
+    if section is None:
+        raise ValueError("Hydraulic cross-section does not exist")
+    assert_dataset_version_mutable(session, section.dataset_version_id)
+    profile, points = _active_profile_and_points(session, section)
+    existing = (profile.marker_config_json or {}).get("markers", {})
+    result = detect_markers(_raw_marker_points(points), payload.mode, existing, force=payload.force)
+    if not result.markers:
+        raise ValueError(", ".join(result.warnings))
+    records = marker_dict(result)
+    warnings = list(result.warnings)
+    if section.orientation_status != "confirmed" and section.spatial_geometry_source == "UNAVAILABLE":
+        warnings.append("UNKNOWN_ORIENTATION")
+    # marker_type is retained as a compatibility projection only.  Raw offset,
+    # elevation, XYZ and point code remain unchanged.
+    by_sequence = {point.sequence: point for point in points}
+    for point in points:
+        if point.marker_type in {"left_bank", "right_bank", "left_levee", "right_levee", "main_channel"}:
+            point.marker_type = "none"
+    for key, marker_type in (("M1", "left_levee"), ("M2", "main_channel"), ("M3", "right_levee")):
+        by_sequence[int(records[key]["sequence"])].marker_type = marker_type
+    profile.marker_detection_mode = payload.mode
+    profile.marker_config_json = {
+        "markers": records,
+        "warnings": list(dict.fromkeys(warnings)),
+        "review_status": "NEEDS_REVIEW" if warnings else result.review_status,
+        "algorithm_version": ALGORITHM_VERSION,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    section.review_status = "NEEDS_REVIEW" if warnings else "REVIEWED"
+    _persist_processed_geometry(profile, points)
+    profile.profile_hash = canonical_hash({
+        "raw_profile_hash": profile.metadata_json["raw_profile_hash"],
+        "marker_config": profile.marker_config_json,
+        "processing": {
+            "active_extent_mode": profile.active_extent_mode,
+            "overbank_treatment": profile.overbank_treatment,
+            "extension_top_elevation_m": profile.extension_top_elevation_m,
+        },
+    })
+    session.flush()
+    if section.axis_geometry is None:
+        return derive_section_spatial_geometry(session, section.id)
+    result_detail = get_section_detail(session, section.id)
+    if result_detail is None:
+        raise ValueError("Hydraulic cross-section could not be reloaded")
+    return result_detail
+
+
+def update_marker_workflow(
+    session: Session, profile_id: int, payload: HydraulicMarkerWorkflowUpdate
+) -> HydraulicMarkerWorkflowRecord:
+    """Update Active Extent and overbank treatment and rebuild derived geometry."""
+
+    profile = session.get(HydraulicCrossSectionProfile, profile_id)
+    if profile is None:
+        raise ValueError("Hydraulic cross-section profile does not exist")
+    assert_dataset_version_mutable(session, profile.dataset_version_id)
+    points = list(session.scalars(
+        select(HydraulicCrossSectionPoint).where(
+            HydraulicCrossSectionPoint.profile_id == profile.id
+        ).order_by(HydraulicCrossSectionPoint.sequence)
+    ).all())
+    profile.active_extent_mode = payload.active_extent_mode
+    profile.overbank_treatment = payload.overbank_treatment
+    profile.extension_top_elevation_m = payload.extension_top_elevation_m
+    profile.design_max_water_level_m = payload.design_max_water_level_m
+    profile.safety_freeboard_m = payload.safety_freeboard_m
+    profile.processing_config_version = ALGORITHM_VERSION
+    _persist_processed_geometry(profile, points)
+    profile.profile_hash = canonical_hash({
+        "raw_profile_hash": profile.metadata_json["raw_profile_hash"],
+        "marker_config": profile.marker_config_json,
+        "workflow": payload.model_dump(mode="json"),
+        "algorithm_version": ALGORITHM_VERSION,
+    })
+    session.flush()
+    return _marker_workflow_record(profile)
+
+
+def batch_detect_markers(
+    session: Session, payload: HydraulicBatchMarkerDetectionRequest
+) -> HydraulicBatchMarkerDetectionRecord:
+    """Process up to 1000 active profiles synchronously and return review statistics."""
+
+    assert_dataset_version_mutable(session, payload.dataset_version_id)
+    profiles = list(session.scalars(
+        select(HydraulicCrossSectionProfile).where(
+            HydraulicCrossSectionProfile.dataset_version_id == payload.dataset_version_id,
+            HydraulicCrossSectionProfile.is_active.is_(True),
+        ).order_by(HydraulicCrossSectionProfile.id).limit(1000)
+    ).all())
+    detected = needs_review = failed = locked_skipped = unknown_orientation = invalid_order = 0
+    for profile in profiles:
+        section = session.get(HydraulicCrossSection, profile.cross_section_id)
+        unknown_orientation += bool(section and section.orientation_status != "confirmed")
+        existing = (profile.marker_config_json or {}).get("markers", {})
+        if existing and all(value.get("locked") for value in existing.values()) and not payload.force:
+            locked_skipped += 1
+            continue
+        try:
+            detail = detect_section_markers(
+                session,
+                profile.cross_section_id,
+                HydraulicMarkerDetectionRequest(mode=payload.mode, force=payload.force),
+            )
+            detected += 1
+            workflow = next(value.marker_workflow for value in detail.profiles if value.id == profile.id)
+            needs_review += workflow.review_status == "NEEDS_REVIEW"
+            invalid_order += "INVALID_MARKER_ORDER" in workflow.warnings
+        except ValueError as exc:
+            failed += 1
+            invalid_order += "INVALID_MARKER_ORDER" in str(exc)
+    return HydraulicBatchMarkerDetectionRecord(
+        total_sections=len(profiles), detected=detected, needs_review=needs_review,
+        failed=failed, locked_skipped=locked_skipped, unknown_orientation=unknown_orientation,
+        invalid_marker_order=invalid_order,
+    )
+
+
+def update_section_markers(
+    session: Session, section_id: int, payload: HydraulicMarkerUpdate
+) -> HydraulicSectionDetail:
+    """Persist MIKE11 Marker 1/3 selections without changing surveyed elevations."""
+
+    section = session.get(HydraulicCrossSection, section_id)
+    if section is None:
+        raise ValueError("Hydraulic cross-section does not exist")
+    assert_dataset_version_mutable(session, section.dataset_version_id)
+    profile = session.scalar(
+        select(HydraulicCrossSectionProfile).where(
+            HydraulicCrossSectionProfile.cross_section_id == section.id,
+            HydraulicCrossSectionProfile.is_active.is_(True),
+        ).order_by(HydraulicCrossSectionProfile.id.desc())
+    )
+    if profile is None:
+        # Older imports may have left every profile inactive after a bulk
+        # replacement.  Promote the newest profile rather than blocking a
+        # safe Marker edit; the section still remains version-scoped and the
+        # promotion is recorded by the same transaction as the edit.
+        profile = session.scalar(
+            select(HydraulicCrossSectionProfile).where(
+                HydraulicCrossSectionProfile.cross_section_id == section.id,
+            ).order_by(HydraulicCrossSectionProfile.id.desc())
+        )
+        if profile is None:
+            raise ValueError("Active cross-section profile does not exist")
+        session.execute(
+            update(HydraulicCrossSectionProfile)
+            .where(HydraulicCrossSectionProfile.cross_section_id == section.id)
+            .values(is_active=False)
+        )
+        profile.is_active = True
+        session.flush()
+    points = session.scalars(
+        select(HydraulicCrossSectionPoint).where(
+            HydraulicCrossSectionPoint.profile_id == profile.id
+        ).order_by(HydraulicCrossSectionPoint.sequence)
+    ).all()
+    by_sequence = {point.sequence: point for point in points}
+    for sequence in (payload.marker1_sequence, payload.marker2_sequence, payload.marker3_sequence):
+        if sequence is not None and sequence not in by_sequence:
+            raise ValueError(f"Marker sequence {sequence} does not exist in the active profile")
+    # Replace only explicit MIKE11 control markers.  Raw elevation and station
+    # values remain untouched, and thalweg/low-flow semantics are preserved.
+    for point in points:
+        if point.marker_type in {"left_bank", "right_bank", "left_levee", "right_levee", "main_channel"}:
+            point.marker_type = "none"
+    if payload.marker1_sequence is not None:
+        by_sequence[payload.marker1_sequence].marker_type = "left_levee"
+    if payload.marker2_sequence is not None:
+        by_sequence[payload.marker2_sequence].marker_type = "main_channel"
+    if payload.marker3_sequence is not None:
+        by_sequence[payload.marker3_sequence].marker_type = "right_levee"
+    manual_markers: dict[str, dict[str, object]] = {}
+    marker_specs = (
+        ("M1", "LEFT_LEVEE", payload.marker1_sequence, payload.lock_marker1),
+        ("M2", "CHANNEL_LOW_POINT", payload.marker2_sequence, payload.lock_marker2),
+        ("M3", "RIGHT_LEVEE", payload.marker3_sequence, payload.lock_marker3),
+    )
+    for marker_type, role, sequence, locked in marker_specs:
+        if sequence is None:
+            continue
+        point = by_sequence[sequence]
+        manual_markers[marker_type] = {
+            "type": marker_type,
+            "role": role,
+            "sequence": point.sequence,
+            "offset": point.distance,
+            "elevation": point.elevation,
+            "x": point.source_x,
+            "y": point.source_y,
+            "source": "MANUAL",
+            "confidence": 1.0,
+            "locked": locked,
+            "review_status": "REVIEWED",
+            "algorithm_version": ALGORITHM_VERSION,
+            "notes": payload.notes,
+        }
+    profile.marker_detection_mode = "MANUAL"
+    profile.marker_config_json = {
+        "markers": manual_markers,
+        "warnings": [],
+        "review_status": "REVIEWED" if len(manual_markers) == 3 else "NEEDS_REVIEW",
+        "algorithm_version": ALGORITHM_VERSION,
+        "updated_at": datetime.now(UTC).isoformat(),
+    }
+    section.review_status = "REVIEWED" if len(manual_markers) == 3 else "NEEDS_REVIEW"
+    _persist_processed_geometry(profile, points)
+    profile.metadata_json = {
+        **(profile.metadata_json or {}),
+        "mike11_marker_policy": "marker_1_to_3_active_extent",
+        "marker1_sequence": payload.marker1_sequence,
+        "marker2_sequence": payload.marker2_sequence,
+        "marker3_sequence": payload.marker3_sequence,
+        "marker_actor": payload.actor,
+        "marker_updated_at": datetime.now(UTC).isoformat(),
+    }
+    profile.profile_hash = canonical_hash({
+        "raw_profile_hash": profile.metadata_json["raw_profile_hash"],
+        "marker1_sequence": payload.marker1_sequence,
+        "marker2_sequence": payload.marker2_sequence,
+        "marker3_sequence": payload.marker3_sequence,
+        "points": [
+            {"sequence": point.sequence, "distance": point.distance,
+             "elevation": point.elevation, "marker_type": point.marker_type}
+            for point in points
+        ],
+    })
+    session.flush()
+    if section.axis_geometry is None:
+        return derive_section_spatial_geometry(session, section.id)
+    result = get_section_detail(session, section.id)
+    if result is None:
+        raise ValueError("Hydraulic cross-section could not be reloaded")
+    return result
 
 
 def _point_xy(session: Session, geometry) -> tuple[float, float]:
     value = geometry_json(session, geometry)["coordinates"]
     return float(value[0]), float(value[1])
+
+
+def _exchange_section_point(point: HydraulicSectionPointRecord) -> HydraulicSectionPointInput:
+    """Project a stored point into the strict exchange DTO without disposable GIS XY."""
+
+    # derived_x/derived_y describe a regenerable map position, not measured survey XY.
+    # Keeping the projection explicit prevents response-only fields from leaking into
+    # fail-closed hydraulic input schemas as the read model evolves.
+    return HydraulicSectionPointInput.model_validate(
+        point.model_dump(exclude={"derived_x", "derived_y"})
+    )
 
 
 def build_exchange_payload(
@@ -692,6 +1440,7 @@ def build_exchange_payload(
             code=branch.branch_code, river_name=branch.river_name,
             branch_name=branch.branch_name,
             flow_direction=(branch.metadata_json or {}).get("source_flow_direction", "unknown"),
+            centerline_role=(branch.metadata_json or {}).get("centerline_role", "unknown"),
             source_revision=branch.source_revision,
             points=[HydraulicChainageInput(
                 chainage=p.chainage, x=_point_xy(session, p.geometry)[0],
@@ -720,7 +1469,7 @@ def build_exchange_payload(
                     bed_elevation_confirmed_at=section.bed_elevation_confirmed_at,
                     location_x=location[0], location_y=location[1], axis_points=axis,
                     roughness_zones=[HydraulicRoughnessZoneInput.model_validate(z.model_dump()) for z in detail.roughness_zones],
-                    points=[HydraulicSectionPointInput.model_validate(p.model_dump()) for p in detail.points],
+                    points=[_exchange_section_point(point) for point in detail.points],
                 ))
     return HydraulicExchangePayload(
         network_code=network.code, network_name=network.name, source_srid=4490,

@@ -1,8 +1,8 @@
-import { BellOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlusOutlined } from '@ant-design/icons';
-import { Button, Form, Input, Layout, Menu, Modal, Select, Tag, Tooltip, message } from 'antd';
+import { BellOutlined, DeleteOutlined, LockOutlined, MenuFoldOutlined, MenuUnfoldOutlined, PlusOutlined, UnlockOutlined } from '@ant-design/icons';
+import { Button, Form, Input, Layout, Menu, Modal, Popconfirm, Select, Tag, Tooltip, message } from 'antd';
 import { useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { createDatasetVersion, type DatasetVersionCreate } from '../api/generated/client';
+import { createDatasetVersion, deleteDatasetVersion, updateDatasetVersion, type DatasetVersionCreate } from '../api/generated/client';
 import { navigationItems } from '../router';
 import { datasetVersionStatusLabel, useDatasetVersion } from '../context/DatasetVersionContext';
 
@@ -21,9 +21,12 @@ export function MainLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [changingReadOnly, setChangingReadOnly] = useState(false);
   const [versionForm] = Form.useForm<DatasetVersionCreate>();
   const location = useLocation();
   const navigate = useNavigate();
+  const isPublishedScenarioResults = location.pathname.startsWith('/hydraulic/scenario-results');
   const {
     versions,
     datasetVersionId,
@@ -42,7 +45,7 @@ export function MainLayout() {
     [location.pathname],
   );
 
-  /** 创建可编辑草稿并立即切换，打通发布版本到编辑工作区的正式入口。 */
+  /** 创建默认可编辑的数据版本并立即切换。 */
   const createDraft = async (values: DatasetVersionCreate) => {
     setCreating(true);
     try {
@@ -50,9 +53,9 @@ export function MainLayout() {
       await refreshVersions(created.id);
       setCreateOpen(false);
       versionForm.resetFields();
-      message.success(`草稿 ${created.version} 已创建并切换`);
+      message.success(`数据版本 ${created.version} 已创建并切换`);
     } catch (reason) {
-      message.error(reason instanceof Error ? reason.message : '草稿创建失败');
+      message.error(reason instanceof Error ? reason.message : '数据版本创建失败');
     } finally {
       setCreating(false);
     }
@@ -68,6 +71,37 @@ export function MainLayout() {
       description: '由大禹天工 Web 工作台创建的可编辑数据版本',
     });
     setCreateOpen(true);
+  };
+
+  /** 删除当前非只读版本；后端审计引用仍是最终安全门。 */
+  const deleteCurrentVersion = async () => {
+    if (!currentVersion || currentVersion.is_read_only) return;
+    setDeleting(true);
+    try {
+      await deleteDatasetVersion(currentVersion.id);
+      await refreshVersions();
+      message.success(`数据版本 ${currentVersion.version} 已删除`);
+    } catch (reason) {
+      message.error(reason instanceof Error ? reason.message : '数据版本删除失败；请先清理计算、发布或派生版本引用');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  /** 由当前用户显式启用或解除只读，不再由发布状态隐式决定。 */
+  const toggleReadOnly = async () => {
+    if (!currentVersion) return;
+    setChangingReadOnly(true);
+    try {
+      const next = !currentVersion.is_read_only;
+      await updateDatasetVersion(currentVersion.id, { is_read_only: next });
+      await refreshVersions(currentVersion.id);
+      message.success(next ? `数据版本 ${currentVersion.version} 已设为只读` : `数据版本 ${currentVersion.version} 已解除只读`);
+    } catch (reason) {
+      message.error(reason instanceof Error ? reason.message : '只读状态更新失败');
+    } finally {
+      setChangingReadOnly(false);
+    }
   };
 
   return (
@@ -130,24 +164,59 @@ export function MainLayout() {
           </div>
 
           <div className="top-bar__right">
-            <Select
-              aria-label="当前数据版本"
-              className="dataset-version-select"
-              loading={loading}
-              value={datasetVersionId}
-              onChange={setDatasetVersionId}
-              options={versions.map((item) => ({
-                value: item.id,
-                label: `${item.version} · ${item.name} · ${datasetVersionStatusLabel(item.status)}`,
-              }))}
-              placeholder="选择数据版本"
-            />
-            <Tooltip title={error || '创建独立的可编辑草稿；已发布版本始终保持只读'}>
-              <Button icon={<PlusOutlined />} onClick={openCreateDraft}>新建草稿</Button>
-            </Tooltip>
-            <Tag color={versionStatusColor(currentVersion?.status)}>
-              {datasetVersionStatusLabel(currentVersion?.status)}
-            </Tag>
+            {isPublishedScenarioResults ? (
+              <>
+                <Tag color="cyan">本地成果包</Tag>
+                <Tag color="gold">未率定</Tag>
+              </>
+            ) : (
+              <>
+                <Select
+                  aria-label="当前数据版本"
+                  className="dataset-version-select"
+                  loading={loading}
+                  value={datasetVersionId}
+                  onChange={setDatasetVersionId}
+                  options={versions.map((item) => ({
+                    value: item.id,
+                    label: `${item.version} · ${item.name} · ${datasetVersionStatusLabel(item.status)}`,
+                  }))}
+                  placeholder="选择数据版本"
+                />
+                <Tooltip title={error || '创建独立且默认可编辑的数据版本'}>
+                  <Button icon={<PlusOutlined />} onClick={openCreateDraft}>新建版本</Button>
+                </Tooltip>
+                {currentVersion && (
+                  <Button
+                    loading={changingReadOnly}
+                    icon={currentVersion.is_read_only ? <UnlockOutlined /> : <LockOutlined />}
+                    onClick={() => void toggleReadOnly()}
+                  >
+                    {currentVersion.is_read_only ? '解除只读' : '设为只读'}
+                  </Button>
+                )}
+                {currentVersion && !currentVersion.is_read_only && (
+                  <Popconfirm
+                    title="删除当前数据版本？"
+                    description={`将删除 ${currentVersion.version} 及其直属河网、断面和模型数据；被计算、发布或派生版本引用时后端会拒绝。`}
+                    okText="删除版本"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => void deleteCurrentVersion()}
+                  >
+                    <Button danger loading={deleting} icon={<DeleteOutlined />}>删除版本</Button>
+                  </Popconfirm>
+                )}
+                <Tag color={versionStatusColor(currentVersion?.status)}>
+                  {datasetVersionStatusLabel(currentVersion?.status)}
+                </Tag>
+                {currentVersion && (
+                  <Tag color={currentVersion.is_read_only ? 'red' : 'green'}>
+                    {currentVersion.is_read_only ? '只读' : '可编辑'}
+                  </Tag>
+                )}
+              </>
+            )}
             <Tag className="env-tag">原型环境</Tag>
             <Tooltip title="通知中心将在后续阶段接入">
               <Button className="notification-button" type="text" icon={<BellOutlined />} />
@@ -166,7 +235,7 @@ export function MainLayout() {
 
       <Modal
         open={createOpen}
-        title="新建可编辑数据草稿"
+        title="新建可编辑数据版本"
         onCancel={() => setCreateOpen(false)}
         onOk={() => versionForm.submit()}
         confirmLoading={creating}

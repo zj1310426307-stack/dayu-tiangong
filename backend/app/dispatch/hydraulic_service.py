@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.dispatch.assets import lock_plan_asset_rows
+from app.dispatch.assets import action_asset_id, lock_plan_asset_rows
 from app.dispatch.hydraulic_assets import (
     HydraulicAssetNormalization,
     HydraulicControlAsset,
@@ -144,14 +144,14 @@ def _scheduled_actions(rows: list[DispatchAction]) -> tuple[ScheduledAction, ...
             id=item.id,
             time_seconds=float(item.time_seconds),
             structure_type=item.structure_type,
-            structure_id=int(item.gate_id if item.structure_type == "gate" else item.pump_id),
+            structure_id=int(action_asset_id(item)),
             command_type=item.command_type,
             target_value=float(item.target_value),
             interpolation=item.interpolation,
             priority=int(item.priority),
         )
         for item in rows
-        if (item.gate_id if item.structure_type == "gate" else item.pump_id) is not None
+        if action_asset_id(item) is not None
     )
 
 
@@ -1064,6 +1064,53 @@ def start_hydraulic_preview(
     )
 
 
+def start_frozen_hydraulic_calculation(
+    session: Session,
+    plan_id: int,
+) -> HydraulicPreviewJobRecord:
+    """Run the exact Gate/Pump contract already approved in a frozen v3 plan.
+
+    The convenience route reconstructs no hydraulic assumptions. It replays only
+    the state, observations, runtime mode, and timeout hash-bound in the plan.
+    """
+
+    plan = session.get(DispatchPlan, plan_id)
+    if plan is None:
+        raise HydraulicDispatchNotFoundError("dispatch plan does not exist")
+    valid, reason = hydraulic_snapshot_integrity(plan)
+    if not valid:
+        raise HydraulicDispatchStateError(
+            reason or "frozen hydraulic snapshot is invalid",
+            code="HYDRAULIC_V3_SNAPSHOT_INVALID",
+        )
+    assert isinstance(plan.frozen_snapshot, dict)
+    envelope = DispatchPlanSnapshot.model_validate(plan.frozen_snapshot)
+    payload = json.loads(envelope.plan_payload_json)
+    execution = payload.get("execution_settings")
+    if not isinstance(execution, dict):
+        raise HydraulicDispatchStateError(
+            "frozen hydraulic execution settings are missing",
+            code="HYDRAULIC_V3_SNAPSHOT_INVALID",
+        )
+    try:
+        request = HydraulicPlanCompileRequest(
+            initial_actuator_state=envelope.initial_actuator_state,
+            observation_bindings=envelope.control_observation_contract.bindings,
+            observation_sampling_interval_seconds=(
+                envelope.control_observation_contract.sampling_interval_seconds
+            ),
+            runtime_mode=execution["runtime_mode"],
+            timeout_seconds=execution["timeout_seconds"],
+            synthetic_fixture=True,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HydraulicDispatchStateError(
+            f"frozen hydraulic execution contract is invalid: {exc}",
+            code="HYDRAULIC_V3_SNAPSHOT_INVALID",
+        ) from exc
+    return start_hydraulic_preview(session, plan_id, request)
+
+
 def persist_controlled_result(
     session: Session,
     task: SimulationTask,
@@ -1235,5 +1282,6 @@ __all__ = [
     "freeze_hydraulic_plan",
     "hydraulic_snapshot_integrity",
     "persist_controlled_result",
+    "start_frozen_hydraulic_calculation",
     "start_hydraulic_preview",
 ]

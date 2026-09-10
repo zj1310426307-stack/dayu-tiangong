@@ -16,11 +16,13 @@ def _finite(value: float) -> bool:
 def validate_exchange(
     payload: HydraulicExchangePayload,
     known_branch_codes: set[str] | None = None,
+    known_branch_ranges: dict[str, tuple[float, float]] | None = None,
+    known_branch_roles: dict[str, str] | None = None,
 ) -> list[HydraulicIssue]:
     """Apply CRS, topology, chainage, and profile gates to one normalized payload."""
 
     issues: list[HydraulicIssue] = []
-    available_branches = set(known_branch_codes or set()) | {
+    available_branches = set(known_branch_codes or set()) | set(known_branch_ranges or {}) | {
         branch.code for branch in payload.branches
     }
     for branch in payload.branches:
@@ -90,17 +92,45 @@ def validate_exchange(
                     )
                     break
 
-    branch_ranges = {
+    branch_ranges = dict(known_branch_ranges or {})
+    branch_ranges.update({
         branch.code: (branch.points[0].chainage, branch.points[-1].chainage)
         for branch in payload.branches
-    }
+    })
+    branch_roles = dict(known_branch_roles or {})
+    branch_roles.update({branch.code: branch.centerline_role for branch in payload.branches})
+    previous_section_by_branch: dict[str, tuple[str, float]] = {}
     for section in payload.sections:
+        previous_section = previous_section_by_branch.get(section.branch_code)
+        if previous_section is not None and section.chainage < previous_section[1]:
+            issues.append(
+                HydraulicIssue(
+                    severity="error",
+                    code="SECTION_CHAINAGE_ORDER_INVALID",
+                    message="横断面组必须按上游到下游、里程非递减顺序依次输入",
+                    entity_type="cross_section",
+                    entity_ref=section.section_code,
+                    context={
+                        "branch_code": section.branch_code,
+                        "previous_section_code": previous_section[0],
+                        "previous_chainage": previous_section[1],
+                        "chainage": section.chainage,
+                    },
+                )
+            )
+        previous_section_by_branch[section.branch_code] = (
+            section.section_code,
+            section.chainage,
+        )
         if section.branch_code not in available_branches:
             issues.append(
                 HydraulicIssue(
                     severity="error",
                     code="SECTION_BRANCH_MISSING",
-                    message="断面引用的河段编码在本次导入和目标版本中均不存在",
+                    message=(
+                        "断面引用的河段编码在本次文件和当前数据版本中均不存在；"
+                        "横断面文件可不含河段，但必须先在同一数据版本提交对应的河道中心线"
+                    ),
                     entity_type="cross_section",
                     entity_ref=section.section_code,
                     context={"branch_code": section.branch_code},
@@ -119,14 +149,58 @@ def validate_exchange(
                         context={"chainage": section.chainage, "start": start, "end": end},
                     )
                 )
-        if not section.axis_points:
+        thalweg_points = [
+            point for point in section.points if point.marker_type == "thalweg"
+        ]
+        if branch_roles.get(section.branch_code) == "thalweg" and not thalweg_points:
+            issues.append(
+                HydraulicIssue(
+                    severity="error",
+                    code="SECTION_THALWEG_MISSING",
+                    message="深泓线河段上的每个断面必须标记至少一个最低高程深泓点",
+                    entity_type="cross_section",
+                    entity_ref=section.section_code,
+                )
+            )
+        if len(thalweg_points) > 1:
             issues.append(
                 HydraulicIssue(
                     severity="warning",
-                    code="SECTION_AXIS_UNAVAILABLE",
-                    message="断面仅有位置/剖面数据，尚无可核对方向的断面线",
+                    code="SECTION_THALWEG_TIE",
+                    message="断面存在多个同高最低点，已全部保留为深泓点候选并等待人工复核",
                     entity_type="cross_section",
                     entity_ref=section.section_code,
+                    context={
+                        "count": len(thalweg_points),
+                        "offsets_m": [point.distance for point in thalweg_points],
+                        "elevation_m": min(point.elevation for point in thalweg_points),
+                    },
+                )
+            )
+        marker1_points = [
+            point for point in section.points
+            if point.marker_type in {"left_bank", "left_levee"}
+        ]
+        marker3_points = [
+            point for point in section.points
+            if point.marker_type in {"right_bank", "right_levee"}
+        ]
+        if not marker1_points or not marker3_points:
+            issues.append(
+                HydraulicIssue(
+                    severity="warning",
+                    code="MIKE11_MARKER_EXTENT_UNDECLARED",
+                    message=(
+                        "未同时声明 MIKE11 Marker 1/3；当前按全断面点计算，"
+                        "请在横断面数据库中补充左右堤防点后重新处理断面"
+                    ),
+                    entity_type="cross_section",
+                    entity_ref=section.section_code,
+                    context={
+                        "marker1_count": len(marker1_points),
+                        "marker3_count": len(marker3_points),
+                        "fallback": "full_profile",
+                    },
                 )
             )
         elevations = [point.elevation for point in section.points]

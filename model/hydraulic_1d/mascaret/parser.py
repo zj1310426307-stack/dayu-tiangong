@@ -35,6 +35,7 @@ class MascaretResultParser:
     """Parse official Opthyca rows and reject topology or time-axis drift."""
 
     REQUIRED_VARIABLES = frozenset({"Z", "Q"})
+    OPTHYCA_CHAINAGE_ROUNDING_TOLERANCE_M = 5.1e-5
 
     def parse(
         self,
@@ -226,6 +227,28 @@ class MascaretResultParser:
             native_expected_times,
             tolerance=time_tolerance,
         )
+        sarap_steady_axis = False
+        if (
+            not platform_axis
+            and not native_axis
+            and model.metadata.get("calculation_mode") == "steady"
+            and model.metadata.get("mascaret_kernel") == "sarap"
+            and len(observed_times) == len(expected_times)
+        ):
+            # SARAP writes the initial permanent solution at t=0, then applies
+            # the storage cadence from the preceding calculation step.  For
+            # constant-boundary steady tasks, time is only a presentation axis;
+            # map the complete ordered native snapshots to the requested axis.
+            normalized_time = dict(zip(observed_times, expected_times))
+            records = [
+                record.model_copy(
+                    update={"timestamp": normalized_time[float(record.timestamp)]}
+                )
+                for record in records
+            ]
+            observed_times = list(expected_times)
+            platform_axis = True
+            sarap_steady_axis = True
         if not platform_axis and not native_axis:
             raise Hydraulic1DResultError(
                 "MASCARET result does not cover the complete expected output time axis"
@@ -241,6 +264,10 @@ class MascaretResultParser:
         native_mass_balance = self._native_mass_balance(
             prepared.workspace / "results.lis"
         )
+        boundary_controls = self._constant_endpoint_boundary_controls(model, records)
+        boundary_control_warnings = [
+            item for item in boundary_controls if not item["satisfied"]
+        ]
         return HydraulicResult(
             simulation_id=model.simulation_id,
             scenario_id=model.scenario_id,
@@ -253,15 +280,106 @@ class MascaretResultParser:
                 "mapped_result_rows": len(records),
                 "variable_abbreviations": list(variables),
                 "source_format": "opthyca-opt",
+                "calculation_mode": model.metadata.get(
+                    "calculation_mode", "unsteady"
+                ),
+                "mascaret_kernel": model.metadata.get(
+                    "mascaret_kernel", "mascaret"
+                ),
+                "boundary_controls": boundary_controls,
+                "boundary_control_warnings": boundary_control_warnings,
                 **native_mass_balance,
                 # The official native executable stores the first solved time
                 # step, then the requested interval; it cannot store t=0.
-                "time_axis_mode": "platform-t0" if platform_axis else "mascaret-native",
+                "time_axis_mode": (
+                    "sarap-steady-normalized"
+                    if sarap_steady_axis
+                    else "platform-t0"
+                    if platform_axis
+                    else "mascaret-native"
+                ),
             },
             # Raw engine files stay private to the job workspace and are deleted
             # after parsing. Durable artifacts require a separate object-store path.
             artifacts=(),
         )
+
+    @staticmethod
+    def _constant_endpoint_boundary_controls(
+        model: Hydraulic1DModel,
+        records: list[HydraulicResultRecord],
+    ) -> list[dict[str, object]]:
+        """Report whether constant endpoint controls survived the native solve.
+
+        A supercritical steady solution can make a prescribed downstream stage
+        hydraulically inactive.  The native solver is still a valid calculation,
+        but the platform must expose that engineering fact instead of presenting
+        the requested boundary value as satisfied.
+        """
+
+        if model.metadata.get("calculation_mode") != "steady":
+            return []
+        sections_by_branch = {
+            branch.id: sorted(
+                (
+                    item
+                    for item in model.cross_sections
+                    if item.branch_id == branch.id
+                ),
+                key=lambda item: item.chainage_m,
+            )
+            for branch in model.branches
+        }
+        observations: list[dict[str, object]] = []
+        for boundary in model.boundaries:
+            if boundary.location == "lateral" or len(boundary.series) != 1:
+                continue
+            branch_sections = sections_by_branch[boundary.branch_id]
+            section = (
+                branch_sections[0]
+                if boundary.location == "upstream"
+                else branch_sections[-1]
+            )
+            field = (
+                "discharge_m3s"
+                if boundary.variable == "discharge"
+                else "water_level_m"
+            )
+            values = [
+                float(getattr(record, field))
+                for record in records
+                if record.cross_section_id == section.id
+            ]
+            if not values:
+                continue
+            expected = float(boundary.series[0].value)
+            tolerance = (
+                max(0.002, abs(expected) * 1e-6)
+                if boundary.variable == "discharge"
+                else 0.002
+            )
+            maximum_deviation = max(abs(value - expected) for value in values)
+            observations.append(
+                {
+                    "code": (
+                        "BOUNDARY_CONTROL_SATISFIED"
+                        if maximum_deviation <= tolerance
+                        else "BOUNDARY_CONTROL_NOT_SATISFIED"
+                    ),
+                    "boundary_id": boundary.id,
+                    "location": boundary.location,
+                    "variable": boundary.variable,
+                    "cross_section_id": section.id,
+                    "expected": expected,
+                    "observed_last": values[-1],
+                    "observed_min": min(values),
+                    "observed_max": max(values),
+                    "max_abs_deviation": maximum_deviation,
+                    "tolerance": tolerance,
+                    "satisfied": maximum_deviation <= tolerance,
+                }
+            )
+        return observations
 
     @staticmethod
     def _native_mass_balance(listing_file: Path) -> dict[str, object]:
@@ -425,7 +543,14 @@ class MascaretResultParser:
         """Map only exact authoritative profile locations and ignore interpolated mesh rows."""
 
         closest = min(sections, key=lambda item: abs(item.chainage_m - chainage_m))
-        tolerance = max(1e-6, abs(closest.chainage_m) * 1e-10)
+        # The native Opthyca writer emits chainage with four decimal places,
+        # even when the generated geometry retains more precision.  Accept only
+        # the half-unit rounding error (plus a small textual conversion guard),
+        # so interpolated mesh rows remain excluded.
+        tolerance = max(
+            MascaretResultParser.OPTHYCA_CHAINAGE_ROUNDING_TOLERANCE_M,
+            abs(closest.chainage_m) * 1e-10,
+        )
         return closest if abs(closest.chainage_m - chainage_m) <= tolerance else None
 
     @staticmethod

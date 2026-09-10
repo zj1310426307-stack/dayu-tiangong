@@ -538,6 +538,12 @@ def _core_content_rows(session: Session, version_id: int) -> list[dict[str, Any]
     return records
 
 
+def dataset_core_content_hash(session: Session, version_id: int) -> str:
+    """Return the canonical four-family hash used by authoritative Dataset Versions."""
+
+    return canonical_sha256(_core_content_rows(session, version_id))
+
+
 def promote_batch(
     session: Session, batch_id: int, payload: PromoteRequest
 ) -> PromotedVersionRecord:

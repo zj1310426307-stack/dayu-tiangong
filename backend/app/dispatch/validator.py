@@ -5,12 +5,13 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.dispatch.assets import resolve_plan_asset_snapshots
+from app.dispatch.assets import action_asset_id, resolve_plan_asset_snapshots, template_uses_unified_structure
 from app.dispatch.schemas import ValidationReport
 from app.gis.models import (
     CrossSection, DispatchAction, DispatchPlan, DispatchRule, Gate, Pump,
     RiverNode, RiverSegment, SimulationCase,
 )
+from app.hydraulic.models import HydraulicStructure
 from model.control.constraints import (
     COMMAND_UNITS,
     command_matches_structure,
@@ -44,7 +45,7 @@ def validate_plan(session: Session, plan: DispatchPlan) -> ValidationReport:
     command_modes: dict[tuple[str, int], set[str]] = {}
     seen: set[tuple[str, int, float]] = set()
     for action in actions:
-        asset_id = action.gate_id if action.structure_type == "gate" else action.pump_id
+        asset_id = action_asset_id(action)
         if asset_id is not None:
             command_modes.setdefault(
                 (action.structure_type, int(asset_id)), set()
@@ -68,9 +69,19 @@ def validate_plan(session: Session, plan: DispatchPlan) -> ValidationReport:
             )
             if not interpolation_valid:
                 errors.append(f"动作 {action.id}：{interpolation_reason}")
-        asset = session.get(Gate if action.structure_type == "gate" else Pump, asset_id)
+        direct = action.hydraulic_structure_id is not None
+        asset = session.get(HydraulicStructure, asset_id) if direct else session.get(
+            Gate if action.structure_type == "gate" else Pump, asset_id
+        )
         if asset is None or asset.dataset_version_id != plan.dataset_version_id:
             errors.append(f"动作 {action.id} 设施不存在或跨数据版本")
+        elif direct and (asset.structure_type != action.structure_type or asset.status != "active"):
+            errors.append(f"动作 {action.id} 的统一水工建筑物类型或状态无效")
+        elif direct:
+            # Branch/chainage is the authoritative spatial attachment for the
+            # solver-neutral structure; detailed solver mapping is checked by
+            # the hydraulic-v3 compiler.
+            pass
         elif action.structure_type == "gate" and (
             asset.river_segment_id is None or asset.upstream_node_id is None or asset.downstream_node_id is None
         ):
@@ -97,6 +108,7 @@ def validate_plan(session: Session, plan: DispatchPlan) -> ValidationReport:
             elif any(item.dataset_version_id != plan.dataset_version_id for item in references):
                 errors.append(f"泵站 {asset.id} 节点引用跨数据版本")
         if asset is not None and asset_id is not None:
+            availability = "online" if direct and asset.status == "active" else asset.status
             target = ControlTarget(
                 action.structure_type,
                 int(asset_id),
@@ -106,11 +118,11 @@ def validate_plan(session: Session, plan: DispatchPlan) -> ValidationReport:
                 "manual",
                 action.id,
             )
-            valid_target, reason = validate_control_target(target, asset.status)
+            valid_target, reason = validate_control_target(target, availability)
             if not valid_target:
                 errors.append(f"动作 {action.id} 的设施状态或目标无效：{reason}")
             snapshot = snapshot_by_key.get((action.structure_type, int(asset_id)))
-            if snapshot is not None:
+            if snapshot is not None and snapshot["constraints"]:
                 valid_target, reason = validate_target_against_asset(
                     target, snapshot["constraints"]
                 )
@@ -155,7 +167,11 @@ def validate_plan(session: Session, plan: DispatchPlan) -> ValidationReport:
 
         template = rule.action_template
         required = {"structure_type", "structure_id", "command_type", "target_value"}
-        if not isinstance(template, dict) or set(template) != required:
+        allowed = required | {"asset_source"}
+        template_keys = set(template) if isinstance(template, dict) else set()
+        if not isinstance(template, dict) or (
+            template_keys != required and template_keys != allowed
+        ):
             errors.append(f"规则 {rule.id} 的动作模板字段不完整或含未授权字段")
             continue
         structure_type = template.get("structure_type")
@@ -174,11 +190,18 @@ def validate_plan(session: Session, plan: DispatchPlan) -> ValidationReport:
             errors.append(f"规则 {rule.id} 的动作模板类型无效")
             continue
         command_modes.setdefault((structure_type, structure_id), set()).add(command_type)
-        asset = session.get(Gate if structure_type == "gate" else Pump, structure_id)
+        direct = template_uses_unified_structure(template)
+        asset = session.get(HydraulicStructure, structure_id) if direct else session.get(
+            Gate if structure_type == "gate" else Pump, structure_id
+        )
         if asset is None or asset.dataset_version_id != plan.dataset_version_id:
             errors.append(f"规则 {rule.id} 的动作设施不存在或跨数据版本")
             continue
-        if structure_type == "gate":
+        if direct and (asset.structure_type != structure_type or asset.status != "active"):
+            errors.append(f"规则 {rule.id} 的统一水工建筑物类型或状态无效")
+        elif direct:
+            pass
+        elif structure_type == "gate":
             if (
                 asset.river_segment_id is None
                 or asset.upstream_node_id is None
@@ -220,12 +243,12 @@ def validate_plan(session: Session, plan: DispatchPlan) -> ValidationReport:
                 structure_type, structure_id, command_type, float(target_value),
                 rule.priority, "rule", rule.id,
             ),
-            asset.status,
+            "online" if direct and asset.status == "active" else asset.status,
         )
         if not valid_target:
             errors.append(f"规则 {rule.id} 的动作无效：{reason}")
         snapshot = snapshot_by_key.get((structure_type, structure_id))
-        if snapshot is not None:
+        if snapshot is not None and snapshot["constraints"]:
             valid_target, reason = validate_target_against_asset(
                 ControlTarget(
                     structure_type,

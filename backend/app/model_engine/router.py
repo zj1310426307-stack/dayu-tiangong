@@ -7,15 +7,18 @@ from os import getenv
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database.session import get_database_session
-from app.model_engine import service
+from app.model_engine import scenario_results, service
 from app.model_engine.schemas import (
     Hydraulic1DPreviewResponse,
     Hydraulic1DReadinessResponse,
+    PublishedScenarioBundle,
     SimulationResultResponse,
+    SimulationResultOverviewResponse,
     SimulationTaskCreate,
     SimulationTaskRecord,
     TaskSnapshotResponse,
@@ -27,6 +30,64 @@ from model.hydraulic_1d.contracts import HYDRAULIC_1D_INPUT_SCHEMA
 
 router = APIRouter(prefix="/api/v1/model", tags=["hydraulic-model"])
 SessionDependency = Annotated[Session, Depends(get_database_session)]
+
+
+@router.get(
+    "/scenario-results",
+    response_model=list[PublishedScenarioBundle],
+    summary="List locally published engineering scenario results",
+)
+def list_scenario_results() -> list[PublishedScenarioBundle]:
+    """Expose governed result bundles independently from mutable Dataset Versions."""
+
+    try:
+        return scenario_results.list_published_scenario_results()
+    except scenario_results.ScenarioResultBundleError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.get(
+    "/scenario-results/{bundle_id}/geojson",
+    summary="Return a scenario result GIS overlay",
+)
+def get_scenario_result_geojson(
+    bundle_id: str,
+    scenario_id: str | None = Query(default=None),
+) -> dict[str, object]:
+    """Expose only the validated local scenario overlay and its result values."""
+
+    try:
+        return scenario_results.published_scenario_geojson(bundle_id, scenario_id)
+    except scenario_results.ScenarioResultBundleError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/scenario-results/{bundle_id}/case-manifest",
+    summary="Read the scenario case step index",
+)
+def get_scenario_case_manifest(bundle_id: str) -> dict[str, object]:
+    """Expose the auditable list of import, model, result, and GIS files."""
+
+    try:
+        return scenario_results.published_case_manifest(bundle_id)
+    except scenario_results.ScenarioResultBundleError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get(
+    "/scenario-results/{bundle_id}/artifacts/{filename}",
+    response_class=FileResponse,
+    summary="Download one scenario case artifact",
+)
+def download_scenario_case_artifact(bundle_id: str, filename: str) -> FileResponse:
+    """Serve only allow-listed files from the governed local case bundle."""
+
+    try:
+        path = scenario_results.published_case_artifact(bundle_id, filename)
+    except scenario_results.ScenarioResultBundleError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path, filename=path.name)
 
 
 def _map_error(exc: Exception) -> HTTPException:
@@ -271,5 +332,22 @@ def get_result(
 
     try:
         return service.get_result(session, task_id, section_id)
+    except (service.TaskNotFoundError, service.TaskStateError) as exc:
+        raise _map_error(exc) from exc
+
+
+@router.get(
+    "/results/{task_id}/overview",
+    response_model=SimulationResultOverviewResponse,
+    summary="Read the final-state overview for a successful Standard 1D task",
+)
+def get_result_overview(
+    task_id: int,
+    session: SessionDependency,
+) -> SimulationResultOverviewResponse:
+    """Return all final Cross Section values for direct scheme-result display."""
+
+    try:
+        return service.get_result_overview(session, task_id)
     except (service.TaskNotFoundError, service.TaskStateError) as exc:
         raise _map_error(exc) from exc

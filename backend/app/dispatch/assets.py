@@ -20,6 +20,20 @@ from model.hydraulic_1d.registry import (
 AssetKey = tuple[str, int]
 
 
+def action_asset_id(action: DispatchAction) -> int | None:
+    """Return the unified identity for new actions, legacy identity otherwise."""
+
+    hydraulic_structure_id = getattr(action, "hydraulic_structure_id", None)
+    if hydraulic_structure_id is not None:
+        return int(hydraulic_structure_id)
+    value = action.gate_id if action.structure_type == "gate" else action.pump_id
+    return int(value) if value is not None else None
+
+
+def template_uses_unified_structure(template: object) -> bool:
+    return isinstance(template, dict) and template.get("asset_source") == "hydraulic_structure"
+
+
 def dispatch_asset_keys(
     actions: Iterable[DispatchAction], rules: Iterable[DispatchRule]
 ) -> tuple[AssetKey, ...]:
@@ -27,7 +41,7 @@ def dispatch_asset_keys(
 
     keys: set[AssetKey] = set()
     for action in actions:
-        asset_id = action.gate_id if action.structure_type == "gate" else action.pump_id
+        asset_id = action_asset_id(action)
         if asset_id is not None:
             keys.add((action.structure_type, int(asset_id)))
     for rule in rules:

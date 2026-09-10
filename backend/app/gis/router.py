@@ -164,6 +164,25 @@ def read_cross_section(section_id: int, dataset_version_id: DatasetVersionQuery,
 
 
 @router.get(
+    "/hydraulic-cross-sections",
+    response_model=GeoJSONFeatureCollection,
+    summary="获取水动力横断面有效空间线与 Marker",
+)
+def read_hydraulic_cross_sections(
+    session: SessionDependency,
+    dataset_version_id: DatasetVersionQuery,
+    bbox: BBoxQuery = None,
+    limit: LimitQuery = 500,
+    offset: OffsetQuery = 0,
+) -> GeoJSONFeatureCollection:
+    """Return survey-first or branch-derived line features for the GIS map."""
+
+    return service.list_hydraulic_cross_sections(
+        session, dataset_version_id, _parse_bbox_or_422(bbox), limit, offset
+    )
+
+
+@router.get(
     "/interaction-frame",
     response_model=GISInteractionFrame,
     summary="读取版本隔离的 GIS 动态结果帧",

@@ -21,6 +21,9 @@ export function GisPage() {
     geoserver: 'checking',
     openlayers: 'online',
   });
+  const query = new URLSearchParams(window.location.search);
+  const scenarioBundleId = query.get('scenarioBundleId') ?? undefined;
+  const scenarioId = query.get('scenarioId') ?? undefined;
 
   useEffect(() => {
     let cancelled = false;
@@ -73,10 +76,13 @@ export function GisPage() {
         </Space>
         <span>QGIS Desktop 仅用于受控数据生产，不在 Web 运行链中</span>
       </div>
-      {!datasetVersionId ? (
+      {!datasetVersionId && !scenarioBundleId ? (
         <Alert type="warning" showIcon message="暂无可用的已发布数据版本" description="请先完成数据质检、审核、晋级与发布。" />
       ) : (
-        <MapView key={datasetVersionId} datasetVersionId={datasetVersionId} />
+        <>
+          {scenarioBundleId && <Alert type="info" showIcon message="已叠加方案成果" description={`方案包 ${scenarioBundleId}${scenarioId ? ` · ${scenarioId}` : ''}；点位颜色按计算流速分级。`} />}
+          <MapView key={`${datasetVersionId ?? 0}-${scenarioBundleId ?? ''}-${scenarioId ?? ''}`} datasetVersionId={datasetVersionId ?? 0} scenarioBundleId={scenarioBundleId} scenarioId={scenarioId} />
+        </>
       )}
       <Alert
         className="gis-scope-note"

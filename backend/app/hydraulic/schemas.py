@@ -119,6 +119,7 @@ class HydraulicBranchInput(BaseModel):
     river_name: str = Field(min_length=1, max_length=128)
     branch_name: str = Field(min_length=1, max_length=128)
     flow_direction: Literal["forward", "reverse", "unknown"] = "unknown"
+    centerline_role: Literal["surveyed_centerline", "thalweg", "unknown"] = "unknown"
     source_revision: str | None = Field(default=None, max_length=64)
     points: list[HydraulicChainageInput] = Field(min_length=2)
 
@@ -145,6 +146,7 @@ MarkerType = Literal[
     "low_flow_left",
     "low_flow_right",
     "thalweg",
+    "main_channel",
 ]
 
 
@@ -346,6 +348,7 @@ class HydraulicSectionSummary(BaseModel):
     profile_count: int = Field(ge=0)
     point_count: int = Field(ge=0)
     orientation_status: str
+    marker_review_status: str
     bed_elevation_m: float | None
     bed_elevation_source: str
 
@@ -361,9 +364,13 @@ class HydraulicBranchRecord(BaseModel):
     start_chainage: float
     end_chainage: float
     length_m: float
+    flow_direction: Literal["forward", "reverse", "unknown"]
+    centerline_role: Literal["surveyed_centerline", "thalweg", "unknown"]
     direction_status: str
+    source_revision: str | None
     upstream_node_id: int | None
     downstream_node_id: int | None
+    vertex_count: int = Field(ge=0)
     section_count: int = Field(ge=0)
     reach_count: int = Field(ge=0)
     reaches: list[HydraulicReachRecord] = Field(default_factory=list)
@@ -401,6 +408,8 @@ class HydraulicSectionPointRecord(BaseModel):
     x: float | None = None
     y: float | None = None
     z: float | None = None
+    derived_x: float | None = None
+    derived_y: float | None = None
 
 
 class HydraulicRoughnessZoneRecord(BaseModel):
@@ -439,6 +448,52 @@ class HydraulicProcessingRecord(BaseModel):
     rows: list[HydraulicHydraulicRowRecord] = Field(default_factory=list)
 
 
+class HydraulicMarkerRecord(BaseModel):
+    """Return one auditable marker candidate or manual control point."""
+
+    type: Literal["M1", "M2", "M3"]
+    role: Literal["LEFT_LEVEE", "CHANNEL_LOW_POINT", "RIGHT_LEVEE"]
+    sequence: int = Field(ge=0)
+    offset: float
+    elevation: float
+    x: float | None = None
+    y: float | None = None
+    source: Literal[
+        "IMPORT_DEFAULT", "AUTO_MIKE11_COMPATIBLE", "GIS_LEVEE", "SURVEY_CODE", "MANUAL"
+    ]
+    confidence: float = Field(ge=0, le=1)
+    locked: bool
+    review_status: Literal["AUTO_ACCEPTED", "NEEDS_REVIEW", "REVIEWED", "REJECTED"]
+    algorithm_version: str
+    notes: str | None = None
+
+
+class HydraulicProcessedPointRecord(BaseModel):
+    """Return one raw-derived or virtual processed geometry point."""
+
+    offset: float
+    elevation: float
+    virtual: bool
+    source_sequence: int | None = None
+
+
+class HydraulicMarkerWorkflowRecord(BaseModel):
+    """Return the complete marker, active-extent, and overbank state."""
+
+    profile_id: int
+    marker_detection_mode: str
+    active_extent_mode: str
+    overbank_treatment: str
+    extension_top_elevation_m: float | None
+    design_max_water_level_m: float | None
+    safety_freeboard_m: float
+    processing_config_version: str
+    review_status: str
+    warnings: list[str]
+    markers: list[HydraulicMarkerRecord] = Field(default_factory=list)
+    processed_points: list[HydraulicProcessedPointRecord] = Field(default_factory=list)
+
+
 class HydraulicProfileRecord(BaseModel):
     """Return one Topography ID, points, roughness, and optional processed table."""
 
@@ -454,6 +509,7 @@ class HydraulicProfileRecord(BaseModel):
     points: list[HydraulicSectionPointRecord]
     roughness_zones: list[HydraulicRoughnessZoneRecord]
     processing: HydraulicProcessingRecord | None = None
+    marker_workflow: HydraulicMarkerWorkflowRecord | None = None
 
 
 class HydraulicSectionDetail(BaseModel):
@@ -477,7 +533,77 @@ class HydraulicSectionDetail(BaseModel):
     bed_elevation_confirmed_at: datetime | None
     location_geometry: dict[str, object]
     axis_geometry: dict[str, object] | None
+    branch_intersection_station: float | None
+    anchor_source: str
+    review_status: str
+    spatial_geometry_source: str
+    spatial_geometry_status: str
+    hydraulic_ready: bool
     profiles: list[HydraulicProfileRecord]
+
+
+class HydraulicMarkerUpdate(BaseModel):
+    """Select MIKE11 Marker 1/2/3 points for one active profile."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    marker1_sequence: int | None = Field(default=None, ge=0)
+    marker2_sequence: int | None = Field(default=None, ge=0)
+    marker3_sequence: int | None = Field(default=None, ge=0)
+    lock_marker1: bool = True
+    lock_marker2: bool = True
+    lock_marker3: bool = True
+    notes: str | None = Field(default=None, max_length=500)
+    actor: str = Field(default="platform", min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_marker_order(self) -> "HydraulicMarkerUpdate":
+        if (
+            self.marker1_sequence is not None
+            and self.marker3_sequence is not None
+            and self.marker1_sequence >= self.marker3_sequence
+        ):
+            raise ValueError("Marker 1 must precede Marker 3 in the section point order")
+        if self.marker2_sequence is not None and self.marker1_sequence is not None and self.marker2_sequence <= self.marker1_sequence:
+            raise ValueError("Marker 2 must follow Marker 1 in the section point order")
+        if self.marker2_sequence is not None and self.marker3_sequence is not None and self.marker2_sequence >= self.marker3_sequence:
+            raise ValueError("Marker 2 must precede Marker 3 in the section point order")
+        return self
+
+
+class HydraulicMarkerDetectionRequest(BaseModel):
+    """Select one deterministic automatic marker strategy."""
+
+    mode: Literal["FULL_EXTENT", "MIKE11_COMPATIBLE"] = "MIKE11_COMPATIBLE"
+    force: bool = False
+
+
+class HydraulicMarkerWorkflowUpdate(BaseModel):
+    """Update active extent and overbank processing as one resource."""
+
+    active_extent_mode: Literal["FULL_EXTENT", "MARKER_EXTENT"] = "FULL_EXTENT"
+    overbank_treatment: Literal["REAL_GEOMETRY", "VERTICAL_EXTENSION"] = "REAL_GEOMETRY"
+    extension_top_elevation_m: float | None = None
+    design_max_water_level_m: float | None = None
+    safety_freeboard_m: float = Field(default=0, ge=0, le=20)
+
+
+class HydraulicBatchMarkerDetectionRequest(HydraulicMarkerDetectionRequest):
+    """Run one strategy for every active profile in a dataset version."""
+
+    dataset_version_id: int = Field(gt=0)
+
+
+class HydraulicBatchMarkerDetectionRecord(BaseModel):
+    """Return aggregate review statistics for one bounded backend batch."""
+
+    total_sections: int
+    detected: int
+    needs_review: int
+    failed: int
+    locked_skipped: int
+    unknown_orientation: int
+    invalid_marker_order: int
 
 
 class HydraulicImportJobRecord(BaseModel):

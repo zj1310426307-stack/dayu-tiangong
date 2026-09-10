@@ -345,10 +345,23 @@ class MascaretModelBuilder:
                 field_path="workspace",
             )
         branches = self.validator._branches(model)
-        branch_offsets = mascaret_branch_offsets(branches)
         sections_by_branch = {
             branch.id: self.validator._sections(model, branch) for branch in branches
         }
+        # MASCARET uses exact floating-point domain limits.  The unified contract
+        # accepts sub-millimetre import rounding at hydraulic endpoints, so align
+        # only the runtime branch bounds to the already validated terminal
+        # profiles.  The frozen source snapshot and imported chainages stay intact.
+        branches = [
+            branch.model_copy(
+                update={
+                    "start_chainage_m": sections_by_branch[branch.id][0].chainage_m,
+                    "end_chainage_m": sections_by_branch[branch.id][-1].chainage_m,
+                }
+            )
+            for branch in branches
+        ]
+        branch_offsets = mascaret_branch_offsets(branches)
         sections = [
             section for branch in branches for section in sections_by_branch[branch.id]
         ]
@@ -597,11 +610,13 @@ class MascaretModelBuilder:
         has_active_weir = any(
             item.kind == "weir" and item.status == "active" for item in model.structures
         )
-        kernel_code = (
-            2
-            if has_active_weir or model.metadata.get("mascaret_kernel") == "rezo"
-            else 3
-        )
+        declared_kernel = model.metadata.get("mascaret_kernel")
+        if declared_kernel == "sarap":
+            kernel_code = 1
+        elif has_active_weir or declared_kernel == "rezo":
+            kernel_code = 2
+        else:
+            kernel_code = 3
         for name, value in (
             ("versionCode", 3),
             ("code", kernel_code),

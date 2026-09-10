@@ -11,12 +11,19 @@
 
 自 2026-08-31 起，生产级 Standard 1D 正式采用“Dayu 统一水力模型 → MASCARET Adapter → 外部 MASCARET v9.1.1 → 统一结果”路线；旧自研 1D Solver 已退出生产代码、API、Worker、前端和 CI。HYDRO-DATA-01 的 Network → Branch → Chainage → Cross Section 权威数据结构保持不变。
 
+2026-09-09：Standard 1D 已支持在可编辑 Dataset Version 上完成校核后批准计算；批准不等于只读，后续编辑会自动回到 draft 并要求重新批准。模型就绪检查与计算表单使用一致的默认时长、步长和输出间隔，避免已有方案因未持久化可选配置被错误阻断。当前实现提交：`d25cae43cf946e8023c41995fcdac2296350cf41`。
+
+2026-09-09：数据版本删除已补齐版本所有河网/水力拓扑级联：内部拓扑外键使用 `NO ACTION DEFERRABLE INITIALLY DEFERRED`，整版删除在提交时统一校验，单独删除仍被引用的节点仍受保护；数据库迁移头为 `20260909_0034`，当前修复提交：`348dbee08843935c0466b703bf4fe34a29fd4a37`。
+
+2026-09-09：成功的 Standard 1D 水动力任务会自动进入“方案成果”，按上游至下游直接展示全断面末时刻水面线、河底、流量、流速、Froude 和运行警告；无需先制作独立成果包。独立发布成果包继续保留，并与任务成功、率定和生产验收状态分开表达。
+
 - [MASCARET 1D Adapter](docs/model/MASCARET-1D-ADAPTER.md)
 - [复杂一维河网工程合同](docs/hydraulics/hydraulic-network.md)
 - [统一水工建筑物模型](docs/hydraulics/hydraulic-structures.md)
 - [一维求解器能力矩阵](docs/hydraulics/solver-capabilities.md)
 - [生产工作流](docs/hydraulics/production-workflow.md)
 - [工程数据导入](docs/hydraulics/engineering-data-import.md)
+- [横断面 Marker 与全归槽处理](docs/hydraulics/cross-section-marker-processing.md)
 - [模型 QA](docs/hydraulics/model-qa.md)
 - [率定与独立验证](docs/hydraulics/calibration-validation.md)
 - [外部模型交叉对比](docs/hydraulics/external-model-comparison.md)
@@ -87,7 +94,7 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 
 ## 水动力数据交换
 
-`/data-center/hydraulic` 将 Network–Node–Branch–Reach–Chainage、断面多地形版本、糙率分区、水力查算、导入审计、校核与 MIKE11 交换能力收敛到一个管理页。导入使用“预览校验 → 配置 hash 确认提交”两阶段流程，并在同一数据库事务内写入 `hydraulic` 权威语义和现有 GIS 兼容投影。显示几何统一为 CGCS2000 `EPSG:4490`；拓扑、长度和桩号只能使用明确确认的米制 engineering CRS。
+`/data-center/hydraulic` 将 Network–Node–Branch–Reach–Chainage、断面多地形版本、深泓点、糙率分区、水力查算、导入审计、校核与 MIKE11 交换能力收敛到一个管理页。导入使用“预览校验 → 配置 hash 确认提交”两阶段流程，并在同一数据库事务内写入 `hydraulic` 权威语义和现有 GIS 兼容投影。Branch 可用 `centerline_role=thalweg` 声明纵向深泓线；它不替代横向断面测线。导入页要求显式填写高程基准，不再硬编码基准。显示几何统一为 CGCS2000 `EPSG:4490`；拓扑、长度和桩号只能使用明确确认的米制 engineering CRS。
 
 - `POST /api/v1/hydraulic/imports/preview|commit`
 - `GET /api/v1/hydraulic/networks|cross-sections/{section_id}|imports`
@@ -95,6 +102,10 @@ docker compose --env-file .env -f docker/docker-compose.yml up -d --build
 - `POST /api/v1/hydraulic/branches/{branch_id}/reverse|recalculate-chainage`
 - `POST /api/v1/hydraulic/cross-sections/{section_id}/locate`
 - `POST /api/v1/hydraulic/profiles/{profile_id}/process|process-batch`
+- `PUT /api/v1/hydraulic/cross-sections/{section_id}/markers`
+- `POST /api/v1/hydraulic/cross-sections/{section_id}/marker-detection`
+- `PUT /api/v1/hydraulic/profiles/{profile_id}/marker-workflow`
+- `POST /api/v1/hydraulic/marker-detection/batch`
 - `POST /api/v1/hydraulic/validation/run`
 - `GET /api/v1/hydraulic/validation/{run_code}`
 - `GET /api/v1/hydraulic/exports/network.nwk11|cross-sections.xns11`

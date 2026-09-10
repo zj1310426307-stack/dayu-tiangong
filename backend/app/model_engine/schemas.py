@@ -54,6 +54,8 @@ class SimulationTaskCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     case_id: int = Field(gt=0)
+    calculation_mode: Literal["steady", "unsteady"] = "unsteady"
+    overbank_treatment: Literal["profile", "vertical_extension"] = "profile"
     duration_seconds: FiniteFloat | None = Field(default=None, gt=0)
     time_step_seconds: FiniteFloat | None = Field(default=None, gt=0)
     output_interval_seconds: FiniteFloat | None = Field(default=None, gt=0)
@@ -156,6 +158,71 @@ class ResultSectionOption(BaseModel):
     chainage_m: float
 
 
+class SimulationResultOverviewSection(BaseModel):
+    """Expose one final-state Cross Section sample for scheme-level review."""
+
+    section_id: int
+    section_code: str
+    branch_id: int
+    chainage_m: FiniteFloat = Field(ge=0)
+    time_seconds: FiniteFloat = Field(ge=0)
+    water_level_m: FiniteFloat
+    bed_elevation_m: FiniteFloat | None = None
+    depth_m: FiniteFloat | None = Field(default=None, ge=0)
+    flow_m3s: FiniteFloat
+    velocity_m_s: FiniteFloat
+    flow_area_m2: FiniteFloat | None = Field(default=None, ge=0)
+    top_width_m: FiniteFloat | None = Field(default=None, ge=0)
+    froude_number: FiniteFloat | None = Field(default=None, ge=0)
+
+
+class SimulationResultOverviewStructure(BaseModel):
+    """Expose one Gate/Pump state at the common final hydraulic time."""
+
+    structure_type: Literal["gate", "pump"]
+    structure_id: int = Field(gt=0)
+    time_seconds: FiniteFloat = Field(ge=0)
+    requested_value: FiniteFloat | None = None
+    resolved_value: FiniteFloat | None = None
+    applied_value: FiniteFloat | None = None
+    flow_m3s: FiniteFloat
+    upstream_water_level_m: FiniteFloat | None = None
+    downstream_water_level_m: FiniteFloat | None = None
+    head_difference_m: FiniteFloat | None = None
+    native_applied_capacity_m3s: FiniteFloat | None = None
+    actual_discharge_m3s: FiniteFloat | None = None
+    pump_head_m: FiniteFloat | None = None
+    pump_reduction_factor: FiniteFloat | None = Field(default=None, ge=0, le=1)
+    pump_actual_stage: int | None = Field(default=None, ge=0)
+    regime: str | None = None
+
+
+class SimulationResultOverviewResponse(BaseModel):
+    """Return a successful task as a directly viewable engineering scheme result."""
+
+    task_id: int
+    case_id: int
+    dataset_version_id: int
+    status: TaskStatus
+    task_kind: Literal["standard_1d", "controlled_hydraulic_preview"] = "standard_1d"
+    simulation_id: str
+    scenario_id: str
+    engine: str
+    engine_version: str
+    calculation_mode: Literal["steady", "unsteady"] | None = None
+    evidence_class: str | None = None
+    final_time_seconds: FiniteFloat = Field(ge=0)
+    created_time: datetime
+    end_time: datetime | None
+    section_summary: list[SimulationResultOverviewSection] = Field(
+        min_length=1, max_length=5000
+    )
+    structure_summary: list[SimulationResultOverviewStructure] = Field(
+        default_factory=list, max_length=1000
+    )
+    diagnostics: dict[str, Any] | None
+
+
 class SimulationResultResponse(BaseModel):
     """Return aligned Standard 1D series without exposing MASCARET files."""
 
@@ -181,6 +248,70 @@ class SimulationResultResponse(BaseModel):
     froude_number: list[float | None]
     available_sections: list[ResultSectionOption]
     diagnostics: dict[str, Any] | None
+
+
+class ScenarioResultQualityGate(BaseModel):
+    """Expose the numerical checks attached to one published scenario."""
+
+    temporal_converged: bool
+    mass_balance_residual: FiniteFloat
+    mass_balance_tolerance: FiniteFloat = Field(gt=0)
+    final_discharge_span_m3s: FiniteFloat = Field(ge=0)
+    final_discharge_span_tolerance_m3s: FiniteFloat = Field(gt=0)
+    passed: bool
+
+
+class ScenarioResultSection(BaseModel):
+    """Describe one upstream-to-downstream final-state Section sample."""
+
+    cross_section_id: str = Field(min_length=1, max_length=128)
+    chainage_m: FiniteFloat = Field(ge=0)
+    bed_min_m: FiniteFloat
+    final_water_level_m: FiniteFloat
+    final_depth_m: FiniteFloat = Field(ge=0)
+    final_discharge_m3s: FiniteFloat
+    final_velocity_ms: FiniteFloat
+    flow_area_m2: FiniteFloat = Field(gt=0)
+
+
+class PublishedScenarioResult(BaseModel):
+    """Return one accepted numerical scenario without claiming calibration."""
+
+    scenario_id: str = Field(min_length=1, max_length=128)
+    label: str = Field(min_length=1, max_length=128)
+    q_m3s: FiniteFloat
+    downstream_h_m: FiniteFloat
+    status: str = Field(min_length=1, max_length=64)
+    mesh_spacing_m: FiniteFloat = Field(gt=0)
+    time_step_seconds: FiniteFloat = Field(gt=0)
+    duration_seconds: FiniteFloat = Field(gt=0)
+    upstream_water_level_m: FiniteFloat
+    maximum_water_level_m: FiniteFloat
+    minimum_depth_m: FiniteFloat = Field(ge=0)
+    maximum_velocity_ms: FiniteFloat = Field(ge=0)
+    final_discharge_span_m3s: FiniteFloat = Field(ge=0)
+    mass_balance_residual: FiniteFloat = Field(ge=0)
+    quality_gate: ScenarioResultQualityGate
+    section_summary: list[ScenarioResultSection] = Field(min_length=2, max_length=500)
+
+
+class PublishedScenarioBundle(BaseModel):
+    """Represent a locally published, solver-neutral engineering result bundle."""
+
+    bundle_id: str = Field(pattern=r"^[a-z0-9][a-z0-9-]{2,63}$")
+    title: str = Field(min_length=1, max_length=200)
+    river_name: str = Field(min_length=1, max_length=128)
+    schema_version: str
+    generated_at: datetime
+    classification: str
+    acceptance: str
+    not_claimed: list[str]
+    input: dict[str, Any]
+    physical_assumptions: dict[str, Any]
+    numerical_acceptance: dict[str, Any]
+    runtime_provenance: dict[str, Any]
+    scenarios: list[PublishedScenarioResult] = Field(min_length=1, max_length=20)
+    source_digest: str = Field(default="", pattern=r"^$|^[0-9a-f]{64}$")
 
 
 class Hydraulic1DReadinessResponse(BaseModel):

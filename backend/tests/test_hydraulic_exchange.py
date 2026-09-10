@@ -16,13 +16,37 @@ from app.hydraulic.schemas import (
     HydraulicCrossSectionInput,
     HydraulicExchangePayload,
     HydraulicSectionPointInput,
+    HydraulicSectionPointRecord,
 )
-from app.hydraulic.service import capabilities
+from app.hydraulic.service import _exchange_section_point, capabilities
 from app.hydraulic.validators import validate_exchange
 from app.main import app
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_exchange_point_omits_derived_xy_without_promoting_it_to_survey_xy() -> None:
+    """Regenerable map coordinates must not enter the strict hydraulic input DTO."""
+
+    stored = HydraulicSectionPointRecord(
+        sequence=0,
+        distance=0.0,
+        elevation=9.25,
+        marker_type="left_bank",
+        point_code=None,
+        derived_x=112.45285306,
+        derived_y=22.74995779,
+    )
+
+    exchange = _exchange_section_point(stored)
+
+    assert exchange.sequence == 0
+    assert exchange.elevation == 9.25
+    assert exchange.x is None
+    assert exchange.y is None
+    assert "derived_x" not in exchange.model_dump()
+    assert "derived_y" not in exchange.model_dump()
 
 
 def _network_text() -> bytes:
@@ -37,6 +61,7 @@ def _network_text() -> bytes:
     RiverName = 'River One'
     BranchName = 'Main branch'
     FlowDirection = 'forward'
+    CenterlineRole = 'thalweg'
     Point = 0, 113.1000, 23.1000
     Point = 1000, 113.1100, 23.1100
   EndSect  // BRANCH
@@ -109,14 +134,148 @@ def test_excel_parser_accepts_bilingual_network_and_section_sheets() -> None:
     buffer = BytesIO()
     workbook.save(buffer)
     payload, profile, _ = parse_hydraulic_file("template.xlsx", buffer.getvalue(), 4490)
-    assert profile == "hydraulic-xlsx-v1"
+    assert profile == "hydraulic-xlsx-v2"
     assert payload.network_code == "DEMO-NET"
     assert [branch.code for branch in payload.branches] == ["R-001"]
+    assert payload.branches[0].centerline_role == "unknown"
     assert [section.section_code for section in payload.sections] == ["XS-001"]
+    assert [point.marker_type for point in payload.sections[0].points] == [
+        "none", "thalweg", "none"
+    ]
 
 
-def test_reviewed_templates_parse_extended_profile_and_provenance_fields() -> None:
-    """The delivered workbooks must remain parser-valid after visual styling changes."""
+def test_excel_parser_rejects_reversed_network_input_instead_of_sorting() -> None:
+    """A centerline entered downstream-to-upstream must fail closed."""
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "河网 Network"
+    sheet.append([
+        "网络编码", "网络名称", "河段编码", "河流名称", "河段名称",
+        "流向", "中心线角色", "桩号", "X坐标", "Y坐标",
+    ])
+    sheet.append([
+        "ORDER-NET", "Order network", "R-001", "River", "Branch",
+        "forward", "thalweg", 1000, 341500, 2518000,
+    ])
+    sheet.append([
+        "ORDER-NET", "Order network", "R-001", "River", "Branch",
+        "forward", "thalweg", 0, 341000, 2517000,
+    ])
+    buffer = BytesIO()
+    workbook.save(buffer)
+
+    with pytest.raises(ValueError, match="strictly increasing"):
+        parse_hydraulic_file("reversed-network.xlsx", buffer.getvalue(), 4547)
+
+
+def test_excel_parser_accepts_mike11_six_column_grouped_profile_layout() -> None:
+    """The user-facing MIKE11 layout may leave identity cells blank on point rows."""
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Sheet1"
+    sheet.append(["ID", "TOPOID", "里程", "偏移", "高程", "river_name"])
+    sheet.append([1, 11, 500, 0, 12.0, "gaominghe"])
+    sheet.append([None, None, None, 5, 9.0, None])
+    sheet.append([None, None, None, 10, 12.5, None])
+    sheet.append([1, 12, 500, 0, 12.2, "gaominghe"])
+    sheet.append([None, None, None, 5, 9.2, None])
+    sheet.append([None, None, None, 10, 12.7, None])
+    buffer = BytesIO()
+    workbook.save(buffer)
+
+    payload, profile, _ = parse_hydraulic_file(
+        "mike11-cross-sections.xlsx", buffer.getvalue(), 4547
+    )
+
+    assert profile == "hydraulic-xlsx-v2"
+    assert payload.branches == []
+    assert [(section.section_code, section.topography_id) for section in payload.sections] == [
+        ("1", "11"),
+        ("1", "12"),
+    ]
+    assert all(section.branch_code == "gaominghe" for section in payload.sections)
+    assert [point.distance for point in payload.sections[0].points] == [0, 5, 10]
+    assert [point.sequence for point in payload.sections[0].points] == [0, 1, 2]
+    assert [point.marker_type for point in payload.sections[0].points] == [
+        "none", "thalweg", "none"
+    ]
+
+
+def test_excel_parser_preserves_all_tied_minimum_points_as_thalweg() -> None:
+    """A flat or duplicated minimum is evidence, not a reason to pick one point."""
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "断面 Cross Section"
+    sheet.append(["ID", "TOPOID", "里程", "偏移", "高程", "river_name"])
+    sheet.append(["DM8", 11, 1920.0435, 0, 33.2, "gaominghe"])
+    sheet.append([None, None, None, 25.8, 31.65, None])
+    sheet.append([None, None, None, 30.0, 31.65, None])
+    sheet.append([None, None, None, 60.0, 33.4, None])
+    buffer = BytesIO()
+    workbook.save(buffer)
+
+    payload, _, _ = parse_hydraulic_file("thalweg-tie.xlsx", buffer.getvalue(), 4547)
+
+    thalweg = [
+        point for point in payload.sections[0].points
+        if point.marker_type == "thalweg"
+    ]
+    assert [(point.distance, point.elevation) for point in thalweg] == [
+        (25.8, 31.65), (30.0, 31.65)
+    ]
+    issues = validate_exchange(
+        payload,
+        known_branch_codes={"gaominghe"},
+        known_branch_ranges={"gaominghe": (0.0, 5432.1266)},
+        known_branch_roles={"gaominghe": "thalweg"},
+    )
+    tie = [issue for issue in issues if issue.code == "SECTION_THALWEG_TIE"]
+    assert len(tie) == 1
+    assert tie[0].context == {
+        "count": 2,
+        "offsets_m": [25.8, 30.0],
+        "elevation_m": 31.65,
+    }
+    for point in payload.sections[0].points:
+        point.marker_type = "none"
+    missing = validate_exchange(
+        payload,
+        known_branch_codes={"gaominghe"},
+        known_branch_ranges={"gaominghe": (0.0, 5432.1266)},
+        known_branch_roles={"gaominghe": "thalweg"},
+    )
+    assert any(
+        issue.code == "SECTION_THALWEG_MISSING" and issue.severity == "error"
+        for issue in missing
+    )
+
+
+def test_excel_parser_maps_mike11_marker_1_and_3_columns() -> None:
+    """Explicit levee marker columns become the persisted MIKE11 marker enum."""
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "断面 Cross Section"
+    sheet.append(["ID", "TOPOID", "里程", "偏移", "高程", "river_name", "Marker 1", "Marker 3", "manning_n"])
+    sheet.append(["DM1", 1, 0, 0, 18.0, "gaominghe", "x", None, 0.029])
+    sheet.append([None, None, None, 5, 12.0, None, None, None, None])
+    sheet.append([None, None, None, 10, 18.5, None, None, "x", None])
+    buffer = BytesIO()
+    workbook.save(buffer)
+
+    payload, _, _ = parse_hydraulic_file("marker-columns.xlsx", buffer.getvalue(), 4547)
+
+    assert payload.sections[0].default_manning_n == pytest.approx(0.029)
+    assert [point.marker_type for point in payload.sections[0].points] == [
+        "left_levee", "thalweg", "right_levee"
+    ]
+
+
+def test_reviewed_templates_parse_network_and_mike11_grouped_section_contracts() -> None:
+    """Both reviewed workbooks must remain parser-valid after the template change."""
 
     root = REPOSITORY_ROOT / "outputs" / "HYDRO-DATA-01-20260818"
     network, _, _ = parse_hydraulic_file(
@@ -129,18 +288,144 @@ def test_reviewed_templates_parse_extended_profile_and_provenance_fields() -> No
     assert network.branches[0].points[0].point_code == "BP-001"
     assert network.branches[0].points[0].z == 12.3
     profile = sections.sections[0]
-    assert profile.topography_id == "SURVEY-2026"
-    assert profile.survey_method == "RTK"
-    assert [point.marker_type for point in profile.points] == [
-        "left_bank", "thalweg", "right_bank"
-    ]
-    assert [zone.zone_type for zone in profile.roughness_zones] == [
-        "left_floodplain", "channel", "right_floodplain"
-    ]
+    assert profile.section_code == "XS-DEMO-001"
+    assert profile.topography_id == "TOPO-2026"
+    assert profile.branch_code == "RIVER-DEMO-001"
+    assert [point.distance for point in profile.points] == [0, 5, 10]
+    assert [point.marker_type for point in profile.points] == ["none", "thalweg", "none"]
+    assert profile.roughness_zones == []
     reparsed, _, _ = parse_hydraulic_file(
         "roundtrip.xns11", export_xns11_subset(sections), 4547
     )
     assert reparsed.sections == sections.sections
+
+
+def test_cross_section_only_validation_uses_persisted_branch_chainage_range() -> None:
+    """A later profile import must not clamp an out-of-range section to an endpoint."""
+
+    payload = HydraulicExchangePayload(
+        network_code="EXISTING-NET",
+        network_name="Existing network",
+        source_srid=4547,
+        source_kind="excel",
+        branches=[],
+        sections=[HydraulicCrossSectionInput(
+            section_code="DM22",
+            branch_code="gaominghe",
+            chainage=5725.8932,
+            topography_id="11",
+            points=[
+                HydraulicSectionPointInput(sequence=0, distance=0, elevation=10),
+                HydraulicSectionPointInput(sequence=1, distance=5, elevation=8),
+                HydraulicSectionPointInput(sequence=2, distance=10, elevation=10),
+            ],
+        )],
+    )
+
+    issues = validate_exchange(
+        payload,
+        known_branch_codes={"gaominghe"},
+        known_branch_ranges={"gaominghe": (0.0, 5432.1266)},
+    )
+
+    outside = [issue for issue in issues if issue.code == "SECTION_CHAINAGE_OUTSIDE_BRANCH"]
+    assert len(outside) == 1
+    assert outside[0].entity_ref == "DM22"
+    assert outside[0].context == {
+        "chainage": 5725.8932,
+        "start": 0.0,
+        "end": 5432.1266,
+    }
+
+
+def test_cross_section_groups_must_follow_upstream_to_downstream_order() -> None:
+    """Section groups on one branch must be entered in nondecreasing chainage order."""
+
+    points = [
+        HydraulicSectionPointInput(sequence=0, distance=0, elevation=10),
+        HydraulicSectionPointInput(sequence=1, distance=5, elevation=8),
+        HydraulicSectionPointInput(sequence=2, distance=10, elevation=10),
+    ]
+    payload = HydraulicExchangePayload(
+        network_code="ORDER-NET",
+        network_name="Section order",
+        source_srid=4547,
+        source_kind="excel",
+        branches=[],
+        sections=[
+            HydraulicCrossSectionInput(
+                section_code="DM02",
+                branch_code="gaominghe",
+                chainage=500,
+                topography_id="11",
+                points=points,
+            ),
+            HydraulicCrossSectionInput(
+                section_code="DM01",
+                branch_code="gaominghe",
+                chainage=100,
+                topography_id="11",
+                points=points,
+            ),
+        ],
+    )
+
+    issues = validate_exchange(
+        payload,
+        known_branch_codes={"gaominghe"},
+        known_branch_ranges={"gaominghe": (0.0, 1000.0)},
+    )
+
+    order = [issue for issue in issues if issue.code == "SECTION_CHAINAGE_ORDER_INVALID"]
+    assert len(order) == 1
+    assert order[0].entity_ref == "DM01"
+    assert order[0].context == {
+        "branch_code": "gaominghe",
+        "previous_section_code": "DM02",
+        "previous_chainage": 500.0,
+        "chainage": 100.0,
+    }
+
+
+def test_cross_section_profiles_may_share_one_chainage() -> None:
+    """Multiple TOPOID profiles at one section location keep a valid table order."""
+
+    points = [
+        HydraulicSectionPointInput(sequence=0, distance=0, elevation=10),
+        HydraulicSectionPointInput(sequence=1, distance=5, elevation=8),
+        HydraulicSectionPointInput(sequence=2, distance=10, elevation=10),
+    ]
+    payload = HydraulicExchangePayload(
+        network_code="ORDER-NET",
+        network_name="Section order",
+        source_srid=4547,
+        source_kind="excel",
+        branches=[],
+        sections=[
+            HydraulicCrossSectionInput(
+                section_code="DM01",
+                branch_code="gaominghe",
+                chainage=100,
+                topography_id="11",
+                points=points,
+            ),
+            HydraulicCrossSectionInput(
+                section_code="DM01",
+                branch_code="gaominghe",
+                chainage=100,
+                topography_id="12",
+                points=points,
+            ),
+        ],
+    )
+
+    issues = validate_exchange(
+        payload,
+        known_branch_codes={"gaominghe"},
+        known_branch_ranges={"gaominghe": (0.0, 1000.0)},
+    )
+
+    assert not any(issue.code == "SECTION_CHAINAGE_ORDER_INVALID" for issue in issues)
 
 
 def test_segmented_roughness_geometry_integrates_each_wetted_interval() -> None:
@@ -260,6 +545,7 @@ def test_openapi_exposes_complete_hydraulic_management_surface() -> None:
         "/api/v1/model/preview",
         "/api/v1/model/tasks",
         "/api/v1/model/results/{task_id}",
+        "/api/v1/model/results/{task_id}/overview",
     }
     assert required <= paths.keys()
 

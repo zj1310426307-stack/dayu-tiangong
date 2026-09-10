@@ -1,0 +1,21 @@
+# Local verified MASCARET overlay. Runtime artifacts remain outside the application
+# image and are mounted read-only from an explicitly configured project path.
+services:
+  backend:
+    environment: &mascaret_environment
+      MASCARET_ENABLED: "1"
+      MASCARET_RUNTIME: external
+      MASCARET_EXECUTABLE: /opt/mascaret/build/bin/mascaret
+      MASCARET_EXECUTABLE_SHA256: ${MASCARET_EXECUTABLE_SHA256:?verified MASCARET executable SHA-256 is required}
+      MASCARET_DATA_DIR: /opt/mascaret/data
+      MASCARET_BUILD_TIMESTAMP: ${MASCARET_BUILD_TIMESTAMP:?verified MASCARET build timestamp is required}
+      LD_LIBRARY_PATH: /opt/mascaret/build/lib
+    volumes:
+      - ${MASCARET_BUILD_HOST_PATH:?verified MASCARET build path is required}:/opt/mascaret/build:ro
+      - ${MASCARET_DATA_HOST_PATH:?verified MASCARET data path is required}:/opt/mascaret/data:ro
+
+  hydraulic-worker:
+    environment: *mascaret_environment
+    volumes:
+      - ${MASCARET_BUILD_HOST_PATH:?verified MASCARET build path is required}:/opt/mascaret/build:ro
+      - ${MASCARET_DATA_HOST_PATH:?verified MASCARET data path is required}:/opt/mascaret/data:ro

@@ -41,6 +41,8 @@ backend/storage/ai-reports/
 backend/storage/conversions/
 backend/storage/hydraulic-evidence/
 backend/storage/hydraulic-workspaces/
+# 本地发布的工程方案成果包；仅供当前部署读取，真实工程结果不得进入公共源码仓库。
+backend/storage/scenario-results/
 
 # D-Flow FM / DIMR / D-RTC 本地运行产物。Native 扩展名不做全局忽略，
 # 以便 tests/fixtures 中经审查的 .mdu/.xml/.ini/.nc 证据仍可入库。

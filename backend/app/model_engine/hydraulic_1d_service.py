@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 import json
+from math import sqrt
 from typing import Any
 
 from sqlalchemy import func, select
@@ -27,6 +28,7 @@ from app.hydraulic.models import (
     HydraulicStructure as HydraulicStructureRow,
     HydraulicStructureScenario,
 )
+from app.hydraulic.rating_curve import interpolate_rating_curve
 from model.hydraulic_1d import (
     DEFAULT_HYDRAULIC_1D_ENGINE_ID,
     BoundaryCondition,
@@ -110,10 +112,153 @@ def _number(
     return float(value)
 
 
+def _boundary_derived_initial_condition(
+    branches: Sequence[HydraulicBranch],
+    cross_sections: Sequence[HydraulicCrossSection],
+    boundaries: Sequence[BoundaryCondition],
+) -> InitialCondition | None:
+    """Build a wet single-branch cold start from the time-zero Q/H boundaries."""
+
+    if len(branches) != 1:
+        return None
+    branch = branches[0]
+    sections = sorted(
+        (item for item in cross_sections if item.branch_id == branch.id),
+        key=lambda item: item.chainage_m,
+    )
+    upstream_q = next(
+        (
+            float(item.series[0].value)
+            for item in boundaries
+            if item.branch_id == branch.id
+            and item.location == "upstream"
+            and item.variable == "discharge"
+        ),
+        None,
+    )
+    downstream_h = next(
+        (
+            float(item.series[0].value)
+            for item in boundaries
+            if item.branch_id == branch.id
+            and item.location == "downstream"
+            and item.variable == "water_level"
+        ),
+        None,
+    )
+    if upstream_q is None or downstream_h is None or not sections:
+        return None
+    minimum_beds = [min(point.elevation_m for point in item.points) for item in sections]
+    if downstream_h <= minimum_beds[-1]:
+        _reject(
+            "DAYU_DOWNSTREAM_BOUNDARY_DRY",
+            "downstream water level must exceed the downstream Cross Section bed",
+            "boundary_conditions.downstream_water_level",
+        )
+    # Keep the cold start comfortably subcritical for a high-discharge design
+    # case.  This is only a numerical initial field; Q(t), H(t), roughness and
+    # the surveyed profiles remain the authoritative physical inputs.
+    target_froude = 0.5
+    minimum_depths = [
+        max(
+            0.5,
+            (
+                abs(upstream_q)
+                / (
+                    target_froude
+                    * (section.points[-1].station_m - section.points[0].station_m)
+                    * sqrt(9.81)
+                )
+            )
+            ** (2.0 / 3.0),
+        )
+        for section in sections
+    ]
+    upstream_stage = max(downstream_h, minimum_beds[0] + minimum_depths[0])
+    branch_span = branch.end_chainage_m - branch.start_chainage_m
+    states: list[SectionInitialState] = []
+    for section, minimum_bed, minimum_depth in zip(
+        sections,
+        minimum_beds,
+        minimum_depths,
+    ):
+        upstream_fraction = (
+            (branch.end_chainage_m - section.chainage_m) / branch_span
+            if branch_span > 0
+            else 0.0
+        )
+        interpolated_stage = downstream_h + (
+            upstream_stage - downstream_h
+        ) * min(1.0, max(0.0, upstream_fraction))
+        states.append(
+            SectionInitialState(
+                cross_section_id=section.id,
+                water_level_m=max(interpolated_stage, minimum_bed + minimum_depth),
+                discharge_m3s=upstream_q,
+            )
+        )
+    return InitialCondition(by_section=tuple(states))
+
+
+def _vertical_bank_extended_sections(
+    cross_sections: Sequence[HydraulicCrossSection],
+    initial: InitialCondition,
+    boundaries: Sequence[BoundaryCondition],
+    *,
+    safety_freeboard_m: float = 1.0,
+) -> tuple[tuple[HydraulicCrossSection, ...], float]:
+    """Build disposable full-channel walls without mutating surveyed profiles."""
+
+    candidate_stages = [
+        float(item.value)
+        for boundary in boundaries
+        if boundary.variable == "water_level"
+        for item in boundary.series
+    ]
+    if initial.by_section:
+        candidate_stages.extend(float(item.water_level_m) for item in initial.by_section)
+    elif initial.water_level_m is not None:
+        candidate_stages.append(float(initial.water_level_m))
+    candidate_stages.extend(
+        max(float(section.points[0].elevation_m), float(section.points[-1].elevation_m))
+        for section in cross_sections
+    )
+    extension_top = max(candidate_stages) + safety_freeboard_m
+    extended: list[HydraulicCrossSection] = []
+    for section in cross_sections:
+        points = list(section.points)
+        if points[0].elevation_m < extension_top:
+            if len(points) > 1 and points[0].station_m == points[1].station_m:
+                points[0] = points[0].model_copy(update={"elevation_m": extension_top})
+            else:
+                points.insert(
+                    0,
+                    CrossSectionPoint(
+                        station_m=points[0].station_m,
+                        elevation_m=extension_top,
+                        zone=points[0].zone,
+                    ),
+                )
+        if points[-1].elevation_m < extension_top:
+            if len(points) > 1 and points[-1].station_m == points[-2].station_m:
+                points[-1] = points[-1].model_copy(update={"elevation_m": extension_top})
+            else:
+                points.append(
+                    CrossSectionPoint(
+                        station_m=points[-1].station_m,
+                        elevation_m=extension_top,
+                        zone=points[-1].zone,
+                    )
+                )
+        extended.append(section.model_copy(update={"points": tuple(points)}))
+    return tuple(extended), extension_top
+
+
 def _time_values(
     row: BoundaryConditionRow,
     *,
     variable: str,
+    boundary_rows: Sequence[BoundaryConditionRow] | None = None,
 ) -> tuple[TimeValue, ...]:
     """Normalize legacy constants and current Q(t)/H(t) JSON without extrapolation."""
 
@@ -125,6 +270,66 @@ def _time_values(
             f"boundary_condition[{row.id}].values",
         )
     mode = str(values.get("mode", "")).lower()
+    if mode == "rating_curve":
+        if variable != "water_level":
+            _reject(
+                "DAYU_RATING_CURVE_VARIABLE_INVALID",
+                "rating_curve mode is only valid for downstream water level",
+                f"boundary_condition[{row.id}].values.mode",
+            )
+        curve = values.get("curve")
+        if not isinstance(curve, Sequence) or isinstance(curve, (str, bytes)):
+            _reject(
+                "DAYU_RATING_CURVE_INVALID",
+                "rating curve must contain an ordered curve array",
+                f"boundary_condition[{row.id}].values.curve",
+            )
+        source_id = values.get("source_discharge_boundary_id")
+        if source_id is not None:
+            source = next(
+                (
+                    item
+                    for item in boundary_rows or ()
+                    if item.id == source_id and item.boundary_type == "upstream_discharge"
+                ),
+                None,
+            )
+            if source is None:
+                _reject(
+                    "DAYU_RATING_CURVE_SOURCE_MISSING",
+                    "rating curve source discharge must be selected in the same Case",
+                    f"boundary_condition[{row.id}].values.source_discharge_boundary_id",
+                )
+            if values.get("source_discharge_values_hash") != snapshot_hash(source.values):
+                _reject(
+                    "DAYU_RATING_CURVE_SOURCE_STALE",
+                    "source discharge changed; regenerate the downstream rating curve",
+                    f"boundary_condition[{row.id}].values.source_discharge_values_hash",
+                )
+            discharge_series = _time_values(source, variable="discharge")
+        else:
+            reference = values.get("reference_discharge_m3_s")
+            if isinstance(reference, bool) or not isinstance(reference, (int, float)):
+                _reject(
+                    "DAYU_RATING_CURVE_SOURCE_MISSING",
+                    "rating curve requires a source boundary or numeric reference discharge",
+                    f"boundary_condition[{row.id}].values",
+                )
+            discharge_series = (TimeValue(time_seconds=0.0, value=float(reference)),)
+        try:
+            return tuple(
+                TimeValue(
+                    time_seconds=sample.time_seconds,
+                    value=interpolate_rating_curve(curve, sample.value),
+                )
+                for sample in discharge_series
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            _reject(
+                "DAYU_RATING_CURVE_INVALID",
+                str(exc),
+                f"boundary_condition[{row.id}].values.curve",
+            )
     if mode == "constant" or (
         "value" in values and "time_seconds" not in values and "series" not in values
     ):
@@ -173,6 +378,7 @@ def _time_values(
 def _boundary(
     row: BoundaryConditionRow,
     branches: list[HydraulicBranchRow],
+    boundary_rows: Sequence[BoundaryConditionRow] | None = None,
 ) -> BoundaryCondition:
     """Bind endpoint boundaries to hydraulic nodes and lateral points to Branch/chainage."""
 
@@ -234,7 +440,7 @@ def _boundary(
         location=location,  # type: ignore[arg-type]
         variable=variable,  # type: ignore[arg-type]
         chainage_m=float(chainage) if chainage is not None else None,
-        series=_time_values(row, variable=variable),
+        series=_time_values(row, variable=variable, boundary_rows=boundary_rows),
     )
 
 
@@ -404,8 +610,13 @@ def build_hydraulic_1d_model(
     task_config: Mapping[str, Any],
     *,
     engine_id: str = DEFAULT_HYDRAULIC_1D_ENGINE_ID,
+    allow_draft_for_approval: bool = False,
 ) -> Hydraulic1DModel:
-    """Freeze one unified model and validate it with the explicitly selected engine."""
+    """Freeze one unified model and validate it with the explicitly selected engine.
+
+    Draft access is restricted to the Dataset approval transaction so the same
+    fail-closed mapper can prove a version before it becomes immutable.
+    """
 
     case = session.get(SimulationCase, case_id)
     if case is None:
@@ -413,7 +624,9 @@ def build_hydraulic_1d_model(
     dataset = session.get(DatasetVersion, case.dataset_version_id)
     if dataset is None:
         raise LookupError("simulation case Dataset Version does not exist")
-    if dataset.status not in {"approved", "published"}:
+    if dataset.status not in {"approved", "published"} and not (
+        allow_draft_for_approval and dataset.status == "draft"
+    ):
         _reject(
             "DAYU_DATASET_NOT_AUTHORITATIVE",
             "Standard 1D requires an approved or published Dataset Version",
@@ -589,10 +802,10 @@ def build_hydraulic_1d_model(
         )
     cross_sections: list[HydraulicCrossSection] = []
     for index, row in enumerate(section_rows):
-        if row.orientation_status != "confirmed":
+        if not row.hydraulic_ready:
             _reject(
-                "DAYU_CROSS_SECTION_ORIENTATION_UNCONFIRMED",
-                "Cross Section orientation must be confirmed",
+                "DAYU_CROSS_SECTION_HYDRAULIC_NOT_READY",
+                "Cross Section hydraulic geometry is not ready",
                 f"cross_sections[{index}]",
             )
         profiles = list(
@@ -638,6 +851,18 @@ def build_hydraulic_1d_model(
         )
         override = roughness_by_section.get(row.id)
         adopted_manning_n = override[1] if override is not None else profile.default_manning_n
+        raw_by_sequence = {point.sequence: point for point in points}
+        processed_rows = (profile.processed_geometry_json or {}).get("points", [])
+        solver_points = processed_rows or [
+            {
+                "offset": point.distance,
+                "elevation": point.elevation,
+                "source_sequence": point.sequence,
+            }
+            for point in points
+        ]
+        solver_station_min = float(solver_points[0]["offset"])
+        solver_station_max = float(solver_points[-1]["offset"])
         cross_sections.append(
             HydraulicCrossSection(
                 id=str(row.id),
@@ -647,29 +872,48 @@ def build_hydraulic_1d_model(
                 vertical_datum=profile.vertical_datum,
                 points=tuple(
                     CrossSectionPoint(
-                        station_m=point.distance,
-                        elevation_m=point.elevation,
-                        source_x=point.source_x,
-                        source_y=point.source_y,
-                        source_z=point.source_z,
-                        source_crs=point.source_crs,
-                        source_axis_mapping=point.source_axis_mapping,
+                        station_m=float(point["offset"]),
+                        elevation_m=float(point["elevation"]),
+                        source_x=(raw_by_sequence.get(point.get("source_sequence")).source_x
+                                  if raw_by_sequence.get(point.get("source_sequence")) else None),
+                        source_y=(raw_by_sequence.get(point.get("source_sequence")).source_y
+                                  if raw_by_sequence.get(point.get("source_sequence")) else None),
+                        source_z=(raw_by_sequence.get(point.get("source_sequence")).source_z
+                                  if raw_by_sequence.get(point.get("source_sequence")) else None),
+                        source_crs=(raw_by_sequence.get(point.get("source_sequence")).source_crs
+                                    if raw_by_sequence.get(point.get("source_sequence")) else None),
+                        source_axis_mapping=(
+                            raw_by_sequence.get(point.get("source_sequence")).source_axis_mapping
+                            if raw_by_sequence.get(point.get("source_sequence")) else None
+                        ),
                     )
-                    for point in points
+                    for point in solver_points
                 ),
                 manning_n=adopted_manning_n,
                 roughness_zones=tuple(
                     RoughnessZone(
-                        start_station_m=zone.offset_start_m,
-                        end_station_m=zone.offset_end_m,
+                        start_station_m=max(solver_station_min, zone.offset_start_m),
+                        end_station_m=min(solver_station_max, zone.offset_end_m),
                         manning_n=adopted_manning_n if override is not None else zone.manning_n,
                     )
                     for zone in zones
+                    if min(solver_station_max, zone.offset_end_m)
+                    > max(solver_station_min, zone.offset_start_m)
                 ),
-                location_geometry=geometry_json(session, row.location_geometry),
+                location_geometry=geometry_json(
+                    session,
+                    row.location_geometry
+                    if row.location_geometry is not None
+                    else row.derived_location_geometry,
+                ),
                 axis_geometry=(
-                    geometry_json(session, row.axis_geometry)
-                    if row.axis_geometry is not None
+                    geometry_json(
+                        session,
+                        row.axis_geometry
+                        if row.axis_geometry is not None
+                        else row.derived_axis_geometry,
+                    )
+                    if row.axis_geometry is not None or row.derived_axis_geometry is not None
                     else None
                 ),
                 left_bank=(
@@ -695,7 +939,24 @@ def build_hydraulic_1d_model(
         legacy_boundary = session.get(BoundaryConditionRow, case.boundary_condition_id)
         if legacy_boundary is not None:
             boundary_rows = [legacy_boundary]
-    boundaries = tuple(_boundary(row, branch_rows) for row in boundary_rows)
+    boundaries = tuple(
+        _boundary(row, branch_rows, boundary_rows=boundary_rows) for row in boundary_rows
+    )
+    if task_config.get("calculation_mode") == "steady":
+        varying = [
+            boundary.id
+            for boundary in boundaries
+            if any(
+                sample.value != boundary.series[0].value
+                for sample in boundary.series[1:]
+            )
+        ]
+        if varying:
+            _reject(
+                "DAYU_STEADY_BOUNDARY_TIME_VARIATION",
+                "steady calculation requires constant boundary values",
+                "boundary_conditions[" + ",".join(varying) + "]",
+            )
     initial_config = case_config.get("initial_condition", {})
     if not isinstance(initial_config, Mapping):
         _reject(
@@ -715,20 +976,39 @@ def build_hydraulic_1d_model(
             by_section=tuple(SectionInitialState.model_validate(item) for item in by_section)
         )
     else:
-        initial = InitialCondition(
-            water_level_m=_number(
-                task_config,
-                initial_config,
-                "initial_water_level",
-                "water_level_m",
-            ),
-            discharge_m3s=_number(
-                task_config,
-                initial_config,
-                "initial_flow",
-                "discharge_m3s",
-            ),
+        explicit_initial = any(
+            value is not None
+            for value in (
+                task_config.get("initial_water_level"),
+                task_config.get("initial_flow"),
+                initial_config.get("initial_water_level"),
+                initial_config.get("water_level_m"),
+                initial_config.get("initial_flow"),
+                initial_config.get("discharge_m3s"),
+            )
         )
+        derived_initial = (
+            None
+            if explicit_initial
+            else _boundary_derived_initial_condition(branches, cross_sections, boundaries)
+        )
+        if derived_initial is not None:
+            initial = derived_initial
+        else:
+            initial = InitialCondition(
+                water_level_m=_number(
+                    task_config,
+                    initial_config,
+                    "initial_water_level",
+                    "water_level_m",
+                ),
+                discharge_m3s=_number(
+                    task_config,
+                    initial_config,
+                    "initial_flow",
+                    "discharge_m3s",
+                ),
+            )
     settings_config = case_config.get("settings", {})
     if not isinstance(settings_config, Mapping):
         _reject(
@@ -741,6 +1021,13 @@ def build_hydraulic_1d_model(
         time_step_seconds=_number(task_config, settings_config, "time_step_seconds"),
         output_interval_seconds=_number(task_config, settings_config, "output_interval_seconds"),
     )
+    extension_top: float | None = None
+    if task_config.get("overbank_treatment") == "vertical_extension":
+        cross_sections, extension_top = _vertical_bank_extended_sections(
+            cross_sections,
+            initial,
+            boundaries,
+        )
     structures = _structures(session, case, case_config, network.id)
     configuration_hash = snapshot_hash(dict(case_config))
     model_metadata: dict[str, Any] = {
@@ -753,7 +1040,26 @@ def build_hydraulic_1d_model(
         "vertical_datum": network.vertical_datum,
         "hydraulic_1d_configuration_hash": configuration_hash,
         "roughness_overrides": [dict(value) for value in raw_roughness_overrides],
+        "initial_condition_source": (
+            "boundary_wet_bed_envelope"
+            if initial.by_section and not by_section
+            else "case_or_task"
+        ),
+        "calculation_mode": task_config.get("calculation_mode", "unsteady"),
+        "overbank_treatment": task_config.get("overbank_treatment", "profile"),
     }
+    if extension_top is not None:
+        model_metadata["vertical_bank_extension"] = {
+            "source": "task_derived_full_channel",
+            "extension_top_elevation_m": extension_top,
+            "safety_freeboard_m": 1.0,
+            "raw_profile_immutable": True,
+        }
+    if task_config.get("calculation_mode") == "steady":
+        # SARAP is the official MASCARET permanent-flow kernel.  Keep this
+        # choice in the frozen solver-neutral snapshot so task replay cannot
+        # silently fall back to a transient kernel.
+        model_metadata["mascaret_kernel"] = "sarap"
     if engine_id == DFLOW_FM_ENGINE_ID:
         dflow_config = case_config.get("dflow_fm")
         if not isinstance(dflow_config, Mapping):

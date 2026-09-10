@@ -401,6 +401,33 @@ export interface BoundaryConditionUpdate {
   "description"?: string | null;
 }
 
+export interface BoundaryRatingCurveGenerateRequest {
+  "dataset_version_id": number;
+  "hydraulic_node_id": number;
+  "source_discharge_boundary_id"?: number | null;
+  "reference_discharge_m3s"?: number | null;
+  "friction_slope"?: number | null;
+  "vertical_step_m"?: number;
+  "maximum_depth_m"?: number;
+}
+
+export interface BoundaryRatingCurveGenerateResponse {
+  "dataset_version_id": number;
+  "hydraulic_node_id": number;
+  "branch_id": number;
+  "cross_section_id": number;
+  "cross_section_code": string;
+  "profile_id": number;
+  "vertical_datum": string;
+  "friction_slope": number;
+  "friction_slope_source": "DERIVED_TERMINAL_THALWEG" | "MANUAL";
+  "reference_discharge_m3s": number;
+  "resolved_water_level_m": number;
+  "curve": Array<RatingCurvePoint>;
+  "values": Record<string, unknown>;
+  "warnings"?: Array<string>;
+}
+
 export interface BufferAnalysisRequest {
   "dataset_version_id": number;
   "object_type": "river" | "gate" | "pump" | "cross_section";
@@ -728,11 +755,17 @@ export interface CrossSectionUpdate {
   "geometry"?: Record<string, unknown> | null;
 }
 
+export interface DatasetVersionApprovalRequest {
+  "reviewer": string;
+  "reason": string;
+}
+
 export interface DatasetVersionCreate {
   "version": string;
   "name": string;
   "description"?: string | null;
   "creator": string;
+  "is_read_only"?: boolean;
 }
 
 export interface DatasetVersionRecord {
@@ -740,6 +773,7 @@ export interface DatasetVersionRecord {
   "name": string;
   "description"?: string | null;
   "creator": string;
+  "is_read_only"?: boolean;
   "id": number;
   "status"?: string;
   "parent_version_id"?: number | null;
@@ -758,6 +792,7 @@ export interface DatasetVersionRecord {
 export interface DatasetVersionUpdate {
   "name"?: string | null;
   "description"?: string | null;
+  "is_read_only"?: boolean | null;
 }
 
 export interface DatasetWindow {
@@ -804,6 +839,7 @@ export interface DispatchActionCreate {
   "structure_type": "gate" | "pump";
   "gate_id"?: number | null;
   "pump_id"?: number | null;
+  "hydraulic_structure_id"?: number | null;
   "command_type": "gate_opening_m" | "gate_opening_ratio" | "pump_enabled" | "pump_unit_count" | "pump_target_flow";
   "target_value": number;
   "interpolation"?: "step" | "linear";
@@ -817,6 +853,7 @@ export interface DispatchActionRecord {
   "structure_type": "gate" | "pump";
   "gate_id"?: number | null;
   "pump_id"?: number | null;
+  "hydraulic_structure_id"?: number | null;
   "command_type": "gate_opening_m" | "gate_opening_ratio" | "pump_enabled" | "pump_unit_count" | "pump_target_flow";
   "target_value": number;
   "interpolation"?: "step" | "linear";
@@ -1425,6 +1462,22 @@ export interface Hydraulic1DReadinessResponse {
   "input_summary"?: Record<string, unknown> | null;
 }
 
+export interface HydraulicBatchMarkerDetectionRecord {
+  "total_sections": number;
+  "detected": number;
+  "needs_review": number;
+  "failed": number;
+  "locked_skipped": number;
+  "unknown_orientation": number;
+  "invalid_marker_order": number;
+}
+
+export interface HydraulicBatchMarkerDetectionRequest {
+  "mode"?: "FULL_EXTENT" | "MIKE11_COMPATIBLE";
+  "force"?: boolean;
+  "dataset_version_id": number;
+}
+
 export interface HydraulicBatchProcessRequest {
   "vertical_step_m"?: number;
   "profile_ids": Array<number>;
@@ -1443,6 +1496,7 @@ export interface HydraulicBranchInput {
   "river_name": string;
   "branch_name": string;
   "flow_direction"?: "forward" | "reverse" | "unknown";
+  "centerline_role"?: "surveyed_centerline" | "thalweg" | "unknown";
   "source_revision"?: string | null;
   "points": Array<HydraulicChainageInput>;
 }
@@ -1456,9 +1510,13 @@ export interface HydraulicBranchRecord {
   "start_chainage": number;
   "end_chainage": number;
   "length_m": number;
+  "flow_direction": "forward" | "reverse" | "unknown";
+  "centerline_role": "surveyed_centerline" | "thalweg" | "unknown";
   "direction_status": string;
+  "source_revision": string | null;
   "upstream_node_id": number | null;
   "downstream_node_id": number | null;
+  "vertex_count": number;
   "section_count": number;
   "reach_count": number;
   "reaches"?: Array<HydraulicReachRecord>;
@@ -1591,6 +1649,61 @@ export interface HydraulicLocateRequest {
   "manual_chainage_m"?: number | null;
   "override_reason"?: string | null;
   "actor"?: string | null;
+}
+
+export interface HydraulicMarkerDetectionRequest {
+  "mode"?: "FULL_EXTENT" | "MIKE11_COMPATIBLE";
+  "force"?: boolean;
+}
+
+export interface HydraulicMarkerRecord {
+  "type": "M1" | "M2" | "M3";
+  "role": "LEFT_LEVEE" | "CHANNEL_LOW_POINT" | "RIGHT_LEVEE";
+  "sequence": number;
+  "offset": number;
+  "elevation": number;
+  "x"?: number | null;
+  "y"?: number | null;
+  "source": "IMPORT_DEFAULT" | "AUTO_MIKE11_COMPATIBLE" | "GIS_LEVEE" | "SURVEY_CODE" | "MANUAL";
+  "confidence": number;
+  "locked": boolean;
+  "review_status": "AUTO_ACCEPTED" | "NEEDS_REVIEW" | "REVIEWED" | "REJECTED";
+  "algorithm_version": string;
+  "notes"?: string | null;
+}
+
+export interface HydraulicMarkerUpdate {
+  "marker1_sequence"?: number | null;
+  "marker2_sequence"?: number | null;
+  "marker3_sequence"?: number | null;
+  "lock_marker1"?: boolean;
+  "lock_marker2"?: boolean;
+  "lock_marker3"?: boolean;
+  "notes"?: string | null;
+  "actor"?: string;
+}
+
+export interface HydraulicMarkerWorkflowRecord {
+  "profile_id": number;
+  "marker_detection_mode": string;
+  "active_extent_mode": string;
+  "overbank_treatment": string;
+  "extension_top_elevation_m": number | null;
+  "design_max_water_level_m": number | null;
+  "safety_freeboard_m": number;
+  "processing_config_version": string;
+  "review_status": string;
+  "warnings": Array<string>;
+  "markers"?: Array<HydraulicMarkerRecord>;
+  "processed_points"?: Array<HydraulicProcessedPointRecord>;
+}
+
+export interface HydraulicMarkerWorkflowUpdate {
+  "active_extent_mode"?: "FULL_EXTENT" | "MARKER_EXTENT";
+  "overbank_treatment"?: "REAL_GEOMETRY" | "VERTICAL_EXTENSION";
+  "extension_top_elevation_m"?: number | null;
+  "design_max_water_level_m"?: number | null;
+  "safety_freeboard_m"?: number;
 }
 
 export interface HydraulicMetrics {
@@ -1738,6 +1851,13 @@ export interface HydraulicPreviewJobRecord {
   "plc_scada_connected"?: false;
 }
 
+export interface HydraulicProcessedPointRecord {
+  "offset": number;
+  "elevation": number;
+  "virtual": boolean;
+  "source_sequence"?: number | null;
+}
+
 export interface HydraulicProcessingRecord {
   "id": number;
   "profile_hash": string;
@@ -1768,6 +1888,7 @@ export interface HydraulicProfileRecord {
   "points": Array<HydraulicSectionPointRecord>;
   "roughness_zones": Array<HydraulicRoughnessZoneRecord>;
   "processing"?: HydraulicProcessingRecord | null;
+  "marker_workflow"?: HydraulicMarkerWorkflowRecord | null;
 }
 
 export interface HydraulicReachRecord {
@@ -1834,6 +1955,12 @@ export interface HydraulicSectionDetail {
   "bed_elevation_confirmed_at": string | null;
   "location_geometry": Record<string, unknown>;
   "axis_geometry": Record<string, unknown> | null;
+  "branch_intersection_station": number | null;
+  "anchor_source": string;
+  "review_status": string;
+  "spatial_geometry_source": string;
+  "spatial_geometry_status": string;
+  "hydraulic_ready": boolean;
   "profiles": Array<HydraulicProfileRecord>;
 }
 
@@ -1841,7 +1968,7 @@ export interface HydraulicSectionPointInput {
   "sequence": number;
   "distance": number;
   "elevation": number;
-  "marker_type"?: "none" | "left_bank" | "right_bank" | "left_levee" | "right_levee" | "low_flow_left" | "low_flow_right" | "thalweg";
+  "marker_type"?: "none" | "left_bank" | "right_bank" | "left_levee" | "right_levee" | "low_flow_left" | "low_flow_right" | "thalweg" | "main_channel";
   "point_code"?: string | null;
   "x"?: number | null;
   "y"?: number | null;
@@ -1857,6 +1984,8 @@ export interface HydraulicSectionPointRecord {
   "x"?: number | null;
   "y"?: number | null;
   "z"?: number | null;
+  "derived_x"?: number | null;
+  "derived_y"?: number | null;
 }
 
 export interface HydraulicSectionSummary {
@@ -1867,6 +1996,7 @@ export interface HydraulicSectionSummary {
   "profile_count": number;
   "point_count": number;
   "orientation_status": string;
+  "marker_review_status": string;
   "bed_elevation_m": number | null;
   "bed_elevation_source": string;
 }
@@ -2431,6 +2561,42 @@ export interface PublicationRecord {
   "created_at": string;
 }
 
+export interface PublishedScenarioBundle {
+  "bundle_id": string;
+  "title": string;
+  "river_name": string;
+  "schema_version": string;
+  "generated_at": string;
+  "classification": string;
+  "acceptance": string;
+  "not_claimed": Array<string>;
+  "input": Record<string, unknown>;
+  "physical_assumptions": Record<string, unknown>;
+  "numerical_acceptance": Record<string, unknown>;
+  "runtime_provenance": Record<string, unknown>;
+  "scenarios": Array<PublishedScenarioResult>;
+  "source_digest"?: string;
+}
+
+export interface PublishedScenarioResult {
+  "scenario_id": string;
+  "label": string;
+  "q_m3s": number;
+  "downstream_h_m": number;
+  "status": string;
+  "mesh_spacing_m": number;
+  "time_step_seconds": number;
+  "duration_seconds": number;
+  "upstream_water_level_m": number;
+  "maximum_water_level_m": number;
+  "minimum_depth_m": number;
+  "maximum_velocity_ms": number;
+  "final_discharge_span_m3s": number;
+  "mass_balance_residual": number;
+  "quality_gate": ScenarioResultQualityGate;
+  "section_summary": Array<ScenarioResultSection>;
+}
+
 export interface PublishRequest {
   "published_by": string;
   "manifest_json"?: Record<string, unknown>;
@@ -2543,6 +2709,11 @@ export interface QAThresholds {
   "maximum_section_spacing_m"?: number;
   "maximum_bed_jump_m"?: number;
   "maximum_reverse_bed_slope"?: number;
+}
+
+export interface RatingCurvePoint {
+  "discharge_m3_s": number;
+  "water_level_m": number;
 }
 
 export interface RecommendationResponse {
@@ -2718,6 +2889,26 @@ export interface RoughnessOverride {
   "manning_n": number;
 }
 
+export interface ScenarioResultQualityGate {
+  "temporal_converged": boolean;
+  "mass_balance_residual": number;
+  "mass_balance_tolerance": number;
+  "final_discharge_span_m3s": number;
+  "final_discharge_span_tolerance_m3s": number;
+  "passed": boolean;
+}
+
+export interface ScenarioResultSection {
+  "cross_section_id": string;
+  "chainage_m": number;
+  "bed_min_m": number;
+  "final_water_level_m": number;
+  "final_depth_m": number;
+  "final_discharge_m3s": number;
+  "final_velocity_ms": number;
+  "flow_area_m2": number;
+}
+
 export interface SimulationCaseCreate {
   "name": string;
   "description"?: string | null;
@@ -2761,6 +2952,61 @@ export interface SimulationLayerRecord {
   "created_time": string;
 }
 
+export interface SimulationResultOverviewResponse {
+  "task_id": number;
+  "case_id": number;
+  "dataset_version_id": number;
+  "status": "pending" | "queued" | "running" | "cancel_requested" | "cancelled" | "success" | "failed";
+  "task_kind"?: "standard_1d" | "controlled_hydraulic_preview";
+  "simulation_id": string;
+  "scenario_id": string;
+  "engine": string;
+  "engine_version": string;
+  "calculation_mode"?: "steady" | "unsteady" | null;
+  "evidence_class"?: string | null;
+  "final_time_seconds": number;
+  "created_time": string;
+  "end_time": string | null;
+  "section_summary": Array<SimulationResultOverviewSection>;
+  "structure_summary"?: Array<SimulationResultOverviewStructure>;
+  "diagnostics": Record<string, unknown> | null;
+}
+
+export interface SimulationResultOverviewSection {
+  "section_id": number;
+  "section_code": string;
+  "branch_id": number;
+  "chainage_m": number;
+  "time_seconds": number;
+  "water_level_m": number;
+  "bed_elevation_m"?: number | null;
+  "depth_m"?: number | null;
+  "flow_m3s": number;
+  "velocity_m_s": number;
+  "flow_area_m2"?: number | null;
+  "top_width_m"?: number | null;
+  "froude_number"?: number | null;
+}
+
+export interface SimulationResultOverviewStructure {
+  "structure_type": "gate" | "pump";
+  "structure_id": number;
+  "time_seconds": number;
+  "requested_value"?: number | null;
+  "resolved_value"?: number | null;
+  "applied_value"?: number | null;
+  "flow_m3s": number;
+  "upstream_water_level_m"?: number | null;
+  "downstream_water_level_m"?: number | null;
+  "head_difference_m"?: number | null;
+  "native_applied_capacity_m3s"?: number | null;
+  "actual_discharge_m3s"?: number | null;
+  "pump_head_m"?: number | null;
+  "pump_reduction_factor"?: number | null;
+  "pump_actual_stage"?: number | null;
+  "regime"?: string | null;
+}
+
 export interface SimulationResultResponse {
   "task_id": number;
   "status": "pending" | "queued" | "running" | "cancel_requested" | "cancelled" | "success" | "failed";
@@ -2788,6 +3034,8 @@ export interface SimulationResultResponse {
 
 export interface SimulationTaskCreate {
   "case_id": number;
+  "calculation_mode"?: "steady" | "unsteady";
+  "overbank_treatment"?: "profile" | "vertical_extension";
   "duration_seconds"?: number | null;
   "time_step_seconds"?: number | null;
   "output_interval_seconds"?: number | null;
@@ -3206,6 +3454,7 @@ export const getPumps = (params: GISListQuery, baseUrl = '') => requestJson<GeoJ
 export const getPump = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<GeoJSONFeature>(`/api/v1/gis/pumps/${id}${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
 export const getCrossSections = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(`/api/v1/gis/cross_sections${toQuery(params)}`, {}, baseUrl);
 export const getCrossSection = (id: number, datasetVersionId: number, baseUrl = '') => requestJson<GeoJSONFeature>(`/api/v1/gis/cross_sections/${id}${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
+export const getHydraulicCrossSections = (params: GISListQuery, baseUrl = '') => requestJson<GeoJSONFeatureCollection>(`/api/v1/gis/hydraulic-cross-sections${toQuery(params)}`, {}, baseUrl);
 export const getGISInteractionFrame = (params: GISInteractionQuery, baseUrl = '') => requestJson<GISInteractionFrame>(`/api/v1/gis/interaction-frame${toQuery(params)}`, {}, baseUrl);
 export const getGISLayerCatalog = (baseUrl = '') => requestJson<Array<LayerCatalogItem>>('/api/v1/gis-analysis/layers', {}, baseUrl);
 export const searchGISLocations = (params: GISLocationSearchQuery, baseUrl = '') => requestJson<LocationSearchResponse>(`/api/v1/gis-analysis/search${toQuery(params)}`, {}, baseUrl);
@@ -3324,11 +3573,13 @@ export const getDatasetVersions = (baseUrl = '') => requestJson<Array<DatasetVer
 export const createDatasetVersion = (body: DatasetVersionCreate, baseUrl = '') => requestJson<DatasetVersionRecord>('/api/v1/model-data/dataset-versions', jsonOptions('POST', body), baseUrl);
 export const updateDatasetVersion = (versionId: number, body: DatasetVersionUpdate, baseUrl = '') => requestJson<DatasetVersionRecord>(`/api/v1/model-data/dataset-versions/${versionId}`, jsonOptions('PUT', body), baseUrl);
 export const deleteDatasetVersion = (versionId: number, baseUrl = '') => requestJson<void>(`/api/v1/model-data/dataset-versions/${versionId}`, { method: 'DELETE' }, baseUrl);
+export const approveDatasetVersionForCalculation = (versionId: number, body: DatasetVersionApprovalRequest, baseUrl = '') => requestJson<DatasetVersionRecord>(`/api/v1/model-data/dataset-versions/${versionId}/approve-for-calculation`, jsonOptions('POST', body), baseUrl);
 export const getModelParameters = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<ModelParameterRecord>>(`/api/v1/model-data/parameters${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
 export const createModelParameter = (body: ModelParameterCreate, baseUrl = '') => requestJson<ModelParameterRecord>('/api/v1/model-data/parameters', jsonOptions('POST', body), baseUrl);
 export const updateModelParameter = (parameterId: number, body: ModelParameterUpdate, baseUrl = '') => requestJson<ModelParameterRecord>(`/api/v1/model-data/parameters/${parameterId}`, jsonOptions('PUT', body), baseUrl);
 export const deleteModelParameter = (parameterId: number, baseUrl = '') => requestJson<void>(`/api/v1/model-data/parameters/${parameterId}`, { method: 'DELETE' }, baseUrl);
 export const getBoundaryConditions = (datasetVersionId?: number, baseUrl = '') => requestJson<Array<BoundaryConditionRecord>>(`/api/v1/model-data/boundary-conditions${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
+export const generateBoundaryRatingCurve = (body: BoundaryRatingCurveGenerateRequest, baseUrl = '') => requestJson<BoundaryRatingCurveGenerateResponse>('/api/v1/model-data/boundary-conditions/rating-curve/generate', jsonOptions('POST', body), baseUrl);
 export const createBoundaryCondition = (body: BoundaryConditionCreate, baseUrl = '') => requestJson<BoundaryConditionRecord>('/api/v1/model-data/boundary-conditions', jsonOptions('POST', body), baseUrl);
 export const updateBoundaryCondition = (boundaryId: number, body: BoundaryConditionUpdate, baseUrl = '') => requestJson<BoundaryConditionRecord>(`/api/v1/model-data/boundary-conditions/${boundaryId}`, jsonOptions('PUT', body), baseUrl);
 export const deleteBoundaryCondition = (boundaryId: number, baseUrl = '') => requestJson<void>(`/api/v1/model-data/boundary-conditions/${boundaryId}`, { method: 'DELETE' }, baseUrl);
@@ -3349,6 +3600,13 @@ export const deleteHydraulicStructure = (structureId: number, baseUrl = '') => r
 export const upsertHydraulicStructureScenario = (structureId: number, caseId: number, body: HydraulicStructureScenarioUpsert, baseUrl = '') => requestJson<HydraulicStructureScenarioRecord>(`/api/v1/hydraulic/structures/${structureId}/scenarios/${caseId}`, jsonOptions('PUT', body), baseUrl);
 export const listHydraulicNetworks = (datasetVersionId: number, baseUrl = '') => requestJson<Array<HydraulicNetworkRecord>>(`/api/v1/hydraulic/networks${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
 export const getHydraulicSection = (sectionId: number, baseUrl = '') => requestJson<HydraulicSectionDetail>(`/api/v1/hydraulic/cross-sections/${sectionId}`, {}, baseUrl);
+export const updateHydraulicSectionMarkers = (sectionId: number, body: HydraulicMarkerUpdate, baseUrl = '') => requestJson<HydraulicSectionDetail>(`/api/v1/hydraulic/cross-sections/${sectionId}/markers`, jsonOptions('PUT', body), baseUrl);
+export const detectHydraulicSectionMarkers = (sectionId: number, body: HydraulicMarkerDetectionRequest, baseUrl = '') => requestJson<HydraulicSectionDetail>(`/api/v1/hydraulic/cross-sections/${sectionId}/marker-detection`, jsonOptions('POST', body), baseUrl);
+export const updateHydraulicMarkerWorkflow = (profileId: number, body: HydraulicMarkerWorkflowUpdate, baseUrl = '') => requestJson<HydraulicMarkerWorkflowRecord>(`/api/v1/hydraulic/profiles/${profileId}/marker-workflow`, jsonOptions('PUT', body), baseUrl);
+export const batchDetectHydraulicMarkers = (body: HydraulicBatchMarkerDetectionRequest, baseUrl = '') => requestJson<HydraulicBatchMarkerDetectionRecord>('/api/v1/hydraulic/marker-detection/batch', jsonOptions('POST', body), baseUrl);
+export const deriveHydraulicSectionSpatialGeometry = (sectionId: number, baseUrl = '') => requestJson<HydraulicSectionDetail>(`/api/v1/hydraulic/cross-sections/${sectionId}/derive-spatial-geometry`, jsonOptions('POST', {}), baseUrl);
+export const clearHydraulicSectionSpatialGeometry = (sectionId: number, baseUrl = '') => requestJson<HydraulicSectionDetail>(`/api/v1/hydraulic/cross-sections/${sectionId}/derived-spatial-geometry`, { method: 'DELETE' }, baseUrl);
+export const deriveHydraulicDatasetSpatialGeometry = (datasetVersionId: number, baseUrl = '') => requestJson<Record<string, number>>(`/api/v1/hydraulic/datasets/${datasetVersionId}/derive-spatial-geometry`, jsonOptions('POST', {}), baseUrl);
 export const listHydraulicImportJobs = (datasetVersionId: number, baseUrl = '') => requestJson<Array<HydraulicImportJobRecord>>(`/api/v1/hydraulic/imports${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);
 export const commitHydraulicImport = (jobCode: string, previewConfigHash: string, baseUrl = '') => requestJson<HydraulicImportJobRecord>('/api/v1/hydraulic/imports/commit', jsonOptions('POST', { job_code: jobCode, preview_config_hash: previewConfigHash }), baseUrl);
 export const buildHydraulicTopology = (networkId: number, body: HydraulicTopologyBuildRequest, baseUrl = '') => requestJson<HydraulicTopologyReport>(`/api/v1/hydraulic/networks/${networkId}/topology`, jsonOptions('POST', body), baseUrl);
@@ -3431,6 +3689,10 @@ export async function importProductionExternal(datasetVersionId: number, resultC
 
 export const createHydraulicTask = (body: SimulationTaskCreate, baseUrl = '') => requestJson<SimulationTaskRecord>('/api/v1/model/tasks', jsonOptions('POST', body), baseUrl);
 export const getHydraulicReadiness = (caseId: number, baseUrl = '') => requestJson<Hydraulic1DReadinessResponse>(`/api/v1/model/readiness${toQuery({ case_id: caseId })}`, {}, baseUrl);
+export const listPublishedScenarioResults = (baseUrl = '') => requestJson<Array<PublishedScenarioBundle>>('/api/v1/model/scenario-results', {}, baseUrl);
+export const getPublishedScenarioGeoJSON = (bundleId: string, scenarioId?: string, baseUrl = '') => requestJson<Record<string, unknown>>(`/api/v1/model/scenario-results/${encodeURIComponent(bundleId)}/geojson${toQuery({ scenario_id: scenarioId })}`, {}, baseUrl);
+export const getPublishedScenarioCaseManifest = (bundleId: string, baseUrl = '') => requestJson<Record<string, unknown>>(`/api/v1/model/scenario-results/${encodeURIComponent(bundleId)}/case-manifest`, {}, baseUrl);
+export const downloadPublishedScenarioArtifact = (bundleId: string, filename: string, baseUrl = '') => requestBlob(`/api/v1/model/scenario-results/${encodeURIComponent(bundleId)}/artifacts/${encodeURIComponent(filename)}`, {}, baseUrl);
 export const previewHydraulicModel = (body: SimulationTaskCreate, baseUrl = '') => requestJson<Hydraulic1DPreviewResponse>('/api/v1/model/preview', jsonOptions('POST', body), baseUrl);
 export const listHydraulicTasks = (paramsOrBaseUrl: DatasetTaskListQuery | string = {}, baseUrl = '') => {
   const [params, resolvedBaseUrl] = datasetTaskListArgs(paramsOrBaseUrl, baseUrl);
@@ -3443,6 +3705,7 @@ export const cancelHydraulicTask = (taskId: number, baseUrl = '') => requestJson
 export const retryHydraulicTask = (taskId: number, baseUrl = '') => requestJson<SimulationTaskRecord>(`/api/v1/model/tasks/${taskId}/retry`, { method: 'POST' }, baseUrl);
 export const getHydraulicTaskSnapshot = (taskId: number, baseUrl = '') => requestJson<TaskSnapshotResponse>(`/api/v1/model/tasks/${taskId}/snapshot`, {}, baseUrl);
 export const getHydraulicResult = (taskId: number, sectionId?: number, baseUrl = '') => requestJson<SimulationResultResponse>(`/api/v1/model/results/${taskId}${toQuery({ section_id: sectionId })}`, {}, baseUrl);
+export const getHydraulicResultOverview = (taskId: number, baseUrl = '') => requestJson<SimulationResultOverviewResponse>(`/api/v1/model/results/${taskId}/overview`, {}, baseUrl);
 
 export const listDispatchPlans = (params: DispatchListQuery = {}, baseUrl = '') => requestJson<PageResult<DispatchPlanRecord>>(`/api/v1/dispatch/plans${toQuery(params)}`, {}, baseUrl);
 export const createDispatchPlan = (body: DispatchPlanCreate, baseUrl = '') => requestJson<DispatchPlanRecord>('/api/v1/dispatch/plans', jsonOptions('POST', body), baseUrl);
@@ -3458,6 +3721,7 @@ export const previewDispatchSchedule = (planId: number, body: DispatchSchedulePr
 export const compileDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPlanCompileReport>(`/api/v1/dispatch/plans/${planId}/hydraulic-compile-check`, jsonOptions('POST', body), baseUrl);
 export const freezeDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPlanFreezeResponse>(`/api/v1/dispatch/plans/${planId}/hydraulic-freeze`, jsonOptions('POST', body), baseUrl);
 export const previewDispatchHydraulicPlan = (planId: number, body: HydraulicPlanCompileRequest, baseUrl = '') => requestJson<HydraulicPreviewJobRecord>(`/api/v1/dispatch/plans/${planId}/hydraulic-preview`, jsonOptions('POST', body), baseUrl);
+export const runFrozenDispatchHydraulicPlan = (planId: number, baseUrl = '') => requestJson<HydraulicPreviewJobRecord>(`/api/v1/dispatch/plans/${planId}/hydraulic-run`, { method: 'POST' }, baseUrl);
 export const listDispatchActions = (planId: number, baseUrl = '') => requestJson<Array<DispatchActionRecord>>(`/api/v1/dispatch/plans/${planId}/actions`, {}, baseUrl);
 export const createDispatchAction = (planId: number, body: DispatchActionCreate, baseUrl = '') => requestJson<DispatchActionRecord>(`/api/v1/dispatch/plans/${planId}/actions`, jsonOptions('POST', body), baseUrl);
 export const updateDispatchAction = (actionId: number, body: DispatchActionUpdate, baseUrl = '') => requestJson<DispatchActionRecord>(`/api/v1/dispatch/actions/${actionId}`, jsonOptions('PATCH', body), baseUrl);

@@ -5,6 +5,7 @@ import View from 'ol/View';
 import proj4 from 'proj4';
 import Feature from 'ol/Feature';
 import Point from 'ol/geom/Point';
+import GeoJSON from 'ol/format/GeoJSON';
 import TileLayer from 'ol/layer/Tile';
 import VectorLayer from 'ol/layer/Vector';
 import TileWMS from 'ol/source/TileWMS';
@@ -17,7 +18,7 @@ import { Circle as CircleStyle, Fill, Stroke, Style } from 'ol/style';
 import type { MapBrowserEvent } from 'ol';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import 'ol/ol.css';
-import { getGISCatalog, getGISFeatureInfo, type GISCatalogResponse } from '../api/generated/client';
+import { getGISCatalog, getGISFeatureInfo, getHydraulicCrossSections, getPublishedScenarioGeoJSON, type GISCatalogResponse } from '../api/generated/client';
 import { Coordinate } from './Coordinate';
 import { CoordinateLocator, type CgcsCentralMeridian, type CoordinateInputMode } from './CoordinateLocator';
 import { LayerManager, type WebLayerState } from './LayerManager';
@@ -72,12 +73,22 @@ function createRuntimeLayer(catalog: GISCatalogResponse, layerState: WebLayerSta
 }
 
 /** Provide the only WebGIS map: OpenLayers + generated API client + GeoServer WMS. */
-export function MapView({ datasetVersionId }: { datasetVersionId: number }) {
+export function MapView({
+  datasetVersionId,
+  scenarioBundleId,
+  scenarioId,
+}: {
+  datasetVersionId: number;
+  scenarioBundleId?: string;
+  scenarioId?: string;
+}) {
   const targetRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<OlMap | null>(null);
   const runtimeRef = useRef<Map<string, RuntimeLayer>>(new Map());
   const locatorSourceRef = useRef<VectorSource | null>(null);
   const locatorLayerRef = useRef<VectorLayer<VectorSource> | null>(null);
+  const scenarioLayerRef = useRef<VectorLayer<VectorSource> | null>(null);
+  const hydraulicSectionLayerRef = useRef<VectorLayer<VectorSource> | null>(null);
   const identifyRef = useRef<(event: MapBrowserEvent<PointerEvent | KeyboardEvent | WheelEvent>) => void>(() => undefined);
   const [catalog, setCatalog] = useState<GISCatalogResponse | null>(null);
   const [layers, setLayers] = useState<WebLayerState[]>([]);
@@ -111,6 +122,37 @@ export function MapView({ datasetVersionId }: { datasetVersionId: number }) {
     locatorSourceRef.current = locatorSource;
     locatorLayerRef.current = locatorLayer;
     map.addLayer(locatorLayer);
+    const scenarioLayer = new VectorLayer({
+      source: new VectorSource(),
+      style: (feature) => {
+        const velocity = Number(feature.get('velocity_m_s') ?? 0);
+        const color = velocity >= 3 ? '#ff5c68' : velocity >= 1.5 ? '#ffc85c' : '#2fe6d6';
+        return feature.getGeometry()?.getType() === 'LineString'
+          ? new Style({ stroke: new Stroke({ color: '#2fe6d6', width: 4, lineDash: [10, 6] }) })
+          : new Style({ image: new CircleStyle({ radius: 7, fill: new Fill({ color }), stroke: new Stroke({ color: '#ffffff', width: 2 }) }) });
+      },
+    });
+    scenarioLayer.setZIndex(9_500);
+    scenarioLayerRef.current = scenarioLayer;
+    map.addLayer(scenarioLayer);
+    const hydraulicSectionLayer = new VectorLayer({
+      source: new VectorSource(),
+      style: (feature) => {
+        const overlayType = feature.get('overlay_type');
+        if (overlayType === 'intersection') {
+          return new Style({ image: new CircleStyle({ radius: 5, fill: new Fill({ color: '#ffffff' }), stroke: new Stroke({ color: '#00e5ff', width: 2 }) }) });
+        }
+        if (overlayType === 'marker') {
+          const markerKind = feature.get('marker_kind');
+          const color = markerKind === 'marker1' ? '#ff8a65' : markerKind === 'marker3' ? '#ba68c8' : '#ffd54f';
+          return new Style({ image: new CircleStyle({ radius: 5, fill: new Fill({ color }), stroke: new Stroke({ color: '#101923', width: 1.5 }) }) });
+        }
+        return new Style({ stroke: new Stroke({ color: '#00e5ff', width: 2, lineDash: [8, 5] }) });
+      },
+    });
+    hydraulicSectionLayer.setZIndex(9_700);
+    hydraulicSectionLayerRef.current = hydraulicSectionLayer;
+    map.addLayer(hydraulicSectionLayer);
     map.on('pointermove', (event) => {
       const [longitude, latitude] = toLonLat(event.coordinate);
       setLongitudeLatitude([longitude, latitude]);
@@ -123,6 +165,8 @@ export function MapView({ datasetVersionId }: { datasetVersionId: number }) {
       mapRef.current = null;
       locatorSourceRef.current = null;
       locatorLayerRef.current = null;
+      scenarioLayerRef.current = null;
+      hydraulicSectionLayerRef.current = null;
     };
   }, []);
 
@@ -131,6 +175,12 @@ export function MapView({ datasetVersionId }: { datasetVersionId: number }) {
     setLoading(true);
     setError('');
     setSelection(null);
+    if (!datasetVersionId) {
+      setCatalog(null);
+      setLayers([]);
+      setLoading(false);
+      return () => { cancelled = true; };
+    }
     void getGISCatalog(datasetVersionId)
       .then((nextCatalog) => {
         if (cancelled) return;
@@ -175,7 +225,76 @@ export function MapView({ datasetVersionId }: { datasetVersionId: number }) {
     });
     const locatorLayer = locatorLayerRef.current;
     if (locatorLayer) map.addLayer(locatorLayer);
+    const scenarioLayer = scenarioLayerRef.current;
+    if (scenarioLayer) map.addLayer(scenarioLayer);
+    const hydraulicSectionLayer = hydraulicSectionLayerRef.current;
+    if (hydraulicSectionLayer) map.addLayer(hydraulicSectionLayer);
   }, [catalog, datasetVersionId]);
+
+  useEffect(() => {
+    const layer = hydraulicSectionLayerRef.current;
+    if (!layer) return;
+    const source = layer.getSource();
+    if (!source) return;
+    source.clear();
+    if (!datasetVersionId) return;
+    void getHydraulicCrossSections({ dataset_version_id: datasetVersionId, limit: 1000 })
+      .then((payload) => {
+        const lines = new GeoJSON().readFeatures(payload, {
+          dataProjection: 'EPSG:4490',
+          featureProjection: 'EPSG:3857',
+        });
+        lines.forEach((line) => {
+          line.set('overlay_type', 'cross_section');
+          source.addFeature(line);
+          const properties = line.getProperties() as Record<string, unknown>;
+          const markers = (properties.markers ?? {}) as Record<string, { coordinates?: number[] }>;
+          Object.entries(markers).forEach(([markerKind, marker]) => {
+            const coordinates = marker.coordinates;
+            if (!coordinates || coordinates.length < 2) return;
+            const markerFeature = new Feature({
+              geometry: new Point(transform([coordinates[0], coordinates[1]], 'EPSG:4490', 'EPSG:3857')),
+              overlay_type: 'marker',
+              marker_kind: markerKind,
+              section_code: properties.section_code,
+            });
+            source.addFeature(markerFeature);
+          });
+          const intersection = properties.intersection_geometry as { coordinates?: number[] } | undefined;
+          if (intersection?.coordinates && intersection.coordinates.length >= 2) {
+            source.addFeature(new Feature({
+              geometry: new Point(transform([intersection.coordinates[0], intersection.coordinates[1]], 'EPSG:4490', 'EPSG:3857')),
+              overlay_type: 'intersection',
+              section_code: properties.section_code,
+            }));
+          }
+        });
+      })
+      .catch(() => {
+        // WMS remains available when a draft has no hydraulic spatial overlay yet.
+      });
+  }, [datasetVersionId]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const layer = scenarioLayerRef.current;
+    if (!map || !layer) return;
+    const source = layer.getSource();
+    if (!source) return;
+    source.clear();
+    if (!scenarioBundleId) return;
+    void getPublishedScenarioGeoJSON(scenarioBundleId, scenarioId)
+      .then((payload) => {
+        const features = new GeoJSON().readFeatures(payload, {
+          dataProjection: 'EPSG:4547',
+          featureProjection: 'EPSG:3857',
+        });
+        source.addFeatures(features);
+        const extent = source.getExtent();
+        if (features.length > 0 && extent) map.getView().fit(extent, { padding: [80, 80, 80, 80], maxZoom: 15, duration: 500 });
+      })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : '方案成果图层加载失败'));
+  }, [scenarioBundleId, scenarioId]);
 
   useEffect(() => {
     layers.forEach((state, index) => {
