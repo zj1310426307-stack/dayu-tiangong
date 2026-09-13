@@ -33,6 +33,16 @@ class DatasetVersionUpdate(BaseModel):
     is_read_only: bool | None = None
 
 
+class DatasetVersionCloneRequest(BaseModel):
+    """Create a new editable engineering lineage node from a source version."""
+
+    model_config = ConfigDict(extra="forbid")
+    version: str = Field(min_length=1, max_length=32)
+    name: str = Field(min_length=1, max_length=128)
+    creator: str = Field(min_length=1, max_length=64)
+    description: str | None = None
+
+
 class DatasetVersionApprovalRequest(BaseModel):
     """Record the operator decision that approves a validated calculation dataset."""
 

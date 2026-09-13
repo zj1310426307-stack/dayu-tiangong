@@ -113,11 +113,11 @@ QGIS Server、Martin、TiTiler、GeoNode 和 Cesium 已退出核心编排。旧�
 
 ## 8. 模型与动态状态
 
-Dataset Version 仍是 GIS、模型、调度和 AI 的共同版本身份。静态权威对象冻结后不可原地修改；动态 `feature_state` 是时序事实追加，不改写静态设计参数。
+Dataset Version 仍是 GIS、模型、调度和 AI 的共同版本身份。只有未锁定 `draft` 可以写入版本化工程数据；审核、批准、发布和退役版本不得自动退回草稿或被解除只读。修改认证版本必须创建带 `parent_version_id` 的新草稿，静态权威对象与冻结快照都不可原地修改；动态 `feature_state` 是时序事实追加，不改写静态设计参数。
 
 GIS 晋级只保证空间核心数据的治理与发布，不伪造模型参数、边界条件或率定状态。模型任务只能选择满足其独立完整性条件的版本。
 
-水动力任务经 Simulation Case、调度运行经 Dispatch Plan、优化任务经自身字段获得 Dataset Version 身份。监控列表可在数据库查询层按版本过滤，前端必须显式传当前版本；不传参数仍保留历史全量合同。该查询边界不是授权，详情、结果和 mutation 仍需未来 Principal/RBAC 门。
+水动力任务经 Simulation Case、调度运行经 Dispatch Plan、优化任务经自身字段获得 Dataset Version 身份。直接统一水工建筑物绑定必须与 Dispatch Plan 同版本、同类型且 `active`，冻结时其权威参数写入计划快照，运行仅读取快照。监控列表可在数据库查询层按版本过滤，前端必须显式传当前版本；不传参数仍保留历史全量合同。该查询边界不是授权，详情、结果和 mutation 仍需未来 Principal/RBAC 门。
 
 无闸泵的 Standard 1D 任务在入队前冻结 solver-neutral `Hydraulic1DModel`，再由独立
 `hydraulic-1d` Worker 调用 MASCARET Adapter。闸泵联合任务只能从已冻结的 `hydraulic_v3`

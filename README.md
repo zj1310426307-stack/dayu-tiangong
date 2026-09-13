@@ -11,7 +11,7 @@
 
 自 2026-08-31 起，生产级 Standard 1D 正式采用“Dayu 统一水力模型 → MASCARET Adapter → 外部 MASCARET v9.1.1 → 统一结果”路线；旧自研 1D Solver 已退出生产代码、API、Worker、前端和 CI。HYDRO-DATA-01 的 Network → Branch → Chainage → Cross Section 权威数据结构保持不变。
 
-2026-09-09：Standard 1D 已支持在可编辑 Dataset Version 上完成校核后批准计算；批准不等于只读，后续编辑会自动回到 draft 并要求重新批准。模型就绪检查与计算表单使用一致的默认时长、步长和输出间隔，避免已有方案因未持久化可选配置被错误阻断。当前实现提交：`d25cae43cf946e8023c41995fcdac2296350cf41`。
+2026-09-13：Dataset Version 已收紧为工程身份边界：仅未锁定草稿可编辑；审核、批准、发布、退役版本不可原地降级或解锁，修改应从“基于此版本创建草稿”开始并保留 `parent_version_id`。直接统一 Gate/Pump 调度绑定在写入时校验版本、类型和 active 状态；冻结快照保存统一建筑物的权威参数，运行不回读可变资产。详见 [ADR-HYDRO-0004](docs/adr/ADR-HYDRO-0004-dataset-editability.md)。
 
 2026-09-09：数据版本删除已补齐版本所有河网/水力拓扑级联：内部拓扑外键使用 `NO ACTION DEFERRABLE INITIALLY DEFERRED`，整版删除在提交时统一校验，单独删除仍被引用的节点仍受保护；数据库迁移头为 `20260909_0034`，当前修复提交：`348dbee08843935c0466b703bf4fe34a29fd4a37`。
 
