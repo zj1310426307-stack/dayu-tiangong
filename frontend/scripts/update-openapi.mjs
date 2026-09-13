@@ -456,6 +456,7 @@ export const deletePumpRecord = (id: number, baseUrl = '') => requestJson<void>(
 
 export const getDatasetVersions = (baseUrl = '') => requestJson<Array<DatasetVersionRecord>>('/api/v1/model-data/dataset-versions', {}, baseUrl);
 export const createDatasetVersion = (body: DatasetVersionCreate, baseUrl = '') => requestJson<DatasetVersionRecord>('/api/v1/model-data/dataset-versions', jsonOptions('POST', body), baseUrl);
+export const cloneDatasetVersion = (versionId: number, body: DatasetVersionCloneRequest, baseUrl = '') => requestJson<DatasetVersionRecord>(\`/api/v1/model-data/dataset-versions/\${versionId}/clone\`, jsonOptions('POST', body), baseUrl);
 export const updateDatasetVersion = (versionId: number, body: DatasetVersionUpdate, baseUrl = '') => requestJson<DatasetVersionRecord>(\`/api/v1/model-data/dataset-versions/\${versionId}\`, jsonOptions('PUT', body), baseUrl);
 export const deleteDatasetVersion = (versionId: number, baseUrl = '') => requestJson<void>(\`/api/v1/model-data/dataset-versions/\${versionId}\`, { method: 'DELETE' }, baseUrl);
 export const approveDatasetVersionForCalculation = (versionId: number, body: DatasetVersionApprovalRequest, baseUrl = '') => requestJson<DatasetVersionRecord>(\`/api/v1/model-data/dataset-versions/\${versionId}/approve-for-calculation\`, jsonOptions('POST', body), baseUrl);

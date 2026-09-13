@@ -15,6 +15,7 @@ from app.dataset.schemas import (
     BoundaryConditionRecord,
     BoundaryConditionUpdate,
     DatasetVersionCreate,
+    DatasetVersionCloneRequest,
     DatasetVersionApprovalRequest,
     DatasetVersionRecord,
     DatasetVersionUpdate,
@@ -56,9 +57,30 @@ def create_dataset_version(payload: DatasetVersionCreate, session: SessionDepend
     return commit_or_conflict(session, lambda: service.create_dataset_version(session, payload))
 
 
+@router.post(
+    "/dataset-versions/{version_id}/clone",
+    response_model=DatasetVersionRecord,
+    status_code=201,
+    summary="基于数据版本创建新的草稿版本",
+)
+def clone_dataset_version(
+    version_id: int,
+    payload: DatasetVersionCloneRequest,
+    session: SessionDependency,
+) -> DatasetVersionRecord:
+    """Create a new Draft lineage node instead of modifying a certified source."""
+
+    source = session.get(DatasetVersion, version_id)
+    if source is None:
+        raise not_found("数据集版本")
+    return _commit_value_error(
+        session, lambda: service.clone_dataset_version(session, source, payload)
+    )
+
+
 @router.put("/dataset-versions/{version_id}", response_model=DatasetVersionRecord, summary="修改数据集版本")
 def update_dataset_version(version_id: int, payload: DatasetVersionUpdate, session: SessionDependency) -> DatasetVersionRecord:
-    """修改版本名称或说明。"""
+    """修改唯一可编辑草稿的名称、说明或人工只读锁。"""
 
     entity = session.get(DatasetVersion, version_id)
     if entity is None:
@@ -89,7 +111,7 @@ def approve_dataset_version_for_calculation(
 
 @router.delete("/dataset-versions/{version_id}", status_code=204, summary="删除数据版本")
 def delete_dataset_version(version_id: int, session: SessionDependency) -> Response:
-    """删除非只读版本；被计算或发布审计引用时仍由后端拒绝。"""
+    """只删除未锁定、未派生且未被执行证据引用的草稿版本。"""
 
     entity = session.get(DatasetVersion, version_id)
     if entity is None:

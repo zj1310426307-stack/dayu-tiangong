@@ -10,7 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.dispatch import repository
-from app.dispatch.assets import action_asset_id, lock_plan_asset_rows
+from app.dispatch.assets import action_asset_id, lock_plan_asset_rows, template_uses_unified_structure
 from app.dispatch.comparison import build_comparison
 from app.dispatch.schemas import (
     DispatchActionCreate, DispatchActionRecord, DispatchActionUpdate,
@@ -25,6 +25,7 @@ from app.gis.models import (
     DispatchAction, DispatchEvent, DispatchPlan, DispatchRule, DispatchRun,
     JunctionResult, SimulationCase, SimulationTask, StructureResult,
 )
+from app.hydraulic.models import HydraulicStructure
 from model.control.replay import (
     ReplayAsset,
     ReplayObservationFrame,
@@ -59,6 +60,31 @@ class DispatchStateError(RuntimeError):
 
 class DispatchQueueError(RuntimeError):
     """基准/受控任务未能完整投递到计算队列。"""
+
+
+def _assert_unified_structure_binding(
+    session: Session,
+    plan: DispatchPlan,
+    *,
+    structure_type: str,
+    structure_id: int,
+) -> None:
+    """Fail closed when a new dispatch reference drifts across data versions.
+
+    Database foreign keys prove that a structure exists.  This domain guard also
+    proves its engineering type, lifecycle and DatasetVersion ownership before
+    a draft action or rule can be persisted.
+    """
+
+    structure = session.get(HydraulicStructure, structure_id)
+    if structure is None:
+        raise DispatchStateError("HYDRAULIC_STRUCTURE_NOT_FOUND")
+    if structure.dataset_version_id != plan.dataset_version_id:
+        raise DispatchStateError("HYDRAULIC_STRUCTURE_DATASET_VERSION_MISMATCH")
+    if structure.structure_type != structure_type:
+        raise DispatchStateError("HYDRAULIC_STRUCTURE_TYPE_MISMATCH")
+    if structure.status != "active":
+        raise DispatchStateError("HYDRAULIC_STRUCTURE_NOT_ACTIVE")
 
 
 def _locked_plan(session: Session, plan_id: int) -> DispatchPlan:
@@ -388,6 +414,13 @@ def create_action(
     """向可编辑计划增加动作并限制动作时刻。"""
 
     plan = _editable_plan(session, plan_id)
+    if payload.hydraulic_structure_id is not None:
+        _assert_unified_structure_binding(
+            session,
+            plan,
+            structure_type=payload.structure_type,
+            structure_id=payload.hydraulic_structure_id,
+        )
     if payload.time_seconds > plan.duration_seconds:
         raise DispatchStateError("action time exceeds plan duration")
     asset_column = (
@@ -445,6 +478,13 @@ def update_action(
     if action.time_seconds > plan.duration_seconds:
         session.rollback()
         raise DispatchStateError("action time exceeds plan duration")
+    if action.hydraulic_structure_id is not None:
+        _assert_unified_structure_binding(
+            session,
+            plan,
+            structure_type=action.structure_type,
+            structure_id=action.hydraulic_structure_id,
+        )
     asset_column = (
         DispatchAction.hydraulic_structure_id if action.hydraulic_structure_id is not None
         else DispatchAction.gate_id if action.structure_type == "gate" else DispatchAction.pump_id
@@ -502,6 +542,13 @@ def create_rule(
     """向可编辑计划增加白名单规则。"""
 
     plan = _editable_plan(session, plan_id)
+    if template_uses_unified_structure(payload.action_template):
+        _assert_unified_structure_binding(
+            session,
+            plan,
+            structure_type=str(payload.action_template["structure_type"]),
+            structure_id=int(payload.action_template["structure_id"]),
+        )
     rule = DispatchRule(plan_id=plan_id, **payload.model_dump())
     session.add(rule)
     plan.status = "draft"
@@ -518,6 +565,13 @@ def update_rule(
     plan, rule = _locked_editable_rule(session, rule_id)
     for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(rule, key, value)
+    if template_uses_unified_structure(rule.action_template):
+        _assert_unified_structure_binding(
+            session,
+            plan,
+            structure_type=str(rule.action_template["structure_type"]),
+            structure_id=int(rule.action_template["structure_id"]),
+        )
     plan.status = "draft"
     session.commit()
     session.refresh(rule)

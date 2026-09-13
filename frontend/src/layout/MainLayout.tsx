@@ -2,7 +2,7 @@ import { BellOutlined, DeleteOutlined, LockOutlined, MenuFoldOutlined, MenuUnfol
 import { Button, Form, Input, Layout, Menu, Modal, Popconfirm, Select, Tag, Tooltip, message } from 'antd';
 import { useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { createDatasetVersion, deleteDatasetVersion, updateDatasetVersion, type DatasetVersionCreate } from '../api/generated/client';
+import { cloneDatasetVersion, createDatasetVersion, deleteDatasetVersion, updateDatasetVersion, type DatasetVersionCreate } from '../api/generated/client';
 import { navigationItems } from '../router';
 import { datasetVersionStatusLabel, useDatasetVersion } from '../context/DatasetVersionContext';
 
@@ -23,6 +23,7 @@ export function MainLayout() {
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [changingReadOnly, setChangingReadOnly] = useState(false);
+  const [cloning, setCloning] = useState(false);
   const [versionForm] = Form.useForm<DatasetVersionCreate>();
   const location = useLocation();
   const navigate = useNavigate();
@@ -73,9 +74,30 @@ export function MainLayout() {
     setCreateOpen(true);
   };
 
+  /** 从不可变工程版本派生新的可编辑草稿，保留清晰的版本血缘。 */
+  const cloneCurrentVersion = async () => {
+    if (!currentVersion) return;
+    const timestamp = new Date().toISOString().replace(/\D/g, '').slice(0, 14);
+    setCloning(true);
+    try {
+      const created = await cloneDatasetVersion(currentVersion.id, {
+        version: `${currentVersion.version}-DRAFT-${timestamp}`.slice(0, 32),
+        name: `${currentVersion.name} 草稿`.slice(0, 128),
+        creator: 'web-operator',
+        description: `基于不可变版本 ${currentVersion.version} 创建的编辑草稿`,
+      });
+      await refreshVersions(created.id);
+      message.success(`已从 ${currentVersion.version} 创建草稿 ${created.version}`);
+    } catch (reason) {
+      message.error(reason instanceof Error ? reason.message : '创建派生草稿失败');
+    } finally {
+      setCloning(false);
+    }
+  };
+
   /** 删除当前非只读版本；后端审计引用仍是最终安全门。 */
   const deleteCurrentVersion = async () => {
-    if (!currentVersion || currentVersion.is_read_only) return;
+    if (!currentVersion || currentVersion.status !== 'draft' || currentVersion.is_read_only) return;
     setDeleting(true);
     try {
       await deleteDatasetVersion(currentVersion.id);
@@ -88,7 +110,7 @@ export function MainLayout() {
     }
   };
 
-  /** 由当前用户显式启用或解除只读，不再由发布状态隐式决定。 */
+  /** 草稿可由当前用户显式启用或解除编辑锁。 */
   const toggleReadOnly = async () => {
     if (!currentVersion) return;
     setChangingReadOnly(true);
@@ -186,7 +208,7 @@ export function MainLayout() {
                 <Tooltip title={error || '创建独立且默认可编辑的数据版本'}>
                   <Button icon={<PlusOutlined />} onClick={openCreateDraft}>新建版本</Button>
                 </Tooltip>
-                {currentVersion && (
+                {currentVersion?.status === 'draft' && (
                   <Button
                     loading={changingReadOnly}
                     icon={currentVersion.is_read_only ? <UnlockOutlined /> : <LockOutlined />}
@@ -195,7 +217,12 @@ export function MainLayout() {
                     {currentVersion.is_read_only ? '解除只读' : '设为只读'}
                   </Button>
                 )}
-                {currentVersion && !currentVersion.is_read_only && (
+                {currentVersion?.status !== 'draft' && (
+                  <Button loading={cloning} onClick={() => void cloneCurrentVersion()}>
+                    基于此版本创建草稿
+                  </Button>
+                )}
+                {currentVersion?.status === 'draft' && !currentVersion.is_read_only && (
                   <Popconfirm
                     title="删除当前数据版本？"
                     description={`将删除 ${currentVersion.version} 及其直属河网、断面和模型数据；被计算、发布或派生版本引用时后端会拒绝。`}
@@ -210,6 +237,9 @@ export function MainLayout() {
                 <Tag color={versionStatusColor(currentVersion?.status)}>
                   {datasetVersionStatusLabel(currentVersion?.status)}
                 </Tag>
+                {currentVersion && currentVersion.status !== 'draft' && (
+                  <Tag color="red">不可原地修改</Tag>
+                )}
                 {currentVersion && (
                   <Tag color={currentVersion.is_read_only ? 'red' : 'green'}>
                     {currentVersion.is_read_only ? '只读' : '可编辑'}
