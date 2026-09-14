@@ -5,6 +5,7 @@ import {
   DownloadOutlined,
   EditOutlined,
   FileExcelOutlined,
+  PlusOutlined,
   ReloadOutlined,
   SafetyCertificateOutlined,
 } from '@ant-design/icons';
@@ -65,6 +66,8 @@ import {
   type HydraulicStructureCreate,
   type HydraulicStructureRecord,
   type HydraulicValidationRunRecord,
+  type Mike11GateControlDefinition,
+  type Mike11GateConfiguration,
   type SolverCapabilityRecord,
 } from '../../api/generated/client';
 import { datasetVersionStatusLabel, useDatasetVersion } from '../../context/DatasetVersionContext';
@@ -88,6 +91,18 @@ type StructureFormValues = HydraulicStructureCreate & {
   gate_maximum_opening_m?: number;
   gate_opening_rate_limit_m_per_s?: number;
   gate_minimum_hold_seconds?: number;
+  mike11_gate_type?: Mike11GateConfiguration['gate_type'];
+  gate_number_of_gates?: number;
+  gate_initial_value_m?: number;
+  gate_marker_2_horizontal_offset_m?: number;
+  gate_graphic_height_or_opening_m?: number;
+  gate_loss_positive_inflow?: number;
+  gate_loss_positive_outflow?: number;
+  gate_loss_positive_free_overflow?: number;
+  gate_loss_negative_inflow?: number;
+  gate_loss_negative_outflow?: number;
+  gate_loss_negative_free_overflow?: number;
+  gate_control_definitions?: Mike11GateControlDefinition[];
   pump_transfer_type?: 'inline_branch';
   pump_intake_id?: string;
   pump_outlet_id?: string;
@@ -105,6 +120,22 @@ type StructureFormValues = HydraulicStructureCreate & {
   pump_minimum_stop_seconds?: number;
   pump_maximum_starts_per_replay?: number;
 };
+
+const MIKE11_GATE_LAW_MAP: Record<Mike11GateConfiguration['gate_type'], string> = {
+  overflow: 'mike11_overflow',
+  underflow: 'vertical_underflow_gate',
+  discharge: 'mike11_discharge',
+  radial_gate: 'mike11_radial_gate',
+  sluice_formula: 'mike11_sluice_formula',
+};
+
+const MIKE11_GATE_TYPE_OPTIONS = [
+  { value: 'overflow', label: 'Overflow（溢流）' },
+  { value: 'underflow', label: 'Underflow（底流）' },
+  { value: 'discharge', label: 'Discharge（给定流量）' },
+  { value: 'radial_gate', label: 'Radial Gate（弧形闸门）' },
+  { value: 'sluice_formula', label: 'Sluice Formula（闸孔公式）' },
+];
 
 const GATE_PARAMETER_KEYS = [
   'gate_subtype', 'allowed_flow_direction', 'use_velocity_height',
@@ -279,6 +310,7 @@ export function HydraulicDataPage() {
   const [editingStructure, setEditingStructure] = useState<HydraulicStructureRecord>();
   const [structureForm] = Form.useForm<StructureFormValues>();
   const watchedStructureType = Form.useWatch('structure_type', structureForm);
+  const watchedMike11GateType = Form.useWatch('mike11_gate_type', structureForm);
   const [section, setSection] = useState<HydraulicSectionDetail>();
   const [selectedNetworkId, setSelectedNetworkId] = useState<number>();
   const [selectedBranchId, setSelectedBranchId] = useState<number>();
@@ -505,10 +537,22 @@ export function HydraulicDataPage() {
       dataset_version_id: datasetVersionId,
       network_id: network?.id,
       branch_id: branch?.id,
-      structure_type: 'weir',
-      hydraulic_law_type: 'broad_crested_weir',
+      structure_type: 'gate',
+      hydraulic_law_type: MIKE11_GATE_LAW_MAP.underflow,
       operation_rule_type: 'fixed',
       status: 'draft',
+      mike11_gate_type: 'underflow',
+      gate_number_of_gates: 1,
+      gate_correction_coefficient: 0.63,
+      gate_opening_rate_limit_m_per_s: 0.001,
+      gate_marker_2_horizontal_offset_m: 0,
+      gate_loss_positive_inflow: 0.5,
+      gate_loss_positive_outflow: 1,
+      gate_loss_positive_free_overflow: 1,
+      gate_loss_negative_inflow: 0.5,
+      gate_loss_negative_outflow: 1,
+      gate_loss_negative_free_overflow: 1,
+      gate_control_definitions: [{ priority: 1, calculation_mode: 'tabulated', control_type: 'H', target_type: 'GateL', scaling_type: 'none', value: 0 }],
     });
     setStructureModalOpen(true);
   };
@@ -517,6 +561,7 @@ export function HydraulicDataPage() {
     const coordinates = Array.isArray(record.location_geometry.coordinates)
       ? record.location_geometry.coordinates as number[]
       : [];
+    const mike11Gate = record.mike11_gate_configuration;
     setEditingStructure(record);
     structureForm.setFieldsValue({
       dataset_version_id: record.dataset_version_id,
@@ -544,6 +589,18 @@ export function HydraulicDataPage() {
       gate_maximum_opening_m: record.operation_parameters.maximum_opening_m as number | undefined,
       gate_opening_rate_limit_m_per_s: record.operation_parameters.opening_rate_limit_m_per_s as number | undefined,
       gate_minimum_hold_seconds: record.operation_parameters.minimum_hold_seconds as number | undefined,
+      mike11_gate_type: mike11Gate?.gate_type,
+      gate_number_of_gates: mike11Gate?.number_of_gates,
+      gate_initial_value_m: mike11Gate?.initial_value_m ?? undefined,
+      gate_marker_2_horizontal_offset_m: mike11Gate?.marker_2_horizontal_offset_m,
+      gate_graphic_height_or_opening_m: mike11Gate?.graphic_gate_height_or_opening_m ?? undefined,
+      gate_loss_positive_inflow: mike11Gate?.head_loss_factors?.positive_inflow,
+      gate_loss_positive_outflow: mike11Gate?.head_loss_factors?.positive_outflow,
+      gate_loss_positive_free_overflow: mike11Gate?.head_loss_factors?.positive_free_overflow,
+      gate_loss_negative_inflow: mike11Gate?.head_loss_factors?.negative_inflow,
+      gate_loss_negative_outflow: mike11Gate?.head_loss_factors?.negative_outflow,
+      gate_loss_negative_free_overflow: mike11Gate?.head_loss_factors?.negative_free_overflow,
+      gate_control_definitions: mike11Gate?.control_definitions,
       pump_transfer_type: record.hydraulic_parameters.transfer_type as 'inline_branch' | undefined,
       pump_intake_id: record.hydraulic_parameters.intake_id as string | undefined,
       pump_outlet_id: record.hydraulic_parameters.outlet_id as string | undefined,
@@ -576,6 +633,11 @@ export function HydraulicDataPage() {
         gate_allowed_flow_direction, gate_use_velocity_height, gate_maximum_opening_axis,
         gate_correction_coefficient, gate_max_flow_m3s, gate_availability, gate_minimum_opening_m,
         gate_maximum_opening_m, gate_opening_rate_limit_m_per_s, gate_minimum_hold_seconds,
+        mike11_gate_type, gate_number_of_gates, gate_initial_value_m,
+        gate_marker_2_horizontal_offset_m, gate_graphic_height_or_opening_m,
+        gate_loss_positive_inflow, gate_loss_positive_outflow, gate_loss_positive_free_overflow,
+        gate_loss_negative_inflow, gate_loss_negative_outflow, gate_loss_negative_free_overflow,
+        gate_control_definitions,
         pump_transfer_type, pump_intake_id, pump_outlet_id, pump_orientation,
         pump_aggregate_capacity_m3s, pump_design_head_m, pump_power_kw, pump_available, pump_head_reduction_curve_json, pump_efficiency_curve_json,
         pump_unit_count, pump_minimum_running_units, pump_maximum_running_units,
@@ -608,8 +670,31 @@ export function HydraulicDataPage() {
           ...optionalFields({ unit_count: pump_unit_count, minimum_running_units: pump_minimum_running_units, maximum_running_units: pump_maximum_running_units, minimum_run_seconds: pump_minimum_run_seconds, minimum_stop_seconds: pump_minimum_stop_seconds, maximum_starts_per_replay: pump_maximum_starts_per_replay }),
         };
       }
+      const mike11GateConfiguration: Mike11GateConfiguration | null = values.structure_type === 'gate' && mike11_gate_type
+        ? {
+            location_type: 'regular',
+            gate_type: mike11_gate_type,
+            number_of_gates: gate_number_of_gates ?? 1,
+            underflow_discharge_coefficient: mike11_gate_type === 'underflow' ? gate_correction_coefficient : null,
+            maximum_speed_m_per_s: gate_opening_rate_limit_m_per_s ?? 0.001,
+            initial_value_m: gate_initial_value_m ?? null,
+            maximum_value_m: gate_maximum_opening_m ?? null,
+            marker_2_horizontal_offset_m: gate_marker_2_horizontal_offset_m ?? 0,
+            graphic_gate_height_or_opening_m: gate_graphic_height_or_opening_m ?? null,
+            head_loss_factors: {
+              positive_inflow: gate_loss_positive_inflow ?? 0.5,
+              positive_outflow: gate_loss_positive_outflow ?? 1,
+              positive_free_overflow: gate_loss_positive_free_overflow ?? 1,
+              negative_inflow: gate_loss_negative_inflow ?? 0.5,
+              negative_outflow: gate_loss_negative_outflow ?? 1,
+              negative_free_overflow: gate_loss_negative_free_overflow ?? 1,
+            },
+            control_definitions: gate_control_definitions ?? [],
+          }
+        : null;
       mutable.operation_parameters = operationParameters;
       mutable.metadata = editingStructure?.metadata ?? {};
+      mutable.mike11_gate_configuration = mike11GateConfiguration;
       if (editingStructure) {
         await updateHydraulicStructure(editingStructure.id, {
           ...mutable,
@@ -915,7 +1000,7 @@ export function HydraulicDataPage() {
       <Modal
         title={editingStructure ? `编辑 ${editingStructure.structure_name}` : '创建统一水工建筑物'}
         open={structureModalOpen}
-        width={980}
+        width={1180}
         onCancel={() => setStructureModalOpen(false)}
         onOk={() => void saveStructure()}
         okText="保存"
@@ -926,37 +1011,100 @@ export function HydraulicDataPage() {
           <Row gutter={12}>
             <Col xs={24} md={12}><Form.Item name="structure_code" label="编码" rules={[{ required: true }]}><Input /></Form.Item></Col>
             <Col xs={24} md={12}><Form.Item name="structure_name" label="名称" rules={[{ required: true }]}><Input /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="structure_type" label="类型" rules={[{ required: true }]}><Select onChange={(value) => structureForm.setFieldsValue({ hydraulic_law_type: value === 'weir' ? 'broad_crested_weir' : value === 'gate' ? 'vertical_underflow_gate' : value === 'pump' ? 'pump' : 'none' })} options={['weir', 'culvert', 'bridge', 'gate', 'sluice', 'pump', 'orifice', 'dam', 'storage_link', 'compound'].map((value) => ({ value, label: value === 'gate' ? '水闸' : value === 'pump' ? '泵站' : value.toUpperCase() }))} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="structure_type" label="类型" rules={[{ required: true }]}><Select onChange={(value) => {
+              if (value === 'gate') {
+                structureForm.setFieldsValue({
+                  hydraulic_law_type: MIKE11_GATE_LAW_MAP.underflow,
+                  mike11_gate_type: 'underflow',
+                  gate_number_of_gates: 1,
+                  gate_correction_coefficient: 0.63,
+                  gate_opening_rate_limit_m_per_s: 0.001,
+                  gate_marker_2_horizontal_offset_m: 0,
+                  gate_loss_positive_inflow: 0.5,
+                  gate_loss_positive_outflow: 1,
+                  gate_loss_positive_free_overflow: 1,
+                  gate_loss_negative_inflow: 0.5,
+                  gate_loss_negative_outflow: 1,
+                  gate_loss_negative_free_overflow: 1,
+                  gate_control_definitions: [{ priority: 1, calculation_mode: 'tabulated', control_type: 'H', target_type: 'GateL', scaling_type: 'none', value: 0 }],
+                });
+              } else {
+                structureForm.setFieldValue('hydraulic_law_type', value === 'weir' ? 'broad_crested_weir' : value === 'pump' ? 'pump' : 'none');
+              }
+            }} options={['weir', 'culvert', 'bridge', 'gate', 'sluice', 'pump', 'orifice', 'dam', 'storage_link', 'compound'].map((value) => ({ value, label: value === 'gate' ? '水闸' : value === 'pump' ? '泵站' : value.toUpperCase() }))} /></Form.Item></Col>
             <Col xs={24} md={8}><Form.Item name="branch_id" label="河段" rules={[{ required: true }]}><Select options={networks.flatMap((network) => (network.branches ?? []).map((branch) => ({ value: branch.id, label: `${network.code} / ${branch.branch_code}` })))} /></Form.Item></Col>
             <Col xs={24} md={8}><Form.Item name="status" label="模型状态" rules={[{ required: true }]}><Select options={['draft', 'active', 'inactive', 'retired'].map((value) => ({ value, label: value }))} /></Form.Item></Col>
             <Col xs={24} md={8}><Form.Item name="chainage_m" label="桩号（m）" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="x" label="CGCS2000 X（经度）" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="y" label="CGCS2000 Y（纬度）" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="x" label="CGCS2000 平面 X（Easting）" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+            <Col xs={24} md={8}><Form.Item name="y" label="CGCS2000 平面 Y（Northing）" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
             <Col xs={24} md={8}><Form.Item name="crest_elevation_m" label="堰顶/顶高程（m）"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
             <Col xs={24} md={8}><Form.Item name="invert_elevation_m" label="底高程（m）"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
             <Col xs={24} md={8}><Form.Item name="width_m" label="宽度（m）"><InputNumber min={0.001} style={{ width: '100%' }} /></Form.Item></Col>
             <Col xs={24} md={8}><Form.Item name="height_m" label="高度（m）"><InputNumber min={0.001} style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="discharge_coefficient" label="堰流量系数"><InputNumber min={0.001} style={{ width: '100%' }} /></Form.Item></Col>
+            {watchedStructureType === 'weir' && <Col xs={24} md={8}><Form.Item name="discharge_coefficient" label="堰流量系数"><InputNumber min={0.001} style={{ width: '100%' }} /></Form.Item></Col>}
             <Col xs={24} md={8}><Form.Item name="operation_rule_type" label="运行规则" rules={[{ required: true }]}><Select options={['fixed', 'time_series', 'water_level_controlled', 'scenario_specific'].map((value) => ({ value, label: value }))} /></Form.Item></Col>
           </Row>
           {watchedStructureType === 'gate' && <>
-            <Alert type="info" showIcon message="水闸水力要素" description="以下字段用于统一水闸、闸门数据库和后续 D-Flow 水动力计算。草稿可暂存；设为 active 前请补齐带“计算必需”标记的工程参数。" />
-            <Row gutter={12} style={{ marginTop: 12 }}>
-              <Col xs={24} md={8}><Form.Item name="hydraulic_law_type" label="闸门型式" rules={[{ required: true }]}><Select options={[{ value: 'vertical_underflow_gate', label: '平板闸 / 垂直底流' }, { value: 'general_opening', label: '通用孔口' }]} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="gate_max_flow_m3s" label="最大过闸流量（m³/s，计算必需）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="gate_correction_coefficient" label="流量/修正系数（计算必需）"><InputNumber min={0.000001} style={{ width: '100%' }} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="gate_allowed_flow_direction" label="允许过流方向（计算必需）"><Select options={[{ value: 'positive', label: '顺河向' }, { value: 'negative', label: '逆河向' }, { value: 'both', label: '双向' }]} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="gate_maximum_opening_axis" label="开度轴向（计算必需）"><Select options={[{ value: 'vertical', label: '垂直开度' }, { value: 'horizontal', label: '水平开度' }]} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="gate_use_velocity_height" label="是否计入流速水头"><Select options={[{ value: true, label: '计入' }, { value: false, label: '不计入' }]} /></Form.Item></Col>
-            </Row>
-            <Title level={5}>闸门运行约束</Title>
-            <Row gutter={12}>
-              <Col xs={24} md={8}><Form.Item name="gate_availability" label="设备可用状态（计算必需）"><Select options={['online', 'offline', 'maintenance', 'fault'].map((value) => ({ value, label: value }))} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="gate_minimum_opening_m" label="最小开度（m）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="gate_maximum_opening_m" label="最大开度（m，计算必需）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="gate_opening_rate_limit_m_per_s" label="开度变化率上限（m/s）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="gate_minimum_hold_seconds" label="最短保持时间（s）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
-            </Row>
+            <Alert
+              type="info"
+              showIcon
+              message="MIKE11 风格水闸资料卡"
+              description="按 Location、Attributes、Head Loss Factor、Control Definitions 和 Graphic 分组保存。MIKE11 字段进入统一闸门数据库；只有能力矩阵已验证的水力规律才会进入具体求解器，未验证类型保持 fail closed。"
+            />
+            <Card size="small" title="Attributes · 闸型与计算属性" style={{ marginTop: 12 }}>
+              <Row gutter={12}>
+                <Col xs={24} md={8}><Form.Item name="mike11_gate_type" label="Gate Type" rules={[{ required: true, message: '请选择 MIKE11 闸型' }]}><Select onChange={(value: Mike11GateConfiguration['gate_type']) => structureForm.setFieldValue('hydraulic_law_type', MIKE11_GATE_LAW_MAP[value])} options={MIKE11_GATE_TYPE_OPTIONS} /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="hydraulic_law_type" label="平台水力规律（自动映射）" rules={[{ required: true }]}><Input disabled /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="gate_number_of_gates" label="No. gates" rules={[{ required: true }]}><InputNumber min={1} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="gate_correction_coefficient" label={watchedMike11GateType === 'underflow' ? 'Underflow CC（必填）' : '流量/修正系数'} rules={[{ required: watchedMike11GateType === 'underflow', message: 'Underflow 闸型必须填写流量系数' }]}><InputNumber min={0.000001} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="gate_max_flow_m3s" label="最大过闸流量（m³/s，平台计算必需）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="gate_allowed_flow_direction" label="允许过流方向（平台计算必需）"><Select options={[{ value: 'positive', label: '顺河向' }, { value: 'negative', label: '逆河向' }, { value: 'both', label: '双向' }]} /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="gate_maximum_opening_axis" label="开度轴向（平台计算必需）"><Select options={[{ value: 'vertical', label: '垂直开度' }, { value: 'horizontal', label: '水平开度' }]} /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="gate_use_velocity_height" label="是否计入流速水头"><Select options={[{ value: true, label: '计入' }, { value: false, label: '不计入' }]} /></Form.Item></Col>
+              </Row>
+            </Card>
+
+            <Card size="small" title="Head Loss Factor · 水头损失系数" style={{ marginTop: 12 }}>
+              <Text type="secondary">正向和反向分别保存 Inflow、Outflow、Free Overflow，默认值与参考页面一致。</Text>
+              <Row gutter={12} style={{ marginTop: 12 }}>
+                <Col xs={24} md={4}><Form.Item name="gate_loss_positive_inflow" label="正向 Inflow" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={4}><Form.Item name="gate_loss_positive_outflow" label="正向 Outflow" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={4}><Form.Item name="gate_loss_positive_free_overflow" label="正向 Free Overflow" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={4}><Form.Item name="gate_loss_negative_inflow" label="反向 Inflow" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={4}><Form.Item name="gate_loss_negative_outflow" label="反向 Outflow" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={4}><Form.Item name="gate_loss_negative_free_overflow" label="反向 Free Overflow" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+              </Row>
+            </Card>
+
+            <Card size="small" title="运行限制与 Graphic 定位" style={{ marginTop: 12 }}>
+              <Row gutter={12}>
+                <Col xs={24} md={6}><Form.Item name="gate_availability" label="设备可用状态（平台计算必需）"><Select options={['online', 'offline', 'maintenance', 'fault'].map((value) => ({ value, label: value }))} /></Form.Item></Col>
+                <Col xs={24} md={6}><Form.Item name="gate_minimum_opening_m" label="最小开度（m）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={6}><Form.Item name="gate_maximum_opening_m" label="Max Value / 最大开度（m）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={6}><Form.Item name="gate_initial_value_m" label="Initial Value / 初始开度（m）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={6}><Form.Item name="gate_opening_rate_limit_m_per_s" label="Max speed（m/s）" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={6}><Form.Item name="gate_minimum_hold_seconds" label="最短保持时间（s）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={6}><Form.Item name="gate_marker_2_horizontal_offset_m" label="相对 Marker 2 水平偏移（m）" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={6}><Form.Item name="gate_graphic_height_or_opening_m" label="Graphic 闸高/开度（m）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+              </Row>
+            </Card>
+
+            <Card size="small" title="Control Definitions · 控制定义" style={{ marginTop: 12 }}>
+              <Form.List name="gate_control_definitions">
+                {(fields, { add, remove }) => <>
+                  {fields.map((field) => <Row gutter={8} key={field.key} align="middle">
+                    <Col xs={12} md={2}><Form.Item {...field} name={[field.name, 'priority']} label="Priority" rules={[{ required: true }]}><InputNumber min={1} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
+                    <Col xs={12} md={4}><Form.Item {...field} name={[field.name, 'calculation_mode']} label="Calculation Mode" rules={[{ required: true }]}><Select options={[{ value: 'tabulated', label: 'Tabulated' }, { value: 'fixed', label: 'Fixed' }, { value: 'formula', label: 'Formula' }]} /></Form.Item></Col>
+                    <Col xs={12} md={3}><Form.Item {...field} name={[field.name, 'control_type']} label="Control Type"><Input /></Form.Item></Col>
+                    <Col xs={12} md={3}><Form.Item {...field} name={[field.name, 'target_type']} label="Target Type"><Input /></Form.Item></Col>
+                    <Col xs={12} md={4}><Form.Item {...field} name={[field.name, 'scaling_type']} label="Type of Scaling"><Select options={[{ value: 'none', label: 'None' }, { value: 'linear', label: 'Linear' }, { value: 'relative', label: 'Relative' }]} /></Form.Item></Col>
+                    <Col xs={12} md={3}><Form.Item {...field} name={[field.name, 'value']} label="Value"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+                    <Col xs={24} md={2}><Button danger type="text" icon={<DeleteOutlined />} aria-label="删除控制定义" onClick={() => remove(field.name)} /></Col>
+                  </Row>)}
+                  <Button type="dashed" icon={<PlusOutlined />} onClick={() => add({ priority: fields.length + 1, calculation_mode: 'tabulated', control_type: 'H', target_type: 'GateL', scaling_type: 'none', value: 0 })}>新增控制定义</Button>
+                </>}
+              </Form.List>
+            </Card>
           </>}
           {watchedStructureType === 'pump' && <>
             <Alert type="info" showIcon message="泵站水力要素" description="以下字段同步服务于统一泵站、泵站数据库和后续 D-Flow 水动力计算。扬程—折减曲线与效率曲线使用 JSON 对象，保存前会验证 JSON 格式。" />

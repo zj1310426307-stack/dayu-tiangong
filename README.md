@@ -13,6 +13,8 @@
 
 2026-09-13：Dataset Version 已收紧为工程身份边界：仅未锁定草稿可编辑；审核、批准、发布、退役版本不可原地降级或解锁，修改应从“基于此版本创建草稿”开始并保留 `parent_version_id`。直接统一 Gate/Pump 调度绑定在写入时校验版本、类型和 active 状态；冻结快照保存统一建筑物的权威参数，运行不回读可变资产。详见 [ADR-HYDRO-0004](docs/adr/ADR-HYDRO-0004-dataset-editability.md)。
 
+2026-09-14：统一水闸数据库新增 MIKE11 风格资料卡，覆盖五类 Gate Type、闸孔数量、Underflow CC、正反向六项水头损失、Initial/Max/Max speed、Marker 2 图形定位和可增删控制定义。类型化 API 与原有 D-Flow 计算字段执行一致性校验；资料可保存不代表求解器能力扩张，MASCARET Gate 和未验证映射继续 fail closed。
+
 2026-09-09：数据版本删除已补齐版本所有河网/水力拓扑级联：内部拓扑外键使用 `NO ACTION DEFERRABLE INITIALLY DEFERRED`，整版删除在提交时统一校验，单独删除仍被引用的节点仍受保护；数据库迁移头为 `20260909_0034`，当前修复提交：`348dbee08843935c0466b703bf4fe34a29fd4a37`。
 
 2026-09-09：成功的 Standard 1D 水动力任务会自动进入“方案成果”，按上游至下游直接展示全断面末时刻水面线、河底、流量、流速、Froude 和运行警告；无需先制作独立成果包。独立发布成果包继续保留，并与任务成功、率定和生产验收状态分开表达。

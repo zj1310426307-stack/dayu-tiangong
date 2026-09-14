@@ -28,6 +28,7 @@ from app.hydraulic.schemas import (
     HydraulicStructureScenarioRecord,
     HydraulicStructureScenarioUpsert,
     HydraulicStructureUpdate,
+    Mike11GateConfiguration,
     SolverCapabilityRecord,
 )
 from model.hydraulic_1d.capabilities import capabilities_for
@@ -40,6 +41,91 @@ from model.hydraulic_1d.registry import (
 
 STRUCTURE_SNAP_TOLERANCE_M = 5.0
 STRUCTURE_CHAINAGE_TOLERANCE_M = 5.0
+MIKE11_GATE_CONFIGURATION_KEY = "mike11_gate_configuration"
+
+
+def _stored_hydraulic_parameters(
+    values: dict[str, Any],
+    configuration: Mike11GateConfiguration | None,
+    *,
+    previous: dict[str, Any] | None = None,
+    configuration_supplied: bool = True,
+) -> dict[str, Any]:
+    """Store the typed MIKE11 extension under one reserved JSON key.
+
+    Callers cannot smuggle an unvalidated value through ``hydraulic_parameters``.
+    When an ordinary parameter-only update is made, the existing typed extension
+    is preserved unless the dedicated field is explicitly supplied.
+    """
+
+    if MIKE11_GATE_CONFIGURATION_KEY in values:
+        raise ValueError(
+            "MIKE11_GATE_CONFIGURATION_RESERVED: use mike11_gate_configuration"
+        )
+    result = dict(values)
+    if configuration_supplied:
+        if configuration is not None:
+            result[MIKE11_GATE_CONFIGURATION_KEY] = configuration.model_dump(mode="json")
+    elif previous and MIKE11_GATE_CONFIGURATION_KEY in previous:
+        result[MIKE11_GATE_CONFIGURATION_KEY] = previous[MIKE11_GATE_CONFIGURATION_KEY]
+    return result
+
+
+def _mike11_gate_configuration(
+    parameters: dict[str, Any],
+) -> Mike11GateConfiguration | None:
+    """Parse the persisted MIKE11 extension back through its strict contract."""
+
+    raw = parameters.get(MIKE11_GATE_CONFIGURATION_KEY)
+    return None if raw is None else Mike11GateConfiguration.model_validate(raw)
+
+
+def _validate_mike11_gate_authority(value: HydraulicStructure) -> None:
+    """Keep duplicated solver-facing Gate values consistent with MIKE11 inputs."""
+
+    configuration = _mike11_gate_configuration(dict(value.hydraulic_parameters or {}))
+    if configuration is None:
+        return
+    if value.structure_type != "gate":
+        raise ValueError(
+            "MIKE11_GATE_CONFIGURATION_INVALID: configuration requires structure_type=gate"
+        )
+    if (
+        configuration.maximum_value_m is not None
+        and value.height_m is not None
+        and configuration.maximum_value_m > value.height_m
+    ):
+        raise ValueError(
+            "MIKE11_GATE_CONFIGURATION_INVALID: maximum_value_m exceeds gate height_m"
+        )
+    hydraulic = dict(value.hydraulic_parameters or {})
+    operation = dict(value.operation_parameters or {})
+    coefficient = hydraulic.get("correction_coefficient")
+    if (
+        coefficient is not None
+        and configuration.underflow_discharge_coefficient is not None
+        and not isclose(
+            float(coefficient),
+            configuration.underflow_discharge_coefficient,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+    ):
+        raise ValueError(
+            "MIKE11_GATE_CONFIGURATION_INVALID: Underflow CC conflicts with correction_coefficient"
+        )
+    paired_values = (
+        ("opening_rate_limit_m_per_s", configuration.maximum_speed_m_per_s),
+        ("maximum_opening_m", configuration.maximum_value_m),
+    )
+    for field, expected in paired_values:
+        actual = operation.get(field)
+        if actual is not None and expected is not None and not isclose(
+            float(actual), float(expected), rel_tol=0.0, abs_tol=1e-12
+        ):
+            raise ValueError(
+                f"MIKE11_GATE_CONFIGURATION_INVALID: {field} conflicts with MIKE11 value"
+            )
 
 
 def _required_number(values: dict[str, Any], field: str, *, label: str) -> float:
@@ -231,6 +317,9 @@ def _record(session: Session, value: HydraulicStructure) -> HydraulicStructureRe
     """Map persistence into the public solver-neutral structure contract."""
 
     solver_status, solver_reason = _capability(value.structure_type)
+    hydraulic_parameters = dict(value.hydraulic_parameters or {})
+    mike11_configuration = _mike11_gate_configuration(hydraulic_parameters)
+    hydraulic_parameters.pop(MIKE11_GATE_CONFIGURATION_KEY, None)
     return HydraulicStructureRecord(
         id=value.id,
         dataset_version_id=value.dataset_version_id,
@@ -246,9 +335,10 @@ def _record(session: Session, value: HydraulicStructure) -> HydraulicStructureRe
         width_m=value.width_m,
         height_m=value.height_m,
         hydraulic_law_type=value.hydraulic_law_type,
-        hydraulic_parameters=value.hydraulic_parameters,
+        hydraulic_parameters=hydraulic_parameters,
         operation_rule_type=value.operation_rule_type,
         operation_parameters=value.operation_parameters,
+        mike11_gate_configuration=mike11_configuration,
         status=value.status,
         metadata=value.metadata_json,
         legacy_gate_id=value.legacy_gate_id,
@@ -362,6 +452,10 @@ def create_structure(
         x=payload.x,
         y=payload.y,
     )
+    hydraulic_parameters = _stored_hydraulic_parameters(
+        payload.hydraulic_parameters,
+        payload.mike11_gate_configuration,
+    )
     value = HydraulicStructure(
         dataset_version_id=payload.dataset_version_id,
         network_id=payload.network_id,
@@ -376,7 +470,7 @@ def create_structure(
         width_m=payload.width_m,
         height_m=payload.height_m,
         hydraulic_law_type=payload.hydraulic_law_type,
-        hydraulic_parameters=payload.hydraulic_parameters,
+        hydraulic_parameters=hydraulic_parameters,
         operation_rule_type=payload.operation_rule_type,
         operation_parameters=payload.operation_parameters,
         status=payload.status,
@@ -384,6 +478,7 @@ def create_structure(
     )
     session.add(value)
     session.flush()
+    _validate_mike11_gate_authority(value)
     _sync_legacy_gate_or_pump(session, value, branch)
     session.flush()
     return _record(session, value)
@@ -401,6 +496,8 @@ def update_structure(
         raise LookupError("Hydraulic structure does not exist")
     assert_dataset_version_mutable(session, value.dataset_version_id)
     updates = payload.model_dump(exclude_unset=True)
+    mike11_configuration_supplied = "mike11_gate_configuration" in updates
+    mike11_configuration = updates.pop("mike11_gate_configuration", None)
     non_nullable_fields = {
         "branch_id",
         "structure_code",
@@ -449,9 +546,24 @@ def update_structure(
     field_map = {
         "metadata": "metadata_json",
     }
+    if "hydraulic_parameters" in updates:
+        updates["hydraulic_parameters"] = _stored_hydraulic_parameters(
+            updates["hydraulic_parameters"],
+            mike11_configuration,
+            previous=dict(value.hydraulic_parameters or {}),
+            configuration_supplied=mike11_configuration_supplied,
+        )
+    elif mike11_configuration_supplied:
+        public_parameters = dict(value.hydraulic_parameters or {})
+        public_parameters.pop(MIKE11_GATE_CONFIGURATION_KEY, None)
+        updates["hydraulic_parameters"] = _stored_hydraulic_parameters(
+            public_parameters,
+            mike11_configuration,
+        )
     for key, item in updates.items():
         setattr(value, field_map.get(key, key), item)
     session.flush()
+    _validate_mike11_gate_authority(value)
     _sync_legacy_gate_or_pump(session, value, branch)
     session.flush()
     return _record(session, value)

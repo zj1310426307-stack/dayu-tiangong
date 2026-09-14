@@ -754,6 +754,76 @@ HydraulicOperationRule = Literal[
 ]
 
 
+class Mike11GateHeadLossFactors(BaseModel):
+    """Store MIKE11 positive/negative flow loss coefficients without axis ambiguity."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    positive_inflow: float = Field(default=0.5, ge=0)
+    positive_outflow: float = Field(default=1.0, ge=0)
+    positive_free_overflow: float = Field(default=1.0, ge=0)
+    negative_inflow: float = Field(default=0.5, ge=0)
+    negative_outflow: float = Field(default=1.0, ge=0)
+    negative_free_overflow: float = Field(default=1.0, ge=0)
+
+
+class Mike11GateControlDefinition(BaseModel):
+    """Represent one ordered MIKE11-style gate control definition as data."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    priority: int = Field(default=1, ge=1)
+    calculation_mode: Literal["tabulated", "fixed", "formula"] = "tabulated"
+    control_type: str = Field(default="H", min_length=1, max_length=32)
+    target_type: str = Field(default="GateL", min_length=1, max_length=32)
+    scaling_type: Literal["none", "linear", "relative"] = "none"
+    value: float = 0.0
+
+
+class Mike11GateConfiguration(BaseModel):
+    """Capture the MIKE11 gate database inputs that are not base location fields.
+
+    Branch, chainage, ID, gate width and sill level stay in the unified structure
+    columns.  This nested contract stores MIKE11-specific behaviour and graphics
+    inputs without claiming that every type is supported by the active solver.
+    """
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    location_type: Literal["regular"] = "regular"
+    gate_type: Literal[
+        "overflow", "underflow", "discharge", "radial_gate", "sluice_formula"
+    ]
+    number_of_gates: int = Field(default=1, ge=1)
+    underflow_discharge_coefficient: float | None = Field(default=None, gt=0)
+    maximum_speed_m_per_s: float = Field(default=0.001, ge=0)
+    initial_value_m: float | None = Field(default=None, ge=0)
+    maximum_value_m: float | None = Field(default=None, ge=0)
+    marker_2_horizontal_offset_m: float = 0.0
+    graphic_gate_height_or_opening_m: float | None = Field(default=None, ge=0)
+    head_loss_factors: Mike11GateHeadLossFactors = Field(
+        default_factory=Mike11GateHeadLossFactors
+    )
+    control_definitions: list[Mike11GateControlDefinition] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_gate_ranges(self) -> "Mike11GateConfiguration":
+        """Reject ambiguous Underflow coefficients and inverted opening ranges."""
+
+        if self.gate_type == "underflow" and self.underflow_discharge_coefficient is None:
+            raise ValueError("MIKE11 Underflow gate requires underflow_discharge_coefficient")
+        if (
+            self.initial_value_m is not None
+            and self.maximum_value_m is not None
+            and self.initial_value_m > self.maximum_value_m
+        ):
+            raise ValueError("MIKE11 gate initial_value_m cannot exceed maximum_value_m")
+        priorities = [item.priority for item in self.control_definitions]
+        if len(priorities) != len(set(priorities)):
+            raise ValueError("MIKE11 gate control priorities must be unique")
+        return self
+
+
 class HydraulicStructureCreate(BaseModel):
     """Create one located structure with separated geometry and hydraulic behaviour."""
 
@@ -776,8 +846,17 @@ class HydraulicStructureCreate(BaseModel):
     hydraulic_parameters: dict[str, Any] = Field(default_factory=dict)
     operation_rule_type: HydraulicOperationRule = "fixed"
     operation_parameters: dict[str, Any] = Field(default_factory=dict)
+    mike11_gate_configuration: Mike11GateConfiguration | None = None
     status: HydraulicStructureStatus = "draft"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_mike11_gate_configuration(self) -> "HydraulicStructureCreate":
+        """Only Gate records may carry the MIKE11 gate-specific contract."""
+
+        if self.mike11_gate_configuration is not None and self.structure_type != "gate":
+            raise ValueError("mike11_gate_configuration is only valid for structure_type=gate")
+        return self
 
 
 class HydraulicStructureUpdate(BaseModel):
@@ -800,6 +879,7 @@ class HydraulicStructureUpdate(BaseModel):
     hydraulic_parameters: dict[str, Any] | None = None
     operation_rule_type: HydraulicOperationRule | None = None
     operation_parameters: dict[str, Any] | None = None
+    mike11_gate_configuration: Mike11GateConfiguration | None = None
     status: HydraulicStructureStatus | None = None
     metadata: dict[str, Any] | None = None
 
@@ -832,6 +912,7 @@ class HydraulicStructureRecord(BaseModel):
     hydraulic_parameters: dict[str, Any]
     operation_rule_type: HydraulicOperationRule
     operation_parameters: dict[str, Any]
+    mike11_gate_configuration: Mike11GateConfiguration | None
     status: HydraulicStructureStatus
     metadata: dict[str, Any]
     legacy_gate_id: int | None

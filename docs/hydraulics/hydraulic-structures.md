@@ -1,7 +1,7 @@
 # 统一水工建筑物模型
 
-更新日期：2026-09-02
-适用范围：HYDRO-1D-ENGINEERING-03
+更新日期：2026-09-14
+适用范围：HYDRO-1D-ENGINEERING-03、MIKE11 水闸数据库优化
 
 ## Domain 与持久化
 
@@ -29,6 +29,20 @@
 | 河网关系 | `GET /api/v1/hydraulic/networks/{network_id}/graph` |
 
 Hydraulic Data 页面在现有管理界面中显示河网关系、建筑物表格和能力状态，并提供创建、编辑、删除。Bridge/Culvert/Gate/Pump 等未验证或不支持对象仍可作为工程资料保存，但运行按钮前显示 MASCARET 的明确状态与原因。GIS 使用权威 Point，不从桩号反猜一套第二几何。
+
+### MIKE11 风格水闸资料卡
+
+统一 `gate` 记录新增类型化的 `mike11_gate_configuration`，页面按 MIKE11 Control Structures 的信息组织方式分为：
+
+- Location：沿用统一 Structure 的 Branch、Chainage、ID 和空间坐标；
+- Attributes：支持 Overflow、Underflow、Discharge、Radial Gate、Sluice Formula、闸孔数量、Underflow CC；
+- Head Loss Factor：正/反向分别保存 Inflow、Outflow、Free Overflow 六个非负系数；
+- Control Definitions：保存唯一 Priority、Calculation Mode、Control Type、Target Type、Scaling 和 Value；
+- Graphic/限制：保存 Marker 2 水平偏移、图形闸高或开度、Initial/Max Value 和 Max speed。
+
+Branch、Chainage、Width、Sill level 等已有权威字段不在扩展对象中重复。与平台 Gate 计算合同重合的 Underflow CC、最大开度和最大开度变化率必须一致；后端拒绝矛盾值，也禁止通过通用 `hydraulic_parameters` 绕过类型化契约。扩展字段保存在既有 JSONB 中，因此不需要数据库迁移，旧记录读取为 `null` 并保持兼容。
+
+这些字段表示可治理的 MIKE11 风格工程输入，不等于本平台已经获得或实现 MIKE11 求解器。MASCARET Gate 仍为 `UNSUPPORTED`；D-Flow 只接受其能力矩阵已验证的 Gate 子集。Overflow、Discharge、Radial Gate 和 Sluice Formula 等未验证映射会保留资料但在运行前 fail closed。
 
 提交计算时，Model Builder 合并 Structure 基础参数和当前 Simulation Case 覆盖；仅 `active` 结构形成 required capability。`MODEL_ENGINE_INCOMPATIBLE` 会列出 feature、structure ID、engine/version 和理由，并在外部进程启动前失败。Adapter 禁止跳过任何 active 的未兼容结构。
 
