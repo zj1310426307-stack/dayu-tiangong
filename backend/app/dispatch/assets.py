@@ -139,7 +139,73 @@ def resolve_plan_asset_snapshots(
 
     snapshots: list[dict[str, Any]] = []
     errors: list[str] = []
-    for structure_type, legacy_id in dispatch_asset_keys(actions, rules):
+    references: set[tuple[str, int, bool]] = set()
+    for action in actions:
+        asset_id = action_asset_id(action)
+        if asset_id is not None:
+            references.add(
+                (action.structure_type, asset_id, action.hydraulic_structure_id is not None)
+            )
+    for rule in rules:
+        template = rule.action_template
+        if not isinstance(template, dict):
+            continue
+        structure_type = template.get("structure_type")
+        structure_id = template.get("structure_id")
+        if structure_type in {"gate", "pump"} and isinstance(structure_id, int):
+            references.add(
+                (structure_type, structure_id, template_uses_unified_structure(template))
+            )
+    for structure_type, asset_id, direct in sorted(references):
+        if direct:
+            unified = session.get(HydraulicStructure, asset_id)
+            if unified is None:
+                errors.append(f"[HYDRAULIC_STRUCTURE_MISSING] {structure_type}:{asset_id} 不存在")
+                continue
+            if unified.dataset_version_id != plan.dataset_version_id:
+                errors.append(
+                    f"[HYDRAULIC_STRUCTURE_DATASET_VERSION_MISMATCH] "
+                    f"{structure_type}:{asset_id} 不属于计划数据版本"
+                )
+                continue
+            if unified.structure_type != structure_type or unified.status != "active":
+                errors.append(
+                    f"[HYDRAULIC_STRUCTURE_STATE] {structure_type}:{asset_id} 的统一结构类型或状态无效"
+                )
+                continue
+            snapshots.append(
+                {
+                    "structure_type": structure_type,
+                    "legacy_asset_id": asset_id,
+                    "asset_source": "hydraulic_structure",
+                    "hydraulic_structure": {
+                        "id": unified.id,
+                        "dataset_version_id": unified.dataset_version_id,
+                        "network_id": unified.network_id,
+                        "branch_id": unified.branch_id,
+                        "chainage_m": unified.chainage_m,
+                        "structure_code": unified.structure_code,
+                        "structure_name": unified.structure_name,
+                        "structure_type": unified.structure_type,
+                        "crest_elevation_m": unified.crest_elevation_m,
+                        "invert_elevation_m": unified.invert_elevation_m,
+                        "width_m": unified.width_m,
+                        "height_m": unified.height_m,
+                        "hydraulic_law_type": unified.hydraulic_law_type,
+                        "hydraulic_parameters": dict(unified.hydraulic_parameters or {}),
+                        "operation_rule_type": unified.operation_rule_type,
+                        "operation_parameters": dict(unified.operation_parameters or {}),
+                        "status": unified.status,
+                        "metadata_json": dict(unified.metadata_json or {}),
+                    },
+                    # v3 obtains strict control bounds from its typed normalizer;
+                    # a static replay must not invent legacy values for a direct row.
+                    "constraints": {},
+                    "capability": _capability_fact(structure_type),
+                }
+            )
+            continue
+        legacy_id = asset_id
         model = Gate if structure_type == "gate" else Pump
         asset = session.get(model, legacy_id)
         if asset is None or asset.dataset_version_id != plan.dataset_version_id:
@@ -205,6 +271,16 @@ def lock_plan_asset_rows(session: Session, plan: DispatchPlan) -> None:
         select(DispatchRule).where(DispatchRule.plan_id == plan.id)
     ).all()
     keys = dispatch_asset_keys(actions, rules)
+    direct_structure_ids = {
+        int(action.hydraulic_structure_id)
+        for action in actions
+        if action.hydraulic_structure_id is not None
+    } | {
+        int(rule.action_template["structure_id"])
+        for rule in rules
+        if template_uses_unified_structure(rule.action_template)
+        and isinstance(rule.action_template.get("structure_id"), int)
+    }
     gate_ids = [asset_id for kind, asset_id in keys if kind == "gate"]
     pump_ids = [asset_id for kind, asset_id in keys if kind == "pump"]
     if gate_ids:
@@ -226,12 +302,15 @@ def lock_plan_asset_rows(session: Session, plan: DispatchPlan) -> None:
         mapping_filters.append(HydraulicStructure.legacy_gate_id.in_(gate_ids))
     if pump_ids:
         mapping_filters.append(HydraulicStructure.legacy_pump_id.in_(pump_ids))
-    if mapping_filters:
+    if mapping_filters or direct_structure_ids:
+        filters = list(mapping_filters)
+        if direct_structure_ids:
+            filters.append(HydraulicStructure.id.in_(direct_structure_ids))
         session.scalars(
             select(HydraulicStructure)
             .where(
                 HydraulicStructure.dataset_version_id == plan.dataset_version_id,
-                or_(*mapping_filters),
+                or_(*filters),
             )
             .order_by(HydraulicStructure.id)
             .with_for_update()

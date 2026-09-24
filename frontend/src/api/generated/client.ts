@@ -760,6 +760,13 @@ export interface DatasetVersionApprovalRequest {
   "reason": string;
 }
 
+export interface DatasetVersionCloneRequest {
+  "version": string;
+  "name": string;
+  "creator": string;
+  "description"?: string | null;
+}
+
 export interface DatasetVersionCreate {
   "version": string;
   "name": string;
@@ -2009,8 +2016,8 @@ export interface HydraulicStructureCreate {
   "structure_name": string;
   "structure_type": "weir" | "culvert" | "bridge" | "gate" | "sluice" | "pump" | "orifice" | "dam" | "storage_link" | "compound";
   "chainage_m": number;
-  "x": number;
-  "y": number;
+  "x"?: number | null;
+  "y"?: number | null;
   "crest_elevation_m"?: number | null;
   "invert_elevation_m"?: number | null;
   "width_m"?: number | null;
@@ -2019,6 +2026,7 @@ export interface HydraulicStructureCreate {
   "hydraulic_parameters"?: Record<string, unknown>;
   "operation_rule_type"?: "fixed" | "time_series" | "water_level_controlled" | "scenario_specific";
   "operation_parameters"?: Record<string, unknown>;
+  "mike11_gate_configuration"?: Mike11GateConfiguration | null;
   "status"?: "draft" | "active" | "inactive" | "retired";
   "metadata"?: Record<string, unknown>;
 }
@@ -2041,6 +2049,7 @@ export interface HydraulicStructureRecord {
   "hydraulic_parameters": Record<string, unknown>;
   "operation_rule_type": "fixed" | "time_series" | "water_level_controlled" | "scenario_specific";
   "operation_parameters": Record<string, unknown>;
+  "mike11_gate_configuration": Mike11GateConfiguration | null;
   "status": "draft" | "active" | "inactive" | "retired";
   "metadata": Record<string, unknown>;
   "legacy_gate_id": number | null;
@@ -2086,6 +2095,7 @@ export interface HydraulicStructureUpdate {
   "hydraulic_parameters"?: Record<string, unknown> | null;
   "operation_rule_type"?: "fixed" | "time_series" | "water_level_controlled" | "scenario_specific" | null;
   "operation_parameters"?: Record<string, unknown> | null;
+  "mike11_gate_configuration"?: Mike11GateConfiguration | null;
   "status"?: "draft" | "active" | "inactive" | "retired" | null;
   "metadata"?: Record<string, unknown> | null;
 }
@@ -2217,6 +2227,38 @@ export interface MetricEvidenceRequest {
   "cross_section_id": number;
   "maximum_chainage_distance_m": number;
   "alignment"?: TimeAlignmentOptions;
+}
+
+export interface Mike11GateConfiguration {
+  "location_type"?: "regular";
+  "gate_type": "overflow" | "underflow" | "discharge" | "radial_gate" | "sluice_formula";
+  "number_of_gates"?: number;
+  "underflow_discharge_coefficient"?: number | null;
+  "maximum_speed_m_per_s"?: number;
+  "initial_value_m"?: number | null;
+  "maximum_value_m"?: number | null;
+  "marker_2_horizontal_offset_m"?: number;
+  "graphic_gate_height_or_opening_m"?: number | null;
+  "head_loss_factors"?: Mike11GateHeadLossFactors;
+  "control_definitions"?: Array<Mike11GateControlDefinition>;
+}
+
+export interface Mike11GateControlDefinition {
+  "priority"?: number;
+  "calculation_mode"?: "tabulated" | "fixed" | "formula";
+  "control_type"?: string;
+  "target_type"?: string;
+  "scaling_type"?: "none" | "linear" | "relative";
+  "value"?: number;
+}
+
+export interface Mike11GateHeadLossFactors {
+  "positive_inflow"?: number;
+  "positive_outflow"?: number;
+  "positive_free_overflow"?: number;
+  "negative_inflow"?: number;
+  "negative_outflow"?: number;
+  "negative_free_overflow"?: number;
 }
 
 export interface ModelParameterCreate {
@@ -3571,6 +3613,7 @@ export const deletePumpRecord = (id: number, baseUrl = '') => requestJson<void>(
 
 export const getDatasetVersions = (baseUrl = '') => requestJson<Array<DatasetVersionRecord>>('/api/v1/model-data/dataset-versions', {}, baseUrl);
 export const createDatasetVersion = (body: DatasetVersionCreate, baseUrl = '') => requestJson<DatasetVersionRecord>('/api/v1/model-data/dataset-versions', jsonOptions('POST', body), baseUrl);
+export const cloneDatasetVersion = (versionId: number, body: DatasetVersionCloneRequest, baseUrl = '') => requestJson<DatasetVersionRecord>(`/api/v1/model-data/dataset-versions/${versionId}/clone`, jsonOptions('POST', body), baseUrl);
 export const updateDatasetVersion = (versionId: number, body: DatasetVersionUpdate, baseUrl = '') => requestJson<DatasetVersionRecord>(`/api/v1/model-data/dataset-versions/${versionId}`, jsonOptions('PUT', body), baseUrl);
 export const deleteDatasetVersion = (versionId: number, baseUrl = '') => requestJson<void>(`/api/v1/model-data/dataset-versions/${versionId}`, { method: 'DELETE' }, baseUrl);
 export const approveDatasetVersionForCalculation = (versionId: number, body: DatasetVersionApprovalRequest, baseUrl = '') => requestJson<DatasetVersionRecord>(`/api/v1/model-data/dataset-versions/${versionId}/approve-for-calculation`, jsonOptions('POST', body), baseUrl);

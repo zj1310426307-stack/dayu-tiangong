@@ -110,8 +110,9 @@ def test_mutability_guard_selects_dataset_version_for_update() -> None:
 
     session.scalar.side_effect = scalar
 
-    assert assert_dataset_version_mutable(session, 23) is version
-    assert version.status == "draft"
+    with pytest.raises(ValueError, match="DAYU_DATASET_VERSION_IMMUTABLE"):
+        assert_dataset_version_mutable(session, 23)
+    assert version.status == "approved"
 
 
 def test_mutability_guard_only_blocks_explicit_user_read_only() -> None:
@@ -125,8 +126,8 @@ def test_mutability_guard_only_blocks_explicit_user_read_only() -> None:
         assert_dataset_version_mutable(session, 24)
 
 
-def test_editing_approved_version_invalidates_approval_metadata() -> None:
-    """A content edit reopens approval without rewriting completed task snapshots."""
+def test_editing_approved_version_is_fail_closed() -> None:
+    """A certified DatasetVersion must be forked instead of silently reopened."""
 
     approved = DatasetVersion(
         id=25,
@@ -142,18 +143,19 @@ def test_editing_approved_version_invalidates_approval_metadata() -> None:
     session = MagicMock()
     session.scalar.return_value = approved
 
-    assert_dataset_version_mutable(session, 25)
+    with pytest.raises(ValueError, match="DAYU_DATASET_VERSION_IMMUTABLE"):
+        assert_dataset_version_mutable(session, 25)
 
-    assert approved.status == "draft"
-    assert approved.content_hash is None
-    assert approved.reviewed_by is None
-    assert approved.approved_by is None
+    assert approved.status == "approved"
+    assert approved.content_hash == "a" * 64
+    assert approved.reviewed_by == "reviewer"
+    assert approved.approved_by == "reviewer"
 
 
-def test_read_only_toggle_can_unlock_without_mutability_guard(
+def test_published_version_cannot_be_unlocked(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The only allowed change on a read-only version is the explicit unlock."""
+    """A manual lock never overrides lifecycle immutability."""
 
     version = DatasetVersion(
         id=26,
@@ -168,16 +170,10 @@ def test_read_only_toggle_can_unlock_without_mutability_guard(
     monkeypatch.setattr(
         dataset_service, "lock_dataset_version", lambda _session, _id: version
     )
-    guard = MagicMock(side_effect=AssertionError("guard must not block unlock"))
-    monkeypatch.setattr(dataset_service, "assert_dataset_version_mutable", guard)
-
-    record = dataset_service.update_dataset_version(
-        session, version, DatasetVersionUpdate(is_read_only=False)
-    )
-
-    assert record.is_read_only is False
-    assert record.status == "published"
-    guard.assert_not_called()
+    with pytest.raises(ValueError, match="DAYU_DATASET_VERSION_IMMUTABLE"):
+        dataset_service.update_dataset_version(
+            session, version, DatasetVersionUpdate(is_read_only=False)
+        )
 
 
 def test_version_owned_river_uses_database_cascade() -> None:

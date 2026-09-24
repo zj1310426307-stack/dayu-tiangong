@@ -61,6 +61,17 @@ hydraulic_v3 draft -- POST .../validate --> hydraulic_v3 validated
 或其 scenario 覆盖中明确给出。缺少开度限值、Pump capacity、曲线、方向、端点或初态时，编译
 返回可定位的阻断项；不会回退到 MASCARET、旧资产字段或隐式默认值。
 
+### Dataset Version 与冻结资产边界
+
+新建或修改直接统一建筑物绑定时，后端在写入事务中校验 `hydraulic_structure_id`：记录必须存在、
+属于计划的 `dataset_version_id`、`structure_type` 与命令一致，并且状态为 `active`。这四项不变式
+不能等到计算前才发现，也不能由前端自行判断。
+
+冻结时，直接绑定会把统一建筑物的网络、河段、桩号、几何/水力/运行参数、状态及元数据写入
+计划快照；冻结后的运行仅读取该快照，不回读可变的 `hydraulic.structure` 或历史 Gate/Pump 行。
+历史 `gate_id`/`pump_id` 计划仍按旧路径读取以保障存量审计，但新直接绑定不会通过通配属性或
+隐式旧字段补齐参数。任何参数不完整均会被 v3 正规化和编译门阻断。
+
 报告把下列状态分开，不允许前端自行合并推断：
 
 - 计划、水力模型、能力门、闸泵映射、Manual control、D-RTC 和 Observation contract 各自的布尔状态及精确 issue；

@@ -189,18 +189,29 @@ class _LocatedValue:
 
 
 @dataclass(frozen=True)
-class _UnifiedDispatchAsset:
-    """Compatibility shell for a direct unified structure.
+class _DirectUnifiedStructureReference:
+    """Explicit legacy-free reference used by the direct unified-structure path.
 
-    It intentionally exposes no legacy engineering values.  The normalizer can
-    therefore reuse the legacy-path parser while requiring every value from the
-    solver-neutral structure or its scenario override.
+    The normalizer still accepts historical Gate/Pump rows during the migration,
+    but a newly authored direct binding must never manufacture values through a
+    generic ``__getattr__`` fallback.  Every optional legacy attribute is
+    declared here as ``None`` so the shared normalizer can only source a value
+    from the authoritative HydraulicStructure/scenario parameter sources.
     """
 
     id: int
-
-    def __getattr__(self, _name: str) -> None:
-        return None
+    gate_type: str | None = None
+    height: float | None = None
+    crest_elevation: float | None = None
+    width: float | None = None
+    maximum_opening: float | None = None
+    discharge_coefficient: float | None = None
+    status: str | None = None
+    unit_count: int | None = None
+    transfer_type: str | None = None
+    intake_node_id: int | None = None
+    outlet_node_id: int | None = None
+    design_flow: float | None = None
 
 
 _GENERAL_GEOMETRY_FIELDS = (
@@ -406,7 +417,7 @@ def _normalize_loaded_assets(
         if int(row.id) in direct_structure_ids and row.structure_type in {"gate", "pump"}:
             key = (str(row.structure_type), int(row.id))
             mapped_rows[key].append(row)
-            legacy_rows[key].append(_UnifiedDispatchAsset(id=int(row.id)))
+            legacy_rows[key].append(_DirectUnifiedStructureReference(id=int(row.id)))
 
     scenario_rows: dict[int, list[HydraulicStructureScenario]] = defaultdict(list)
     for row in scenarios:

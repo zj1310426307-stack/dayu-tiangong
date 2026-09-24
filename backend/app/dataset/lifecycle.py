@@ -24,26 +24,21 @@ def lock_dataset_version(session: Session, version_id: int) -> DatasetVersion:
 
 
 def assert_dataset_version_mutable(session: Session, version_id: int) -> DatasetVersion:
-    """Allow edits unless the operator explicitly marked the version read-only.
+    """Allow content writes only to an explicitly writable Draft Version.
 
-    Workflow status and write permission are deliberately independent. Editing a
-    previously approved or published version invalidates its certification and
-    returns it to draft, while completed task snapshots remain immutable.
+    A DatasetVersion is an engineering identity, not a mutable container.  Its
+    lifecycle state therefore cannot be silently rewritten by a content write.
+    ``is_read_only`` is deliberately only the manual edit lock for a Draft.
     """
 
     version = lock_dataset_version(session, version_id)
+    if version.status != "draft":
+        raise ValueError(
+            "DAYU_DATASET_VERSION_IMMUTABLE: 该数据版本已审核、批准、发布或退役，"
+            "不能原地修改；请基于当前版本创建新的草稿版本。"
+        )
     if version.is_read_only:
         raise ValueError(
             f"数据版本 {version_id} 已由用户设为只读；请先解除只读后再修改。"
         )
-    if version.status != "draft":
-        version.status = "draft"
-        version.content_hash = None
-        version.change_summary = None
-        version.reviewed_by = None
-        version.reviewed_at = None
-        version.approved_by = None
-        version.approved_at = None
-        version.published_at = None
-        version.retired_at = None
     return version

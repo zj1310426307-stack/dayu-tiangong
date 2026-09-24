@@ -15,6 +15,7 @@ from app.dataset.schemas import (
     BoundaryConditionUpdate,
     DatasetVersionCreate,
     DatasetVersionApprovalRequest,
+    DatasetVersionCloneRequest,
     DatasetVersionRecord,
     DatasetVersionUpdate,
     ModelParameterCreate,
@@ -98,6 +99,50 @@ def create_dataset_version(session: Session, payload: DatasetVersionCreate) -> D
     return DatasetVersionRecord(**_dump(entity))
 
 
+def clone_dataset_version(
+    session: Session,
+    source: DatasetVersion,
+    payload: DatasetVersionCloneRequest,
+) -> DatasetVersionRecord:
+    """Fork a version identity into a fresh writable Draft without execution evidence.
+
+    The first safe clone boundary is the version-owned configuration records that
+    have no spatial foreign-key remapping requirement.  Network and survey data
+    remain source-version evidence until their dedicated graph clone is available;
+    this prevents a deceptively partial geometry copy from becoming authoritative.
+    """
+
+    locked_source = lock_dataset_version(session, source.id)
+    clone = DatasetVersion(
+        version=payload.version,
+        name=payload.name,
+        description=payload.description,
+        creator=payload.creator,
+        status="draft",
+        is_read_only=False,
+        parent_version_id=locked_source.id,
+    )
+    session.add(clone)
+    session.flush()
+    for parameter in session.scalars(
+        select(ModelParameter)
+        .where(ModelParameter.dataset_version_id == locked_source.id)
+        .order_by(ModelParameter.id)
+    ):
+        session.add(
+            ModelParameter(
+                dataset_version_id=clone.id,
+                parameter_type=parameter.parameter_type,
+                parameter_name=parameter.parameter_name,
+                value=parameter.value,
+                unit=parameter.unit,
+                description=parameter.description,
+            )
+        )
+    session.flush()
+    return DatasetVersionRecord(**_dump(clone))
+
+
 def update_dataset_version(session: Session, entity: DatasetVersion, payload: DatasetVersionUpdate) -> DatasetVersionRecord:
     """修改版本说明或由用户显式切换只读状态。
 
@@ -105,12 +150,7 @@ def update_dataset_version(session: Session, entity: DatasetVersion, payload: Da
     """
 
     values = payload.model_dump(exclude_unset=True)
-    read_only_toggle = set(values) == {"is_read_only"}
-    mutable = (
-        lock_dataset_version(session, entity.id)
-        if read_only_toggle
-        else assert_dataset_version_mutable(session, entity.id)
-    )
+    mutable = assert_dataset_version_mutable(session, entity.id)
     _apply(mutable, values)
     session.flush()
     return DatasetVersionRecord(**_dump(mutable))
@@ -651,6 +691,12 @@ def delete_entity(session: Session, entity: Any) -> None:
 
     if isinstance(entity, DatasetVersion):
         assert_dataset_version_mutable(session, entity.id)
+        if session.scalar(
+            select(DatasetVersion.id).where(DatasetVersion.parent_version_id == entity.id)
+        ) is not None:
+            raise ValueError(
+                "DAYU_DATASET_VERSION_DELETE_FORBIDDEN: 已被派生版本引用的数据版本不可删除"
+            )
     elif isinstance(entity, (ModelParameter, BoundaryCondition, SimulationCase)):
         assert_dataset_version_mutable(session, entity.dataset_version_id)
     session.delete(entity)
