@@ -32,6 +32,17 @@ Adapter：`dayu-mascaret-adapter-v2`
 
 每个 VERIFIED 行都能追溯到 source-controlled benchmark ID。状态不是“MASCARET 永久支持某功能”的布尔声明，未来 engine/adapter 版本必须新增或更新独立矩阵。
 
+## HYDRO-CORE-06 统一路由规则
+
+引擎选择不是页面默认值，也不是 Worker 的推断行为。任务创建时必须写入并冻结 `engine_id` 与 `execution_class`；Worker 在领取、运行和结果验证阶段都用同一注册表重验 `solver_id`、`capability_id`、`runtime_adapter_id`、`result_schema_version` 和 `registry_hash`。身份缺失、未知、漂移或能力不匹配均失败关闭，不尝试替换为其他引擎。
+
+| Engine | execution class | production eligible | 可接受能力证据 | 当前可进入的路线 |
+|---|---|---:|---|---|
+| `mascaret` v9.1.1 | `production`、`pilot`、`synthetic` | 是 | `VERIFIED_NATIVE` / `VERIFIED_EQUIVALENT`（生产） | Standard 1D；Gate/Pump 仍为 `UNSUPPORTED` |
+| `d-flow-fm` DIMRset_2026.02 | `pilot`、`synthetic` | 否 | 已登记的合成验收 | 冻结的 Gate/Pump 受控合同；不得升格为生产 |
+
+历史任务按已保存的 input schema、solver 与 adapter 精确映射：已知 MASCARET 映射为 `mascaret/production`，已知受控 D-Flow 映射为 `d-flow-fm/synthetic`；其余为 `legacy-unresolved/legacy`，保留审计和读取能力但不可重跑。完整决策见 [ADR-HYDRO-0005](../adr/ADR-HYDRO-0005-capability-based-engine-routing.md)。
+
 ## D-Flow FM / HYDROLIB-core 开发适配器
 
 当前已建立 `dayu-dflow-fm-adapter-v1` 的开发期合同：Solver-neutral 1D 模型严格校验、HYDROLIB-core `1.0.1` 类型化 Network/MDU/INI/BC/DIMR 生成、Gate/Pump 受限映射、HIS NetCDF 结果解析、Job Workspace 隔离及 DIMR CLI/Container 运行边界。官方源固定为 `DIMRset_2026.02` / `5a4649830b1e5072caf019fb4850bbdefd9ad431`。

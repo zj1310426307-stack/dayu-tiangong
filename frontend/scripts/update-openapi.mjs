@@ -59,7 +59,7 @@ const requiredPaths = [
   '/api/v1/model-data/parameters', '/api/v1/model-data/boundary-conditions',
   '/api/v1/model-data/boundary-conditions/rating-curve/generate',
   '/api/v1/model-data/simulation-cases',
-  '/api/v1/model/readiness', '/api/v1/model/preview',
+  '/api/v1/model/readiness', '/api/v1/model/engines', '/api/v1/model/preview',
   '/api/v1/model/scenario-results', '/api/v1/model/scenario-results/{bundle_id}/geojson',
   '/api/v1/model/scenario-results/{bundle_id}/case-manifest', '/api/v1/model/scenario-results/{bundle_id}/artifacts/{filename}',
   '/api/v1/model/tasks', '/api/v1/model/tasks/{task_id}/run',
@@ -575,6 +575,7 @@ export async function importProductionExternal(datasetVersionId: number, resultC
 
 export const createHydraulicTask = (body: SimulationTaskCreate, baseUrl = '') => requestJson<SimulationTaskRecord>('/api/v1/model/tasks', jsonOptions('POST', body), baseUrl);
 export const getHydraulicReadiness = (caseId: number, baseUrl = '') => requestJson<Hydraulic1DReadinessResponse>(\`/api/v1/model/readiness\${toQuery({ case_id: caseId })}\`, {}, baseUrl);
+export const getHydraulicEngineCatalog = (baseUrl = '') => requestJson<HydraulicEngineCatalogResponse>('/api/v1/model/engines', {}, baseUrl);
 export const listPublishedScenarioResults = (baseUrl = '') => requestJson<Array<PublishedScenarioBundle>>('/api/v1/model/scenario-results', {}, baseUrl);
 export const getPublishedScenarioGeoJSON = (bundleId: string, scenarioId?: string, baseUrl = '') => requestJson<Record<string, unknown>>(\`/api/v1/model/scenario-results/\${encodeURIComponent(bundleId)}/geojson\${toQuery({ scenario_id: scenarioId })}\`, {}, baseUrl);
 export const getPublishedScenarioCaseManifest = (bundleId: string, baseUrl = '') => requestJson<Record<string, unknown>>(\`/api/v1/model/scenario-results/\${encodeURIComponent(bundleId)}/case-manifest\`, {}, baseUrl);

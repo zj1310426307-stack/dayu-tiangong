@@ -1,4 +1,4 @@
-"""Engine-neutral factory used by backend workers and command-line entry points."""
+"""Engine factory; executable workers must always pass a frozen ``engine_id``."""
 
 from __future__ import annotations
 
@@ -22,7 +22,12 @@ _DFLOW_FM_ENGINE_MODULE = "model.hydraulic_1d.dflow_fm.engine"
 def create_hydraulic_1d_engine(
     engine_id: str = DEFAULT_HYDRAULIC_1D_ENGINE_ID,
 ) -> Hydraulic1DEngine:
-    """Create one explicit engine while preserving MASCARET as the default route."""
+    """Create one engine.
+
+    The default remains solely for legacy command-line/test compatibility.
+    API-created tasks and workers must provide their persisted ``engine_id`` so
+    capability routing can never silently choose MASCARET.
+    """
 
     if engine_id == DEFAULT_HYDRAULIC_1D_ENGINE_ID:
         return MascaretEngine()

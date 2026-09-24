@@ -16,10 +16,10 @@ from model.hydraulic_1d.execution_lease import (
     hydraulic_1d_attempt_job_id,
     recover_configured_hydraulic_1d_attempt,
 )
-from model.hydraulic_1d.registry import (
-    CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA,
-    controlled_task_engine_provenance,
-    task_engine_provenance,
+from model.hydraulic_1d.registry import CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA
+from model.hydraulic_1d.routing import (
+    ExecutionClass,
+    validate_frozen_task_identity,
 )
 
 
@@ -160,22 +160,22 @@ def claim_task(session: Session, task_id: int, worker_id: str) -> SimulationTask
             observed,
             "LEGACY_ENGINE_RETIRED: historical custom-solver tasks cannot execute",
         )
-    expected = (
-        controlled_task_engine_provenance()
-        if observed.task_kind == "controlled_hydraulic_preview"
-        else task_engine_provenance()
-    )
-    route_fields = tuple(expected)
-    mismatches = [
-        f"{field}: task={getattr(observed, field)!r}, registered={expected[field]!r}"
-        for field in route_fields
-        if getattr(observed, field) != expected[field]
-    ]
-    if mismatches:
+    try:
+        registration = validate_frozen_task_identity(observed)
+    except Exception as exc:
         _reject_bad_route(
             session,
             observed,
-            "HYDRAULIC_1D_ROUTE_MISMATCH: " + "; ".join(mismatches),
+            f"HYDRAULIC_TASK_ENGINE_IDENTITY_MISMATCH: {exc}",
+        )
+    if observed.task_kind == "controlled_hydraulic_preview" and (
+        registration.engine_id != "d-flow-fm"
+        or observed.execution_class != ExecutionClass.SYNTHETIC.value
+    ):
+        _reject_bad_route(
+            session,
+            observed,
+            "HYDRAULIC_TASK_ENGINE_IDENTITY_MISMATCH: controlled route requires d-flow-fm/synthetic",
         )
     result = session.execute(
         update(SimulationTask)
@@ -183,7 +183,8 @@ def claim_task(session: Session, task_id: int, worker_id: str) -> SimulationTask
             SimulationTask.id == task_id,
             SimulationTask.status == "queued",
             SimulationTask.input_schema_version == expected_schema,
-            *(getattr(SimulationTask, field) == expected[field] for field in route_fields),
+            SimulationTask.engine_id == registration.engine_id,
+            SimulationTask.execution_class == observed.execution_class,
         )
         .values(**_claim_values(worker_id))
     )

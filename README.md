@@ -11,6 +11,8 @@
 
 自 2026-08-31 起，生产级 Standard 1D 正式采用“Dayu 统一水力模型 → MASCARET Adapter → 外部 MASCARET v9.1.1 → 统一结果”路线；旧自研 1D Solver 已退出生产代码、API、Worker、前端和 CI。HYDRO-DATA-01 的 Network → Branch → Chainage → Cross Section 权威数据结构保持不变。
 
+2026-09-24：HYDRO-CORE-06 将多引擎选择收敛为持久化的 `SimulationTask.engine_id + execution_class`。Worker 只按冻结的任务身份创建引擎，并在领取、执行和结果落库前重复校验注册表、能力矩阵与 provenance，绝不隐式回退至 MASCARET。MASCARET 是唯一 `production` 可选路由；D-Flow FM 仅可由冻结闸泵合同创建为 `synthetic`/`pilot`，保持 `production_eligible=false`，不开放 PLC/SCADA、优化、第二水力 Domain 或原生文件业务入口。详见 [ADR-HYDRO-0005](docs/adr/ADR-HYDRO-0005-capability-based-engine-routing.md)。
+
 2026-09-13：Dataset Version 已收紧为工程身份边界：仅未锁定草稿可编辑；审核、批准、发布、退役版本不可原地降级或解锁，修改应从“基于此版本创建草稿”开始并保留 `parent_version_id`。直接统一 Gate/Pump 调度绑定在写入时校验版本、类型和 active 状态；冻结快照保存统一建筑物的权威参数，运行不回读可变资产。详见 [ADR-HYDRO-0004](docs/adr/ADR-HYDRO-0004-dataset-editability.md)。
 
 2026-09-14：统一水闸数据库新增 MIKE11 风格资料卡，覆盖五类 Gate Type、闸孔数量、Underflow CC、正反向六项水头损失、Initial/Max/Max speed、Marker 2 图形定位和可增删控制定义。类型化 API 与原有 D-Flow 计算字段执行一致性校验；资料可保存不代表求解器能力扩张，MASCARET Gate 和未验证映射继续 fail closed。
@@ -23,6 +25,8 @@
 - [复杂一维河网工程合同](docs/hydraulics/hydraulic-network.md)
 - [统一水工建筑物模型](docs/hydraulics/hydraulic-structures.md)
 - [一维求解器能力矩阵](docs/hydraulics/solver-capabilities.md)
+- [工程图谱克隆计划](docs/hydraulics/engineering-graph-clone-plan.md)
+- [真实工程试点资料画像](docs/hydraulics/real-engineering-pilot-profile.md)
 - [生产工作流](docs/hydraulics/production-workflow.md)
 - [工程数据导入](docs/hydraulics/engineering-data-import.md)
 - [横断面 Marker 与全归槽处理](docs/hydraulics/cross-section-marker-processing.md)

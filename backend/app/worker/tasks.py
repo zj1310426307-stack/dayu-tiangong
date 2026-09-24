@@ -32,6 +32,11 @@ from model.hydraulic_1d.errors import Hydraulic1DCancelled, Hydraulic1DError
 from model.hydraulic_1d.execution_lease import hydraulic_1d_attempt_job_id
 from model.hydraulic_1d.factory import create_hydraulic_1d_engine
 from model.hydraulic_1d.registry import DFLOW_FM_ENGINE_ID
+from model.hydraulic_1d.routing import (
+    ExecutionClass,
+    validate_frozen_task_identity,
+    validate_required_capabilities,
+)
 from model.provenance import snapshot_hash
 
 
@@ -99,7 +104,16 @@ def run_hydraulic_task(self, task_id: int) -> dict[str, str | int]:
             )
 
         try:
+            registration = validate_frozen_task_identity(task)
             if task.task_kind == "controlled_hydraulic_preview":
+                if (
+                    registration.engine_id != DFLOW_FM_ENGINE_ID
+                    or task.execution_class != ExecutionClass.SYNTHETIC.value
+                ):
+                    raise ValueError(
+                        "HYDRAULIC_TASK_ENGINE_IDENTITY_MISMATCH: controlled "
+                        "route requires d-flow-fm/synthetic"
+                    )
                 if not isinstance(task.input_snapshot, Mapping) or not isinstance(
                     task.input_snapshot_hash, str
                 ):
@@ -108,7 +122,12 @@ def run_hydraulic_task(self, task_id: int) -> dict[str, str | int]:
                 if not compare_digest(observed_hash, task.input_snapshot_hash):
                     raise ValueError("controlled task snapshot digest mismatch")
                 run = ControlledHydraulic1DRun.model_validate(task.input_snapshot)
-                engine = create_hydraulic_1d_engine(DFLOW_FM_ENGINE_ID)
+                validate_required_capabilities(
+                    run.hydraulic_model,
+                    engine_id=registration.engine_id,
+                    execution_class=task.execution_class,
+                )
+                engine = create_hydraulic_1d_engine(registration.engine_id)
                 run_controlled = getattr(engine, "run_controlled", None)
                 if run_controlled is None:
                     raise ValueError("selected D-Flow engine lacks controlled execution")
@@ -150,8 +169,13 @@ def run_hydraulic_task(self, task_id: int) -> dict[str, str | int]:
                 expected_registry_hash=task.registry_hash,
             )
             model = parse_frozen_task_model(task)
+            validate_required_capabilities(
+                model,
+                engine_id=registration.engine_id,
+                execution_class=task.execution_class,
+            )
             assert_production_gate(task.config, model, str(task.input_snapshot_hash or ""))
-            result = create_hydraulic_1d_engine().run(
+            result = create_hydraulic_1d_engine(registration.engine_id).run(
                 model,
                 Hydraulic1DExecutionContext(
                     job_id=hydraulic_1d_attempt_job_id(

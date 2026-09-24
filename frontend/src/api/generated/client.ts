@@ -1459,8 +1459,9 @@ export interface Hydraulic1DPreviewResponse {
 export interface Hydraulic1DReadinessResponse {
   "case_id": number;
   "ready": boolean;
-  "engine_id"?: "mascaret";
-  "engine_version"?: "v9.1.1";
+  "engine_id"?: string;
+  "engine_version"?: string;
+  "execution_class"?: "production" | "pilot" | "synthetic";
   "runtime_available": boolean;
   "runtime_detail": string;
   "runtime_identity": Record<string, unknown>;
@@ -1585,6 +1586,12 @@ export interface HydraulicCrossSectionInput {
   "axis_points"?: Array<Array<unknown>>;
   "roughness_zones"?: Array<HydraulicRoughnessZoneInput>;
   "points": Array<HydraulicSectionPointInput>;
+}
+
+export interface HydraulicEngineCatalogResponse {
+  "schema_version": string;
+  "default_engine_id": string;
+  "engines": Array<Record<string, unknown>>;
 }
 
 export interface HydraulicExchangePayload {
@@ -3083,7 +3090,8 @@ export interface SimulationTaskCreate {
   "output_interval_seconds"?: number | null;
   "initial_water_level"?: number | null;
   "initial_flow"?: number | null;
-  "engine"?: "mascaret";
+  "engine_id"?: string;
+  "execution_class"?: "production" | "pilot" | "synthetic";
   "input_schema_version"?: "dayu.hydraulic-1d.input.v1";
   "storage_level"?: "full";
   "roughness_overrides"?: Array<RoughnessOverride>;
@@ -3097,6 +3105,8 @@ export interface SimulationTaskRecord {
   "progress": number;
   "config": Record<string, unknown>;
   "task_kind"?: "standard_1d" | "controlled_hydraulic_preview";
+  "engine_id": string | null;
+  "execution_class": string | null;
   "evidence_class"?: string | null;
   "input_schema_version": string | null;
   "input_snapshot_hash": string | null;
@@ -3732,6 +3742,7 @@ export async function importProductionExternal(datasetVersionId: number, resultC
 
 export const createHydraulicTask = (body: SimulationTaskCreate, baseUrl = '') => requestJson<SimulationTaskRecord>('/api/v1/model/tasks', jsonOptions('POST', body), baseUrl);
 export const getHydraulicReadiness = (caseId: number, baseUrl = '') => requestJson<Hydraulic1DReadinessResponse>(`/api/v1/model/readiness${toQuery({ case_id: caseId })}`, {}, baseUrl);
+export const getHydraulicEngineCatalog = (baseUrl = '') => requestJson<HydraulicEngineCatalogResponse>('/api/v1/model/engines', {}, baseUrl);
 export const listPublishedScenarioResults = (baseUrl = '') => requestJson<Array<PublishedScenarioBundle>>('/api/v1/model/scenario-results', {}, baseUrl);
 export const getPublishedScenarioGeoJSON = (bundleId: string, scenarioId?: string, baseUrl = '') => requestJson<Record<string, unknown>>(`/api/v1/model/scenario-results/${encodeURIComponent(bundleId)}/geojson${toQuery({ scenario_id: scenarioId })}`, {}, baseUrl);
 export const getPublishedScenarioCaseManifest = (bundleId: string, baseUrl = '') => requestJson<Record<string, unknown>>(`/api/v1/model/scenario-results/${encodeURIComponent(bundleId)}/case-manifest`, {}, baseUrl);

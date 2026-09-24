@@ -31,6 +31,7 @@ import {
   cancelHydraulicTask,
   createHydraulicTask,
   enqueueHydraulicTask,
+  getHydraulicEngineCatalog,
   getHydraulicReadiness,
   getHydraulicResult,
   getHydraulicResultOverview,
@@ -43,6 +44,7 @@ import {
   runFrozenDispatchHydraulicPlan,
   type DispatchPlanRecord,
   type Hydraulic1DReadinessResponse,
+  type HydraulicEngineCatalogResponse,
   type PublishedScenarioBundle,
   type PublishedScenarioResult,
   type ScenarioResultSection,
@@ -131,7 +133,7 @@ function pairedInitialRule(peer: 'initial_water_level' | 'initial_flow', label: 
   });
 }
 
-/** Build the one supported production request without exposing solver-specific controls. */
+/** Build the explicit MASCARET production request without exposing solver-private controls. */
 function normalizeTaskRequest(values: SimulationTaskCreate): SimulationTaskCreate {
   return {
     case_id: values.case_id,
@@ -142,7 +144,8 @@ function normalizeTaskRequest(values: SimulationTaskCreate): SimulationTaskCreat
     output_interval_seconds: values.output_interval_seconds,
     initial_water_level: values.initial_water_level,
     initial_flow: values.initial_flow,
-    engine: HYDRAULIC_ENGINE,
+    engine_id: HYDRAULIC_ENGINE,
+    execution_class: 'production',
     input_schema_version: HYDRAULIC_INPUT_SCHEMA,
     storage_level: 'full',
   };
@@ -165,7 +168,21 @@ export function HydraulicConfigPage() {
   const [controlledPlans, setControlledPlans] = useState<DispatchPlanRecord[]>([]);
   const [selectedControlledPlanId, setSelectedControlledPlanId] = useState<number>();
   const [controlledSubmitting, setControlledSubmitting] = useState(false);
+  const [engineCatalog, setEngineCatalog] = useState<HydraulicEngineCatalogResponse>();
+  const [engineCatalogError, setEngineCatalogError] = useState('');
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    void getHydraulicEngineCatalog()
+      .then((value) => {
+        if (!cancelled) setEngineCatalog(value);
+      })
+      .catch((reason: unknown) => {
+        if (!cancelled) setEngineCatalogError(reason instanceof Error ? reason.message : '求解引擎目录加载失败');
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (!datasetVersionId) {
@@ -337,14 +354,32 @@ export function HydraulicConfigPage() {
         <Alert
           showIcon
           type="info"
-          message="产品只提供 Standard 1D；引擎固定为 MASCARET v9.1.1，不暴露求解器私有文件或旧自研算法选项。"
+          message="Standard 1D 固定使用 MASCARET 正式路由；闸泵联合计算仅由已冻结的 D-Flow FM 受控路由创建。"
+          description={engineCatalog && (
+            <Space wrap>
+              {engineCatalog.engines.map((engine) => {
+                const engineId = String(engine.engine_id ?? 'unknown');
+                const production = engine.production_eligible === true;
+                const classes = Array.isArray(engine.allowed_execution_classes)
+                  ? engine.allowed_execution_classes.join(' / ')
+                  : '—';
+                return (
+                  <Tag color={production ? 'success' : 'warning'} key={engineId}>
+                    {engineId} · {production ? '生产可用' : '受控试点'} · {classes}
+                  </Tag>
+                );
+              })}
+            </Space>
+          )}
         />
+        {engineCatalogError && <Alert className="data-alert" type="warning" showIcon message={engineCatalogError} />}
         <Form
           form={form}
           layout="vertical"
           className="hydraulic-form"
           initialValues={{
-            engine: HYDRAULIC_ENGINE,
+            engine_id: HYDRAULIC_ENGINE,
+            execution_class: 'production',
             input_schema_version: HYDRAULIC_INPUT_SCHEMA,
             storage_level: 'full',
             calculation_mode: 'steady',
@@ -612,7 +647,9 @@ export function HydraulicTasksPage() {
       render: (_, task) => (
         <Space direction="vertical" size={0}>
           <Text>{task.task_kind === 'controlled_hydraulic_preview' ? '闸泵联合 1D' : 'Standard 1D'}</Text>
-          <Text type="secondary">{task.solver_id ?? HYDRAULIC_ENGINE} {task.engine_version ?? 'v9.1.1'} · {task.runtime_adapter_id ?? '—'}</Text>
+          <Text type="secondary">
+            {task.engine_id ?? task.solver_id ?? HYDRAULIC_ENGINE} · {task.execution_class ?? 'legacy'} · {task.engine_version ?? 'v9.1.1'} · {task.runtime_adapter_id ?? '—'}
+          </Text>
         </Space>
       ),
     },

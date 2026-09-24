@@ -10,15 +10,19 @@ MODEL_DATA_PAGE = ROOT / "frontend/src/pages/data-center/DataCenterPages.tsx"
 GENERATED_CLIENT = ROOT / "frontend/src/api/generated/client.ts"
 
 
-def test_hydraulic_pages_use_the_single_standard_1d_mascaret_route() -> None:
-    """The browser must expose one solver-neutral input contract and MASCARET route."""
+def test_hydraulic_pages_expose_explicit_engine_routes() -> None:
+    """The browser must distinguish production MASCARET from controlled D-Flow."""
 
     source = HYDRAULIC_PAGE.read_text(encoding="utf-8")
     assert "const HYDRAULIC_INPUT_SCHEMA = 'dayu.hydraulic-1d.input.v1'" in source
     assert "const HYDRAULIC_ENGINE = 'mascaret'" in source
     assert "getHydraulicReadiness" in source
+    assert "getHydraulicEngineCatalog" in source
     assert "previewHydraulicModel" in source
-    assert "STANDARD 1D / MASCARET" in source
+    assert "engine_id: HYDRAULIC_ENGINE" in source
+    assert "execution_class: 'production'" in source
+    assert "D-Flow FM" in source
+    assert "runFrozenDispatchHydraulicPlan" in source
     assert "dayu.model-input.v" not in source
     assert "D3A" not in source
     assert "/model/v4" not in source

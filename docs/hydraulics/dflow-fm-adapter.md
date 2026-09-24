@@ -4,6 +4,8 @@
 适用版本：`dayu-dflow-fm-adapter-v1` / `DIMRset_2026.02`
 当前结论：reviewed Container Runtime 已通过合成开发验收；CLI 与生产能力继续关闭
 
+> HYDRO-CORE-06 路由边界：D-Flow FM 仅注册为 `pilot`/`synthetic`，`production_eligible=false`。它只能由已冻结的 Gate/Pump 调度合同创建任务；Worker 读取任务内的 `engine_id`，不会使用默认引擎，也不会在失败时回退至 MASCARET。PLC/SCADA、调度优化、第二水力业务 Domain 与原生文件作为业务权威源均不在本适配器范围内。
+
 ## 当前状态
 
 仓库已经具备 D-Flow FM 的开发期边界：多引擎登记、Solver-neutral 模型校验、HYDROLIB-core 类型化文件生成、Gate/Pump 严格子集映射、HIS NetCDF 结果解析、隔离 Workspace、CLI/Container 进程监督及完整 Runtime provenance 合同。

@@ -35,6 +35,8 @@ def test_result_overview_uses_complete_final_time_and_upstream_order(monkeypatch
         case_id=14,
         dataset_version_id=78,
         status="success",
+        engine_id="mascaret",
+        execution_class="production",
         input_schema_version=HYDRAULIC_1D_INPUT_SCHEMA,
         config={"calculation_mode": "steady"},
         evidence_class="UNCALIBRATED_SCENARIO",
@@ -72,6 +74,8 @@ def test_result_overview_rejects_incomplete_final_section_axis(monkeypatch) -> N
     task = SimpleNamespace(
         id=438,
         status="success",
+        engine_id="mascaret",
+        execution_class="production",
         input_schema_version=HYDRAULIC_1D_INPUT_SCHEMA,
     )
     session = MagicMock()
@@ -102,6 +106,8 @@ def test_controlled_result_overview_includes_final_gate_and_pump_response(monkey
         case_id=17,
         dataset_version_id=79,
         status="success",
+        engine_id="d-flow-fm",
+        execution_class="synthetic",
         task_kind="controlled_hydraulic_preview",
         input_schema_version=CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA,
         engine_version="DIMRset_2026.02",
@@ -157,6 +163,8 @@ def test_controlled_result_overview_rejects_missing_structure_result(monkeypatch
     task = SimpleNamespace(
         id=440,
         status="success",
+        engine_id="d-flow-fm",
+        execution_class="synthetic",
         input_schema_version=CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA,
         engine_version="DIMRset_2026.02",
     )

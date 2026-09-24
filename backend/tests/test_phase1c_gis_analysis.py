@@ -44,6 +44,7 @@ def _build_comparison_fixture() -> tuple[int, int, int, int]:
             SimulationTask(
                 case_id=case.id, dataset_version_id=case.dataset_version_id,
                 status="success", progress=100, config={"phase": "1C"},
+                engine_id="legacy-unresolved", execution_class="legacy",
                 end_time=datetime.now(UTC),
             )
             for _ in range(2)

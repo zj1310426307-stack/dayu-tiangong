@@ -1667,6 +1667,10 @@ class SimulationTask(Base):
             "task_kind IN ('standard_1d','controlled_hydraulic_preview')",
             name="ck_simulation_task_kind",
         ),
+        CheckConstraint(
+            "execution_class IN ('production','pilot','synthetic','legacy')",
+            name="ck_simulation_task_execution_class",
+        ),
         UniqueConstraint(
             "comparison_group_id", "group_role",
             name="uq_simulation_task_group_role",
@@ -1697,6 +1701,8 @@ class SimulationTask(Base):
     task_kind: Mapped[str] = mapped_column(
         String(32), nullable=False, server_default="standard_1d"
     )
+    engine_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    execution_class: Mapped[str] = mapped_column(String(16), nullable=False)
     evidence_class: Mapped[str | None] = mapped_column(String(48))
     input_schema_version: Mapped[str | None] = mapped_column(String(48))
     input_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON)
