@@ -14,6 +14,7 @@ import {
   Button,
   Card,
   Col,
+  Collapse,
   Descriptions,
   Form,
   Input,
@@ -24,6 +25,7 @@ import {
   Select,
   Space,
   Statistic,
+  Switch,
   Table,
   Tag,
   Tree,
@@ -80,6 +82,7 @@ const CENTRAL_MERIDIANS: Record<number, number> = {
   4546: 111, 4547: 114, 4548: 117, 4549: 120,
 };
 type StructureFormValues = HydraulicStructureCreate & {
+  manual_coordinate_override?: boolean;
   discharge_coefficient?: number;
   gate_allowed_flow_direction?: 'positive' | 'negative' | 'both';
   gate_use_velocity_height?: boolean;
@@ -161,6 +164,11 @@ function withoutKeys(values: Record<string, unknown>, keys: readonly string[]): 
 
 function optionalFields(values: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(values).filter(([, value]) => value !== undefined && value !== null && value !== ''));
+}
+
+function generatedStructureCode(): string {
+  /** Provide a stable editable default so users do not have to invent an identifier. */
+  return `STRUCT-${Date.now().toString(36).toUpperCase()}`;
 }
 
 function parseCurve(value: string | undefined): Record<string, unknown> | undefined {
@@ -311,6 +319,7 @@ export function HydraulicDataPage() {
   const [structureForm] = Form.useForm<StructureFormValues>();
   const watchedStructureType = Form.useWatch('structure_type', structureForm);
   const watchedMike11GateType = Form.useWatch('mike11_gate_type', structureForm);
+  const watchedManualCoordinateOverride = Form.useWatch('manual_coordinate_override', structureForm);
   const [section, setSection] = useState<HydraulicSectionDetail>();
   const [selectedNetworkId, setSelectedNetworkId] = useState<number>();
   const [selectedBranchId, setSelectedBranchId] = useState<number>();
@@ -537,6 +546,7 @@ export function HydraulicDataPage() {
       dataset_version_id: datasetVersionId,
       network_id: network?.id,
       branch_id: branch?.id,
+      structure_code: generatedStructureCode(),
       structure_type: 'gate',
       hydraulic_law_type: MIKE11_GATE_LAW_MAP.underflow,
       operation_rule_type: 'fixed',
@@ -544,6 +554,10 @@ export function HydraulicDataPage() {
       mike11_gate_type: 'underflow',
       gate_number_of_gates: 1,
       gate_correction_coefficient: 0.63,
+      gate_allowed_flow_direction: 'both',
+      gate_use_velocity_height: false,
+      gate_maximum_opening_axis: 'vertical',
+      gate_availability: 'online',
       gate_opening_rate_limit_m_per_s: 0.001,
       gate_marker_2_horizontal_offset_m: 0,
       gate_loss_positive_inflow: 0.5,
@@ -553,6 +567,7 @@ export function HydraulicDataPage() {
       gate_loss_negative_outflow: 1,
       gate_loss_negative_free_overflow: 1,
       gate_control_definitions: [{ priority: 1, calculation_mode: 'tabulated', control_type: 'H', target_type: 'GateL', scaling_type: 'none', value: 0 }],
+      manual_coordinate_override: false,
     });
     setStructureModalOpen(true);
   };
@@ -621,6 +636,7 @@ export function HydraulicDataPage() {
       pump_maximum_starts_per_replay: record.operation_parameters.maximum_starts_per_replay as number | undefined,
       operation_rule_type: record.operation_rule_type,
       status: record.status,
+      manual_coordinate_override: false,
     });
     setStructureModalOpen(true);
   };
@@ -629,7 +645,8 @@ export function HydraulicDataPage() {
     try {
       const values = await structureForm.validateFields();
       const {
-        discharge_coefficient: coefficient, dataset_version_id, network_id,
+        discharge_coefficient: coefficient, dataset_version_id, network_id, x, y,
+        manual_coordinate_override,
         gate_allowed_flow_direction, gate_use_velocity_height, gate_maximum_opening_axis,
         gate_correction_coefficient, gate_max_flow_m3s, gate_availability, gate_minimum_opening_m,
         gate_maximum_opening_m, gate_opening_rate_limit_m_per_s, gate_minimum_hold_seconds,
@@ -698,11 +715,13 @@ export function HydraulicDataPage() {
       if (editingStructure) {
         await updateHydraulicStructure(editingStructure.id, {
           ...mutable,
+          ...(manual_coordinate_override ? { x, y } : {}),
           hydraulic_parameters: hydraulicParameters,
         });
       } else {
         await createHydraulicStructure({
           ...mutable,
+          ...(manual_coordinate_override ? { x, y } : {}),
           dataset_version_id,
           network_id,
           hydraulic_parameters: hydraulicParameters,
@@ -1000,7 +1019,7 @@ export function HydraulicDataPage() {
       <Modal
         title={editingStructure ? `编辑 ${editingStructure.structure_name}` : '创建统一水工建筑物'}
         open={structureModalOpen}
-        width={1180}
+        width={980}
         onCancel={() => setStructureModalOpen(false)}
         onOk={() => void saveStructure()}
         okText="保存"
@@ -1008,16 +1027,26 @@ export function HydraulicDataPage() {
         <Form form={structureForm} layout="vertical">
           <Form.Item name="dataset_version_id" hidden><InputNumber /></Form.Item>
           <Form.Item name="network_id" hidden><InputNumber /></Form.Item>
+          <Alert
+            type="info"
+            showIcon
+            message="精简录入模式"
+            description="先填写位置和核心水力要素即可保存草稿。空间坐标默认由河段中心线与桩号自动生成；设备控制、损失系数和人工坐标均放在高级参数中。"
+            style={{ marginBottom: 16 }}
+          />
           <Row gutter={12}>
-            <Col xs={24} md={12}><Form.Item name="structure_code" label="编码" rules={[{ required: true }]}><Input /></Form.Item></Col>
-            <Col xs={24} md={12}><Form.Item name="structure_name" label="名称" rules={[{ required: true }]}><Input /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="structure_type" label="类型" rules={[{ required: true }]}><Select onChange={(value) => {
+            <Col xs={24} md={12}><Form.Item name="structure_name" label="名称" rules={[{ required: true, message: '请输入建筑物名称' }]}><Input placeholder="例如：高明河节制闸" /></Form.Item></Col>
+            <Col xs={24} md={12}><Form.Item name="structure_type" label="类型" rules={[{ required: true }]}><Select onChange={(value) => {
               if (value === 'gate') {
                 structureForm.setFieldsValue({
                   hydraulic_law_type: MIKE11_GATE_LAW_MAP.underflow,
                   mike11_gate_type: 'underflow',
                   gate_number_of_gates: 1,
                   gate_correction_coefficient: 0.63,
+                  gate_allowed_flow_direction: 'both',
+                  gate_use_velocity_height: false,
+                  gate_maximum_opening_axis: 'vertical',
+                  gate_availability: 'online',
                   gate_opening_rate_limit_m_per_s: 0.001,
                   gate_marker_2_horizontal_offset_m: 0,
                   gate_loss_positive_inflow: 0.5,
@@ -1028,39 +1057,79 @@ export function HydraulicDataPage() {
                   gate_loss_negative_free_overflow: 1,
                   gate_control_definitions: [{ priority: 1, calculation_mode: 'tabulated', control_type: 'H', target_type: 'GateL', scaling_type: 'none', value: 0 }],
                 });
+              } else if (value === 'pump') {
+                structureForm.setFieldsValue({
+                  hydraulic_law_type: 'pump',
+                  pump_transfer_type: 'inline_branch',
+                  pump_orientation: 'positive',
+                  pump_available: true,
+                  pump_unit_count: 1,
+                });
               } else {
-                structureForm.setFieldValue('hydraulic_law_type', value === 'weir' ? 'broad_crested_weir' : value === 'pump' ? 'pump' : 'none');
+                structureForm.setFieldValue('hydraulic_law_type', value === 'weir' ? 'broad_crested_weir' : 'none');
               }
             }} options={['weir', 'culvert', 'bridge', 'gate', 'sluice', 'pump', 'orifice', 'dam', 'storage_link', 'compound'].map((value) => ({ value, label: value === 'gate' ? '水闸' : value === 'pump' ? '泵站' : value.toUpperCase() }))} /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="branch_id" label="河段" rules={[{ required: true }]}><Select options={networks.flatMap((network) => (network.branches ?? []).map((branch) => ({ value: branch.id, label: `${network.code} / ${branch.branch_code}` })))} /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="status" label="模型状态" rules={[{ required: true }]}><Select options={['draft', 'active', 'inactive', 'retired'].map((value) => ({ value, label: value }))} /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="chainage_m" label="桩号（m）" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="x" label="CGCS2000 平面 X（Easting）" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="y" label="CGCS2000 平面 Y（Northing）" rules={[{ required: true }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="crest_elevation_m" label="堰顶/顶高程（m）"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="invert_elevation_m" label="底高程（m）"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="width_m" label="宽度（m）"><InputNumber min={0.001} style={{ width: '100%' }} /></Form.Item></Col>
-            <Col xs={24} md={8}><Form.Item name="height_m" label="高度（m）"><InputNumber min={0.001} style={{ width: '100%' }} /></Form.Item></Col>
-            {watchedStructureType === 'weir' && <Col xs={24} md={8}><Form.Item name="discharge_coefficient" label="堰流量系数"><InputNumber min={0.001} style={{ width: '100%' }} /></Form.Item></Col>}
-            <Col xs={24} md={8}><Form.Item name="operation_rule_type" label="运行规则" rules={[{ required: true }]}><Select options={['fixed', 'time_series', 'water_level_controlled', 'scenario_specific'].map((value) => ({ value, label: value }))} /></Form.Item></Col>
+            <Col xs={24} md={12}><Form.Item name="branch_id" label="所在河段" rules={[{ required: true, message: '请选择河段' }]}><Select showSearch optionFilterProp="label" options={networks.flatMap((network) => (network.branches ?? []).map((branch) => ({ value: branch.id, label: `${network.code} / ${branch.branch_code}` })))} /></Form.Item></Col>
+            <Col xs={24} md={12}><Form.Item name="chainage_m" label="桩号（m）" extra="按河段上游→下游方向定位，并自动生成空间坐标。" rules={[{ required: true, message: '请输入桩号' }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
           </Row>
+          <Collapse
+            size="small"
+            items={[{
+              key: 'general-advanced',
+              label: '通用高级参数（编码、状态与人工坐标）',
+              children: <Row gutter={12}>
+                <Col xs={24} md={8}><Form.Item name="structure_code" label="编码" rules={[{ required: true }]}><Input /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="status" label="模型状态" rules={[{ required: true }]}><Select options={['draft', 'active', 'inactive', 'retired'].map((value) => ({ value, label: value }))} /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="operation_rule_type" label="运行规则" rules={[{ required: true }]}><Select options={['fixed', 'time_series', 'water_level_controlled', 'scenario_specific'].map((value) => ({ value, label: value }))} /></Form.Item></Col>
+                <Col span={24}><Form.Item name="manual_coordinate_override" label="人工坐标纠偏" valuePropName="checked" extra="默认关闭：平台按河段中心线与桩号自动定位。仅有可靠实测点时开启。"><Switch checkedChildren="手工" unCheckedChildren="自动" /></Form.Item></Col>
+                {watchedManualCoordinateOverride && <>
+                  <Col xs={24} md={12}><Form.Item name="x" label="CGCS2000 平面 X（Easting）" rules={[{ required: true, message: '请输入 X 坐标' }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+                  <Col xs={24} md={12}><Form.Item name="y" label="CGCS2000 平面 Y（Northing）" rules={[{ required: true, message: '请输入 Y 坐标' }]}><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+                </>}
+                {watchedStructureType !== 'gate' && <>
+                  <Col xs={24} md={6}><Form.Item name="crest_elevation_m" label="顶高程（m）"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+                  <Col xs={24} md={6}><Form.Item name="invert_elevation_m" label="底高程（m）"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+                  <Col xs={24} md={6}><Form.Item name="width_m" label="宽度（m）"><InputNumber min={0.001} style={{ width: '100%' }} /></Form.Item></Col>
+                  <Col xs={24} md={6}><Form.Item name="height_m" label="高度（m）"><InputNumber min={0.001} style={{ width: '100%' }} /></Form.Item></Col>
+                </>}
+                {watchedStructureType === 'weir' && <Col xs={24} md={8}><Form.Item name="discharge_coefficient" label="堰流量系数"><InputNumber min={0.001} style={{ width: '100%' }} /></Form.Item></Col>}
+              </Row>,
+            }]}
+            style={{ marginBottom: 12 }}
+          />
           {watchedStructureType === 'gate' && <>
             <Alert
               type="info"
               showIcon
-              message="MIKE11 风格水闸资料卡"
-              description="按 Location、Attributes、Head Loss Factor、Control Definitions 和 Graphic 分组保存。MIKE11 字段进入统一闸门数据库；只有能力矩阵已验证的水力规律才会进入具体求解器，未验证类型保持 fail closed。"
+              message="水闸核心参数"
+              description="默认值可直接保存为草稿；投入计算前再补齐实际开度、过流能力和控制资料。"
             />
-            <Card size="small" title="Attributes · 闸型与计算属性" style={{ marginTop: 12 }}>
+            <Card size="small" title="必填与常用参数" style={{ marginTop: 12 }}>
               <Row gutter={12}>
                 <Col xs={24} md={8}><Form.Item name="mike11_gate_type" label="Gate Type" rules={[{ required: true, message: '请选择 MIKE11 闸型' }]}><Select onChange={(value: Mike11GateConfiguration['gate_type']) => structureForm.setFieldValue('hydraulic_law_type', MIKE11_GATE_LAW_MAP[value])} options={MIKE11_GATE_TYPE_OPTIONS} /></Form.Item></Col>
-                <Col xs={24} md={8}><Form.Item name="hydraulic_law_type" label="平台水力规律（自动映射）" rules={[{ required: true }]}><Input disabled /></Form.Item></Col>
                 <Col xs={24} md={8}><Form.Item name="gate_number_of_gates" label="No. gates" rules={[{ required: true }]}><InputNumber min={1} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
                 <Col xs={24} md={8}><Form.Item name="gate_correction_coefficient" label={watchedMike11GateType === 'underflow' ? 'Underflow CC（必填）' : '流量/修正系数'} rules={[{ required: watchedMike11GateType === 'underflow', message: 'Underflow 闸型必须填写流量系数' }]}><InputNumber min={0.000001} style={{ width: '100%' }} /></Form.Item></Col>
-                <Col xs={24} md={8}><Form.Item name="gate_max_flow_m3s" label="最大过闸流量（m³/s，平台计算必需）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
-                <Col xs={24} md={8}><Form.Item name="gate_allowed_flow_direction" label="允许过流方向（平台计算必需）"><Select options={[{ value: 'positive', label: '顺河向' }, { value: 'negative', label: '逆河向' }, { value: 'both', label: '双向' }]} /></Form.Item></Col>
-                <Col xs={24} md={8}><Form.Item name="gate_maximum_opening_axis" label="开度轴向（平台计算必需）"><Select options={[{ value: 'vertical', label: '垂直开度' }, { value: 'horizontal', label: '水平开度' }]} /></Form.Item></Col>
-                <Col xs={24} md={8}><Form.Item name="gate_use_velocity_height" label="是否计入流速水头"><Select options={[{ value: true, label: '计入' }, { value: false, label: '不计入' }]} /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="invert_elevation_m" label="闸底高程（m）"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="width_m" label="单孔净宽（m）"><InputNumber min={0.001} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="gate_maximum_opening_m" label="最大开度（m）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+              </Row>
+            </Card>
+
+            <Collapse
+              style={{ marginTop: 12 }}
+              items={[{
+                key: 'gate-advanced',
+                label: '高级参数（过流能力、损失系数与控制定义）',
+                children: <>
+            <Card size="small" title="计算与运行属性">
+              <Row gutter={12}>
+                <Col xs={24} md={8}><Form.Item name="hydraulic_law_type" label="平台水力规律（自动映射）" rules={[{ required: true }]}><Input disabled /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="gate_max_flow_m3s" label="最大过闸流量（m³/s）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="gate_allowed_flow_direction" label="允许过流方向"><Select options={[{ value: 'positive', label: '顺河向' }, { value: 'negative', label: '逆河向' }, { value: 'both', label: '双向' }]} /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="gate_maximum_opening_axis" label="开度轴向"><Select options={[{ value: 'vertical', label: '垂直开度' }, { value: 'horizontal', label: '水平开度' }]} /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="gate_use_velocity_height" label="流速水头"><Select options={[{ value: true, label: '计入' }, { value: false, label: '不计入' }]} /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="crest_elevation_m" label="闸顶高程（m）"><InputNumber style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={8}><Form.Item name="height_m" label="结构高度（m）"><InputNumber min={0.001} style={{ width: '100%' }} /></Form.Item></Col>
               </Row>
             </Card>
 
@@ -1080,7 +1149,6 @@ export function HydraulicDataPage() {
               <Row gutter={12}>
                 <Col xs={24} md={6}><Form.Item name="gate_availability" label="设备可用状态（平台计算必需）"><Select options={['online', 'offline', 'maintenance', 'fault'].map((value) => ({ value, label: value }))} /></Form.Item></Col>
                 <Col xs={24} md={6}><Form.Item name="gate_minimum_opening_m" label="最小开度（m）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
-                <Col xs={24} md={6}><Form.Item name="gate_maximum_opening_m" label="Max Value / 最大开度（m）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
                 <Col xs={24} md={6}><Form.Item name="gate_initial_value_m" label="Initial Value / 初始开度（m）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
                 <Col xs={24} md={6}><Form.Item name="gate_opening_rate_limit_m_per_s" label="Max speed（m/s）" rules={[{ required: true }]}><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
                 <Col xs={24} md={6}><Form.Item name="gate_minimum_hold_seconds" label="最短保持时间（s）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
@@ -1105,31 +1173,47 @@ export function HydraulicDataPage() {
                 </>}
               </Form.List>
             </Card>
+                </>,
+              }]}
+            />
           </>}
           {watchedStructureType === 'pump' && <>
-            <Alert type="info" showIcon message="泵站水力要素" description="以下字段同步服务于统一泵站、泵站数据库和后续 D-Flow 水动力计算。扬程—折减曲线与效率曲线使用 JSON 对象，保存前会验证 JSON 格式。" />
-            <Row gutter={12} style={{ marginTop: 12 }}>
-              <Col xs={24} md={8}><Form.Item name="hydraulic_law_type" label="泵站水力规律" rules={[{ required: true }]}><Input disabled /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="pump_transfer_type" label="输水方式（计算必需）"><Select options={[{ value: 'inline_branch', label: '同河段串联泵' }]} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="pump_orientation" label="扬水方向（计算必需）"><Select options={[{ value: 'positive', label: '顺河向' }, { value: 'negative', label: '逆河向' }]} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="pump_intake_id" label="取水端标识（计算必需）"><Input /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="pump_outlet_id" label="出水端标识（计算必需）"><Input /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="pump_available" label="泵站可用（计算必需）"><Select options={[{ value: true, label: '可用' }, { value: false, label: '不可用' }]} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="pump_aggregate_capacity_m3s" label="总设计流量（m³/s，计算必需）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="pump_design_head_m" label="设计扬程（m，泵站库必需）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="pump_power_kw" label="额定功率（kW，泵站库必需）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
-              <Col span={24}><Form.Item name="pump_head_reduction_curve_json" label="扬程—流量折减曲线（JSON，计算必需）" extra={'示例：{"provenance":"SYNTHETIC_ASSUMPTION","points":[{"head_m":0,"reduction_factor":1},{"head_m":6,"reduction_factor":0.65}]}'}><Input.TextArea rows={3} /></Form.Item></Col>
-              <Col span={24}><Form.Item name="pump_efficiency_curve_json" label="效率曲线（JSON，泵站库必需）" extra={'示例：{"points":[[0,0.6],[1,0.85]]}'}><Input.TextArea rows={3} /></Form.Item></Col>
-            </Row>
-            <Title level={5}>泵站运行约束</Title>
-            <Row gutter={12}>
-              <Col xs={24} md={8}><Form.Item name="pump_unit_count" label="机组数量"><InputNumber min={1} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="pump_minimum_running_units" label="最少运行机组"><InputNumber min={0} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="pump_maximum_running_units" label="最多运行机组"><InputNumber min={0} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="pump_minimum_run_seconds" label="最短运行时间（s）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="pump_minimum_stop_seconds" label="最短停机时间（s）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
-              <Col xs={24} md={8}><Form.Item name="pump_maximum_starts_per_replay" label="最大启动次数"><InputNumber min={0} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
-            </Row>
+            <Alert type="info" showIcon message="泵站核心参数" description="先录入设计工况即可保存草稿；曲线、端点标识和启停约束在高级参数中补充。" />
+            <Card size="small" title="设计工况" style={{ marginTop: 12 }}>
+              <Row gutter={12}>
+                <Col xs={24} md={6}><Form.Item name="pump_aggregate_capacity_m3s" label="总设计流量（m³/s）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={6}><Form.Item name="pump_design_head_m" label="设计扬程（m）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={6}><Form.Item name="pump_power_kw" label="额定功率（kW）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                <Col xs={24} md={6}><Form.Item name="pump_orientation" label="扬水方向"><Select options={[{ value: 'positive', label: '顺河向' }, { value: 'negative', label: '逆河向' }]} /></Form.Item></Col>
+              </Row>
+            </Card>
+            <Collapse
+              style={{ marginTop: 12 }}
+              items={[{
+                key: 'pump-advanced',
+                label: '高级参数（性能曲线、端点与启停约束）',
+                children: <>
+                  <Row gutter={12}>
+                    <Col xs={24} md={8}><Form.Item name="hydraulic_law_type" label="泵站水力规律" rules={[{ required: true }]}><Input disabled /></Form.Item></Col>
+                    <Col xs={24} md={8}><Form.Item name="pump_transfer_type" label="输水方式"><Select options={[{ value: 'inline_branch', label: '同河段串联泵' }]} /></Form.Item></Col>
+                    <Col xs={24} md={8}><Form.Item name="pump_available" label="泵站可用"><Select options={[{ value: true, label: '可用' }, { value: false, label: '不可用' }]} /></Form.Item></Col>
+                    <Col xs={24} md={12}><Form.Item name="pump_intake_id" label="取水端标识"><Input /></Form.Item></Col>
+                    <Col xs={24} md={12}><Form.Item name="pump_outlet_id" label="出水端标识"><Input /></Form.Item></Col>
+                    <Col span={24}><Form.Item name="pump_head_reduction_curve_json" label="扬程—流量折减曲线（JSON）" extra={'示例：{"provenance":"SYNTHETIC_ASSUMPTION","points":[{"head_m":0,"reduction_factor":1},{"head_m":6,"reduction_factor":0.65}]}'}><Input.TextArea rows={3} /></Form.Item></Col>
+                    <Col span={24}><Form.Item name="pump_efficiency_curve_json" label="效率曲线（JSON）" extra={'示例：{"points":[[0,0.6],[1,0.85]]}'}><Input.TextArea rows={3} /></Form.Item></Col>
+                  </Row>
+                  <Title level={5}>泵站运行约束</Title>
+                  <Row gutter={12}>
+                    <Col xs={24} md={8}><Form.Item name="pump_unit_count" label="机组数量"><InputNumber min={1} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
+                    <Col xs={24} md={8}><Form.Item name="pump_minimum_running_units" label="最少运行机组"><InputNumber min={0} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
+                    <Col xs={24} md={8}><Form.Item name="pump_maximum_running_units" label="最多运行机组"><InputNumber min={0} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
+                    <Col xs={24} md={8}><Form.Item name="pump_minimum_run_seconds" label="最短运行时间（s）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                    <Col xs={24} md={8}><Form.Item name="pump_minimum_stop_seconds" label="最短停机时间（s）"><InputNumber min={0} style={{ width: '100%' }} /></Form.Item></Col>
+                    <Col xs={24} md={8}><Form.Item name="pump_maximum_starts_per_replay" label="最大启动次数"><InputNumber min={0} precision={0} style={{ width: '100%' }} /></Form.Item></Col>
+                  </Row>
+                </>,
+              }]}
+            />
           </>}
           {watchedStructureType !== 'gate' && watchedStructureType !== 'pump' && <Form.Item name="hydraulic_law_type" label="水力规律" rules={[{ required: true }]}><Input /></Form.Item>}
         </Form>

@@ -836,8 +836,8 @@ class HydraulicStructureCreate(BaseModel):
     structure_name: str = Field(min_length=1, max_length=128)
     structure_type: HydraulicStructureType
     chainage_m: float = Field(ge=0)
-    x: float
-    y: float
+    x: float | None = None
+    y: float | None = None
     crest_elevation_m: float | None = None
     invert_elevation_m: float | None = None
     width_m: float | None = Field(default=None, gt=0)
@@ -852,8 +852,10 @@ class HydraulicStructureCreate(BaseModel):
 
     @model_validator(mode="after")
     def validate_mike11_gate_configuration(self) -> "HydraulicStructureCreate":
-        """Only Gate records may carry the MIKE11 gate-specific contract."""
+        """Keep optional manual coordinates paired and MIKE11 data Gate-only."""
 
+        if (self.x is None) != (self.y is None):
+            raise ValueError("x and y must be supplied together")
         if self.mike11_gate_configuration is not None and self.structure_type != "gate":
             raise ValueError("mike11_gate_configuration is only valid for structure_type=gate")
         return self

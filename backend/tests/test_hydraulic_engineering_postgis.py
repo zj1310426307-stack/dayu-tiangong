@@ -127,11 +127,13 @@ def test_structure_crud_location_capability_and_network_graph_round_trip() -> No
         "metadata": {"test": "engineering-03"},
     }
     try:
-        created = client.post("/api/v1/hydraulic/structures", json=payload)
+        automatic_location_payload = {key: value for key, value in payload.items() if key not in {"x", "y"}}
+        created = client.post("/api/v1/hydraulic/structures", json=automatic_location_payload)
         assert created.status_code == 201, created.text
         structure = created.json()
         structure_id = structure["id"]
         assert structure["solver_status"] == "VERIFIED_NATIVE"
+        assert structure["location_geometry"]["coordinates"] == pytest.approx([120.005, 30.0])
 
         invalid = client.post(
             "/api/v1/hydraulic/structures",
@@ -147,10 +149,13 @@ def test_structure_crud_location_capability_and_network_graph_round_trip() -> No
 
         updated = client.put(
             f"/api/v1/hydraulic/structures/{structure_id}",
-            json={"width_m": 13.0},
+            json={"width_m": 13.0, "chainage_m": 250.0},
         )
         assert updated.status_code == 200
         assert updated.json()["width_m"] == 13.0
+        assert updated.json()["location_geometry"]["coordinates"] == pytest.approx(
+            [120.0025, 30.0]
+        )
 
         scenario = client.put(
             f"/api/v1/hydraulic/structures/{structure_id}/scenarios/{case_id}",

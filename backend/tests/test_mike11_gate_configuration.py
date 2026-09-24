@@ -9,7 +9,7 @@ from app.hydraulic.engineering import (
     _validate_mike11_gate_authority,
 )
 from app.hydraulic.models import HydraulicStructure
-from app.hydraulic.schemas import Mike11GateConfiguration
+from app.hydraulic.schemas import HydraulicStructureCreate, Mike11GateConfiguration
 
 
 def _underflow_configuration() -> Mike11GateConfiguration:
@@ -65,6 +65,23 @@ def test_mike11_underflow_requires_coefficient_and_unique_priorities() -> None:
                 {"priority": 1},
             ],
         )
+
+
+def test_structure_create_allows_derived_location_but_rejects_partial_xy() -> None:
+    """Branch plus chainage may derive geometry, while manual XY remains an atomic pair."""
+
+    minimal = {
+        "dataset_version_id": 1,
+        "network_id": 2,
+        "branch_id": 3,
+        "structure_code": "G-01",
+        "structure_name": "Test gate",
+        "structure_type": "gate",
+        "chainage_m": 10.0,
+    }
+    assert HydraulicStructureCreate(**minimal).x is None
+    with pytest.raises(ValidationError, match="x and y must be supplied together"):
+        HydraulicStructureCreate(**minimal, x=112.0)
 
 
 def test_mike11_reserved_payload_round_trips_through_typed_contract() -> None:

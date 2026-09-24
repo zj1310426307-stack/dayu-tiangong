@@ -1,6 +1,6 @@
 # 统一水工建筑物模型
 
-更新日期：2026-09-14
+更新日期：2026-09-18
 适用范围：HYDRO-1D-ENGINEERING-03、MIKE11 水闸数据库优化
 
 ## Domain 与持久化
@@ -17,7 +17,7 @@
 
 数据库复合外键同时约束 `branch_id + network_id + dataset_version_id`，避免建筑物引用同版本的另一河网。`hydraulic.structure_scenario` 只存工况覆盖参数，并同时外键绑定 Structure/Case 与 Dataset Version；不同工况不复制整张河网或建筑物几何。
 
-结构物写入复用 XY→Branch→Chainage 映射服务：在 Network 的米制 engineering CRS 中计算到 Branch 的距离和线定位桩号，默认空间吸附与桩号冲突容差均为 5 m。超出河段、漂浮位置或 XY/桩号矛盾返回 `STRUCTURE_LOCATION_INVALID`。
+结构物默认使用 `Branch + chainage_m` 沿权威中心线线性插值生成 CGCS2000 Point，因此常规录入不再要求重复填写 X/Y。存在可靠实测点时可成对提交 X/Y，后端复用 XY→Branch→Chainage 映射服务，在 Network 的米制 engineering CRS 中校核距离和线定位桩号；默认空间吸附与桩号冲突容差均为 5 m。超出河段、漂浮位置、单轴坐标或 XY/桩号矛盾返回 `STRUCTURE_LOCATION_INVALID`。修改河段或桩号而未提交人工坐标时，Point 会从中心线重新生成。
 
 ## API、前端与 GIS
 
@@ -28,7 +28,7 @@
 | 工况覆盖 | `PUT /api/v1/hydraulic/structures/{id}/scenarios/{case_id}` |
 | 河网关系 | `GET /api/v1/hydraulic/networks/{network_id}/graph` |
 
-Hydraulic Data 页面在现有管理界面中显示河网关系、建筑物表格和能力状态，并提供创建、编辑、删除。Bridge/Culvert/Gate/Pump 等未验证或不支持对象仍可作为工程资料保存，但运行按钮前显示 MASCARET 的明确状态与原因。GIS 使用权威 Point，不从桩号反猜一套第二几何。
+Hydraulic Data 页面在现有管理界面中显示河网关系、建筑物表格和能力状态，并提供创建、编辑、删除。创建弹窗采用渐进式录入：默认仅显示名称、类型、河段、桩号和对应闸/泵核心工况；编码、草稿状态、运行规则、人工坐标、损失系数、性能曲线和控制定义放入高级参数。编码和安全默认值由页面生成，用户仍可展开修改。Bridge/Culvert/Gate/Pump 等未验证或不支持对象仍可作为工程资料保存，但运行按钮前显示 MASCARET 的明确状态与原因。GIS 使用保存后的权威 Point，不另建第二套几何。
 
 ### MIKE11 风格水闸资料卡
 

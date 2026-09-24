@@ -2016,8 +2016,8 @@ export interface HydraulicStructureCreate {
   "structure_name": string;
   "structure_type": "weir" | "culvert" | "bridge" | "gate" | "sluice" | "pump" | "orifice" | "dam" | "storage_link" | "compound";
   "chainage_m": number;
-  "x": number;
-  "y": number;
+  "x"?: number | null;
+  "y"?: number | null;
   "crest_elevation_m"?: number | null;
   "invert_elevation_m"?: number | null;
   "width_m"?: number | null;

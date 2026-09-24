@@ -432,6 +432,43 @@ def _validated_location(
     return geometry
 
 
+def _location_at_chainage(branch: HydraulicBranch, chainage_m: float) -> Any:
+    """Interpolate a structure point on the authoritative Branch centerline."""
+
+    if not branch.start_chainage <= chainage_m <= branch.end_chainage:
+        raise ValueError("STRUCTURE_LOCATION_INVALID: chainage lies outside Branch")
+    chainage_span = branch.end_chainage - branch.start_chainage
+    if chainage_span <= 0:
+        raise ValueError("STRUCTURE_LOCATION_INVALID: Branch chainage range is invalid")
+    fraction = (chainage_m - branch.start_chainage) / chainage_span
+    return func.ST_LineInterpolatePoint(branch.geometry, min(1.0, max(0.0, fraction)))
+
+
+def _resolved_location(
+    session: Session,
+    *,
+    branch: HydraulicBranch,
+    network: HydraulicNetwork,
+    chainage_m: float,
+    x: float | None,
+    y: float | None,
+) -> Any:
+    """Use paired survey coordinates when supplied, otherwise derive from chainage."""
+
+    if x is None and y is None:
+        return _location_at_chainage(branch, chainage_m)
+    if x is None or y is None:
+        raise ValueError("STRUCTURE_LOCATION_INVALID: x and y must be supplied together")
+    return _validated_location(
+        session,
+        branch=branch,
+        network=network,
+        chainage_m=chainage_m,
+        x=x,
+        y=y,
+    )
+
+
 def create_structure(
     session: Session, payload: HydraulicStructureCreate
 ) -> HydraulicStructureRecord:
@@ -444,7 +481,7 @@ def create_structure(
         network_id=payload.network_id,
         dataset_version_id=payload.dataset_version_id,
     )
-    geometry = _validated_location(
+    geometry = _resolved_location(
         session,
         branch=branch,
         network=network,
@@ -527,7 +564,7 @@ def update_structure(
     y = updates.pop("y", None)
     chainage = float(updates.get("chainage_m", value.chainage_m))
     if x is not None and y is not None:
-        value.location = _validated_location(
+        value.location = _resolved_location(
             session,
             branch=branch,
             network=network,
@@ -536,13 +573,7 @@ def update_structure(
             y=float(y),
         )
     elif "chainage_m" in updates or "branch_id" in updates:
-        computed, distance_m = locate_geometry_on_branch(session, branch, network, value.location)
-        if distance_m > STRUCTURE_SNAP_TOLERANCE_M or not isclose(
-            computed, chainage, rel_tol=0.0, abs_tol=STRUCTURE_CHAINAGE_TOLERANCE_M
-        ):
-            raise ValueError(
-                "STRUCTURE_LOCATION_INVALID: updated branch/chainage conflicts with XY"
-            )
+        value.location = _location_at_chainage(branch, chainage)
     field_map = {
         "metadata": "metadata_json",
     }
