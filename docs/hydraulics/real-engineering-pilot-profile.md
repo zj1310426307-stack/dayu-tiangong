@@ -1,6 +1,6 @@
 # 真实工程试点资料画像
 
-状态：`DATA_REQUIRED`。本文是资料清单和验收门槛，不把合成 Gate/Pump 验收表述为真实工程验证。
+状态：`DATA_REQUIRED`。本文是资料清单和验收门槛，不把合成 Gate/Pump 验收表述为真实工程验证。可执行字段、状态枚举、阻断规则和空白机器可读模板以 [pilot-data-readiness.md](pilot-data-readiness.md) 为准。
 
 ## 最小资料包
 

@@ -26,9 +26,9 @@ Project/Data → Preview/Issues/Import → QA → Model/Scenario
 
 ## 引擎路由与试点边界
 
-正式 Production Run 只接受冻结为 `mascaret + production` 的任务。D-Flow FM 的 Gate/Pump 路径必须先在调度模块完成结构、动作、规则、观测绑定、校验与冻结；它被写为 `d-flow-fm + synthetic`（未来受控试点可为 `pilot`），而不是从 Standard 页面切换求解器。两类结果共享统一结果合同和成果展示，但不共享生产资格。
+正式 Production Run 只接受冻结为 `mascaret + production` 的任务。D-Flow FM 的 Gate/Pump 路径必须先在调度模块完成结构、动作、规则、观测绑定、校验与冻结；它被写为 `d-flow-fm + synthetic`，而不是从 Standard 页面切换求解器。`pilot` 是已登记的准入合同，不是当前可执行入口：`pilot_contract_supported=true`、`pilot_execution_enabled=false`，直到 REAL-02 使用完整真实资料、独立门禁和专用实现启用。两类结果共享统一结果合同和成果展示，但不共享生产资格。
 
-工程图谱克隆、资料追溯和冻结规则见 [engineering-graph-clone-plan.md](engineering-graph-clone-plan.md)；真实试点进入条件见 [real-engineering-pilot-profile.md](real-engineering-pilot-profile.md)。
+工程图谱克隆、资料追溯和冻结规则见 [engineering-graph-clone-plan.md](engineering-graph-clone-plan.md)；真实试点进入条件见 [pilot-data-readiness.md](pilot-data-readiness.md)。
 
 ## 结果产品
 

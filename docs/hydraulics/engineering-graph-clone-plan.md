@@ -7,13 +7,14 @@
 ## 克隆顺序
 
 ```text
-Dataset Version（已批准/发布）
-  → River Network / Node / Branch / Chainage / Cross Section
-  → Boundary / parameter / Simulation Case
-  → Unified Structure（Gate/Pump）与已冻结 Dispatch Plan
-  → canonical model input + source hashes
-  → SimulationTask（engine_id + execution_class + provenance）
-  → isolated runtime workspace + unified result
+Raw Engineering Data
+  → Import / Manual Entry → QA → Dataset Version
+  → River Network / Node / Branch / Cross Section / Boundary / Structure / Dispatch Plan
+  → Approved or Frozen Engineering Graph
+  → Canonical Hydraulic Model + source hashes
+  → Capability Resolution
+  → SimulationTask (object IDs, versions, hashes, engine_id, execution_class, capability evidence)
+  → isolated runtime workspace → Solver → Unified Result
 ```
 
 每一步只读取权威对象，并把对象 ID、版本、内容 hash 和映射规则写入不可变 snapshot。运行时绝不回读可编辑表；修改资料必须建立或选择新的 Dataset Version 后重新冻结。
@@ -21,7 +22,7 @@ Dataset Version（已批准/发布）
 ## 引擎分流
 
 - 无活动 Gate/Pump 的 Standard 1D：`mascaret/production`，先通过 MASCARET 能力矩阵。
-- Gate/Pump 受控子集：仅从冻结调度计划创建 `d-flow-fm/synthetic` 或将来显式授权的 `pilot`；其能力矩阵、控制合同、runtime provenance 和结果 schema 全部随任务冻结。
+- Gate/Pump 受控子集：仅从冻结调度计划创建 `d-flow-fm/synthetic`；`pilot` 目前只是资料准入合同，执行路径在 REAL-02 前禁用。其能力矩阵、控制合同、runtime provenance 和结果 schema 全部随任务冻结。
 - 任何未登记结构、未知 engine、历史无法确证路线或跨引擎回退：拒绝执行并保留原因。
 
 ## 冻结核验点

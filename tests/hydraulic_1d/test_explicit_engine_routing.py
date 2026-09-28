@@ -10,6 +10,7 @@ from model.hydraulic_1d.errors import Hydraulic1DValidationError
 from model.hydraulic_1d.registry import (
     DEFAULT_HYDRAULIC_1D_ENGINE_ID,
     DFLOW_FM_ENGINE_ID,
+    engine_registration,
     engine_catalog_payload,
     task_engine_provenance_for,
 )
@@ -20,7 +21,7 @@ from model.hydraulic_1d.routing import (
 from tests.hydraulic_1d.helpers import model_fixture
 
 
-def _model_with_structure(kind: str):
+def _model_with_structure(kind: str, *, operation_rule_type: str = "fixed"):
     """Attach one active Structure so routing derives its required capability."""
 
     source = model_fixture()
@@ -33,6 +34,7 @@ def _model_with_structure(kind: str):
                     branch_id="branch-1",
                     kind=kind,
                     chainage_m=500.0,
+                    operation_rule_type=operation_rule_type,
                     status="active",
                 ),
             )
@@ -63,10 +65,15 @@ def test_catalog_exposes_evidence_and_allowed_execution_classes() -> None:
     ]
     assert rows[DFLOW_FM_ENGINE_ID]["evidence_class"] == "SYNTHETIC_NUMERICAL_ONLY"
     assert rows[DFLOW_FM_ENGINE_ID]["production_eligible"] is False
+    assert rows[DFLOW_FM_ENGINE_ID]["pilot_contract_supported"] is True
+    assert rows[DFLOW_FM_ENGINE_ID]["pilot_execution_enabled"] is False
     assert rows[DFLOW_FM_ENGINE_ID]["allowed_execution_classes"] == [
         "pilot",
         "synthetic",
     ]
+    frozen_payload = engine_registration(DFLOW_FM_ENGINE_ID).to_dict()
+    assert "pilot_contract_supported" not in frozen_payload
+    assert "pilot_execution_enabled" not in frozen_payload
 
 
 def test_capability_routing_is_explicit_and_fail_closed() -> None:
@@ -91,7 +98,39 @@ def test_capability_routing_is_explicit_and_fail_closed() -> None:
         gate_model,
         engine_id=DFLOW_FM_ENGINE_ID,
         execution_class="synthetic",
-    ) == ("GATE", "UNSTEADY_1D")
+    ) == ("GATE", "GATE_FIXED", "UNSTEADY_1D")
+
+    assert validate_required_capabilities(
+        _model_with_structure("gate", operation_rule_type="time_series"),
+        engine_id=DFLOW_FM_ENGINE_ID,
+        execution_class="synthetic",
+    ) == ("GATE", "GATE_SCHEDULE", "UNSTEADY_1D")
+
+    assert validate_required_capabilities(
+        _model_with_structure("gate", operation_rule_type="water_level_controlled"),
+        engine_id=DFLOW_FM_ENGINE_ID,
+        execution_class="synthetic",
+    ) == ("GATE", "GATE_RULE", "UNSTEADY_1D")
+
+    assert validate_required_capabilities(
+        _model_with_structure("pump", operation_rule_type="fixed"),
+        engine_id=DFLOW_FM_ENGINE_ID,
+        execution_class="synthetic",
+    ) == ("PUMP", "PUMP_FIXED", "UNSTEADY_1D")
+
+    assert validate_required_capabilities(
+        _model_with_structure("pump", operation_rule_type="time_series"),
+        engine_id=DFLOW_FM_ENGINE_ID,
+        execution_class="synthetic",
+    ) == ("PUMP", "PUMP_SCHEDULE", "UNSTEADY_1D")
+
+    with pytest.raises(Hydraulic1DValidationError) as unverified_pump_rule:
+        validate_required_capabilities(
+            _model_with_structure("pump", operation_rule_type="water_level_controlled"),
+            engine_id=DFLOW_FM_ENGINE_ID,
+            execution_class="synthetic",
+        )
+    assert unverified_pump_rule.value.code == "HYDRAULIC_ENGINE_CAPABILITY_UNVERIFIED"
 
     with pytest.raises(Hydraulic1DValidationError) as dflow_production:
         validate_required_capabilities(

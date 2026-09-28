@@ -363,9 +363,14 @@ export function HydraulicConfigPage() {
                 const classes = Array.isArray(engine.allowed_execution_classes)
                   ? engine.allowed_execution_classes.join(' / ')
                   : '—';
+                const pilotBoundary = engine.pilot_contract_supported === true
+                  ? engine.pilot_execution_enabled === true
+                    ? '试点执行已启用'
+                    : '试点合同已定义，执行延后'
+                  : '';
                 return (
                   <Tag color={production ? 'success' : 'warning'} key={engineId}>
-                    {engineId} · {production ? '生产可用' : '受控试点'} · {classes}
+                    {engineId} · {production ? '生产可用' : '受控试点'} · {classes}{pilotBoundary && ` · ${pilotBoundary}`}
                   </Tag>
                 );
               })}

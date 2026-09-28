@@ -52,11 +52,13 @@ class HydraulicEngineRegistration:
     production_eligible: bool
     evidence_class: str
     allowed_execution_classes: tuple[str, ...]
+    pilot_contract_supported: bool
+    pilot_execution_enabled: bool
     controlled_input_schema_version: str | None = None
     controlled_result_schema_version: str | None = None
 
     def to_dict(self) -> dict[str, object]:
-        """Return a deterministic catalog row with explicit license boundaries."""
+        """Return the frozen registration payload used by task provenance hashes."""
 
         return {
             "engine_id": self.engine_id,
@@ -86,6 +88,9 @@ class HydraulicEngineRegistration:
             **self.to_dict(),
             "evidence_class": self.evidence_class,
             "allowed_execution_classes": list(self.allowed_execution_classes),
+            # Catalog-only readiness flags must not rewrite historical task hashes.
+            "pilot_contract_supported": self.pilot_contract_supported,
+            "pilot_execution_enabled": self.pilot_execution_enabled,
         }
 
 
@@ -106,6 +111,8 @@ _ENGINE_REGISTRATIONS: Final = (
         production_eligible=True,
         evidence_class="VERIFIED_NATIVE",
         allowed_execution_classes=("production", "pilot", "synthetic"),
+        pilot_contract_supported=False,
+        pilot_execution_enabled=False,
     ),
     HydraulicEngineRegistration(
         engine_id=DFLOW_FM_ENGINE_ID,
@@ -123,6 +130,8 @@ _ENGINE_REGISTRATIONS: Final = (
         production_eligible=False,
         evidence_class="SYNTHETIC_NUMERICAL_ONLY",
         allowed_execution_classes=("pilot", "synthetic"),
+        pilot_contract_supported=True,
+        pilot_execution_enabled=False,
         controlled_input_schema_version=CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA,
         controlled_result_schema_version=CONTROLLED_HYDRAULIC_RESULT_SCHEMA,
     ),
