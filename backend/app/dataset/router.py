@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.common.http import commit_or_conflict, not_found
 from app.database.session import get_database_session
 from app.dataset import service
+from app.dataset.real01 import build_real01_readiness
 from app.dataset.schemas import (
     BoundaryRatingCurveGenerateRequest,
     BoundaryRatingCurveGenerateResponse,
@@ -22,6 +23,8 @@ from app.dataset.schemas import (
     ModelParameterCreate,
     ModelParameterRecord,
     ModelParameterUpdate,
+    Real01FreezeRequest,
+    Real01ReadinessRecord,
     SimulationCaseCreate,
     SimulationCaseRecord,
     SimulationCaseUpdate,
@@ -48,6 +51,43 @@ def read_dataset_versions(session: SessionDependency) -> list[DatasetVersionReco
     """返回全部版本。"""
 
     return service.list_dataset_versions(session)
+
+
+@router.get(
+    "/dataset-versions/{version_id}/real-01-readiness",
+    response_model=Real01ReadinessRecord,
+    summary="查询真实工程资料准入与冻结就绪度",
+)
+def read_real01_readiness(
+    version_id: int, session: SessionDependency
+) -> Real01ReadinessRecord:
+    """Report REAL-01 evidence gaps without changing the Dataset Version state."""
+
+    entity = session.get(DatasetVersion, version_id)
+    if entity is None:
+        raise not_found("数据集版本")
+    return build_real01_readiness(session, entity)
+
+
+@router.post(
+    "/dataset-versions/{version_id}/freeze-real-01",
+    response_model=DatasetVersionRecord,
+    summary="冻结已通过 QA 的真实工程图",
+)
+def freeze_dataset_version_for_real01(
+    version_id: int,
+    payload: Real01FreezeRequest,
+    session: SessionDependency,
+) -> DatasetVersionRecord:
+    """Persist the full graph hash without creating a simulation task or result."""
+
+    entity = session.get(DatasetVersion, version_id)
+    if entity is None:
+        raise not_found("数据集版本")
+    return _commit_value_error(
+        session,
+        lambda: service.freeze_dataset_version_for_real01(session, entity, payload),
+    )
 
 
 @router.post("/dataset-versions", response_model=DatasetVersionRecord, status_code=201, summary="新增数据集版本")

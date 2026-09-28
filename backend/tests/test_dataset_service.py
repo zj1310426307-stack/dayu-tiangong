@@ -6,11 +6,16 @@ from typing import Any, cast
 
 from sqlalchemy.orm import Session
 
-from app.dataset.schemas import DatasetVersionApprovalRequest, DatasetVersionCloneRequest
+from app.dataset.schemas import (
+    DatasetVersionApprovalRequest,
+    DatasetVersionCloneRequest,
+    Real01FreezeRequest,
+)
 from app.dataset.service import (
     _case_record,
     approve_dataset_version_for_calculation,
     clone_dataset_version,
+    freeze_dataset_version_for_real01,
 )
 from app.gis.models import DatasetVersion
 
@@ -159,6 +164,10 @@ def test_approve_dataset_validates_every_case_before_freezing(monkeypatch: Any) 
         "app.dataset.service.dataset_core_content_hash",
         lambda _session, _version_id: "a" * 64,
     )
+    monkeypatch.setattr(
+        "app.dataset.service.engineering_graph_content_hash",
+        lambda _session, _version_id: "e" * 64,
+    )
 
     record = approve_dataset_version_for_calculation(
         cast(Session, _CaseSession()),
@@ -172,6 +181,7 @@ def test_approve_dataset_validates_every_case_before_freezing(monkeypatch: Any) 
     assert mapped_cases == [(47, True), (49, True)]
     assert record.status == "approved"
     assert record.content_hash == "a" * 64
+    assert record.engineering_content_hash == "e" * 64
     assert record.reviewed_by == "web-operator"
     assert record.approved_by == "web-operator"
 
@@ -208,6 +218,10 @@ def test_approve_dataset_allows_validation_warnings_for_uncalibrated_workflow(mo
         "app.dataset.service.dataset_core_content_hash",
         lambda _session, _version_id: "b" * 64,
     )
+    monkeypatch.setattr(
+        "app.dataset.service.engineering_graph_content_hash",
+        lambda _session, _version_id: "f" * 64,
+    )
 
     record = approve_dataset_version_for_calculation(
         cast(Session, _CaseSession()),
@@ -217,3 +231,42 @@ def test_approve_dataset_allows_validation_warnings_for_uncalibrated_workflow(mo
 
     assert record.status == "approved"
     assert record.content_hash == "b" * 64
+
+
+def test_real01_freeze_requires_readiness_then_persists_full_graph_hash(
+    monkeypatch: Any,
+) -> None:
+    """REAL-01 freezes graph evidence but must not create a solver task."""
+
+    entity = DatasetVersion(
+        id=78,
+        version="five-rivers-review",
+        name="Five Rivers",
+        creator="web-operator",
+        status="draft",
+        is_read_only=False,
+        created_time=datetime(2026, 9, 28, tzinfo=UTC),
+    )
+    readiness = SimpleNamespace(
+        can_freeze=True,
+        engineering_content_hash="c" * 64,
+        missing_data_records=[],
+    )
+    monkeypatch.setattr(
+        "app.dataset.service.assert_dataset_version_mutable",
+        lambda _session, _version_id: entity,
+    )
+    monkeypatch.setattr(
+        "app.dataset.service.build_real01_readiness",
+        lambda _session, _entity: readiness,
+    )
+
+    record = freeze_dataset_version_for_real01(
+        cast(Session, _CaseSession()),
+        entity,
+        Real01FreezeRequest(reviewer="hydraulic-reviewer", reason="QA evidence reviewed"),
+    )
+
+    assert record.status == "approved"
+    assert record.engineering_content_hash == "c" * 64
+    assert record.approved_by == "hydraulic-reviewer"

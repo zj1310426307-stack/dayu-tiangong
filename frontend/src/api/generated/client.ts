@@ -786,6 +786,7 @@ export interface DatasetVersionRecord {
   "parent_version_id"?: number | null;
   "source_batch_id"?: number | null;
   "content_hash"?: string | null;
+  "engineering_content_hash"?: string | null;
   "change_summary"?: string | null;
   "reviewed_by"?: string | null;
   "reviewed_at"?: string | null;
@@ -2765,6 +2766,42 @@ export interface RatingCurvePoint {
   "water_level_m": number;
 }
 
+export interface Real01DomainStatus {
+  "domain": string;
+  "status": "AVAILABLE" | "PARTIAL" | "MISSING" | "NEEDS_CONFIRMATION";
+  "detail": string;
+}
+
+export interface Real01FreezeRequest {
+  "reviewer": string;
+  "reason": string;
+}
+
+export interface Real01IssueRecord {
+  "code": string;
+  "severity": "BLOCKER" | "WARNING" | "INFO";
+  "domain": string;
+  "message": string;
+}
+
+export interface Real01ReadinessRecord {
+  "dataset_version_id": number;
+  "dataset_version": string;
+  "dataset_status": string;
+  "engineering_content_hash": string;
+  "counts": Record<string, number>;
+  "domains": Array<Real01DomainStatus>;
+  "missing_data_records": Array<Real01IssueRecord>;
+  "assumption_records": Array<Real01IssueRecord>;
+  "base_model_ready": boolean;
+  "calibration_ready": boolean;
+  "validation_ready": boolean;
+  "dflow_pilot_ready": boolean;
+  "production_ready": boolean;
+  "can_freeze": boolean;
+  "overall_status": "FRAMEWORK_READY_DATA_REQUIRED" | "DATA_READY_FOR_REVIEW";
+}
+
 export interface RecommendationResponse {
   "task_id": number;
   "candidate": ParetoCandidateRecord | null;
@@ -3622,6 +3659,8 @@ export const updatePumpRecord = (id: number, body: PumpUpdate, baseUrl = '') => 
 export const deletePumpRecord = (id: number, baseUrl = '') => requestJson<void>(`/api/v1/pumps/${id}`, { method: 'DELETE' }, baseUrl);
 
 export const getDatasetVersions = (baseUrl = '') => requestJson<Array<DatasetVersionRecord>>('/api/v1/model-data/dataset-versions', {}, baseUrl);
+export const getReal01Readiness = (versionId: number, baseUrl = '') => requestJson<Real01ReadinessRecord>(`/api/v1/model-data/dataset-versions/${versionId}/real-01-readiness`, {}, baseUrl);
+export const freezeDatasetVersionForReal01 = (versionId: number, body: Real01FreezeRequest, baseUrl = '') => requestJson<DatasetVersionRecord>(`/api/v1/model-data/dataset-versions/${versionId}/freeze-real-01`, jsonOptions('POST', body), baseUrl);
 export const createDatasetVersion = (body: DatasetVersionCreate, baseUrl = '') => requestJson<DatasetVersionRecord>('/api/v1/model-data/dataset-versions', jsonOptions('POST', body), baseUrl);
 export const cloneDatasetVersion = (versionId: number, body: DatasetVersionCloneRequest, baseUrl = '') => requestJson<DatasetVersionRecord>(`/api/v1/model-data/dataset-versions/${versionId}/clone`, jsonOptions('POST', body), baseUrl);
 export const updateDatasetVersion = (versionId: number, body: DatasetVersionUpdate, baseUrl = '') => requestJson<DatasetVersionRecord>(`/api/v1/model-data/dataset-versions/${versionId}`, jsonOptions('PUT', body), baseUrl);
