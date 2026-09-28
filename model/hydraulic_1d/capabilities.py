@@ -165,7 +165,13 @@ def capabilities_for(engine: str, engine_version: str) -> tuple[SolverCapability
 
 
 def required_capabilities(model: Hydraulic1DModel) -> tuple[str, ...]:
-    """Derive model requirements without importing an engine adapter."""
+    """Derive physical and control requirements from the frozen unified model.
+
+    Gate and Pump support is intentionally not inferred from the structure kind
+    alone.  The canonical ``operation_rule_type`` describes whether the frozen
+    task needs a fixed state, a pre-frozen time series, or runtime rule logic;
+    adapters must prove that exact subset before they may run it.
+    """
 
     required = {"UNSTEADY_1D"}
     if len(model.branches) > 1:
@@ -175,9 +181,20 @@ def required_capabilities(model: Hydraulic1DModel) -> tuple[str, ...]:
     upstream = sum(item.location == "upstream" for item in model.boundaries)
     if upstream > 1 and any(item.location == "lateral" for item in model.boundaries):
         required.add("COMBINED_BOUNDARIES")
-    required.update(
-        item.kind.upper() for item in model.structures if item.status == "active"
-    )
+    for item in model.structures:
+        if item.status != "active":
+            continue
+        feature = item.kind.upper()
+        required.add(feature)
+        if feature not in {"GATE", "PUMP"}:
+            continue
+        control_feature = {
+            "fixed": "FIXED",
+            "time_series": "SCHEDULE",
+            "water_level_controlled": "RULE",
+            "scenario_specific": "RULE",
+        }[item.operation_rule_type]
+        required.add(f"{feature}_{control_feature}")
     if any(item.node_type == "storage_connection" for item in model.nodes):
         required.add("CASIER")
     return tuple(sorted(required))

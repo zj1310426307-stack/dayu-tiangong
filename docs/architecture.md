@@ -1,7 +1,7 @@
 # 大禹·天工当前架构
 
-更新日期：2026-09-10
-架构基线：GIS-RESET-01 + CONTINUOUS-OPT-01 + HYDRO-1D-RESET-01
+更新日期：2026-09-24
+架构基线：GIS-RESET-01 + CONTINUOUS-OPT-01 + HYDRO-CORE-06
 
 ## 1. 总体结构
 
@@ -21,8 +21,9 @@ flowchart LR
   OPENLAYERS --> IMAGERY["FastAPI 影像代理<br/>Esri 高分辨率 / NASA 后备"]
   GEOSERVER --> PUBLISH
   CORE --> MODEL["Dayu Unified Hydraulic Model"]
-  MODEL --> MASCARET["MASCARET Adapter<br/>官方 v9.1.1 CLI"]
-  MODEL --> DFLOW["D-Flow FM Adapter<br/>DIMR/FBC 受控闸泵子集"]
+  MODEL --> ROUTE["Engine Router<br/>冻结 engine_id + execution_class"]
+  ROUTE --> MASCARET["MASCARET Adapter<br/>production · 官方 v9.1.1 CLI"]
+  ROUTE --> DFLOW["D-Flow FM Adapter<br/>pilot/synthetic · DIMR/FBC 受控闸泵子集"]
   MASCARET --> RESULT["Dayu Unified Hydraulic Result"]
   DFLOW --> RESULT
   MODEL --> REDIS["Redis / hydraulic-1d Worker"]
@@ -41,7 +42,8 @@ PostGIS 是唯一空间事实源。`imports`、`staging_qgis`、`reference_data`
 | GeoServer | `publish` WMS/WMTS/Basic WFS/GetFeatureInfo | WFS-T、读取 staging、核心 DML |
 | FastAPI GIS 网关 | 版本门禁、layer allow-list、BBOX/尺寸/类型限制 | 接收任意 GeoServer 层名、SQL/CQL |
 | FastAPI 水动力交换 | 文件预览、标准化、校核、原子提交、导出与审计 | 无 CRS 入库、跨版本写入、将子集能力冒充为 DHI 原生兼容 |
-| Hydraulic 1D Engine | 统一模型、验证、独立作业目录、MASCARET Adapter、结果解析 | 业务层直接操作 MASCARET 文件、捆绑伪运行时、不支持能力降级伪装 |
+| Hydraulic Engine Router | 注册表、能力矩阵、任务冻结身份和执行类别的唯一裁决者 | Worker 默认选引擎、未知引擎回退、试点引擎升格生产 |
+| Hydraulic 1D Engine | 统一模型、验证、独立作业目录、MASCARET/D-Flow Adapter、结果解析 | 业务层直接操作原生文件、捆绑伪运行时、不支持能力降级伪装 |
 | OpenLayers | EPSG:3857 浏览、图层开关/透明度/顺序、点选 | 数据编辑、业务样式权威、直接访问数据库 |
 
 ## 3. 数据生产与发布

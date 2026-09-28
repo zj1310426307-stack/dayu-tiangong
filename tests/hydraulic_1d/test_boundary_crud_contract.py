@@ -314,7 +314,7 @@ def test_service_preview_and_readiness_keep_lateral_binding(
     monkeypatch.setattr(
         service,
         "_runtime_readiness",
-        lambda _case_id: (True, "test", {"version_verified": True}),
+        lambda _case_id, _engine_id: (True, "test", {"version_verified": True}),
     )
     preview = service.preview_model(
         _PreviewSession(),  # type: ignore[arg-type]

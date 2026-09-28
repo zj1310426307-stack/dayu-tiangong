@@ -32,6 +32,17 @@ Adapter：`dayu-mascaret-adapter-v2`
 
 每个 VERIFIED 行都能追溯到 source-controlled benchmark ID。状态不是“MASCARET 永久支持某功能”的布尔声明，未来 engine/adapter 版本必须新增或更新独立矩阵。
 
+## HYDRO-CORE-06 统一路由规则
+
+引擎选择不是页面默认值，也不是 Worker 的推断行为。任务创建时必须写入并冻结 `engine_id` 与 `execution_class`；Worker 在领取、运行和结果验证阶段都用同一注册表重验 `solver_id`、`capability_id`、`runtime_adapter_id`、`result_schema_version` 和 `registry_hash`。身份缺失、未知、漂移或能力不匹配均失败关闭，不尝试替换为其他引擎。
+
+| Engine | execution class | production eligible | 可接受能力证据 | 当前可进入的路线 |
+|---|---|---:|---|---|
+| `mascaret` v9.1.1 | `production`、`pilot`、`synthetic` | 是 | `VERIFIED_NATIVE` / `VERIFIED_EQUIVALENT`（生产） | Standard 1D；Gate/Pump 仍为 `UNSUPPORTED` |
+| `d-flow-fm` DIMRset_2026.02 | `pilot`（合同）、`synthetic`（当前执行） | 否 | 已登记的合成验收 | Pilot Contract 已定义；Pilot Execution 延后至 REAL-02；不得升格为生产 |
+
+历史任务按已保存的 input schema、solver 与 adapter 精确映射：已知 MASCARET 映射为 `mascaret/production`，已知受控 D-Flow 映射为 `d-flow-fm/synthetic`；其余为 `legacy-unresolved/legacy`，保留审计和读取能力但不可重跑。完整决策见 [ADR-HYDRO-0005](../adr/ADR-HYDRO-0005-capability-based-engine-routing.md)。
+
 ## D-Flow FM / HYDROLIB-core 开发适配器
 
 当前已建立 `dayu-dflow-fm-adapter-v1` 的开发期合同：Solver-neutral 1D 模型严格校验、HYDROLIB-core `1.0.1` 类型化 Network/MDU/INI/BC/DIMR 生成、Gate/Pump 受限映射、HIS NetCDF 结果解析、Job Workspace 隔离及 DIMR CLI/Container 运行边界。官方源固定为 `DIMRset_2026.02` / `5a4649830b1e5072caf019fb4850bbdefd9ad431`。
@@ -39,6 +50,21 @@ Adapter：`dayu-mascaret-adapter-v2`
 开发证据现已绑定 reviewed OCI digest、四组件 provenance、acceptance registry v2 及每份紧凑证据的 SHA-256。官方 D-Flow 01、官方 D-Flow+FBC 10、DF01、DRTC-S01、G01–G03、PUMP01–PUMP02、GP01–GP03 与 24h L01 均已 PASS。其中 Pump 只开放经审计的 `pumps/<id>/capacity` aggregate Capacity 目标，并将 requested/resolved/native Capacity 与 actual structure discharge 分开；`pump_enabled`、`pump_unit_count`、Pump threshold、分级 Pump 仍关闭。Gate 可以使用单水位阈值，且 GP03 证明它可与另一 Pump 的手工 Capacity schedule 在同一 FBC 组件中并行。
 
 这些全部是 `SYNTHETIC_NUMERICAL_ONLY`：D-Flow 的生产状态仍为 `EXPERIMENTAL`/`UNVERIFIED`，不具备生产资格，也不影响 MASCARET 作为 Standard 1D 默认引擎的现有验证矩阵。Bridge/Culvert 的早期序列化 spike 仍不是 runtime 或数值证据。
+
+## Gate / Pump 控制能力粒度
+
+控制能力从统一 `HydraulicStructure.operation_rule_type` 确定性派生：`fixed` 为 `*_FIXED`，`time_series` 为 `*_SCHEDULE`，`water_level_controlled` 与 `scenario_specific` 为 `*_RULE`。基础结构能力仍与细分能力一起检查；因此不存在仅凭 `GATE` 或 `PUMP` 名称绕过控制语义的路径。
+
+| Feature | MASCARET production | D-Flow synthetic | 可审计边界 |
+|---|---|---|---|
+| `GATE_FIXED` | UNSUPPORTED | ACCEPTED | 单个竖向闸、冻结开度；`G01`/`GP01`。 |
+| `GATE_SCHEDULE` | UNSUPPORTED | ACCEPTED | 单个冻结开度时间表；`G02`/`GP02`。 |
+| `GATE_RULE` | UNSUPPORTED | ACCEPTED | 单一水位阈值且有冻结回退；`DRTC-S01`/`G03`/`GP03`；多规则、滞回、hold、cooldown 继续关闭。 |
+| `PUMP_FIXED` | UNSUPPORTED | ACCEPTED | 单个非分级 inline Pump、冻结 aggregate Capacity；`PUMP01`/`GP01`。 |
+| `PUMP_SCHEDULE` | UNSUPPORTED | ACCEPTED | 冻结 aggregate Capacity 时间表；`PUMP02`/`GP02`/`GP03`/`L01`。 |
+| `PUMP_RULE` | UNSUPPORTED | UNVERIFIED | 无 source-controlled runtime acceptance，必须 fail closed。 |
+
+上述 D-Flow ACCEPTED 只表示 accepted synthetic subset，不表示真实工程、设备或生产控制能力。
 
 官方资料：
 

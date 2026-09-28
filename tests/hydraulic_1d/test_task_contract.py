@@ -149,10 +149,13 @@ def test_historical_custom_solver_task_is_never_retryable() -> None:
 
     task = SimpleNamespace(
         input_schema_version="dayu.model-input.v3",
+        engine_id="legacy-unresolved",
         status="failed",
         active_execution_token=None,
     )
-    assert retry_block_reason(task).startswith("LEGACY_ENGINE_RETIRED")
+    assert retry_block_reason(task).startswith(
+        "HYDRAULIC_TASK_ENGINE_IDENTITY_MISSING"
+    )
 
 
 def test_registry_names_external_engine_and_reserved_future_adapter() -> None:
@@ -176,6 +179,10 @@ def test_worker_fails_closed_when_frozen_snapshot_digest_drifts() -> None:
     task = SimpleNamespace(
         input_snapshot=snapshot,
         input_snapshot_hash=snapshot_hash(snapshot),
+        engine_id=DEFAULT_HYDRAULIC_1D_ENGINE_ID,
+        execution_class="production",
+        engine_version="dayu-hydraulic-platform-5.0.0",
+        **task_engine_provenance(),
     )
     assert parse_frozen_task_model(task).simulation_id == snapshot["simulation_id"]
 
@@ -210,6 +217,10 @@ def test_persistence_rejects_record_identity_and_incomplete_time_axes() -> None:
     task = SimpleNamespace(
         input_snapshot=snapshot,
         input_snapshot_hash=snapshot_hash(snapshot),
+        engine_id=DEFAULT_HYDRAULIC_1D_ENGINE_ID,
+        execution_class="production",
+        engine_version="dayu-hydraulic-platform-5.0.0",
+        **task_engine_provenance(),
     )
     records = tuple(
         HydraulicResultRecord(

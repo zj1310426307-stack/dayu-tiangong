@@ -48,7 +48,6 @@ from model.hydraulic_1d.contracts import (
 )
 from model.hydraulic_1d import (
     DEFAULT_HYDRAULIC_1D_ENGINE_ID,
-    DEFAULT_HYDRAULIC_1D_ENGINE_VERSION,
 )
 from model.hydraulic_1d.engine import Hydraulic1DExecutionContext
 from model.hydraulic_1d.controlled import ControlledHydraulic1DRun
@@ -61,7 +60,17 @@ from model.hydraulic_1d.factory import create_hydraulic_1d_engine
 from model.hydraulic_1d.registry import (
     CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA,
     DFLOW_FM_ENGINE_ID,
+    engine_registration,
     task_engine_provenance,
+    task_engine_provenance_for,
+)
+from model.hydraulic_1d.routing import (
+    ExecutionClass,
+    parse_execution_class,
+    resolve_engine_registration,
+    validate_engine_execution_class,
+    validate_frozen_task_identity,
+    validate_required_capabilities,
 )
 from model.provenance import snapshot_hash
 
@@ -125,9 +134,18 @@ def parse_result_task_model(task: SimulationTask) -> Hydraulic1DModel:
 def _result_engine(task: SimulationTask) -> tuple[str, str]:
     """Resolve the public engine identity without exposing internal solver IDs."""
 
-    if task.input_schema_version == CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA:
-        return DFLOW_FM_ENGINE_ID, task.engine_version or "unknown"
-    return DEFAULT_HYDRAULIC_1D_ENGINE_ID, DEFAULT_HYDRAULIC_1D_ENGINE_VERSION
+    engine_id = getattr(task, "engine_id", None)
+    if engine_id == "legacy-unresolved":
+        raise TaskStateError("HYDRAULIC_TASK_ENGINE_IDENTITY_MISSING")
+    if engine_id is None:
+        if task.input_schema_version == CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA:
+            engine_id = DFLOW_FM_ENGINE_ID
+        elif task.solver_id == task_engine_provenance()["solver_id"]:
+            engine_id = DEFAULT_HYDRAULIC_1D_ENGINE_ID
+        else:
+            raise TaskStateError("HYDRAULIC_TASK_ENGINE_IDENTITY_MISSING")
+    registration = resolve_engine_registration(engine_id)
+    return registration.engine_id, registration.engine_version
 
 
 def _snapshot_summary(snapshot: Mapping[str, Any]) -> dict[str, Any]:
@@ -151,8 +169,14 @@ def _snapshot_summary(snapshot: Mapping[str, Any]) -> dict[str, Any]:
 def retry_block_reason(task: SimulationTask) -> str | None:
     """Explain why an immutable task may or may not enter a manual retry."""
 
+    if getattr(task, "engine_id", None) == "legacy-unresolved":
+        return "HYDRAULIC_TASK_ENGINE_IDENTITY_MISSING: legacy task cannot be retried"
     if task.input_schema_version != HYDRAULIC_1D_INPUT_SCHEMA:
         return "LEGACY_ENGINE_RETIRED: historical custom-solver tasks cannot be retried"
+    try:
+        validate_frozen_task_identity(task)
+    except Hydraulic1DValidationError as exc:
+        return f"{exc.code}: {exc}"
     if task.status == "success":
         return "successful tasks are immutable; create a new task to recompute"
     if task.status not in {"failed", "cancelled"}:
@@ -177,7 +201,7 @@ def _task_config(payload: SimulationTaskCreate) -> dict[str, Any]:
     """Keep only execution-neutral overrides in the immutable model builder input."""
 
     return payload.model_dump(
-        exclude={"case_id", "engine", "input_schema_version"},
+        exclude={"case_id", "engine_id", "execution_class", "input_schema_version"},
         exclude_none=True,
     )
 
@@ -188,10 +212,33 @@ def build_task_entity(session: Session, payload: SimulationTaskCreate) -> Simula
     simulation_case = session.get(SimulationCase, payload.case_id)
     if simulation_case is None:
         raise TaskNotFoundError("simulation case does not exist")
+    registration = resolve_engine_registration(payload.engine_id)
+    execution_class = parse_execution_class(payload.execution_class)
+    validate_engine_execution_class(registration, execution_class)
+    if (
+        registration.engine_id != DEFAULT_HYDRAULIC_1D_ENGINE_ID
+        or execution_class is not ExecutionClass.PRODUCTION
+    ):
+        raise TaskStateError(
+            "HYDRAULIC_ENGINE_EXECUTION_CLASS_FORBIDDEN: standard task creation "
+            "currently accepts only explicit MASCARET production runs; D-Flow "
+            "uses the frozen controlled Task route"
+        )
     config = _task_config(payload)
     try:
         build_identity = current_runtime_build_identity()
-        snapshot, digest = freeze_hydraulic_1d_input(session, payload.case_id, config)
+        snapshot, digest = freeze_hydraulic_1d_input(
+            session,
+            payload.case_id,
+            config,
+            engine_id=registration.engine_id,
+        )
+        model = Hydraulic1DModel.parse_snapshot(snapshot)
+        validate_required_capabilities(
+            model,
+            engine_id=registration.engine_id,
+            execution_class=execution_class.value,
+        )
     except LookupError as exc:
         raise TaskNotFoundError(str(exc)) from exc
     except (BuildIdentityError, Hydraulic1DError, ValueError) as exc:
@@ -200,6 +247,8 @@ def build_task_entity(session: Session, payload: SimulationTaskCreate) -> Simula
         case_id=payload.case_id,
         dataset_version_id=simulation_case.dataset_version_id,
         config=config,
+        engine_id=registration.engine_id,
+        execution_class=execution_class.value,
         input_schema_version=HYDRAULIC_1D_INPUT_SCHEMA,
         input_snapshot=snapshot,
         input_snapshot_hash=digest,
@@ -210,7 +259,7 @@ def build_task_entity(session: Session, payload: SimulationTaskCreate) -> Simula
         build_verified=build_identity.verified,
         execution_phase="validating_snapshot",
         artifact_status="none",
-        **task_engine_provenance(),
+        **task_engine_provenance_for(registration.engine_id),
     )
     session.add(task)
     session.flush()
@@ -300,11 +349,14 @@ def reset_task_for_manual_retry(session: Session, task: SimulationTask) -> Simul
     return current
 
 
-def _runtime_readiness(case_id: int) -> tuple[bool, str, dict[str, object]]:
+def _runtime_readiness(
+    case_id: int,
+    engine_id: str,
+) -> tuple[bool, str, dict[str, object]]:
     """Return the configured external runtime status without doing work."""
 
     del case_id
-    engine = create_hydraulic_1d_engine()
+    engine = create_hydraulic_1d_engine(engine_id)
     available, detail = engine.availability()
     return available, detail, engine.runtime_provenance()
 
@@ -325,20 +377,38 @@ def assess_readiness(
     session: Session,
     case_id: int,
     task_config: Mapping[str, Any] | None = None,
+    *,
+    engine_id: str = DEFAULT_HYDRAULIC_1D_ENGINE_ID,
+    execution_class: str = ExecutionClass.PRODUCTION.value,
 ) -> Hydraulic1DReadinessResponse:
     """Validate authoritative mapping and report runtime availability independently."""
 
-    runtime_available, runtime_detail, runtime_identity = _runtime_readiness(case_id)
     blockers: list[dict[str, Any]] = []
     model: Hydraulic1DModel | None = None
     try:
+        registration = resolve_engine_registration(engine_id)
+        selected_class = parse_execution_class(execution_class)
+        validate_engine_execution_class(registration, selected_class)
+        runtime_available, runtime_detail, runtime_identity = _runtime_readiness(
+            case_id,
+            registration.engine_id,
+        )
         model = build_hydraulic_1d_model(
             session,
             case_id,
             task_config or DEFAULT_READINESS_TASK_CONFIG,
+            engine_id=registration.engine_id,
+        )
+        validate_required_capabilities(
+            model,
+            engine_id=registration.engine_id,
+            execution_class=selected_class.value,
         )
     except (LookupError, Hydraulic1DError, ValueError) as exc:
         blockers.append(_blocker(exc))
+        runtime_available = False
+        runtime_detail = str(exc)
+        runtime_identity = {}
     if not runtime_available:
         blockers.append(
             {
@@ -353,6 +423,13 @@ def assess_readiness(
     return Hydraulic1DReadinessResponse(
         case_id=case_id,
         ready=model is not None and runtime_available,
+        engine_id=engine_id,
+        engine_version=(
+            engine_registration(engine_id).engine_version
+            if model is not None
+            else "unknown"
+        ),
+        execution_class=execution_class,
         runtime_available=runtime_available,
         runtime_detail=runtime_detail,
         runtime_identity=runtime_identity,
@@ -378,9 +455,20 @@ def preview_model(session: Session, payload: SimulationTaskCreate) -> Hydraulic1
     """Return the exact unified snapshot without creating a task or workspace."""
 
     config = _task_config(payload)
-    readiness = assess_readiness(session, payload.case_id, config)
+    readiness = assess_readiness(
+        session,
+        payload.case_id,
+        config,
+        engine_id=payload.engine_id,
+        execution_class=payload.execution_class,
+    )
     try:
-        snapshot, digest = freeze_hydraulic_1d_input(session, payload.case_id, config)
+        snapshot, digest = freeze_hydraulic_1d_input(
+            session,
+            payload.case_id,
+            config,
+            engine_id=payload.engine_id,
+        )
     except (LookupError, Hydraulic1DError, ValueError):
         return Hydraulic1DPreviewResponse(readiness=readiness)
     return Hydraulic1DPreviewResponse(
@@ -394,11 +482,12 @@ def _validate_result(task: SimulationTask, result: HydraulicResult) -> None:
     """Reject cross-task, wrong-engine, empty, duplicate, or non-finite output."""
 
     snapshot = parse_frozen_task_model(task)
+    registration = validate_frozen_task_identity(task)
     expected = {
         "simulation_id": snapshot.simulation_id,
         "scenario_id": snapshot.scenario_id,
-        "engine": DEFAULT_HYDRAULIC_1D_ENGINE_ID,
-        "engine_version": DEFAULT_HYDRAULIC_1D_ENGINE_VERSION,
+        "engine": registration.engine_id,
+        "engine_version": registration.engine_version,
     }
     observed = {
         "simulation_id": result.simulation_id,
@@ -630,7 +719,13 @@ def run_task(session: Session, task_id: int) -> SimulationTaskRecord:
         )
         model = parse_frozen_task_model(task)
         assert_production_gate(task.config, model, str(task.input_snapshot_hash or ""))
-        engine = create_hydraulic_1d_engine()
+        registration = validate_frozen_task_identity(task)
+        validate_required_capabilities(
+            model,
+            engine_id=registration.engine_id,
+            execution_class=task.execution_class,
+        )
+        engine = create_hydraulic_1d_engine(registration.engine_id)
 
         def progress(value: float, details: dict[str, Any]) -> None:
             task.progress = min(99, max(task.progress, int(value)))

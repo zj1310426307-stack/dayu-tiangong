@@ -1,0 +1,95 @@
+# Empty REAL-01 readiness declaration. Do not replace unknown engineering data with defaults.
+project:
+  project_id: null
+  project_name: null
+  purpose: null
+  responsible_person: null
+  data_owner: null
+
+spatial_reference:
+  horizontal_crs: null
+  vertical_datum: null
+  unit: null
+  status: NEEDS_CONFIRMATION
+  source: null
+
+dataset:
+  version: null
+  source_version: null
+  source_date: null
+  review_status: NEEDS_CONFIRMATION
+  evidence_reference: null
+
+river_network:
+  status: MISSING
+  source: null
+  source_file: null
+  topology_confirmed: false
+
+cross_sections:
+  status: MISSING
+  count: null
+  source: null
+  source_file: null
+  station_unit: null
+  elevation_unit: null
+  branch_chainage_mapped: false
+
+roughness:
+  status: MISSING
+  source: null
+  assumption_flag: false
+
+structures:
+  gates:
+    status: MISSING
+    count: null
+    source: null
+    branch_chainage_confirmed: false
+    invert_elevation_confirmed: false
+    geometry_confirmed: false
+  pumps:
+    status: NOT_AVAILABLE
+    count: 0
+    source: null
+    missing_reason: "No real Pump Station data supplied for REAL-01."
+
+boundaries:
+  upstream:
+    status: MISSING
+    type: null
+    source: null
+    unit: null
+    time_reference: null
+  downstream:
+    status: MISSING
+    type: null
+    source: null
+    time_reference: null
+
+initial_condition:
+  status: NEEDS_CONFIRMATION
+  source: null
+
+observations:
+  status: MISSING
+  source: null
+  quality_status: NEEDS_CONFIRMATION
+
+scenario:
+  status: NEEDS_CONFIRMATION
+  source: null
+
+dispatch_plan:
+  status: NOT_APPLICABLE
+  source: null
+
+quality:
+  blockers: []
+  warnings: []
+
+readiness:
+  real_01_ready: false
+  pilot_contract_supported: true
+  pilot_execution_enabled: false
+  dflow_production_eligible: false

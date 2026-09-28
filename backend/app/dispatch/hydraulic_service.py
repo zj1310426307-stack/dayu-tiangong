@@ -1004,6 +1004,8 @@ def start_hydraulic_preview(
             "production_mode": False,
         },
         task_kind="controlled_hydraulic_preview",
+        engine_id=DFLOW_FM_ENGINE_ID,
+        execution_class="synthetic",
         evidence_class="SYNTHETIC_NUMERICAL_ONLY",
         input_schema_version=CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA,
         input_snapshot=frozen_run,

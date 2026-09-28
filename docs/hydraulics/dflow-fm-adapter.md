@@ -2,7 +2,20 @@
 
 更新日期：2026-09-03
 适用版本：`dayu-dflow-fm-adapter-v1` / `DIMRset_2026.02`
-当前结论：reviewed Container Runtime 已通过合成开发验收；CLI 与生产能力继续关闭
+当前结论：源控的 controlled-runtime 与合成数值验收已通过；这不是官方工程 runtime 验收、真实工程验证或生产资格。
+
+> HYDRO-CORE-06-FIX-01 路由边界：D-Flow FM 注册 `pilot`/`synthetic` 的**合同**，但当前只有 `synthetic` 受控执行路径。`pilot_execution_enabled=false`，真实工程 Pilot 留待 REAL-02 的独立准入与实现；`production_eligible=false`。它只能由已冻结的 Gate/Pump 调度合同创建任务；Worker 读取任务内的 `engine_id`，不会使用默认引擎，也不会在失败时回退至 MASCARET。PLC/SCADA、调度优化、第二水力业务 Domain 与原生文件作为业务权威源均不在本适配器范围内。
+
+## HYDRO-CORE-06 证据等级
+
+| 证据项 | 状态 | 本阶段含义 |
+|---|---|---|
+| Adapter / dispatch contracts | PASS | 类型化输入、冻结身份、文件生成与解析的回归合同通过。 |
+| Source-controlled controlled-runtime acceptance | PASS | 锁定 DIMR/FBC/D-Flow 运行时通过限定合成算例。 |
+| Synthetic numerical evidence | PASS（限定子集） | 仅适用于登记的 Gate/Pump 与边界子集。 |
+| Official external runtime acceptance | NOT VERIFIED by HYDRO-CORE-06 | 本任务没有独立的官方工程 runtime 验收。 |
+| Real engineering validation | NOT STARTED | 没有以真实工程资料、率定或独立验证事件运行。 |
+| Production eligibility | FALSE | 不能由上述任一 PASS 自动升格。 |
 
 ## 当前状态
 

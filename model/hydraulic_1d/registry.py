@@ -50,11 +50,15 @@ class HydraulicEngineRegistration:
     license_classification: str
     license_review_required: bool
     production_eligible: bool
+    evidence_class: str
+    allowed_execution_classes: tuple[str, ...]
+    pilot_contract_supported: bool
+    pilot_execution_enabled: bool
     controlled_input_schema_version: str | None = None
     controlled_result_schema_version: str | None = None
 
     def to_dict(self) -> dict[str, object]:
-        """Return a deterministic catalog row with explicit license boundaries."""
+        """Return the frozen registration payload used by task provenance hashes."""
 
         return {
             "engine_id": self.engine_id,
@@ -77,6 +81,18 @@ class HydraulicEngineRegistration:
             "controlled_result_schema_version": self.controlled_result_schema_version,
         }
 
+    def public_catalog_row(self) -> dict[str, object]:
+        """Expose execution evidence without changing legacy task-hash payloads."""
+
+        return {
+            **self.to_dict(),
+            "evidence_class": self.evidence_class,
+            "allowed_execution_classes": list(self.allowed_execution_classes),
+            # Catalog-only readiness flags must not rewrite historical task hashes.
+            "pilot_contract_supported": self.pilot_contract_supported,
+            "pilot_execution_enabled": self.pilot_execution_enabled,
+        }
+
 
 _ENGINE_REGISTRATIONS: Final = (
     HydraulicEngineRegistration(
@@ -93,6 +109,10 @@ _ENGINE_REGISTRATIONS: Final = (
         license_classification="GPL-3.0-only",
         license_review_required=True,
         production_eligible=True,
+        evidence_class="VERIFIED_NATIVE",
+        allowed_execution_classes=("production", "pilot", "synthetic"),
+        pilot_contract_supported=False,
+        pilot_execution_enabled=False,
     ),
     HydraulicEngineRegistration(
         engine_id=DFLOW_FM_ENGINE_ID,
@@ -108,6 +128,10 @@ _ENGINE_REGISTRATIONS: Final = (
         license_classification="UPSTREAM-COMPONENT-SPECIFIC",
         license_review_required=True,
         production_eligible=False,
+        evidence_class="SYNTHETIC_NUMERICAL_ONLY",
+        allowed_execution_classes=("pilot", "synthetic"),
+        pilot_contract_supported=True,
+        pilot_execution_enabled=False,
         controlled_input_schema_version=CONTROLLED_HYDRAULIC_1D_RUN_SCHEMA,
         controlled_result_schema_version=CONTROLLED_HYDRAULIC_RESULT_SCHEMA,
     ),
@@ -146,6 +170,13 @@ def engine_registry_payload() -> dict[str, object]:
                 DEFAULT_HYDRAULIC_1D_ENGINE_ID,
                 DEFAULT_HYDRAULIC_1D_ENGINE_VERSION,
             )
+            # Keep the legacy MASCARET registry envelope byte-stable.  Detailed
+            # Gate/Pump control rows are exposed through engine_catalog_payload()
+            # and must never invalidate persisted MASCARET task provenance.
+            if not (
+                item.feature.startswith("GATE_")
+                or item.feature.startswith("PUMP_")
+            )
         ],
         "reserved": ["d-flow-fm"],
     }
@@ -179,6 +210,22 @@ def controlled_task_engine_provenance() -> dict[str, str]:
         "result_schema_version": CONTROLLED_HYDRAULIC_RESULT_SCHEMA,
         "registry_hash": selected_engine_hash(DFLOW_FM_ENGINE_ID),
     }
+
+
+def task_engine_provenance_for(engine_id: str) -> dict[str, str]:
+    """Return the persisted provenance contract for one explicitly selected Engine.
+
+    MASCARET keeps the legacy registry hash because it is also bound into the
+    runtime build identity. D-Flow uses its already-established selected-engine
+    hash. Unknown engines are rejected by the shared registration resolver.
+    """
+
+    engine_registration(engine_id)
+    if engine_id == DEFAULT_HYDRAULIC_1D_ENGINE_ID:
+        return task_engine_provenance()
+    if engine_id == DFLOW_FM_ENGINE_ID:
+        return controlled_task_engine_provenance()
+    raise KeyError(f"hydraulic engine is not registered: {engine_id}")
 
 
 def engine_registrations() -> tuple[HydraulicEngineRegistration, ...]:
@@ -220,7 +267,16 @@ def engine_catalog_payload() -> dict[str, object]:
         "schema_version": "dayu.hydraulic-engine-catalog.v1",
         "default_engine_id": DEFAULT_HYDRAULIC_1D_ENGINE_ID,
         "engines": [
-            _catalog_engine_payload(registration)
+            {
+                **registration.public_catalog_row(),
+                "capabilities": [
+                    item.to_dict()
+                    for item in capabilities_for(
+                        registration.engine_id,
+                        registration.engine_version,
+                    )
+                ],
+            }
             for registration in _ENGINE_REGISTRATIONS
         ],
     }

@@ -715,7 +715,9 @@ def execution_readiness(
                 )
             )
     try:
-        runtime_available, runtime_detail = create_hydraulic_1d_engine().availability()
+        runtime_available, runtime_detail = create_hydraulic_1d_engine(
+            DEFAULT_HYDRAULIC_1D_ENGINE_ID
+        ).availability()
     except Exception as exc:  # pragma: no cover - defensive environment boundary
         runtime_available = False
         runtime_detail = f"runtime availability check failed: {exc}"

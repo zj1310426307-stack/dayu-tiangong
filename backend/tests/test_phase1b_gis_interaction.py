@@ -54,6 +54,8 @@ def _build_interaction_fixture() -> tuple[int, int, int, int]:
             status="success",
             progress=100,
             config={},
+            engine_id="legacy-unresolved",
+            execution_class="legacy",
             end_time=datetime.now(UTC),
         )
         session.add(task)
@@ -189,6 +191,8 @@ def test_interaction_frame_rejects_cross_version_and_cross_run_mixing() -> None:
                 status="success",
                 progress=100,
                 config={},
+                engine_id="legacy-unresolved",
+                execution_class="legacy",
             )
             other_version = DatasetVersion(
                 version=f"phase1b-{datetime.now(UTC).timestamp()}",

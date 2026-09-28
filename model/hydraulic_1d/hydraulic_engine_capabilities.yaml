@@ -47,6 +47,18 @@ engines:
         status: UNSUPPORTED
         benchmark_ids: []
         reason: Gate remains explicitly disabled pending a complete semantic and runtime acceptance phase.
+      - feature: GATE_FIXED
+        status: UNSUPPORTED
+        benchmark_ids: []
+        reason: Even a frozen Gate opening has no verified MASCARET adapter mapping.
+      - feature: GATE_SCHEDULE
+        status: UNSUPPORTED
+        benchmark_ids: []
+        reason: Time-varying Gate control is not mapped by the production adapter.
+      - feature: GATE_RULE
+        status: UNSUPPORTED
+        benchmark_ids: []
+        reason: Runtime Gate rule control is not mapped by the production adapter.
       - feature: SLUICE
         status: UNSUPPORTED
         benchmark_ids: []
@@ -55,6 +67,18 @@ engines:
         status: UNSUPPORTED
         benchmark_ids: []
         reason: MASCARET Pump support is not available through the verified adapter.
+      - feature: PUMP_FIXED
+        status: UNSUPPORTED
+        benchmark_ids: []
+        reason: Fixed Pump operation is not mapped by the production adapter.
+      - feature: PUMP_SCHEDULE
+        status: UNSUPPORTED
+        benchmark_ids: []
+        reason: Time-varying Pump operation is not mapped by the production adapter.
+      - feature: PUMP_RULE
+        status: UNSUPPORTED
+        benchmark_ids: []
+        reason: Runtime Pump rule control is not mapped by the production adapter.
       - feature: ORIFICE
         status: UNVERIFIED
         benchmark_ids: []
@@ -136,6 +160,33 @@ engines:
         supported_subset: [vertical underflow Gate, fixed opening, manual schedule, one scalar water-level rule]
         unsupported_subset: [multiple Gate priority, production control]
         reason: Native Gate mapping and the listed synthetic fixed/manual/simple-rule cases pass on the locked runtime.
+      - feature: GATE_FIXED
+        production_status: EXPERIMENTAL
+        synthetic_status: ACCEPTED
+        production_eligible: false
+        evidence_class: SYNTHETIC_NUMERICAL_ONLY
+        accepted_cases: [G01, GP01]
+        supported_subset: [one vertical underflow Gate with a frozen opening]
+        unsupported_subset: [real engineering Gate operation, production control]
+        reason: The locked runtime accepts the fixed-opening Gate subset in source-controlled synthetic cases.
+      - feature: GATE_SCHEDULE
+        production_status: EXPERIMENTAL
+        synthetic_status: ACCEPTED
+        production_eligible: false
+        evidence_class: SYNTHETIC_NUMERICAL_ONLY
+        accepted_cases: [G02, GP02]
+        supported_subset: [one frozen Gate opening schedule]
+        unsupported_subset: [multiple Gate priority, production control]
+        reason: The locked runtime accepts the listed pre-frozen Gate schedules in synthetic cases.
+      - feature: GATE_RULE
+        production_status: EXPERIMENTAL
+        synthetic_status: ACCEPTED
+        production_eligible: false
+        evidence_class: SYNTHETIC_NUMERICAL_ONLY
+        accepted_cases: [DRTC-S01, G03, GP03]
+        supported_subset: [one scalar water-level Gate threshold with frozen fallback]
+        unsupported_subset: [hysteresis, hold, cooldown, multiple-rule priority, production control]
+        reason: The minimal audited Gate threshold subset is accepted only by source-controlled synthetic cases.
       - feature: SLUICE
         production_status: UNVERIFIED
         synthetic_status: NOT_ACCEPTED
@@ -150,6 +201,31 @@ engines:
         supported_subset: [inline non-staged Pump, fixed aggregate capacity, manual aggregate-capacity schedule, explicit synthetic head-reduction curve]
         unsupported_subset: [pump_enabled, pump_unit_count, staged Pump, real equipment curve, PLC/SCADA]
         reason: Native aggregate capacity and actual discharge are independently observed in synthetic runtime cases; unit and equipment semantics remain unsupported.
+      - feature: PUMP_FIXED
+        production_status: EXPERIMENTAL
+        synthetic_status: ACCEPTED
+        production_eligible: false
+        evidence_class: SYNTHETIC_NUMERICAL_ONLY
+        accepted_cases: [PUMP01, GP01]
+        supported_subset: [one inline non-staged Pump with frozen aggregate capacity]
+        unsupported_subset: [pump_enabled, pump_unit_count, real equipment curve, PLC/SCADA]
+        reason: The fixed aggregate-capacity subset is accepted in source-controlled synthetic cases.
+      - feature: PUMP_SCHEDULE
+        production_status: EXPERIMENTAL
+        synthetic_status: ACCEPTED
+        production_eligible: false
+        evidence_class: SYNTHETIC_NUMERICAL_ONLY
+        accepted_cases: [PUMP02, GP02, GP03, L01]
+        supported_subset: [one frozen aggregate-capacity schedule]
+        unsupported_subset: [pump_enabled, pump_unit_count, Pump threshold, production control]
+        reason: The listed manual aggregate-capacity schedules are accepted in source-controlled synthetic cases.
+      - feature: PUMP_RULE
+        production_status: UNVERIFIED
+        synthetic_status: NOT_ACCEPTED
+        production_eligible: false
+        supported_subset: []
+        unsupported_subset: [Pump threshold, hysteresis, hold, cooldown, staged Pump, PLC/SCADA]
+        reason: No source-controlled D-Flow runtime acceptance proves Pump rule control.
       - feature: ORIFICE
         production_status: EXPERIMENTAL
         synthetic_status: ACCEPTED

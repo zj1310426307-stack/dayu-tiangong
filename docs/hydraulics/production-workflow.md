@@ -24,6 +24,12 @@ Project/Data → Preview/Issues/Import → QA → Model/Scenario
 
 前端只能调用生成客户端；数据库访问、QA、状态机、导入重解析、参数排序、验收和成果计算都由后端拥有。Worker 只从哈希校验后的冻结模型执行外部 MASCARET。
 
+## 引擎路由与试点边界
+
+正式 Production Run 只接受冻结为 `mascaret + production` 的任务。D-Flow FM 的 Gate/Pump 路径必须先在调度模块完成结构、动作、规则、观测绑定、校验与冻结；它被写为 `d-flow-fm + synthetic`，而不是从 Standard 页面切换求解器。`pilot` 是已登记的准入合同，不是当前可执行入口：`pilot_contract_supported=true`、`pilot_execution_enabled=false`，直到 REAL-02 使用完整真实资料、独立门禁和专用实现启用。两类结果共享统一结果合同和成果展示，但不共享生产资格。
+
+工程图谱克隆、资料追溯和冻结规则见 [engineering-graph-clone-plan.md](engineering-graph-clone-plan.md)；真实试点进入条件见 [pilot-data-readiness.md](pilot-data-readiness.md)。
+
 ## 结果产品
 
 统一结果生成 maximum H/depth/Q/V 及峰现时间、水位纵剖面、Baseline vs Project 的精确时刻 ΔH、最大壅水和超过项目阈值的连续一维区段、Key Section Table 以及事实 GeoJSON。缺失岸顶/河底/几何保持 null。CSV、XLSX 和 GeoJSON 共享同一产品对象；XLSX 按现有数据动态创建 Summary、Max Results、Longitudinal Profile、Scenario Compare、Afflux Reaches 和 Key Sections。

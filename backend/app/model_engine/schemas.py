@@ -5,7 +5,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    field_validator,
+    model_validator,
+)
 
 from model.hydraulic_1d import (
     DEFAULT_HYDRAULIC_1D_ENGINE_ID,
@@ -61,10 +69,21 @@ class SimulationTaskCreate(BaseModel):
     output_interval_seconds: FiniteFloat | None = Field(default=None, gt=0)
     initial_water_level: FiniteFloat | None = None
     initial_flow: FiniteFloat | None = None
-    engine: Literal[DEFAULT_HYDRAULIC_1D_ENGINE_ID] = DEFAULT_HYDRAULIC_1D_ENGINE_ID
+    engine_id: str = Field(
+        default=DEFAULT_HYDRAULIC_1D_ENGINE_ID,
+        validation_alias=AliasChoices("engine_id", "engine"),
+        serialization_alias="engine_id",
+    )
+    execution_class: Literal["production", "pilot", "synthetic"] = "production"
     input_schema_version: Literal[HYDRAULIC_1D_INPUT_SCHEMA] = HYDRAULIC_1D_INPUT_SCHEMA
     storage_level: Literal["full"] = "full"
     roughness_overrides: list[RoughnessOverride] = Field(default_factory=list)
+
+    @property
+    def engine(self) -> str:
+        """Keep the former request-model attribute readable during API migration."""
+
+        return self.engine_id
 
     @model_validator(mode="after")
     def validate_initial_override_pair(self) -> "SimulationTaskCreate":
@@ -98,6 +117,8 @@ class SimulationTaskRecord(BaseModel):
     progress: int = Field(ge=0, le=100)
     config: dict[str, Any]
     task_kind: Literal["standard_1d", "controlled_hydraulic_preview"] = "standard_1d"
+    engine_id: str | None
+    execution_class: str | None
     evidence_class: str | None = None
     input_schema_version: str | None
     input_snapshot_hash: str | None
@@ -133,6 +154,14 @@ class SimulationTaskRecord(BaseModel):
     created_time: datetime
     start_time: datetime | None
     end_time: datetime | None
+
+
+class HydraulicEngineCatalogResponse(BaseModel):
+    """Expose registered Engine evidence without exposing native file formats."""
+
+    schema_version: str
+    default_engine_id: str
+    engines: list[dict[str, Any]]
 
 
 class TaskSnapshotResponse(BaseModel):
@@ -319,10 +348,9 @@ class Hydraulic1DReadinessResponse(BaseModel):
 
     case_id: int
     ready: bool
-    engine_id: Literal[DEFAULT_HYDRAULIC_1D_ENGINE_ID] = DEFAULT_HYDRAULIC_1D_ENGINE_ID
-    engine_version: Literal[DEFAULT_HYDRAULIC_1D_ENGINE_VERSION] = (
-        DEFAULT_HYDRAULIC_1D_ENGINE_VERSION
-    )
+    engine_id: str = DEFAULT_HYDRAULIC_1D_ENGINE_ID
+    engine_version: str = DEFAULT_HYDRAULIC_1D_ENGINE_VERSION
+    execution_class: Literal["production", "pilot", "synthetic"] = "production"
     runtime_available: bool
     runtime_detail: str
     runtime_identity: dict[str, Any]

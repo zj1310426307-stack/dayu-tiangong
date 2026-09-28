@@ -16,6 +16,7 @@ from app.model_engine import scenario_results, service
 from app.model_engine.schemas import (
     Hydraulic1DPreviewResponse,
     Hydraulic1DReadinessResponse,
+    HydraulicEngineCatalogResponse,
     PublishedScenarioBundle,
     SimulationResultResponse,
     SimulationResultOverviewResponse,
@@ -26,6 +27,7 @@ from app.model_engine.schemas import (
 from app.worker.lifecycle import request_cancel
 from app.worker.tasks import HYDRAULIC_1D_QUEUE, run_hydraulic_task
 from model.hydraulic_1d.contracts import HYDRAULIC_1D_INPUT_SCHEMA
+from model.hydraulic_1d.registry import engine_catalog_payload
 
 
 router = APIRouter(prefix="/api/v1/model", tags=["hydraulic-model"])
@@ -105,6 +107,17 @@ def _deliver(task: service.SimulationTask):
             "LEGACY_ENGINE_RETIRED: historical custom-solver tasks cannot execute"
         )
     return run_hydraulic_task.apply_async(args=[task.id], queue=HYDRAULIC_1D_QUEUE)
+
+
+@router.get(
+    "/engines",
+    response_model=HydraulicEngineCatalogResponse,
+    summary="List registered hydraulic Engines and evidence boundaries",
+)
+def list_engines() -> HydraulicEngineCatalogResponse:
+    """Return the server-owned Engine catalog for task selection and status UI."""
+
+    return HydraulicEngineCatalogResponse.model_validate(engine_catalog_payload())
 
 
 @router.get(
