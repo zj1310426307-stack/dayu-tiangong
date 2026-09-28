@@ -148,6 +148,7 @@ class DatasetVersion(Base):
         ForeignKey("gis_import_batch.id", ondelete="RESTRICT")
     )
     content_hash: Mapped[str | None] = mapped_column(String(64))
+    engineering_content_hash: Mapped[str | None] = mapped_column(String(64))
     change_summary: Mapped[str | None] = mapped_column(Text)
     reviewed_by: Mapped[str | None] = mapped_column(String(64))
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

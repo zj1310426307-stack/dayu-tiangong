@@ -47,6 +47,7 @@ import type {
   ImportResource,
   ModelParameterCreate,
   ModelParameterRecord,
+  Real01ReadinessRecord,
   Hydraulic1DPreviewResponse,
   HydraulicSectionDetail,
   HydraulicSectionSummary,
@@ -74,6 +75,7 @@ import {
   deleteSimulationCase,
   getBoundaryConditions,
   generateBoundaryRatingCurve,
+  getReal01Readiness,
   getModelParameters,
   getSimulationCases,
   getHydraulicSection,
@@ -2177,6 +2179,8 @@ export function ModelDataPage() {
   const [ratingCurvePreview, setRatingCurvePreview] =
     useState<BoundaryRatingCurveGenerateResponse>();
   const [approvingVersionId, setApprovingVersionId] = useState<number>();
+  const [real01Readiness, setReal01Readiness] = useState<Real01ReadinessRecord>();
+  const [real01Loading, setReal01Loading] = useState(false);
   const [parameterForm] = Form.useForm<ModelParameterFormValues>();
   const [boundaryForm] = Form.useForm<BoundaryFormValues>();
   const [caseForm] = Form.useForm<SimulationCaseFormValues>();
@@ -2201,6 +2205,30 @@ export function ModelDataPage() {
     [datasetVersionId],
     Boolean(datasetVersionId),
   );
+  useEffect(() => {
+    if (!datasetVersionId) {
+      setReal01Readiness(undefined);
+      return;
+    }
+    let active = true;
+    setReal01Loading(true);
+    void getReal01Readiness(datasetVersionId)
+      .then((value) => {
+        if (active) setReal01Readiness(value);
+      })
+      .catch((reason: unknown) => {
+        if (active) {
+          setReal01Readiness(undefined);
+          message.error(reason instanceof Error ? reason.message : "真实资料准入检查失败");
+        }
+      })
+      .finally(() => {
+        if (active) setReal01Loading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [datasetVersionId]);
   const endpointOptions = useMemo(
     () => hydraulicEndpointOptions(hydraulicNetworks.data ?? [], boundaryType),
     [boundaryType, hydraulicNetworks.data],
@@ -2546,6 +2574,60 @@ export function ModelDataPage() {
             },
           ]}
         />
+      ),
+    },
+    {
+      key: "real-01-readiness",
+      label: "真实资料准入",
+      children: (
+        <Card loading={real01Loading} title="HYDRO-DATA-REAL-01 准入与冻结检查">
+          {real01Readiness ? (
+            <Space direction="vertical" size="middle" style={{ width: "100%" }}>
+              <Alert
+                type={real01Readiness.overall_status === "DATA_READY_FOR_REVIEW" ? "success" : "warning"}
+                showIcon
+                message={
+                  real01Readiness.overall_status === "DATA_READY_FOR_REVIEW"
+                    ? "资料已满足审核前置条件；仍需人工审核后冻结。"
+                    : "资料框架已就绪，但真实工程资料尚不完整，不能冻结或声明已率定。"
+                }
+                description={`完整工程图 hash：${real01Readiness.engineering_content_hash}`}
+              />
+              <Descriptions bordered size="small" column={{ xs: 1, md: 2 }}>
+                <Descriptions.Item label="基础模型">{real01Readiness.base_model_ready ? "就绪" : "未就绪"}</Descriptions.Item>
+                <Descriptions.Item label="率定/验证">{real01Readiness.calibration_ready && real01Readiness.validation_ready ? "就绪" : "资料不足"}</Descriptions.Item>
+                <Descriptions.Item label="D-Flow 试点">{real01Readiness.dflow_pilot_ready ? "就绪" : "未启用"}</Descriptions.Item>
+                <Descriptions.Item label="生产能力">{real01Readiness.production_ready ? "就绪" : "未授权"}</Descriptions.Item>
+              </Descriptions>
+              <Table
+                size="small"
+                rowKey="domain"
+                pagination={false}
+                dataSource={real01Readiness.domains}
+                columns={[
+                  { title: "资料域", dataIndex: "domain" },
+                  {
+                    title: "状态",
+                    dataIndex: "status",
+                    render: (value: string) => <Tag color={value === "AVAILABLE" ? "success" : value === "MISSING" ? "error" : "warning"}>{value}</Tag>,
+                  },
+                  { title: "说明", dataIndex: "detail" },
+                ]}
+              />
+              {real01Readiness.missing_data_records.map((item) => (
+                <Alert
+                  key={item.code}
+                  type={item.severity === "BLOCKER" ? "error" : "warning"}
+                  showIcon
+                  message={`${item.code} · ${item.domain}`}
+                  description={item.message}
+                />
+              ))}
+            </Space>
+          ) : (
+            <Alert type="info" showIcon message="请选择数据版本以检查真实资料准入状态。" />
+          )}
+        </Card>
       ),
     },
     {

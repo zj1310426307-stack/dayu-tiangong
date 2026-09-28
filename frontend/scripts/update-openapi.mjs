@@ -55,6 +55,8 @@ const requiredPaths = [
   '/api/v1/gis/rivers', '/api/v1/gis/interaction-frame', '/api/v1/gis/hydraulic-cross-sections', '/api/v1/rivers', '/api/v1/cross-sections',
   '/api/v1/gates', '/api/v1/pumps', '/api/v1/import/excel',
   '/api/v1/validation/run', '/api/v1/model-data/dataset-versions',
+  '/api/v1/model-data/dataset-versions/{version_id}/real-01-readiness',
+  '/api/v1/model-data/dataset-versions/{version_id}/freeze-real-01',
   '/api/v1/model-data/dataset-versions/{version_id}/approve-for-calculation',
   '/api/v1/model-data/parameters', '/api/v1/model-data/boundary-conditions',
   '/api/v1/model-data/boundary-conditions/rating-curve/generate',
@@ -455,6 +457,8 @@ export const updatePumpRecord = (id: number, body: PumpUpdate, baseUrl = '') => 
 export const deletePumpRecord = (id: number, baseUrl = '') => requestJson<void>(\`/api/v1/pumps/\${id}\`, { method: 'DELETE' }, baseUrl);
 
 export const getDatasetVersions = (baseUrl = '') => requestJson<Array<DatasetVersionRecord>>('/api/v1/model-data/dataset-versions', {}, baseUrl);
+export const getReal01Readiness = (versionId: number, baseUrl = '') => requestJson<Real01ReadinessRecord>(\`/api/v1/model-data/dataset-versions/\${versionId}/real-01-readiness\`, {}, baseUrl);
+export const freezeDatasetVersionForReal01 = (versionId: number, body: Real01FreezeRequest, baseUrl = '') => requestJson<DatasetVersionRecord>(\`/api/v1/model-data/dataset-versions/\${versionId}/freeze-real-01\`, jsonOptions('POST', body), baseUrl);
 export const createDatasetVersion = (body: DatasetVersionCreate, baseUrl = '') => requestJson<DatasetVersionRecord>('/api/v1/model-data/dataset-versions', jsonOptions('POST', body), baseUrl);
 export const cloneDatasetVersion = (versionId: number, body: DatasetVersionCloneRequest, baseUrl = '') => requestJson<DatasetVersionRecord>(\`/api/v1/model-data/dataset-versions/\${versionId}/clone\`, jsonOptions('POST', body), baseUrl);
 export const updateDatasetVersion = (versionId: number, body: DatasetVersionUpdate, baseUrl = '') => requestJson<DatasetVersionRecord>(\`/api/v1/model-data/dataset-versions/\${versionId}\`, jsonOptions('PUT', body), baseUrl);

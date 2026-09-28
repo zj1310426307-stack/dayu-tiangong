@@ -6,7 +6,9 @@ from typing import Any, TypeVar
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.dataset.engineering_graph import clone_unified_engineering_graph
 from app.dataset.lifecycle import assert_dataset_version_mutable, lock_dataset_version
+from app.dataset.real01 import build_real01_readiness
 from app.dataset.schemas import (
     BoundaryRatingCurveGenerateRequest,
     BoundaryRatingCurveGenerateResponse,
@@ -21,17 +23,12 @@ from app.dataset.schemas import (
     ModelParameterCreate,
     ModelParameterRecord,
     ModelParameterUpdate,
+    Real01FreezeRequest,
     SimulationCaseCreate,
     SimulationCaseRecord,
     SimulationCaseUpdate,
 )
-from app.gis.models import (
-    BoundaryCondition,
-    DatasetVersion,
-    ModelParameter,
-    SimulationCase,
-    SimulationCaseBoundary,
-)
+from app.gis.models import BoundaryCondition, DatasetVersion, ModelParameter, SimulationCase, SimulationCaseBoundary
 from app.hydraulic.models import (
     HydraulicBranch as HydraulicBranchRow,
     HydraulicCrossSection,
@@ -47,6 +44,7 @@ from app.hydraulic.rating_curve import (
     interpolate_rating_curve,
 )
 from app.gis_governance.service import dataset_core_content_hash
+from app.hydraulic.snapshot import engineering_graph_content_hash
 from app.model_engine.hydraulic_1d_service import build_hydraulic_1d_model
 from app.validation.service import run_validation
 from model.provenance import snapshot_hash
@@ -104,12 +102,10 @@ def clone_dataset_version(
     source: DatasetVersion,
     payload: DatasetVersionCloneRequest,
 ) -> DatasetVersionRecord:
-    """Fork a version identity into a fresh writable Draft without execution evidence.
+    """Fork the full unified engineering graph into a fresh writable Draft.
 
-    The first safe clone boundary is the version-owned configuration records that
-    have no spatial foreign-key remapping requirement.  Network and survey data
-    remain source-version evidence until their dedicated graph clone is available;
-    this prevents a deceptively partial geometry copy from becoming authoritative.
+    Solver Tasks and result products are deliberately excluded: a cloned version
+    must build fresh execution evidence rather than inherit an old run.
     """
 
     locked_source = lock_dataset_version(session, source.id)
@@ -124,22 +120,12 @@ def clone_dataset_version(
     )
     session.add(clone)
     session.flush()
-    for parameter in session.scalars(
-        select(ModelParameter)
-        .where(ModelParameter.dataset_version_id == locked_source.id)
-        .order_by(ModelParameter.id)
-    ):
-        session.add(
-            ModelParameter(
-                dataset_version_id=clone.id,
-                parameter_type=parameter.parameter_type,
-                parameter_name=parameter.parameter_name,
-                value=parameter.value,
-                unit=parameter.unit,
-                description=parameter.description,
-            )
-        )
-    session.flush()
+    clone_unified_engineering_graph(
+        session,
+        source_version_id=locked_source.id,
+        target_version_id=clone.id,
+        target_version=clone.version,
+    )
     return DatasetVersionRecord(**_dump(clone))
 
 
@@ -196,6 +182,42 @@ def approve_dataset_version_for_calculation(
         )
     now = datetime.now(UTC)
     mutable.content_hash = dataset_core_content_hash(session, mutable.id)
+    mutable.engineering_content_hash = engineering_graph_content_hash(session, mutable.id)
+    mutable.change_summary = payload.reason
+    mutable.reviewed_by = payload.reviewer
+    mutable.reviewed_at = now
+    mutable.approved_by = payload.reviewer
+    mutable.approved_at = now
+    mutable.status = "approved"
+    session.flush()
+    return DatasetVersionRecord(**_dump(mutable))
+
+
+def freeze_dataset_version_for_real01(
+    session: Session,
+    entity: DatasetVersion,
+    payload: Real01FreezeRequest,
+) -> DatasetVersionRecord:
+    """Freeze a QA-passed REAL-01 graph without creating a solver execution.
+
+    ``content_hash`` remains the legacy GIS four-family identity for governance
+    compatibility.  ``engineering_content_hash`` is the complete REAL-01
+    identity, including source evidence and unified hydraulic controls.
+    """
+
+    mutable = assert_dataset_version_mutable(session, entity.id)
+    readiness = build_real01_readiness(session, mutable)
+    if not readiness.can_freeze:
+        blockers = [
+            item.code
+            for item in readiness.missing_data_records
+            if item.severity == "BLOCKER"
+        ]
+        raise ValueError(
+            "REAL-01 数据版本不可冻结：" + ", ".join(blockers or ["READY_CHECK_FAILED"])
+        )
+    now = datetime.now(UTC)
+    mutable.engineering_content_hash = readiness.engineering_content_hash
     mutable.change_summary = payload.reason
     mutable.reviewed_by = payload.reviewer
     mutable.reviewed_at = now
