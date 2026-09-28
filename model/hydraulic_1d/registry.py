@@ -170,6 +170,13 @@ def engine_registry_payload() -> dict[str, object]:
                 DEFAULT_HYDRAULIC_1D_ENGINE_ID,
                 DEFAULT_HYDRAULIC_1D_ENGINE_VERSION,
             )
+            # Keep the legacy MASCARET registry envelope byte-stable.  Detailed
+            # Gate/Pump control rows are exposed through engine_catalog_payload()
+            # and must never invalidate persisted MASCARET task provenance.
+            if not (
+                item.feature.startswith("GATE_")
+                or item.feature.startswith("PUMP_")
+            )
         ],
         "reserved": ["d-flow-fm"],
     }
