@@ -51,6 +51,14 @@ class DatasetVersionApprovalRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=512)
 
 
+class Real01FreezeRequest(BaseModel):
+    """Record the reviewed REAL-01 engineering graph freeze decision."""
+
+    model_config = ConfigDict(extra="forbid")
+    reviewer: str = Field(min_length=1, max_length=64)
+    reason: str = Field(min_length=1, max_length=512)
+
+
 class DatasetVersionRecord(DatasetVersionCreate):
     """返回带主键与创建时间的数据集版本。"""
 
@@ -59,6 +67,7 @@ class DatasetVersionRecord(DatasetVersionCreate):
     parent_version_id: int | None = None
     source_batch_id: int | None = None
     content_hash: str | None = None
+    engineering_content_hash: str | None = None
     change_summary: str | None = None
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None
@@ -67,6 +76,46 @@ class DatasetVersionRecord(DatasetVersionCreate):
     published_at: datetime | None = None
     retired_at: datetime | None = None
     created_time: datetime
+
+
+class Real01DomainStatus(BaseModel):
+    """Expose one real-engineering data domain without inventing missing values."""
+
+    model_config = ConfigDict(extra="forbid")
+    domain: str
+    status: Literal["AVAILABLE", "PARTIAL", "MISSING", "NEEDS_CONFIRMATION"]
+    detail: str
+
+
+class Real01IssueRecord(BaseModel):
+    """Return one machine-readable REAL-01 gap or recorded assumption."""
+
+    model_config = ConfigDict(extra="forbid")
+    code: str
+    severity: Literal["BLOCKER", "WARNING", "INFO"]
+    domain: str
+    message: str
+
+
+class Real01ReadinessRecord(BaseModel):
+    """Read-only real-engineering admission and freeze-readiness evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+    dataset_version_id: int
+    dataset_version: str
+    dataset_status: str
+    engineering_content_hash: str
+    counts: dict[str, int]
+    domains: list[Real01DomainStatus]
+    missing_data_records: list[Real01IssueRecord]
+    assumption_records: list[Real01IssueRecord]
+    base_model_ready: bool
+    calibration_ready: bool
+    validation_ready: bool
+    dflow_pilot_ready: bool
+    production_ready: bool
+    can_freeze: bool
+    overall_status: Literal["FRAMEWORK_READY_DATA_REQUIRED", "DATA_READY_FOR_REVIEW"]
 
 
 class ModelParameterCreate(BaseModel):

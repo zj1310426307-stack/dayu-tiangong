@@ -1,6 +1,8 @@
 # REAL-01 试点资料准入合同
 
-状态：`DATA_REQUIRED`。本合同定义 HYDRO-DATA-REAL-01 允许接收什么资料、如何记录缺口以及何时拒绝冻结；它不是数据库迁移、数据导入器或真实工程运行授权。
+状态：`FRAMEWORK_READY_DATA_REQUIRED`。本合同定义 HYDRO-DATA-REAL-01 允许接收什么资料、如何记录缺口以及何时拒绝冻结；它不是 D-Flow 试运行或真实工程运行授权。
+
+平台以只读准入接口自动生成当前版本的缺失清单：`GET /api/v1/model-data/dataset-versions/{id}/real-01-readiness`。该接口只读取已入库的权威对象，绝不使用默认值补齐资料。满足全部 blocker 后，审核人可调用 `POST /api/v1/model-data/dataset-versions/{id}/freeze-real-01` 写入完整工程图 hash；此操作不创建计算任务。
 
 ## 资料域与状态
 
@@ -22,7 +24,7 @@
 
 ## 必填元数据
 
-每一条原始资料或人工录入均须在其已有的来源/导入/版本字段中保留：`source`、`source_file`、`source_version`、`source_date`、`unit`、`horizontal_crs`、`vertical_datum`、`data_owner`、`responsible_person`、`quality_status`、`review_status`、`evidence_reference`、`missing_reason`、`assumption_flag`。本合同不新建平行数据库字段；字段由现有导入元数据、Dataset Version、结构参数、Boundary、Observation 与 QA 记录承接。
+每一条原始资料或人工录入均须在其已有的来源/导入/版本字段中保留：`source`、`source_file`、`source_version`、`source_date`、`unit`、`horizontal_crs`、`vertical_datum`、`data_owner`、`responsible_person`、`quality_status`、`review_status`、`evidence_reference`、`missing_reason`、`assumption_flag`。本合同不新建平行数据库字段；字段由现有导入元数据、Dataset Version、结构参数、Boundary、Observation 与 QA 记录承接。原始文件及其内容不得提交到 Git；仅 SHA-256、解析配置和受控交付清单可用于复算。
 
 ## 阻断规则
 
