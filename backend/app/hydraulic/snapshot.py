@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import inspect as sqlalchemy_inspect, select
 from sqlalchemy.orm import Session
 
 from app.gis.models import BoundaryCondition, ModelParameter, SimulationCase, SimulationCaseBoundary
@@ -58,17 +58,41 @@ def _row_snapshot(
 ) -> dict[str, Any]:
     """Serialize one engineering row without surrogate keys or volatile timestamps."""
 
+    mapper = sqlalchemy_inspect(type(row), raiseerr=False)
+    if mapper is None:
+        column_bindings = [
+            (column, column.name) for column in row.__table__.columns
+        ]
+    else:
+        # SQLAlchemy attributes may intentionally differ from physical column
+        # names (for example start_chainage -> chainage_start_m).  Snapshot keys
+        # remain database-stable while values must be read through the mapped
+        # Python attribute.
+        column_bindings = [
+            (attribute.columns[0], attribute.key)
+            for attribute in mapper.column_attrs
+        ]
     values = {
-        column.name: getattr(row, column.name)
-        for column in row.__table__.columns
+        column.name: getattr(row, attribute_key)
+        for column, attribute_key in column_bindings
         if column.name not in {
             "id", "dataset_version_id", "created_at", "updated_at", "created_time",
             "completed_at", "generated_at", "imported_at", "raw_content",
         }
     }
-    for column in row.__table__.columns:
+    # These fields are version-local display/transaction identities.  Clone
+    # assigns new values to satisfy database uniqueness, but the hydraulic
+    # engineering content is unchanged and must retain the same canonical hash.
+    table_name = row.__table__.name
+    if table_name == "import_job":
+        values.pop("job_code", None)
+    elif table_name == "simulation_case":
+        values.pop("name", None)
+    for column, attribute_key in column_bindings:
         if getattr(column.type, "geometry_type", None):
-            values[column.name] = row_geometry_hash_value(session, getattr(row, column.name))
+            values[column.name] = row_geometry_hash_value(
+                session, getattr(row, attribute_key)
+            )
     reference_columns = {
         "network_id": "network",
         "branch_id": "branch",
@@ -96,7 +120,7 @@ def _row_snapshot(
         values[column] = reference
     for legacy_column in ("legacy_river_id", "legacy_cross_section_id", "legacy_gate_id", "legacy_pump_id", "target_node_id"):
         values.pop(legacy_column, None)
-    values["entity_type"] = f"{row.__table__.schema or 'public'}.{row.__table__.name}"
+    values["entity_type"] = f"{row.__table__.schema or 'public'}.{table_name}"
     return values
 
 
@@ -128,7 +152,13 @@ def _reference_maps(rows_by_model: dict[type[Any], list[Any]]) -> dict[str, dict
     boundaries = {
         item.id: f"{item.boundary_type}:{item.name}" for item in rows_by_model[BoundaryCondition]
     }
-    cases = {item.id: item.name for item in rows_by_model[SimulationCase]}
+    # Case names are global UI identities and are deliberately changed during a
+    # version clone.  Boundary-link references therefore use their deterministic
+    # version-local order instead of the mutable display name.
+    cases = {
+        item.id: f"case-{position:06d}"
+        for position, item in enumerate(rows_by_model[SimulationCase], start=1)
+    }
     imports = {
         item.id: f"{item.source_hash_sha256}:{item.config_hash}"
         for item in rows_by_model[HydraulicImportJob]
