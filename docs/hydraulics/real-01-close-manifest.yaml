@@ -1,0 +1,113 @@
+# Controlled, sanitized REAL-01-CLOSE manifest. Unknown engineering values stay null.
+project:
+  project_id: null
+  project_name: five-river-two-gate-pilot
+  purpose: real-engineering-data-admission
+  responsible_person: null
+  data_owner: null
+
+spatial_reference:
+  horizontal_crs: EPSG:4547
+  vertical_datum: 1985-national-height-datum
+  unit: m
+  status: NEEDS_CONFIRMATION
+  source: user-declared-plus-partial-file-inventory
+
+dataset:
+  version: null
+  source_version: null
+  source_date: null
+  review_status: NEEDS_CONFIRMATION
+  evidence_reference: docs/hydraulics/real-01-close-source-inventory.yaml
+
+river_network:
+  status: PARTIAL
+  source: PROJECT_CONTROLLED_REFERENCE
+  source_file: gaominghe-centerline.txt
+  topology_confirmed: false
+  expected_river_count: 5
+  accessible_river_count: 1
+
+cross_sections:
+  status: PARTIAL
+  count: null
+  source: PROJECT_CONTROLLED_REFERENCE
+  source_file: gaominghe-cross-sections.xlsx
+  station_unit: m
+  elevation_unit: m
+  branch_chainage_mapped: false
+
+roughness:
+  status: MISSING
+  source: null
+  assumption_flag: false
+
+structures:
+  gates:
+    status: MISSING
+    count: null
+    expected_count: 2
+    source: null
+    branch_chainage_confirmed: false
+    invert_elevation_confirmed: false
+    geometry_confirmed: false
+  pumps:
+    status: NOT_AVAILABLE
+    count: 0
+    source: null
+    missing_reason: No Pump Station is in the REAL-01-CLOSE scope.
+
+boundaries:
+  upstream:
+    status: MISSING
+    type: Q(t)
+    source: null
+    unit: null
+    time_reference: null
+  downstream:
+    status: MISSING
+    type: H-or-H(t)
+    source: null
+    time_reference: null
+
+initial_condition:
+  status: MISSING
+  source: null
+
+observations:
+  status: MISSING
+  source: null
+  quality_status: NEEDS_CONFIRMATION
+
+scenario:
+  status: MISSING
+  source: null
+
+dispatch_plan:
+  status: NOT_APPLICABLE
+  source: null
+
+quality:
+  blockers:
+    - PROJECT_IDENTITY_INCOMPLETE
+    - CRS_AXIS_EVIDENCE_INCOMPLETE
+    - VERTICAL_DATUM_EVIDENCE_INCOMPLETE
+    - FOUR_RIVERS_AND_TOPOLOGY_MISSING
+    - FIVE_RIVER_CROSS_SECTION_MAPPING_MISSING
+    - ROUGHNESS_PROVENANCE_MISSING
+    - TWO_GATE_PACKAGES_MISSING
+    - BOUNDARY_TIME_SERIES_MISSING
+    - INITIAL_CONDITION_MISSING
+    - SCENARIO_EVIDENCE_MISSING
+    - CURRENT_GRAPH_QA_NOT_AVAILABLE
+  warnings:
+    - OBSERVATION_DATA_MISSING
+    - PLATFORM_IAM_NOT_AVAILABLE_FOR_T14
+
+readiness:
+  real_01_ready: false
+  framework_status: FRAMEWORK_PASS_DATA_REQUIRED
+  pilot_contract_supported: true
+  pilot_execution_enabled: false
+  dflow_production_eligible: false
+  freeze_attempted: false

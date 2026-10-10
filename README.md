@@ -9,6 +9,8 @@
 
 ## 当前架构状态
 
+2026-10-09：HYDRO-DATA-REAL-01-CLOSE 已将真实工程 Readiness 收紧为工程语义门禁，QA 通过证据必须绑定当前 Engineering Graph Hash，Clone 不再继承外部结果/历史验收且相同工程内容 Hash 保持稳定。可访问资料仅覆盖一条河的局部中心线与断面，两闸、边界、初始条件和审核证据缺失，因此未导入/冻结，结论为 `FRAMEWORK_PASS_DATA_REQUIRED`。详见 [CLOSE 最终审查](docs/review/HYDRO-DATA-REAL-01-CLOSE-REVIEW.md) 与 [REAL-02 交接](docs/hydraulics/real-02-engineering-handoff.md)。
+
 自 2026-08-31 起，生产级 Standard 1D 正式采用“Dayu 统一水力模型 → MASCARET Adapter → 外部 MASCARET v9.1.1 → 统一结果”路线；旧自研 1D Solver 已退出生产代码、API、Worker、前端和 CI。HYDRO-DATA-01 的 Network → Branch → Chainage → Cross Section 权威数据结构保持不变。
 
 2026-09-28：HYDRO-CORE-06-FIX-01 明确了多引擎证据与试点边界。Worker 只按冻结的 `SimulationTask.engine_id + execution_class` 创建引擎，并在领取、执行和结果落库前重复校验注册表、能力矩阵与 provenance，绝不隐式回退至 MASCARET。MASCARET 是唯一 `production` 可选路由；D-Flow FM 的合成 adapter/dispatch/controlled-runtime 验收与合成数值证据均为 PASS，但不构成官方工程 runtime 或真实工程验证。D-Flow 的 Pilot Contract 已定义、Pilot Execution 仍禁用并延后至 REAL-02，`production_eligible=false` 保持不变。详见 [ADR-HYDRO-0005](docs/adr/ADR-HYDRO-0005-capability-based-engine-routing.md)、[试点资料准入合同](docs/hydraulics/pilot-data-readiness.md)。

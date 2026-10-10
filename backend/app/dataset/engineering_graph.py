@@ -13,7 +13,7 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import Any, TypeVar
 
-from sqlalchemy import select
+from sqlalchemy import inspect as sqlalchemy_inspect, select
 from sqlalchemy.orm import Session
 
 from app.gis.models import (
@@ -30,7 +30,6 @@ from app.hydraulic.models import (
     HydraulicCrossSectionPoint,
     HydraulicCrossSectionProcessing,
     HydraulicCrossSectionProfile,
-    HydraulicExternalResult,
     HydraulicImportJob,
     HydraulicImportMappingProfile,
     HydraulicNetwork,
@@ -62,10 +61,11 @@ def _row_values(row: Any, *, excluded: set[str] | None = None) -> dict[str, Any]
     """Copy persisted business columns but never surrogate IDs or lifecycle timestamps."""
 
     omitted = _VOLATILE_COLUMNS | (excluded or set())
+    mapper = sqlalchemy_inspect(type(row))
     return {
-        column.name: getattr(row, column.name)
-        for column in row.__table__.columns
-        if column.name not in omitted
+        attribute.key: getattr(row, attribute.key)
+        for attribute in mapper.column_attrs
+        if attribute.columns[0].name not in omitted
     }
 
 
@@ -393,11 +393,7 @@ def clone_unified_engineering_graph(
             ),
         ),
     )
-    _copy_family(
-        session,
-        HydraulicExternalResult,
-        HydraulicExternalResult,
-        source_version_id,
-        target_version_id,
-    )
+    # External-model outputs are execution/validation evidence, not editable
+    # engineering inputs.  A clone must recreate them from the cloned graph so
+    # it cannot inherit a historical MIKE11 comparison or acceptance result.
     session.flush()

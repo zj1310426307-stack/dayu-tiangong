@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "task_id": "HYDRO-DATA-REAL-01-CLOSE",
+  "status": "FRAMEWORK_PASS_DATA_REQUIRED",
+  "branch": "phase/hydro-data-real-01-close",
+  "baseline_commit": "01b01c949b09a0b05434758510080a9e0712edd6",
+  "final_commit_source": "git_pr_head",
+  "real_data": {
+    "expected_rivers": 5,
+    "accessible_river_centerline_sets": 1,
+    "accessible_cross_section_sets": 1,
+    "expected_gates": 2,
+    "accessible_gate_packages": 0,
+    "import_committed": false,
+    "dataset_frozen": false,
+    "engineering_graph_hash": null
+  },
+  "software_evidence": {
+    "unit_and_contract_tests_passed": 21,
+    "full_backend_tests_passed": 512,
+    "full_backend_tests_skipped": 77,
+    "frontend_typecheck": "PASS",
+    "frontend_build": "PASS_WITH_EXISTING_CHUNK_SIZE_WARNING",
+    "postgis_migration": "PASS_CURRENT_HEAD",
+    "postgis_clone_hash_transaction": "PASS_ROLLBACK_CLEAN",
+    "frontend_contract_changed": false,
+    "migration_added": false,
+    "dflow_pilot_execution_enabled": false,
+    "dflow_production_eligible": false
+  },
+  "blockers": [
+    "INCOMPLETE_FIVE_RIVER_NETWORK",
+    "INCOMPLETE_FIVE_RIVER_CROSS_SECTIONS",
+    "MISSING_TWO_GATE_ENGINEERING_PACKAGES",
+    "MISSING_ROUGHNESS_PROVENANCE",
+    "MISSING_BOUNDARY_TIME_SERIES",
+    "MISSING_INITIAL_CONDITION_AND_SCENARIO",
+    "MISSING_REVIEW_AND_CURRENT_GRAPH_QA",
+    "TRUSTED_REVIEWER_IAM_NOT_AVAILABLE"
+  ],
+  "real_02_handoff_ready": false,
+  "raw_engineering_sources_in_git": false
+}

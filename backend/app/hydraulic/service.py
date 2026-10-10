@@ -1529,7 +1529,18 @@ def run_validation(session: Session, dataset_version_id: int) -> HydraulicValida
             ))
     counts = {key: sum(v.severity == key for v in issues) for key in ("error", "warning", "info", "passed")}
     run.status = "failed" if counts["error"] else "passed"
-    run.summary = {**counts, "passed_gate": counts["error"] == 0}
+    # Bind this QA decision to the exact version-owned engineering inputs.
+    # Validation rows themselves are excluded from the graph hash, so this can
+    # be recomputed without a self-reference and later detects stale QA.
+    from app.hydraulic.snapshot import engineering_graph_content_hash
+
+    run.summary = {
+        **counts,
+        "passed_gate": counts["error"] == 0,
+        "engineering_content_hash": engineering_graph_content_hash(
+            session, dataset_version_id
+        ),
+    }
     run.completed_at = datetime.now(UTC)
     for issue in issues:
         context = {**issue.context, **({"entity_ref": issue.entity_ref} if issue.entity_ref else {})}

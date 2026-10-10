@@ -8,7 +8,9 @@ introducing a parallel pilot database.
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Iterable
+import math
 from typing import Any
 
 from sqlalchemy import func, select
@@ -19,7 +21,7 @@ from app.dataset.schemas import (
     Real01IssueRecord,
     Real01ReadinessRecord,
 )
-from app.gis.models import BoundaryCondition, DatasetVersion
+from app.gis.models import BoundaryCondition, DatasetVersion, SimulationCase
 from app.hydraulic.models import (
     HydraulicBranch,
     HydraulicCrossSection,
@@ -65,7 +67,7 @@ def _domain(
         return record, None
     return record, Real01IssueRecord(
         code=blocker_code or f"REAL01_{domain}_INCOMPLETE",
-        severity="BLOCKER" if status == "MISSING" else "WARNING",
+        severity="BLOCKER",
         domain=domain,
         message=detail,
     )
@@ -88,20 +90,226 @@ def _has_source_reference(values: dict[str, Any] | None) -> bool:
     )
 
 
-def _all_profiles_have_points(
-    session: Session, profiles: Iterable[HydraulicCrossSectionProfile]
-) -> bool:
-    """Require at least two source points for each profile in the candidate graph."""
+def _coordinate_contract_ready(network: HydraulicNetwork) -> bool:
+    """Require the persisted projected CRS, axis mapping, units, and datum evidence."""
 
-    for profile in profiles:
-        point_count = session.scalar(
-            select(func.count())
-            .select_from(HydraulicCrossSectionPoint)
-            .where(HydraulicCrossSectionPoint.profile_id == profile.id)
-        )
-        if int(point_count or 0) < 2:
+    metadata = network.metadata_json if isinstance(network.metadata_json, dict) else {}
+    coordinate = metadata.get("coordinate_reference")
+    return bool(
+        network.engineering_crs
+        and str(network.engineering_crs).startswith("EPSG:")
+        and network.horizontal_unit == "m"
+        and network.vertical_unit == "m"
+        and _known_datum(network.vertical_datum)
+        and isinstance(coordinate, dict)
+        and coordinate.get("source_crs")
+        and coordinate.get("engineering_crs") == network.engineering_crs
+        and coordinate.get("axis_mapping")
+        and coordinate.get("vertical_datum") == network.vertical_datum
+    )
+
+
+def _network_topology_ready(branches: Iterable[HydraulicBranch]) -> bool:
+    """Accept branching networks while rejecting unlocated or disconnected Branch graphs."""
+
+    grouped: dict[int, list[HydraulicBranch]] = defaultdict(list)
+    for branch in branches:
+        grouped[branch.network_id].append(branch)
+    if not grouped:
+        return False
+    for network_branches in grouped.values():
+        if any(
+            branch.direction_status != "confirmed"
+            or branch.upstream_node_id is None
+            or branch.downstream_node_id is None
+            or branch.upstream_node_id == branch.downstream_node_id
+            or not math.isfinite(branch.start_chainage)
+            or not math.isfinite(branch.end_chainage)
+            or branch.end_chainage <= branch.start_chainage
+            for branch in network_branches
+        ):
+            return False
+        adjacency: dict[int, set[int]] = defaultdict(set)
+        for branch in network_branches:
+            upstream = int(branch.upstream_node_id)
+            downstream = int(branch.downstream_node_id)
+            adjacency[upstream].add(downstream)
+            adjacency[downstream].add(upstream)
+        pending = [next(iter(adjacency))]
+        visited: set[int] = set()
+        while pending:
+            node_id = pending.pop()
+            if node_id in visited:
+                continue
+            visited.add(node_id)
+            pending.extend(adjacency[node_id] - visited)
+        if visited != set(adjacency):
             return False
     return True
+
+
+def _profile_points_ready(points: Iterable[HydraulicCrossSectionPoint]) -> bool:
+    """Require at least two finite Station/Elevation points ordered left-to-right."""
+
+    ordered = sorted(points, key=lambda item: item.sequence)
+    if len(ordered) < 2:
+        return False
+    stations = [item.distance for item in ordered]
+    elevations = [item.elevation for item in ordered]
+    return all(math.isfinite(value) for value in (*stations, *elevations)) and all(
+        right > left for left, right in zip(stations, stations[1:])
+    )
+
+
+def _roughness_covers_profile(
+    profile: HydraulicCrossSectionProfile,
+    points: Iterable[HydraulicCrossSectionPoint],
+    zones: Iterable[HydraulicRoughnessZone],
+) -> bool:
+    """Verify sourced positive Manning zones cover the full raw Station domain."""
+
+    point_rows = sorted(points, key=lambda item: item.distance)
+    zone_rows = sorted(zones, key=lambda item: item.offset_start_m)
+    if not point_rows or not zone_rows:
+        return False
+    if not (profile.source_revision or _has_source_reference(profile.metadata_json)):
+        return False
+    tolerance = 1e-9
+    if zone_rows[0].offset_start_m > point_rows[0].distance + tolerance:
+        return False
+    if zone_rows[-1].offset_end_m < point_rows[-1].distance - tolerance:
+        return False
+    for zone in zone_rows:
+        if not math.isfinite(zone.manning_n) or zone.manning_n <= 0:
+            return False
+    return all(
+        right.offset_start_m <= left.offset_end_m + tolerance
+        for left, right in zip(zone_rows, zone_rows[1:])
+    )
+
+
+def _gate_ready(gate: HydraulicStructure, branches: dict[int, HydraulicBranch]) -> bool:
+    """Require both Gate geometry and traceable MIKE11-style engineering inputs."""
+
+    branch = branches.get(gate.branch_id)
+    hydraulic = gate.hydraulic_parameters if isinstance(gate.hydraulic_parameters, dict) else {}
+    operation = gate.operation_parameters if isinstance(gate.operation_parameters, dict) else {}
+    metadata = gate.metadata_json if isinstance(gate.metadata_json, dict) else {}
+    mike11 = hydraulic.get("mike11_gate_configuration")
+    if not isinstance(mike11, dict):
+        mike11 = {}
+    gate_count = mike11.get("number_of_gates", hydraulic.get("number_of_gates"))
+    maximum_opening = mike11.get("maximum_value_m", operation.get("maximum_opening_m"))
+    initial_opening = mike11.get("initial_value_m", operation.get("initial_opening_m"))
+    opening_speed = mike11.get(
+        "maximum_speed_m_per_s", operation.get("opening_rate_limit_m_per_s")
+    )
+    coefficient = mike11.get(
+        "underflow_discharge_coefficient",
+        hydraulic.get("correction_coefficient", hydraulic.get("discharge_coefficient")),
+    )
+    head_loss = mike11.get("head_loss_factors", hydraulic.get("head_loss_factors"))
+    try:
+        positive_gate_count = int(gate_count) >= 1
+        numeric_values = [
+            float(maximum_opening),
+            float(initial_opening),
+            float(opening_speed),
+            float(coefficient),
+        ]
+    except (TypeError, ValueError):
+        return False
+    return bool(
+        branch
+        and branch.start_chainage <= gate.chainage_m <= branch.end_chainage
+        and gate.invert_elevation_m is not None
+        and gate.width_m is not None
+        and positive_gate_count
+        and all(math.isfinite(value) for value in numeric_values)
+        and numeric_values[0] >= numeric_values[1] >= 0
+        and numeric_values[2] >= 0
+        and numeric_values[3] > 0
+        and isinstance(head_loss, dict)
+        and head_loss
+        and (
+            _has_source_reference(metadata)
+            or _has_source_reference(hydraulic)
+            or _has_source_reference(operation)
+        )
+    )
+
+
+def _time_series_ready(values: dict[str, Any], value_keys: tuple[str, ...]) -> bool:
+    """Validate a non-empty, strictly increasing engineering boundary series."""
+
+    series = values.get("series")
+    if isinstance(series, list) and len(series) >= 2:
+        pairs = [
+            (item.get("time_seconds"), next((item.get(key) for key in value_keys if item.get(key) is not None), item.get("value")))
+            for item in series
+            if isinstance(item, dict)
+        ]
+    else:
+        times = values.get("time_seconds")
+        ordinates = next(
+            (values.get(key) for key in value_keys if isinstance(values.get(key), list)),
+            None,
+        )
+        if not isinstance(times, list) or not isinstance(ordinates, list) or len(times) != len(ordinates):
+            return False
+        pairs = list(zip(times, ordinates))
+    if len(pairs) < 2:
+        return False
+    try:
+        numeric = [(float(time), float(value)) for time, value in pairs]
+    except (TypeError, ValueError):
+        return False
+    return all(math.isfinite(value) for pair in numeric for value in pair) and all(
+        right[0] > left[0] for left, right in zip(numeric, numeric[1:])
+    )
+
+
+def _boundary_ready(boundary: BoundaryCondition) -> bool:
+    """Require source, time basis, location, units, and valid Q/H data semantics."""
+
+    values = boundary.values if isinstance(boundary.values, dict) else {}
+    if not boundary.unit or not _has_source_reference(values):
+        return False
+    time_basis = values.get("time_basis")
+    if time_basis not in {"relative", "absolute"}:
+        return False
+    if time_basis == "absolute" and not values.get("timezone"):
+        return False
+    if boundary.boundary_type == "upstream_discharge":
+        return boundary.hydraulic_node_id is not None and _time_series_ready(
+            values, ("flow_m3_s", "discharge_m3_s")
+        )
+    if boundary.boundary_type == "downstream_water_level":
+        if boundary.hydraulic_node_id is None:
+            return False
+        if values.get("mode") == "constant":
+            value = values.get("value")
+            return bool(
+                isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and math.isfinite(float(value))
+                and values.get("applicability")
+            )
+        if values.get("mode") == "rating_curve":
+            curve = values.get("curve")
+            return bool(isinstance(curve, list) and len(curve) >= 2)
+        return _time_series_ready(values, ("water_level_m", "stage_m"))
+    return False
+
+
+def _qa_matches_graph(run: HydraulicValidationRun, graph_hash: str) -> bool:
+    """Accept only a passed QA decision bound to the current graph identity."""
+
+    return bool(
+        run.status == "passed"
+        and isinstance(run.summary, dict)
+        and run.summary.get("engineering_content_hash") == graph_hash
+    )
 
 
 def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01ReadinessRecord:
@@ -152,6 +360,44 @@ def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01R
             select(HydraulicImportJob).where(HydraulicImportJob.dataset_version_id == version_id)
         ).all()
     )
+    points = list(
+        session.scalars(
+            select(HydraulicCrossSectionPoint).where(
+                HydraulicCrossSectionPoint.dataset_version_id == version_id
+            )
+        ).all()
+    )
+    roughness_zones = list(
+        session.scalars(
+            select(HydraulicRoughnessZone).where(
+                HydraulicRoughnessZone.dataset_version_id == version_id
+            )
+        ).all()
+    )
+    observations = list(
+        session.scalars(
+            select(HydraulicObservationSeries).where(
+                HydraulicObservationSeries.dataset_version_id == version_id
+            )
+        ).all()
+    )
+    cases = list(
+        session.scalars(
+            select(SimulationCase).where(SimulationCase.dataset_version_id == version_id)
+        ).all()
+    )
+    validation_runs = list(
+        session.scalars(
+            select(HydraulicValidationRun).where(
+                HydraulicValidationRun.dataset_version_id == version_id,
+                HydraulicValidationRun.status == "passed",
+            )
+        ).all()
+    )
+    graph_hash = engineering_graph_content_hash(session, version_id)
+    current_qa_runs = [
+        item for item in validation_runs if _qa_matches_graph(item, graph_hash)
+    ]
 
     counts = {
         "networks": len(networks),
@@ -159,24 +405,15 @@ def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01R
         "branches": len(branches),
         "cross_sections": len(sections),
         "active_profiles": len(profiles),
-        "cross_section_points": _count(session, HydraulicCrossSectionPoint, version_id),
-        "roughness_zones": _count(session, HydraulicRoughnessZone, version_id),
+        "cross_section_points": len(points),
+        "roughness_zones": len(roughness_zones),
         "gates": sum(item.structure_type == "gate" for item in structures),
         "pumps": sum(item.structure_type == "pump" for item in structures),
         "boundary_conditions": len(boundaries),
-        "observation_series": _count(session, HydraulicObservationSeries, version_id),
+        "observation_series": len(observations),
         "import_jobs": len(import_jobs),
-        "passed_qa_runs": int(
-            session.scalar(
-                select(func.count())
-                .select_from(HydraulicValidationRun)
-                .where(
-                    HydraulicValidationRun.dataset_version_id == version_id,
-                    HydraulicValidationRun.status == "passed",
-                )
-            )
-            or 0
-        ),
+        "passed_qa_runs": len(validation_runs),
+        "current_qa_runs": len(current_qa_runs),
     }
 
     domains: list[Real01DomainStatus] = []
@@ -190,6 +427,21 @@ def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01R
         domains.append(record)
         if issue is not None:
             missing.append(issue)
+
+    project_ok = bool(
+        version.version
+        and version.name
+        and version.creator
+        and version.description
+    )
+    add(
+        "PROJECT",
+        "AVAILABLE" if project_ok else "PARTIAL",
+        "Dataset Version 已记录工程名称、版本、责任人和用途说明。"
+        if project_ok
+        else "工程名称、版本、责任人或用途/权属说明未完整记录。",
+        "REAL01_PROJECT_IDENTITY_REQUIRED",
+    )
 
     committed_jobs = [item for item in import_jobs if item.status == "committed"]
     source_ok = bool(committed_jobs) and all(
@@ -206,8 +458,11 @@ def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01R
     )
 
     crs_ok = bool(networks) and all(
-        network.engineering_crs and _known_datum(network.vertical_datum) for network in networks
-    ) and all(_known_datum(profile.vertical_datum) for profile in profiles)
+        _coordinate_contract_ready(network) for network in networks
+    ) and bool(profiles) and all(
+        _known_datum(profile.vertical_datum) and profile.vertical_unit == "m"
+        for profile in profiles
+    )
     add(
         "CRS_VERTICAL_DATUM",
         "AVAILABLE" if crs_ok else ("PARTIAL" if networks else "MISSING"),
@@ -218,50 +473,78 @@ def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01R
     )
 
     river_count = len({item.river_name for item in branches if item.river_name})
-    network_ok = counts["nodes"] > 0 and bool(branches) and river_count >= REAL01_EXPECTED_RIVER_COUNT
+    network_ok = (
+        counts["nodes"] > 0
+        and river_count == REAL01_EXPECTED_RIVER_COUNT
+        and _network_topology_ready(branches)
+    )
     add(
         "RIVER_NETWORK",
         "AVAILABLE" if network_ok else ("PARTIAL" if branches else "MISSING"),
-        f"已识别 {river_count} 条有向河流；REAL-01 准入至少需要 {REAL01_EXPECTED_RIVER_COUNT} 条并有节点拓扑。"
+        f"已识别 {river_count} 条河流；REAL-01 准入要求恰好 {REAL01_EXPECTED_RIVER_COUNT} 条，且每个河网内方向、节点和连通性完整。"
         if not network_ok
         else "五河河网、节点、河段和方向均已存在于统一水力 Domain。",
         "REAL01_NETWORK_REQUIRED",
     )
 
-    section_ok = bool(sections) and len(profiles) >= len(sections) and _all_profiles_have_points(session, profiles)
+    branch_by_id = {item.id: item for item in branches}
+    profiles_by_section: dict[int, list[HydraulicCrossSectionProfile]] = defaultdict(list)
+    points_by_profile: dict[int, list[HydraulicCrossSectionPoint]] = defaultdict(list)
+    zones_by_profile: dict[int, list[HydraulicRoughnessZone]] = defaultdict(list)
+    for profile in profiles:
+        profiles_by_section[profile.cross_section_id].append(profile)
+    for point in points:
+        points_by_profile[point.profile_id].append(point)
+    for zone in roughness_zones:
+        zones_by_profile[zone.profile_id].append(zone)
+    section_ok = bool(sections) and all(
+        len(profiles_by_section.get(section.id, [])) == 1
+        and section.branch_id in branch_by_id
+        and branch_by_id[section.branch_id].start_chainage
+        <= section.chainage
+        <= branch_by_id[section.branch_id].end_chainage
+        and section.hydraulic_ready
+        and section.spatial_geometry_source != "UNAVAILABLE"
+        and section.review_status == "REVIEWED"
+        and _profile_points_ready(
+            points_by_profile[profiles_by_section[section.id][0].id]
+        )
+        for section in sections
+    )
     add(
         "CROSS_SECTION",
         "AVAILABLE" if section_ok else ("PARTIAL" if sections else "MISSING"),
-        "所有断面均有活动剖面和至少两个原始 Station/Elevation 点。"
+        "所有断面均位于 Branch 桩号范围内，有一个已审核活动剖面、可用空间定位和严格递增的原始 Station/Elevation 点。"
         if section_ok
-        else "断面、活动剖面或 Station/Elevation 原始点未完整映射到统一 Domain。",
+        else "断面 Branch/Chainage、活动剖面、空间定位、人工审核或 Station/Elevation 点序存在缺口。",
         "REAL01_CROSS_SECTION_REQUIRED",
     )
 
-    roughness_evidence = all(
-        profile.source_revision or _has_source_reference(profile.metadata_json) for profile in profiles
+    roughness_ok = bool(profiles) and all(
+        _roughness_covers_profile(
+            profile,
+            points_by_profile[profile.id],
+            zones_by_profile[profile.id],
+        )
+        for profile in profiles
     )
-    roughness_ok = bool(profiles) and roughness_evidence
     add(
         "ROUGHNESS",
         "AVAILABLE" if roughness_ok else ("PARTIAL" if profiles else "MISSING"),
-        "每个活动剖面均附带粗糙率来源版本或证据引用。"
+        "每个活动剖面均有来源证据，且正值糙率分区连续覆盖完整 Station 范围。"
         if roughness_ok
         else "粗糙率可以有数值，但尚无逐剖面来源证据；不得把默认值升级为真实工程参数。",
         "REAL01_ROUGHNESS_PROVENANCE_REQUIRED",
     )
 
     gates = [item for item in structures if item.structure_type == "gate"]
-    gate_geometry_ok = all(
-        item.branch_id and item.chainage_m is not None and item.invert_elevation_m is not None
-        and item.width_m is not None and item.hydraulic_parameters
-        for item in gates
+    gate_ok = len(gates) == REAL01_EXPECTED_GATE_COUNT and all(
+        _gate_ready(item, branch_by_id) for item in gates
     )
-    gate_ok = len(gates) == REAL01_EXPECTED_GATE_COUNT and gate_geometry_ok
     add(
         "GATE",
         "AVAILABLE" if gate_ok else ("PARTIAL" if gates else "MISSING"),
-        f"已识别 {len(gates)} 座 Gate；REAL-01 需要 {REAL01_EXPECTED_GATE_COUNT} 座具备位置、底槛、孔宽和水力参数来源。"
+        f"已识别 {len(gates)} 座 Gate；REAL-01 需要 {REAL01_EXPECTED_GATE_COUNT} 座具备 Branch/Chainage、底槛、孔数/孔宽、开度/速度、流量与水头损失参数及来源。"
         if not gate_ok
         else "两座 Gate 的统一建筑物参数和位置均已具备。",
         "REAL01_GATE_REQUIRED",
@@ -270,11 +553,10 @@ def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01R
     upstream = [item for item in boundaries if item.boundary_type == "upstream_discharge"]
     downstream = [item for item in boundaries if item.boundary_type == "downstream_water_level"]
     boundary_ok = bool(upstream) and bool(downstream) and all(
-        item.values and item.unit and _has_source_reference(item.values)
-        for item in (*upstream, *downstream)
+        _boundary_ready(item) for item in (*upstream, *downstream)
     )
     add(
-        "BOUNDARY_INITIAL_CONDITION",
+        "BOUNDARY",
         "AVAILABLE" if boundary_ok else ("PARTIAL" if upstream or downstream else "MISSING"),
         "上游 Q(t) 与下游 H/H(t) 均有单位、值和来源/时间基准证据。"
         if boundary_ok
@@ -282,8 +564,34 @@ def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01R
         "REAL01_BOUNDARY_REQUIRED",
     )
 
-    observation_count = counts["observation_series"]
-    observation_ok = observation_count > 0
+    scenario_ok = bool(cases) and all(
+        isinstance(item.hydraulic_1d_configuration, dict)
+        and isinstance(item.hydraulic_1d_configuration.get("initial_condition"), dict)
+        and _has_source_reference(
+            item.hydraulic_1d_configuration.get("initial_condition")
+        )
+        and _has_source_reference(item.hydraulic_1d_configuration)
+        for item in cases
+    )
+    add(
+        "SCENARIO_INITIAL_CONDITION",
+        "AVAILABLE" if scenario_ok else ("PARTIAL" if cases else "MISSING"),
+        "计算工况和初始条件均记录来源、适用范围与显式初值。"
+        if scenario_ok
+        else "计算工况、适用范围、初始水位/流量或其来源证据尚未完整记录。",
+        "REAL01_SCENARIO_OR_INITIAL_CONDITION_REQUIRED",
+    )
+
+    observation_ok = bool(observations) and all(
+        item.unit
+        and _known_datum(item.vertical_datum)
+        and item.time_basis in {"relative", "absolute"}
+        and (item.time_basis != "absolute" or item.timezone)
+        and item.source
+        and item.source_sha256
+        and item.samples_json
+        for item in observations
+    )
     domains.append(
         Real01DomainStatus(
             domain="OBSERVATION",
@@ -303,16 +611,29 @@ def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01R
             )
         )
 
-    qa_ok = counts["passed_qa_runs"] > 0
+    qa_ok = bool(current_qa_runs)
     add(
         "QA_REVIEW",
         "AVAILABLE" if qa_ok else "MISSING",
-        "统一水力 QA 已保留通过记录。" if qa_ok else "尚无通过的统一水力 QA 记录。",
+        "统一水力 QA 通过记录与当前工程图 Hash 一致。"
+        if qa_ok
+        else "尚无与当前工程图 Hash 一致的通过 QA；历史通过记录在数据变化后不得复用。",
         "REAL01_QA_REQUIRED",
     )
 
     blocking_statuses = {"MISSING", "PARTIAL"}
-    base_domains = {"SOURCE_EVIDENCE", "CRS_VERTICAL_DATUM", "RIVER_NETWORK", "CROSS_SECTION", "ROUGHNESS", "GATE", "BOUNDARY_INITIAL_CONDITION", "QA_REVIEW"}
+    base_domains = {
+        "PROJECT",
+        "SOURCE_EVIDENCE",
+        "CRS_VERTICAL_DATUM",
+        "RIVER_NETWORK",
+        "CROSS_SECTION",
+        "ROUGHNESS",
+        "GATE",
+        "BOUNDARY",
+        "SCENARIO_INITIAL_CONDITION",
+        "QA_REVIEW",
+    }
     base_ready = not any(
         item.domain in base_domains and item.status in blocking_statuses for item in domains
     )
@@ -324,7 +645,7 @@ def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01R
         dataset_version_id=version_id,
         dataset_version=version.version,
         dataset_status=version.status,
-        engineering_content_hash=engineering_graph_content_hash(session, version_id),
+        engineering_content_hash=graph_hash,
         counts=counts,
         domains=domains,
         missing_data_records=missing,

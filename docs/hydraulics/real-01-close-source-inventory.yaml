@@ -1,0 +1,87 @@
+schema_version: "1.0"
+task_id: HYDRO-DATA-REAL-01-CLOSE
+generated_at: "2026-10-09T16:30:00+08:00"
+scope: five-river-two-gate-real-engineering-admission
+inventory_status: PARTIAL
+controlled_source_root: PROJECT_CONTROLLED_REFERENCE
+raw_sources_committed_to_git: false
+validation_case_root_configured: false
+
+sources:
+  - source_id: GAOMINGHE-CROSS-SECTIONS-001
+    domain: CROSS_SECTION
+    source_file: PROJECT_CONTROLLED_REFERENCE/gaominghe-cross-sections.xlsx
+    source_version: null
+    source_date: null
+    file_sha256: c8df64d3ad626685020314652e46f3797e422dd179afc2fd994fb66a143ca8c4
+    format: xlsx
+    unit: m
+    horizontal_crs: null
+    vertical_datum: 1985-national-height-datum
+    data_owner: null
+    responsible_person: null
+    quality_status: PARTIAL
+    review_status: NEEDS_CONFIRMATION
+    evidence_reference: controlled-project-file-hash
+    missing_reason: >-
+      Source version/date, data owner, responsible person, horizontal placement
+      evidence, roughness provenance, and professional review are not available.
+    assumption_flag: false
+
+  - source_id: GAOMINGHE-CENTERLINE-001
+    domain: RIVER_NETWORK
+    source_file: PROJECT_CONTROLLED_REFERENCE/gaominghe-centerline.txt
+    source_version: null
+    source_date: null
+    file_sha256: 62a99b3077ccee94ce548a0be3913dd495d0f61367f16eae24eb644ba96ed25e
+    format: txt
+    unit: m
+    horizontal_crs: EPSG:4547
+    vertical_datum: null
+    data_owner: null
+    responsible_person: null
+    quality_status: PARTIAL
+    review_status: NEEDS_CONFIRMATION
+    evidence_reference: controlled-project-file-hash
+    missing_reason: >-
+      Only one river centerline is accessible. Axis mapping, survey metadata,
+      topology ties to four other rivers, ownership, and review are unconfirmed.
+    assumption_flag: false
+
+missing_sources:
+  - domain: PROJECT
+    status: NEEDS_CONFIRMATION
+    missing_reason: Project identity, ownership, responsible person, source version, and review evidence are incomplete.
+  - domain: CRS
+    status: NEEDS_CONFIRMATION
+    missing_reason: Authoritative CRS certificate, central meridian, axis mapping, and transformation evidence are incomplete.
+  - domain: VERTICAL_DATUM
+    status: NEEDS_CONFIRMATION
+    missing_reason: The 1985 datum is user-declared but no authoritative datum or conversion evidence was supplied.
+  - domain: RIVER_NETWORK
+    status: PARTIAL
+    missing_reason: Four river centerlines and the complete five-river node/branch topology are absent.
+  - domain: CROSS_SECTION
+    status: PARTIAL
+    missing_reason: Only one river workbook is accessible; complete five-river mapping and professional review are absent.
+  - domain: ROUGHNESS
+    status: MISSING
+    missing_reason: No per-profile channel/floodplain roughness source or approval record is available.
+  - domain: GATE
+    status: MISSING
+    missing_reason: No authoritative design/control package for either of the two gates is available.
+  - domain: BOUNDARY
+    status: MISSING
+    missing_reason: No traceable upstream Q(t), downstream H/H(t), time basis, or applicability package is available.
+  - domain: INITIAL_CONDITION
+    status: MISSING
+    missing_reason: No sourced initial water level/discharge or approved initialization method is available.
+  - domain: OBSERVATION
+    status: MISSING
+    missing_reason: No calibration or independent-validation H/Q series is available.
+  - domain: SCENARIO
+    status: MISSING
+    missing_reason: No approved scenario definition, time window, or applicability evidence is available.
+  - domain: SOURCE_EVIDENCE
+    status: PARTIAL
+    missing_reason: Two source hashes exist; owners, reviewers, revisions, and evidence for all remaining domains are absent.
