@@ -17,7 +17,7 @@ Trusted principal, OIDC/JWT verification, local RBAC, protected engineering muta
 
 Status is `FRAMEWORK_PASS_IDP_CONFIGURATION_REQUIRED` until a real OIDC Provider, audience, trust anchor, and initial Security Admin identity are supplied by the deployment owner. This is an allowed partial state: protected APIs remain closed, and no anonymous administrator exists.
 
-The additive migration was exercised against a disposable PostgreSQL 17/PostGIS 3.5 database from an empty schema through `20261010_0038`, downgraded to `20260928_0037`, and upgraded to head again. The issuer/subject identity and server-owned role binding integration test also passed against that database; the isolated container and volume were then removed.
+The additive migration was exercised against a disposable PostgreSQL 17/PostGIS 3.5 database from an empty schema through `20261010_0038`, downgraded to `20260928_0037`, and upgraded to head again. The issuer/subject identity and server-owned role binding integration test passed, and the existing Engineering-03 structure API round trip was upgraded to use a signed OIDC token plus a database-owned Engineer role. The isolated containers and volumes were then removed.
 
 ## Compatibility
 
