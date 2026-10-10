@@ -30,10 +30,16 @@ from app.dataset.schemas import (
     SimulationCaseUpdate,
 )
 from app.gis.models import BoundaryCondition, DatasetVersion, ModelParameter, SimulationCase
+from app.security.auth import AuthenticatedPrincipal, require_permission
 
 
 router = APIRouter(prefix="/api/v1/model-data", tags=["model-data"])
 SessionDependency = Annotated[Session, Depends(get_database_session)]
+EngineerDependency = Annotated[AuthenticatedPrincipal, Depends(require_permission("dataset.edit"))]
+ReviewerDependency = Annotated[
+    AuthenticatedPrincipal, Depends(require_permission("dataset.approve"))
+]
+FreezerDependency = Annotated[AuthenticatedPrincipal, Depends(require_permission("dataset.freeze"))]
 
 
 def _commit_value_error(session: Session, action: Any) -> Any:
@@ -46,7 +52,9 @@ def _commit_value_error(session: Session, action: Any) -> Any:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.get("/dataset-versions", response_model=list[DatasetVersionRecord], summary="查询数据集版本")
+@router.get(
+    "/dataset-versions", response_model=list[DatasetVersionRecord], summary="查询数据集版本"
+)
 def read_dataset_versions(session: SessionDependency) -> list[DatasetVersionRecord]:
     """返回全部版本。"""
 
@@ -58,9 +66,7 @@ def read_dataset_versions(session: SessionDependency) -> list[DatasetVersionReco
     response_model=Real01ReadinessRecord,
     summary="查询真实工程资料准入与冻结就绪度",
 )
-def read_real01_readiness(
-    version_id: int, session: SessionDependency
-) -> Real01ReadinessRecord:
+def read_real01_readiness(version_id: int, session: SessionDependency) -> Real01ReadinessRecord:
     """Report REAL-01 evidence gaps without changing the Dataset Version state."""
 
     entity = session.get(DatasetVersion, version_id)
@@ -78,6 +84,7 @@ def freeze_dataset_version_for_real01(
     version_id: int,
     payload: Real01FreezeRequest,
     session: SessionDependency,
+    principal: FreezerDependency,
 ) -> DatasetVersionRecord:
     """Persist the full graph hash without creating a simulation task or result."""
 
@@ -86,15 +93,25 @@ def freeze_dataset_version_for_real01(
         raise not_found("数据集版本")
     return _commit_value_error(
         session,
-        lambda: service.freeze_dataset_version_for_real01(session, entity, payload),
+        lambda: service.freeze_dataset_version_for_real01(session, entity, payload, principal),
     )
 
 
-@router.post("/dataset-versions", response_model=DatasetVersionRecord, status_code=201, summary="新增数据集版本")
-def create_dataset_version(payload: DatasetVersionCreate, session: SessionDependency) -> DatasetVersionRecord:
+@router.post(
+    "/dataset-versions",
+    response_model=DatasetVersionRecord,
+    status_code=201,
+    summary="新增数据集版本",
+)
+def create_dataset_version(
+    payload: DatasetVersionCreate,
+    session: SessionDependency,
+    principal: EngineerDependency,
+) -> DatasetVersionRecord:
     """新增数据集版本。"""
 
-    return commit_or_conflict(session, lambda: service.create_dataset_version(session, payload))
+    trusted = payload.model_copy(update={"creator": principal.display_name})
+    return commit_or_conflict(session, lambda: service.create_dataset_version(session, trusted))
 
 
 @router.post(
@@ -107,25 +124,36 @@ def clone_dataset_version(
     version_id: int,
     payload: DatasetVersionCloneRequest,
     session: SessionDependency,
+    principal: EngineerDependency,
 ) -> DatasetVersionRecord:
     """Create a new Draft lineage node instead of modifying a certified source."""
 
     source = session.get(DatasetVersion, version_id)
     if source is None:
         raise not_found("数据集版本")
+    trusted = payload.model_copy(update={"creator": principal.display_name})
     return _commit_value_error(
-        session, lambda: service.clone_dataset_version(session, source, payload)
+        session, lambda: service.clone_dataset_version(session, source, trusted)
     )
 
 
-@router.put("/dataset-versions/{version_id}", response_model=DatasetVersionRecord, summary="修改数据集版本")
-def update_dataset_version(version_id: int, payload: DatasetVersionUpdate, session: SessionDependency) -> DatasetVersionRecord:
+@router.put(
+    "/dataset-versions/{version_id}", response_model=DatasetVersionRecord, summary="修改数据集版本"
+)
+def update_dataset_version(
+    version_id: int,
+    payload: DatasetVersionUpdate,
+    session: SessionDependency,
+    _: EngineerDependency,
+) -> DatasetVersionRecord:
     """修改唯一可编辑草稿的名称、说明或人工只读锁。"""
 
     entity = session.get(DatasetVersion, version_id)
     if entity is None:
         raise not_found("数据集版本")
-    return commit_or_conflict(session, lambda: service.update_dataset_version(session, entity, payload))
+    return commit_or_conflict(
+        session, lambda: service.update_dataset_version(session, entity, payload)
+    )
 
 
 @router.post(
@@ -137,6 +165,7 @@ def approve_dataset_version_for_calculation(
     version_id: int,
     payload: DatasetVersionApprovalRequest,
     session: SessionDependency,
+    principal: ReviewerDependency,
 ) -> DatasetVersionRecord:
     """批准通过校核的数据；编辑权限由独立只读开关控制。"""
 
@@ -145,12 +174,16 @@ def approve_dataset_version_for_calculation(
         raise not_found("数据集版本")
     return _commit_value_error(
         session,
-        lambda: service.approve_dataset_version_for_calculation(session, entity, payload),
+        lambda: service.approve_dataset_version_for_calculation(
+            session, entity, payload, principal
+        ),
     )
 
 
 @router.delete("/dataset-versions/{version_id}", status_code=204, summary="删除数据版本")
-def delete_dataset_version(version_id: int, session: SessionDependency) -> Response:
+def delete_dataset_version(
+    version_id: int, session: SessionDependency, _: EngineerDependency
+) -> Response:
     """只删除未锁定、未派生且未被执行证据引用的草稿版本。"""
 
     entity = session.get(DatasetVersion, version_id)
@@ -158,22 +191,37 @@ def delete_dataset_version(version_id: int, session: SessionDependency) -> Respo
         raise not_found("数据集版本")
     commit_or_conflict(session, lambda: service.delete_entity(session, entity))
     return Response(status_code=204)
+
+
 @router.get("/parameters", response_model=list[ModelParameterRecord], summary="查询模型参数")
-def read_parameters(session: SessionDependency, dataset_version_id: int | None = Query(default=None, gt=0)) -> list[ModelParameterRecord]:
+def read_parameters(
+    session: SessionDependency, dataset_version_id: int | None = Query(default=None, gt=0)
+) -> list[ModelParameterRecord]:
     """按版本查询模型参数。"""
 
     return service.list_parameters(session, dataset_version_id)
 
 
-@router.post("/parameters", response_model=ModelParameterRecord, status_code=201, summary="新增模型参数")
-def create_parameter(payload: ModelParameterCreate, session: SessionDependency) -> ModelParameterRecord:
+@router.post(
+    "/parameters", response_model=ModelParameterRecord, status_code=201, summary="新增模型参数"
+)
+def create_parameter(
+    payload: ModelParameterCreate, session: SessionDependency, _: EngineerDependency
+) -> ModelParameterRecord:
     """新增模型参数。"""
 
     return commit_or_conflict(session, lambda: service.create_parameter(session, payload))
 
 
-@router.put("/parameters/{parameter_id}", response_model=ModelParameterRecord, summary="修改模型参数")
-def update_parameter(parameter_id: int, payload: ModelParameterUpdate, session: SessionDependency) -> ModelParameterRecord:
+@router.put(
+    "/parameters/{parameter_id}", response_model=ModelParameterRecord, summary="修改模型参数"
+)
+def update_parameter(
+    parameter_id: int,
+    payload: ModelParameterUpdate,
+    session: SessionDependency,
+    _: EngineerDependency,
+) -> ModelParameterRecord:
     """修改模型参数。"""
 
     entity = session.get(ModelParameter, parameter_id)
@@ -183,7 +231,9 @@ def update_parameter(parameter_id: int, payload: ModelParameterUpdate, session: 
 
 
 @router.delete("/parameters/{parameter_id}", status_code=204, summary="删除模型参数")
-def delete_parameter(parameter_id: int, session: SessionDependency) -> Response:
+def delete_parameter(
+    parameter_id: int, session: SessionDependency, _: EngineerDependency
+) -> Response:
     """删除模型参数。"""
 
     entity = session.get(ModelParameter, parameter_id)
@@ -193,8 +243,12 @@ def delete_parameter(parameter_id: int, session: SessionDependency) -> Response:
     return Response(status_code=204)
 
 
-@router.get("/boundary-conditions", response_model=list[BoundaryConditionRecord], summary="查询边界条件")
-def read_boundaries(session: SessionDependency, dataset_version_id: int | None = Query(default=None, gt=0)) -> list[BoundaryConditionRecord]:
+@router.get(
+    "/boundary-conditions", response_model=list[BoundaryConditionRecord], summary="查询边界条件"
+)
+def read_boundaries(
+    session: SessionDependency, dataset_version_id: int | None = Query(default=None, gt=0)
+) -> list[BoundaryConditionRecord]:
     """按版本查询边界条件。"""
 
     return service.list_boundaries(session, dataset_version_id)
@@ -208,6 +262,7 @@ def read_boundaries(session: SessionDependency, dataset_version_id: int | None =
 def generate_boundary_rating_curve(
     payload: BoundaryRatingCurveGenerateRequest,
     session: SessionDependency,
+    _: EngineerDependency,
 ) -> BoundaryRatingCurveGenerateResponse:
     """Generate a read-only Manning Q-H preview for a downstream boundary."""
 
@@ -217,15 +272,33 @@ def generate_boundary_rating_curve(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@router.post("/boundary-conditions", response_model=BoundaryConditionRecord, status_code=201, summary="新增边界条件")
-def create_boundary(payload: BoundaryConditionCreate, session: SessionDependency) -> BoundaryConditionRecord:
+@router.post(
+    "/boundary-conditions",
+    response_model=BoundaryConditionRecord,
+    status_code=201,
+    summary="新增边界条件",
+)
+def create_boundary(
+    payload: BoundaryConditionCreate,
+    session: SessionDependency,
+    _: EngineerDependency,
+) -> BoundaryConditionRecord:
     """新增边界条件。"""
 
     return commit_or_conflict(session, lambda: service.create_boundary(session, payload))
 
 
-@router.put("/boundary-conditions/{boundary_id}", response_model=BoundaryConditionRecord, summary="修改边界条件")
-def update_boundary(boundary_id: int, payload: BoundaryConditionUpdate, session: SessionDependency) -> BoundaryConditionRecord:
+@router.put(
+    "/boundary-conditions/{boundary_id}",
+    response_model=BoundaryConditionRecord,
+    summary="修改边界条件",
+)
+def update_boundary(
+    boundary_id: int,
+    payload: BoundaryConditionUpdate,
+    session: SessionDependency,
+    _: EngineerDependency,
+) -> BoundaryConditionRecord:
     """修改边界条件。"""
 
     entity = session.get(BoundaryCondition, boundary_id)
@@ -235,7 +308,9 @@ def update_boundary(boundary_id: int, payload: BoundaryConditionUpdate, session:
 
 
 @router.delete("/boundary-conditions/{boundary_id}", status_code=204, summary="删除边界条件")
-def delete_boundary(boundary_id: int, session: SessionDependency) -> Response:
+def delete_boundary(
+    boundary_id: int, session: SessionDependency, _: EngineerDependency
+) -> Response:
     """删除未被方案引用的边界条件。"""
 
     entity = session.get(BoundaryCondition, boundary_id)
@@ -246,21 +321,37 @@ def delete_boundary(boundary_id: int, session: SessionDependency) -> Response:
 
 
 @router.get("/simulation-cases", response_model=list[SimulationCaseRecord], summary="查询计算方案")
-def read_cases(session: SessionDependency, dataset_version_id: int | None = Query(default=None, gt=0)) -> list[SimulationCaseRecord]:
+def read_cases(
+    session: SessionDependency, dataset_version_id: int | None = Query(default=None, gt=0)
+) -> list[SimulationCaseRecord]:
     """按版本查询计算方案。"""
 
     return service.list_cases(session, dataset_version_id)
 
 
-@router.post("/simulation-cases", response_model=SimulationCaseRecord, status_code=201, summary="新增计算方案")
-def create_case(payload: SimulationCaseCreate, session: SessionDependency) -> SimulationCaseRecord:
+@router.post(
+    "/simulation-cases",
+    response_model=SimulationCaseRecord,
+    status_code=201,
+    summary="新增计算方案",
+)
+def create_case(
+    payload: SimulationCaseCreate, session: SessionDependency, _: EngineerDependency
+) -> SimulationCaseRecord:
     """新增计算方案并校验跨版本引用。"""
 
     return _commit_value_error(session, lambda: service.create_case(session, payload))
 
 
-@router.put("/simulation-cases/{case_id}", response_model=SimulationCaseRecord, summary="修改计算方案")
-def update_case(case_id: int, payload: SimulationCaseUpdate, session: SessionDependency) -> SimulationCaseRecord:
+@router.put(
+    "/simulation-cases/{case_id}", response_model=SimulationCaseRecord, summary="修改计算方案"
+)
+def update_case(
+    case_id: int,
+    payload: SimulationCaseUpdate,
+    session: SessionDependency,
+    _: EngineerDependency,
+) -> SimulationCaseRecord:
     """修改计算方案。"""
 
     entity = session.get(SimulationCase, case_id)
@@ -270,7 +361,7 @@ def update_case(case_id: int, payload: SimulationCaseUpdate, session: SessionDep
 
 
 @router.delete("/simulation-cases/{case_id}", status_code=204, summary="删除计算方案")
-def delete_case(case_id: int, session: SessionDependency) -> Response:
+def delete_case(case_id: int, session: SessionDependency, _: EngineerDependency) -> Response:
     """删除计算方案。"""
 
     entity = session.get(SimulationCase, case_id)

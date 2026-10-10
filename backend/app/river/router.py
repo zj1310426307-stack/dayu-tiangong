@@ -17,10 +17,12 @@ from app.river.schemas import (
     TopologyGenerateRequest,
     TopologyResponse,
 )
+from app.security.auth import AuthenticatedPrincipal, require_permission
 
 
 router = APIRouter(prefix="/api/v1/rivers", tags=["river-database"])
 SessionDependency = Annotated[Session, Depends(get_database_session)]
+EngineerDependency = Annotated[AuthenticatedPrincipal, Depends(require_permission("dataset.edit"))]
 
 
 @router.get("", response_model=RiverListResponse, summary="分页查询河道")
@@ -36,8 +38,12 @@ def read_rivers(
     return service.list_rivers(session, dataset_version_id, search, limit, offset)
 
 
-@router.post("", response_model=RiverRecord, status_code=status.HTTP_201_CREATED, summary="新增河道")
-def create_river(payload: RiverCreate, session: SessionDependency) -> RiverRecord:
+@router.post(
+    "", response_model=RiverRecord, status_code=status.HTTP_201_CREATED, summary="新增河道"
+)
+def create_river(
+    payload: RiverCreate, session: SessionDependency, _: EngineerDependency
+) -> RiverRecord:
     """创建河道并提交单一业务事务。"""
 
     return commit_or_conflict(session, lambda: service.create_river(session, payload))
@@ -45,15 +51,15 @@ def create_river(payload: RiverCreate, session: SessionDependency) -> RiverRecor
 
 @router.post("/topology/generate", response_model=TopologyResponse, summary="自动生成河网拓扑")
 def generate_topology(
-    payload: TopologyGenerateRequest, session: SessionDependency
+    payload: TopologyGenerateRequest,
+    session: SessionDependency,
+    _: EngineerDependency,
 ) -> TopologyResponse:
     """按容差从河道端点幂等重建拓扑。"""
 
     return commit_or_conflict(
         session,
-        lambda: service.generate_topology(
-            session, payload.dataset_version_id, payload.tolerance
-        ),
+        lambda: service.generate_topology(session, payload.dataset_version_id, payload.tolerance),
     )
 
 
@@ -79,7 +85,10 @@ def read_river(river_id: int, session: SessionDependency) -> RiverRecord:
 
 @router.put("/{river_id}", response_model=RiverRecord, summary="修改河道")
 def update_river(
-    river_id: int, payload: RiverUpdate, session: SessionDependency
+    river_id: int,
+    payload: RiverUpdate,
+    session: SessionDependency,
+    _: EngineerDependency,
 ) -> RiverRecord:
     """局部更新河道并提交。"""
 
@@ -90,7 +99,7 @@ def update_river(
 
 
 @router.delete("/{river_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除河道")
-def delete_river(river_id: int, session: SessionDependency) -> Response:
+def delete_river(river_id: int, session: SessionDependency, _: EngineerDependency) -> Response:
     """删除河道；有关联闸泵时数据库将拒绝并返回冲突。"""
 
     river = session.get(River, river_id)

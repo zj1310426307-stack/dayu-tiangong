@@ -5,6 +5,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { cloneDatasetVersion, createDatasetVersion, deleteDatasetVersion, updateDatasetVersion, type DatasetVersionCreate } from '../api/generated/client';
 import { navigationItems } from '../router';
 import { datasetVersionStatusLabel, useDatasetVersion } from '../context/DatasetVersionContext';
+import { useAuth } from '../context/AuthContext';
 
 const { Header, Sider, Content } = Layout;
 
@@ -27,6 +28,9 @@ export function MainLayout() {
   const [versionForm] = Form.useForm<DatasetVersionCreate>();
   const location = useLocation();
   const navigate = useNavigate();
+  const { principal, loading: authLoading, error: authError, can } = useAuth();
+  const canEditDataset = can('dataset.edit');
+  const canCloneDataset = can('dataset.clone');
   const isPublishedScenarioResults = location.pathname.startsWith('/hydraulic/scenario-results');
   const {
     versions,
@@ -68,7 +72,7 @@ export function MainLayout() {
     versionForm.setFieldsValue({
       version: `DRAFT-${timestamp}`,
       name: '数据维护草稿',
-      creator: 'web-operator',
+      creator: principal?.display_name ?? '当前用户',
       description: '由大禹天工 Web 工作台创建的可编辑数据版本',
     });
     setCreateOpen(true);
@@ -83,7 +87,7 @@ export function MainLayout() {
       const created = await cloneDatasetVersion(currentVersion.id, {
         version: `${currentVersion.version}-DRAFT-${timestamp}`.slice(0, 32),
         name: `${currentVersion.name} 草稿`.slice(0, 128),
-        creator: 'web-operator',
+        creator: principal?.display_name ?? '当前用户',
         description: `基于不可变版本 ${currentVersion.version} 创建的编辑草稿`,
       });
       await refreshVersions(created.id);
@@ -206,19 +210,28 @@ export function MainLayout() {
                   placeholder="选择数据版本"
                 />
                 <Tooltip title={error || '创建独立且默认可编辑的数据版本'}>
-                  <Button icon={<PlusOutlined />} onClick={openCreateDraft}>新建版本</Button>
+                  <Button
+                    icon={<PlusOutlined />}
+                    onClick={openCreateDraft}
+                    disabled={!canEditDataset}
+                  >新建版本</Button>
                 </Tooltip>
                 {currentVersion?.status === 'draft' && (
                   <Button
                     loading={changingReadOnly}
                     icon={currentVersion.is_read_only ? <UnlockOutlined /> : <LockOutlined />}
                     onClick={() => void toggleReadOnly()}
+                    disabled={!canEditDataset}
                   >
                     {currentVersion.is_read_only ? '解除只读' : '设为只读'}
                   </Button>
                 )}
                 {currentVersion?.status !== 'draft' && (
-                  <Button loading={cloning} onClick={() => void cloneCurrentVersion()}>
+                  <Button
+                    loading={cloning}
+                    onClick={() => void cloneCurrentVersion()}
+                    disabled={!canCloneDataset}
+                  >
                     基于此版本创建草稿
                   </Button>
                 )}
@@ -231,7 +244,12 @@ export function MainLayout() {
                     okButtonProps={{ danger: true }}
                     onConfirm={() => void deleteCurrentVersion()}
                   >
-                    <Button danger loading={deleting} icon={<DeleteOutlined />}>删除版本</Button>
+                    <Button
+                      danger
+                      loading={deleting}
+                      icon={<DeleteOutlined />}
+                      disabled={!canEditDataset}
+                    >删除版本</Button>
                   </Popconfirm>
                 )}
                 <Tag color={versionStatusColor(currentVersion?.status)}>
@@ -247,6 +265,11 @@ export function MainLayout() {
                 )}
               </>
             )}
+            <Tooltip title={authError ?? principal?.roles.join(', ') ?? '正在校验身份'}>
+              <Tag color={principal ? 'cyan' : 'default'}>
+                {authLoading ? '身份校验中' : principal?.display_name ?? '未登录'}
+              </Tag>
+            </Tooltip>
             <Tag className="env-tag">原型环境</Tag>
             <Tooltip title="通知中心将在后续阶段接入">
               <Button className="notification-button" type="text" icon={<BellOutlined />} />
@@ -278,9 +301,7 @@ export function MainLayout() {
           <Form.Item name="name" label="草稿名称" rules={[{ required: true, message: '请输入草稿名称' }]}>
             <Input maxLength={128} />
           </Form.Item>
-          <Form.Item name="creator" label="创建者" rules={[{ required: true, message: '请输入创建者' }]}>
-            <Input maxLength={64} />
-          </Form.Item>
+          <Form.Item name="creator" hidden><Input /></Form.Item>
           <Form.Item name="description" label="说明">
             <Input.TextArea rows={3} />
           </Form.Item>

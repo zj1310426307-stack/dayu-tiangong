@@ -147,7 +147,9 @@ def _remap_case_configuration(
     if isinstance(initial, dict) and isinstance(initial.get("by_section"), list):
         for item in initial["by_section"]:
             if not isinstance(item, dict) or "cross_section_id" not in item:
-                raise ValueError("工程图克隆失败：initial_condition.by_section 缺少 cross_section_id")
+                raise ValueError(
+                    "工程图克隆失败：initial_condition.by_section 缺少 cross_section_id"
+                )
             item["cross_section_id"] = str(
                 _remap(int(item["cross_section_id"]), sections, "configuration.initial_condition")
             )
@@ -198,7 +200,9 @@ def clone_unified_engineering_graph(
         HydraulicNode,
         source_version_id,
         target_version_id,
-        mutate=lambda source, values: values.update(network_id=_remap(source.network_id, networks, "node.network_id")),
+        mutate=lambda source, values: values.update(
+            network_id=_remap(source.network_id, networks, "node.network_id")
+        ),
     )
     branches = _copy_family(
         session,
@@ -209,7 +213,9 @@ def clone_unified_engineering_graph(
         mutate=lambda source, values: values.update(
             network_id=_remap(source.network_id, networks, "branch.network_id"),
             upstream_node_id=_remap(source.upstream_node_id, nodes, "branch.upstream_node_id"),
-            downstream_node_id=_remap(source.downstream_node_id, nodes, "branch.downstream_node_id"),
+            downstream_node_id=_remap(
+                source.downstream_node_id, nodes, "branch.downstream_node_id"
+            ),
             legacy_river_id=None,
         ),
     )

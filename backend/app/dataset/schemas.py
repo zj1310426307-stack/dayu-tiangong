@@ -47,7 +47,12 @@ class DatasetVersionApprovalRequest(BaseModel):
     """Record the operator decision that approves a validated calculation dataset."""
 
     model_config = ConfigDict(extra="forbid")
-    reviewer: str = Field(min_length=1, max_length=64)
+    reviewer: str | None = Field(
+        default=None,
+        max_length=64,
+        deprecated=True,
+        description="Compatibility input only; the verified bearer principal is authoritative.",
+    )
     reason: str = Field(min_length=1, max_length=512)
 
 
@@ -55,7 +60,12 @@ class Real01FreezeRequest(BaseModel):
     """Record the reviewed REAL-01 engineering graph freeze decision."""
 
     model_config = ConfigDict(extra="forbid")
-    reviewer: str = Field(min_length=1, max_length=64)
+    reviewer: str | None = Field(
+        default=None,
+        max_length=64,
+        deprecated=True,
+        description="Compatibility input only; the verified bearer principal is authoritative.",
+    )
     reason: str = Field(min_length=1, max_length=512)
 
 

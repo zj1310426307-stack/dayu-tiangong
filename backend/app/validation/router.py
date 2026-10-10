@@ -8,14 +8,20 @@ from sqlalchemy.orm import Session
 from app.database.session import get_database_session
 from app.validation.schemas import ValidationReport, ValidationRequest
 from app.validation.service import run_validation
+from app.security.auth import AuthenticatedPrincipal, require_permission
 
 
 router = APIRouter(prefix="/api/v1/validation", tags=["data-validation"])
 SessionDependency = Annotated[Session, Depends(get_database_session)]
+EngineerDependency = Annotated[AuthenticatedPrincipal, Depends(require_permission("dataset.edit"))]
 
 
 @router.post("/run", response_model=ValidationReport, summary="运行水利数据库自动校验")
-def validate_dataset(payload: ValidationRequest, session: SessionDependency) -> ValidationReport:
+def validate_dataset(
+    payload: ValidationRequest,
+    session: SessionDependency,
+    _: EngineerDependency,
+) -> ValidationReport:
     """返回空间、水力、建筑物、拓扑和模型完整性报告。"""
 
     try:

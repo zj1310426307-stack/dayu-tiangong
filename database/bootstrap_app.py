@@ -32,7 +32,9 @@ def _ensure_login_role(cursor: psycopg.Cursor, role_name: str, password: str) ->
             "NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS"
         ).format(role, sql.Literal(password))
     )
-    cursor.execute(sql.SQL("ALTER ROLE {} RESET default_transaction_read_only").format(role))
+    cursor.execute(
+        sql.SQL("ALTER ROLE {} RESET default_transaction_read_only").format(role)
+    )
 
 
 def _reset_memberships(cursor: psycopg.Cursor, role_name: str) -> None:
@@ -70,8 +72,12 @@ def _configure_privileges(
     owner_id = sql.Identifier(owner)
     database_id = sql.Identifier(database)
     publisher_id = sql.Identifier(publisher)
-    cursor.execute(sql.SQL("REVOKE ALL ON DATABASE {} FROM {}").format(database_id, role))
-    cursor.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(database_id, role))
+    cursor.execute(
+        sql.SQL("REVOKE ALL ON DATABASE {} FROM {}").format(database_id, role)
+    )
+    cursor.execute(
+        sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(database_id, role)
+    )
     for schema_name in ("public", "staging_qgis", "publish", "imports"):
         schema = sql.Identifier(schema_name)
         cursor.execute(sql.SQL("REVOKE ALL ON SCHEMA {} FROM {}").format(schema, role))
@@ -86,11 +92,13 @@ def _configure_privileges(
             ).format(schema, role)
         )
         cursor.execute(
-            sql.SQL(
-                "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA {} TO {}"
-            ).format(schema, role)
+            sql.SQL("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA {} TO {}").format(
+                schema, role
+            )
         )
-    cursor.execute(sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA publish TO {}").format(role))
+    cursor.execute(
+        sql.SQL("GRANT SELECT ON ALL TABLES IN SCHEMA publish TO {}").format(role)
+    )
 
     for schema_name in ("public", "staging_qgis"):
         schema = sql.Identifier(schema_name)
@@ -115,12 +123,68 @@ def _configure_privileges(
     cursor.execute(sql.SQL("GRANT {} TO {}").format(publisher_id, role))
 
 
+def _bootstrap_security_admin(cursor: psycopg.Cursor) -> None:
+    """Create the first security administrator exactly once when explicitly configured."""
+
+    issuer = os.getenv("DAYU_BOOTSTRAP_SECURITY_ADMIN_ISSUER", "").strip()
+    subject = os.getenv("DAYU_BOOTSTRAP_SECURITY_ADMIN_SUBJECT", "").strip()
+    if not issuer and not subject:
+        return
+    if not issuer or not subject:
+        raise ValueError(
+            "both DAYU_BOOTSTRAP_SECURITY_ADMIN_ISSUER and "
+            "DAYU_BOOTSTRAP_SECURITY_ADMIN_SUBJECT are required"
+        )
+    existing_admin = cursor.execute(
+        """
+        SELECT EXISTS (
+            SELECT 1
+              FROM identity_role_binding AS binding
+              JOIN identity_principal AS principal ON principal.id = binding.principal_id
+             WHERE binding.role = 'security_admin'
+               AND binding.active IS TRUE
+               AND principal.active IS TRUE
+        )
+        """
+    ).fetchone()[0]
+    if existing_admin:
+        return
+    display_name = os.getenv(
+        "DAYU_BOOTSTRAP_SECURITY_ADMIN_DISPLAY_NAME", subject
+    ).strip()
+    email = os.getenv("DAYU_BOOTSTRAP_SECURITY_ADMIN_EMAIL") or None
+    principal_id = cursor.execute(
+        """
+        INSERT INTO identity_principal
+            (issuer, subject, display_name, email, active, authentication_method)
+        VALUES (%s, %s, %s, %s, TRUE, 'bootstrap')
+        ON CONFLICT (issuer, subject) DO UPDATE
+            SET display_name = EXCLUDED.display_name,
+                email = EXCLUDED.email,
+                active = TRUE
+        RETURNING id
+        """,
+        (issuer, subject, display_name, email),
+    ).fetchone()[0]
+    cursor.execute(
+        """
+        INSERT INTO identity_role_binding
+            (principal_id, role, active, created_by_principal_id)
+        VALUES (%s, 'security_admin', TRUE, %s)
+        ON CONFLICT (principal_id, role) DO UPDATE SET active = TRUE
+        """,
+        (principal_id, principal_id),
+    )
+
+
 def main() -> None:
     """Create the application login and make it the inheriting publisher member."""
 
     owner = _identifier(os.getenv("POSTGRES_USER", "dayu"), "POSTGRES_USER")
     database = _identifier(os.getenv("POSTGRES_DB", "dayu_tiangong"), "POSTGRES_DB")
-    app_role = _identifier(os.getenv("BACKEND_DB_USER", "dayu_backend"), "BACKEND_DB_USER")
+    app_role = _identifier(
+        os.getenv("BACKEND_DB_USER", "dayu_backend"), "BACKEND_DB_USER"
+    )
     publisher = _identifier(
         os.getenv("QGIS_PUBLISHER_DB_USER", "dayu_publisher"),
         "QGIS_PUBLISHER_DB_USER",
@@ -149,6 +213,7 @@ def main() -> None:
             app_role=app_role,
             publisher=publisher,
         )
+        _bootstrap_security_admin(cursor)
     print(
         "Application bootstrap complete: "
         f"role={app_role}, publisher={publisher}, database={database}"
