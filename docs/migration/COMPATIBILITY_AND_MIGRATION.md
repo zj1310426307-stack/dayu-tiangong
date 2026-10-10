@@ -90,3 +90,13 @@ git revert a6ee95b
 ```
 
 若只回滚一项，仍需保证后端与生成客户端版本匹配。回滚文件基础前先备份自定义存储根和本轮生成文件；旧代码不会自动删除孤儿文件。Nginx、Dockerfile、Compose 可独立恢复，但必须重新验证上传与模板。没有数据库 migration，因此没有 downgrade 命令。
+# HYDRO-AUTH-01 trusted identity migration (20261010_0038)
+
+Migration `20261010_0038_trusted_principal_rbac` adds `identity_principal`,
+`identity_role_binding`, `dataset_review`, and `security_audit_event`. It does not rewrite
+existing Dataset or hydraulic rows. Deploy in this order: migrate as owner, optionally run
+the explicit first-admin bootstrap, then start API/Workers with `AUTH_MODE=oidc` and the IdP
+trust configuration. Protected mutations remain fail-closed while auth is disabled or
+incomplete. Downgrade removes only the four additive security tables and therefore discards
+their authorization/audit evidence; take a database backup and obtain security-owner approval
+before any downgrade.

@@ -77,6 +77,7 @@ from app.hydraulic.production.records import (
     ValidationRunRecord,
 )
 from app.hydraulic.production.workflow import build_acceptance_manifest
+from app.security.auth import AuthenticatedPrincipal, require_permission
 
 
 router = APIRouter(prefix="/api/v1/hydraulic/production", tags=["hydraulic-production"])
@@ -85,6 +86,7 @@ OptionsForm = Annotated[str, Form()]
 PositiveIdForm = Annotated[int, Form(gt=0)]
 CodeForm = Annotated[str, Form(min_length=1, max_length=128)]
 SessionDependency = Annotated[Session, Depends(get_database_session)]
+EngineerDependency = Annotated[AuthenticatedPrincipal, Depends(require_permission("dataset.edit"))]
 
 
 @router.get("/capabilities", response_model=ProductionCapabilityResponse)
@@ -122,9 +124,7 @@ def create_production_run(
 ) -> ProductionRunRecord:
     """Atomically create a formal task and its reproducible backend/Worker QA gate."""
 
-    return commit_or_conflict(
-        session, lambda: persistence.create_production_run(session, payload)
-    )
+    return commit_or_conflict(session, lambda: persistence.create_production_run(session, payload))
 
 
 @router.get("/runs", response_model=list[ProductionRunRecord])
@@ -147,9 +147,7 @@ def commit_calibration_run(
 ) -> CalibrationRunRecord:
     """Persist a bounded calibration experiment without overwriting source parameters."""
 
-    return commit_or_conflict(
-        session, lambda: persistence.commit_calibration_run(session, payload)
-    )
+    return commit_or_conflict(session, lambda: persistence.commit_calibration_run(session, payload))
 
 
 @router.post(
@@ -180,9 +178,7 @@ def accept_calibration_candidate(
 
     return commit_or_conflict(
         session,
-        lambda: persistence.promote_calibration_candidate(
-            session, calibration_run_id, payload
-        ),
+        lambda: persistence.promote_calibration_candidate(session, calibration_run_id, payload),
     )
 
 
@@ -192,13 +188,13 @@ def accept_calibration_candidate(
     status_code=status.HTTP_201_CREATED,
 )
 def commit_validation_run(
-    payload: ValidationRunCommitRequest, session: SessionDependency
+    payload: ValidationRunCommitRequest,
+    session: SessionDependency,
+    _: EngineerDependency,
 ) -> ValidationRunRecord:
     """Persist validation evidence while enforcing the independent-data rule."""
 
-    return commit_or_conflict(
-        session, lambda: persistence.commit_validation_run(session, payload)
-    )
+    return commit_or_conflict(session, lambda: persistence.commit_validation_run(session, payload))
 
 
 @router.post(
@@ -211,9 +207,7 @@ def commit_result_product(
 ) -> ResultProductRecord:
     """Persist a content-addressed result product and append an export audit event."""
 
-    return commit_or_conflict(
-        session, lambda: persistence.commit_result_product(session, payload)
-    )
+    return commit_or_conflict(session, lambda: persistence.commit_result_product(session, payload))
 
 
 @router.get("/audit", response_model=list[AuditEventRecord])
@@ -296,7 +290,9 @@ def validate_acceptance(payload: AcceptanceEvaluationRequest) -> AcceptanceEvalu
 
 
 @router.post("/external-results/preview", response_model=ExternalResultPreview)
-async def preview_external_result(file: FileUpload, options_json: OptionsForm) -> ExternalResultPreview:
+async def preview_external_result(
+    file: FileUpload, options_json: OptionsForm
+) -> ExternalResultPreview:
     """Preview a legal external CSV/XLSX export without database mutation."""
 
     filename = Path(file.filename or "external-result").name
@@ -314,7 +310,9 @@ async def preview_external_result(file: FileUpload, options_json: OptionsForm) -
 
 
 @router.post("/time-series/preview", response_model=TimeSeriesImportPreview)
-async def preview_time_series(file: FileUpload, options_json: OptionsForm) -> TimeSeriesImportPreview:
+async def preview_time_series(
+    file: FileUpload, options_json: OptionsForm
+) -> TimeSeriesImportPreview:
     """Preview boundary or observation CSV/XLSX without database mutation."""
 
     filename = Path(file.filename or "hydraulic-series").name
@@ -341,6 +339,7 @@ async def import_observation(
     dataset_version_id: PositiveIdForm,
     actor: CodeForm,
     session: SessionDependency,
+    principal: EngineerDependency,
 ) -> ObservationRecord:
     """Re-read and atomically persist a complete observation file after preview."""
 
@@ -356,13 +355,11 @@ async def import_observation(
         request = ObservationCommitRequest(
             dataset_version_id=dataset_version_id,
             preview=preview,
-            actor=actor,
+            actor=principal.display_name,
         )
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)[:1000]) from exc
-    return commit_or_conflict(
-        session, lambda: persistence.commit_observation(session, request)
-    )
+    return commit_or_conflict(session, lambda: persistence.commit_observation(session, request))
 
 
 @router.post(
@@ -377,6 +374,7 @@ async def import_external_result(
     result_code: CodeForm,
     actor: CodeForm,
     session: SessionDependency,
+    principal: EngineerDependency,
 ) -> ExternalResultRecord:
     """Re-read and atomically persist every row of a legal external CSV/XLSX export."""
 
@@ -390,14 +388,12 @@ async def import_external_result(
         request = ExternalResultCommitRequest(
             dataset_version_id=dataset_version_id,
             result_code=result_code,
-            actor=actor,
+            actor=principal.display_name,
             preview=preview,
         )
     except (ValidationError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)[:1000]) from exc
-    return commit_or_conflict(
-        session, lambda: persistence.commit_external_result(session, request)
-    )
+    return commit_or_conflict(session, lambda: persistence.commit_external_result(session, request))
 
 
 @router.post("/external-results/compare", response_model=ExternalComparisonResult)

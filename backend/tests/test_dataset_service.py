@@ -18,6 +18,7 @@ from app.dataset.service import (
     freeze_dataset_version_for_real01,
 )
 from app.gis.models import DatasetVersion
+from app.security.auth import AuthenticatedPrincipal
 
 
 class _ScalarRows:
@@ -35,6 +36,24 @@ class _CaseSession:
 
     def flush(self) -> None:
         return None
+
+    def add(self, _entity: object) -> None:
+        return None
+
+
+def _principal(*roles: str) -> AuthenticatedPrincipal:
+    """Return the trusted actor required by protected service operations."""
+
+    return AuthenticatedPrincipal(
+        id=12,
+        issuer="https://issuer.example",
+        subject="hydraulic-reviewer",
+        display_name="hydraulic-reviewer",
+        email=None,
+        authentication_method="oidc",
+        roles=roles,
+        permissions=frozenset(),
+    )
 
 
 class _CloneRows:
@@ -104,9 +123,7 @@ def test_clone_creates_writable_draft_lineage_without_certification(monkeypatch:
         created_time=datetime(2026, 9, 13, tzinfo=UTC),
     )
     session = _CloneSession()
-    monkeypatch.setattr(
-        "app.dataset.service.lock_dataset_version", lambda _session, _id: source
-    )
+    monkeypatch.setattr("app.dataset.service.lock_dataset_version", lambda _session, _id: source)
 
     record = clone_dataset_version(
         cast(Session, session),
@@ -141,9 +158,7 @@ def test_approve_dataset_validates_every_case_before_freezing(monkeypatch: Any) 
         is_read_only=False,
         created_time=datetime(2026, 9, 9, tzinfo=UTC),
     )
-    validation = SimpleNamespace(
-        summary=SimpleNamespace(errors=0, warnings=0, is_model_ready=True)
-    )
+    validation = SimpleNamespace(summary=SimpleNamespace(errors=0, warnings=0, is_model_ready=True))
     mapped_cases: list[tuple[int, bool]] = []
 
     monkeypatch.setattr(
@@ -176,17 +191,20 @@ def test_approve_dataset_validates_every_case_before_freezing(monkeypatch: Any) 
             reviewer="web-operator",
             reason="Validated and frozen for Standard 1D calculation",
         ),
+        _principal("engineering_reviewer"),
     )
 
     assert mapped_cases == [(47, True), (49, True)]
-    assert record.status == "approved"
+    assert record.status == "review"
     assert record.content_hash == "a" * 64
     assert record.engineering_content_hash == "e" * 64
-    assert record.reviewed_by == "web-operator"
-    assert record.approved_by == "web-operator"
+    assert record.reviewed_by == "hydraulic-reviewer"
+    assert record.approved_by is None
 
 
-def test_approve_dataset_allows_validation_warnings_for_uncalibrated_workflow(monkeypatch: Any) -> None:
+def test_approve_dataset_allows_validation_warnings_for_uncalibrated_workflow(
+    monkeypatch: Any,
+) -> None:
     """Warnings are retained as review information but do not block approval."""
 
     entity = DatasetVersion(
@@ -198,9 +216,7 @@ def test_approve_dataset_allows_validation_warnings_for_uncalibrated_workflow(mo
         is_read_only=False,
         created_time=datetime(2026, 9, 9, tzinfo=UTC),
     )
-    validation = SimpleNamespace(
-        summary=SimpleNamespace(errors=0, warnings=1, is_model_ready=True)
-    )
+    validation = SimpleNamespace(summary=SimpleNamespace(errors=0, warnings=1, is_model_ready=True))
     monkeypatch.setattr(
         "app.dataset.service.assert_dataset_version_mutable",
         lambda _session, _version_id: entity,
@@ -227,9 +243,10 @@ def test_approve_dataset_allows_validation_warnings_for_uncalibrated_workflow(mo
         cast(Session, _CaseSession()),
         entity,
         DatasetVersionApprovalRequest(reviewer="operator", reason="未率定方案，已知悉校核警告"),
+        _principal("engineering_reviewer"),
     )
 
-    assert record.status == "approved"
+    assert record.status == "review"
     assert record.content_hash == "b" * 64
 
 
@@ -243,7 +260,7 @@ def test_real01_freeze_requires_readiness_then_persists_full_graph_hash(
         version="five-rivers-review",
         name="Five Rivers",
         creator="web-operator",
-        status="draft",
+        status="review",
         is_read_only=False,
         created_time=datetime(2026, 9, 28, tzinfo=UTC),
     )
@@ -253,18 +270,30 @@ def test_real01_freeze_requires_readiness_then_persists_full_graph_hash(
         missing_data_records=[],
     )
     monkeypatch.setattr(
-        "app.dataset.service.assert_dataset_version_mutable",
+        "app.dataset.service.lock_dataset_version",
         lambda _session, _version_id: entity,
     )
     monkeypatch.setattr(
         "app.dataset.service.build_real01_readiness",
         lambda _session, _entity: readiness,
     )
+    monkeypatch.setattr(
+        "app.dataset.service.latest_approved_review",
+        lambda _session, _version_id: SimpleNamespace(
+            engineering_content_hash="c" * 64,
+            reviewer_display_name="hydraulic-reviewer",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.dataset.service.record_freeze_audit",
+        lambda *_args, **_kwargs: None,
+    )
 
     record = freeze_dataset_version_for_real01(
         cast(Session, _CaseSession()),
         entity,
         Real01FreezeRequest(reviewer="hydraulic-reviewer", reason="QA evidence reviewed"),
+        _principal("dataset_freezer"),
     )
 
     assert record.status == "approved"

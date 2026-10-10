@@ -13,10 +13,12 @@ from app.database.session import get_database_session
 from app import files
 from app.import_service import service
 from app.import_service.schemas import ImportResponse
+from app.security.auth import AuthenticatedPrincipal, require_permission
 
 
 router = APIRouter(prefix="/api/v1/import", tags=["data-import"])
 SessionDependency = Annotated[Session, Depends(get_database_session)]
+EngineerDependency = Annotated[AuthenticatedPrincipal, Depends(require_permission("dataset.edit"))]
 ResourceForm = Annotated[Literal["rivers", "cross_sections", "gates", "pumps"], Form()]
 VersionForm = Annotated[int, Form(gt=0)]
 FileUpload = Annotated[UploadFile, File()]
@@ -30,7 +32,9 @@ async def _read_upload(file: UploadFile, expected_suffixes: set[str]) -> tuple[b
     filename = file.filename or "upload"
     suffix = Path(filename).suffix.lower()
     if suffix not in expected_suffixes:
-        raise HTTPException(status_code=415, detail=f"仅支持 {', '.join(sorted(expected_suffixes))}")
+        raise HTTPException(
+            status_code=415, detail=f"仅支持 {', '.join(sorted(expected_suffixes))}"
+        )
     content = await files.read_limited_upload(file, MAX_UPLOAD_BYTES)
     if not content:
         raise HTTPException(status_code=422, detail="上传文件为空")
@@ -40,7 +44,13 @@ async def _read_upload(file: UploadFile, expected_suffixes: set[str]) -> tuple[b
 
 
 @router.post("/excel", response_model=ImportResponse, summary="批量导入 Excel")
-async def import_excel(resource: ResourceForm, dataset_version_id: VersionForm, file: FileUpload, session: SessionDependency) -> ImportResponse:
+async def import_excel(
+    resource: ResourceForm,
+    dataset_version_id: VersionForm,
+    file: FileUpload,
+    session: SessionDependency,
+    _: EngineerDependency,
+) -> ImportResponse:
     """存档并原子导入 Excel 活动工作表。"""
 
     content, filename = await _read_upload(file, {".xlsx"})
@@ -53,7 +63,13 @@ async def import_excel(resource: ResourceForm, dataset_version_id: VersionForm, 
 
 
 @router.post("/csv", response_model=ImportResponse, summary="批量导入 CSV")
-async def import_csv(resource: ResourceForm, dataset_version_id: VersionForm, file: FileUpload, session: SessionDependency) -> ImportResponse:
+async def import_csv(
+    resource: ResourceForm,
+    dataset_version_id: VersionForm,
+    file: FileUpload,
+    session: SessionDependency,
+    _: EngineerDependency,
+) -> ImportResponse:
     """存档并原子导入 UTF-8 CSV。"""
 
     content, filename = await _read_upload(file, {".csv"})
@@ -66,7 +82,13 @@ async def import_csv(resource: ResourceForm, dataset_version_id: VersionForm, fi
 
 
 @router.post("/geojson", response_model=ImportResponse, summary="批量导入 GeoJSON")
-async def import_geojson(resource: ResourceForm, dataset_version_id: VersionForm, file: FileUpload, session: SessionDependency) -> ImportResponse:
+async def import_geojson(
+    resource: ResourceForm,
+    dataset_version_id: VersionForm,
+    file: FileUpload,
+    session: SessionDependency,
+    _: EngineerDependency,
+) -> ImportResponse:
     """存档并原子导入 FeatureCollection。"""
 
     content, filename = await _read_upload(file, {".geojson", ".json"})
@@ -79,7 +101,9 @@ async def import_geojson(resource: ResourceForm, dataset_version_id: VersionForm
 
 
 @router.get("/templates/{resource}", response_class=FileResponse, summary="下载 Excel 导入模板")
-def download_template(resource: Literal["rivers", "cross_sections", "gates", "pumps"]) -> FileResponse:
+def download_template(
+    resource: Literal["rivers", "cross_sections", "gates", "pumps"],
+) -> FileResponse:
     """返回与导入字段严格一致的版本化 Excel 模板。"""
 
     path = TEMPLATE_ROOT / f"phase2_{resource}_template.xlsx"
