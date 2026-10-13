@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 from types import SimpleNamespace
 import os
+from pathlib import Path
 import subprocess
 import sys
 from uuid import uuid4
@@ -494,7 +495,7 @@ def test_migration_roundtrip_preserves_history_and_invalidates_unknown_rounds():
                 "-m",
                 "alembic",
                 "-c",
-                "../database/alembic.ini",
+                str(Path(__file__).resolve().parents[2] / "database" / "alembic.ini"),
                 target,
                 "20261010_0038" if target == "downgrade" else "head",
             ],
