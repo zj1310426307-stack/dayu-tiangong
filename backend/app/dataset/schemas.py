@@ -78,6 +78,8 @@ class DatasetVersionRecord(DatasetVersionCreate):
     source_batch_id: int | None = None
     content_hash: str | None = None
     engineering_content_hash: str | None = None
+    current_review_round: int = 0
+    current_review_scope: Literal["real01", "standard_1d"] | None = None
     change_summary: str | None = None
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None

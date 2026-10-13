@@ -770,12 +770,16 @@ export interface CurrentPrincipalRecord {
 export interface DatasetReviewDecisionRequest {
   "comment"?: string | null;
   "action": string;
+  "review_round": number;
+  "expected_decision_id"?: number | null;
 }
 
 export interface DatasetReviewRecord {
   "id": number;
   "dataset_version_id": number;
   "engineering_content_hash": string;
+  "review_round"?: number | null;
+  "review_scope"?: string | null;
   "action": string;
   "status": string;
   "reviewer_principal_id": number;
@@ -822,6 +826,8 @@ export interface DatasetVersionRecord {
   "source_batch_id"?: number | null;
   "content_hash"?: string | null;
   "engineering_content_hash"?: string | null;
+  "current_review_round"?: number;
+  "current_review_scope"?: "real01" | "standard_1d" | null;
   "change_summary"?: string | null;
   "reviewed_by"?: string | null;
   "reviewed_at"?: string | null;

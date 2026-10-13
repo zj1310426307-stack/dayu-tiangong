@@ -53,7 +53,7 @@ from app.gis_governance.service import dataset_core_content_hash
 from app.hydraulic.snapshot import engineering_graph_content_hash
 from app.security.auth import AuthenticatedPrincipal
 from app.security.models import DatasetReview
-from app.security.service import latest_approved_review, record_freeze_audit
+from app.security.service import _audit, latest_approved_review, record_freeze_audit
 from app.model_engine.hydraulic_1d_service import build_hydraulic_1d_model
 from app.validation.service import run_validation
 from model.provenance import snapshot_hash
@@ -127,6 +127,7 @@ def clone_dataset_version(
         description=payload.description,
         creator=payload.creator,
         status="draft",
+        current_review_round=0,
         is_read_only=False,
         parent_version_id=locked_source.id,
     )
@@ -164,9 +165,12 @@ def approve_dataset_version_for_calculation(
 ) -> DatasetVersionRecord:
     """Validate and approve one version for traceable Standard 1D calculations."""
 
-    if entity.status in {"approved", "published"}:
-        return DatasetVersionRecord(**_dump(entity))
-    mutable = assert_dataset_version_mutable(session, entity.id)
+    mutable = lock_dataset_version(session, entity.id)
+    if mutable.status in {"approved", "published"}:
+        return DatasetVersionRecord(**_dump(mutable))
+    # This compatibility entry point certifies Standard 1D mapper evidence only.
+    # REAL-01 requires a separate Engineer submission and hash-bound Reviewer decision.
+    mutable = assert_dataset_version_mutable(session, mutable.id)
     report = run_validation(session, mutable.id)
     # Validation errors still block authority; warnings are intentionally
     # non-blocking for the explicitly uncalibrated Standard 1D workflow.
@@ -206,10 +210,14 @@ def approve_dataset_version_for_calculation(
     mutable.approved_by = None
     mutable.approved_at = None
     mutable.status = "review"
+    mutable.current_review_round = (mutable.current_review_round or 0) + 1
+    mutable.current_review_scope = "standard_1d"
     session.add(
         DatasetReview(
             dataset_version_id=mutable.id,
             engineering_content_hash=mutable.engineering_content_hash,
+            review_round=mutable.current_review_round,
+            review_scope="standard_1d",
             action="approve",
             status="approved",
             reviewer_principal_id=principal.id,
@@ -218,6 +226,17 @@ def approve_dataset_version_for_calculation(
             reviewer_display_name=principal.display_name,
             comment=payload.reason,
         )
+    )
+    _audit(
+        session,
+        principal,
+        "DATASET_REVIEW_APPROVED",
+        "dataset_version",
+        str(mutable.id),
+        engineering_content_hash=mutable.engineering_content_hash,
+        previous_state="draft",
+        new_state="review",
+        details_json={"review_round": mutable.current_review_round, "review_scope": "standard_1d"},
     )
     session.flush()
     return DatasetVersionRecord(**_dump(mutable))
@@ -239,6 +258,8 @@ def freeze_dataset_version_for_real01(
     mutable = lock_dataset_version(session, entity.id)
     if mutable.status != "review":
         raise ValueError("REAL-01 数据版本不可冻结：必须先处于审核状态")
+    if not mutable.current_review_round or mutable.current_review_scope != "real01":
+        raise ValueError("REAL-01 数据版本不可冻结：必须有本轮 REAL-01 提交与批准")
     readiness = build_real01_readiness(session, mutable)
     if not readiness.can_freeze:
         blockers = [

@@ -100,3 +100,7 @@ trust configuration. Protected mutations remain fail-closed while auth is disabl
 incomplete. Downgrade removes only the four additive security tables and therefore discards
 their authorization/audit evidence; take a database backup and obtain security-owner approval
 before any downgrade.
+
+# HYDRO-AUTH-01-FIX-01 (20261013_0039)
+
+0039 adds explicit review round/scope, an owner-only bootstrap singleton and evidence protection. Upgrade never attributes historical approval to a current round. Run the existing application bootstrap after migrating to correct direct/inherited evidence grants; `BACKEND_DB_USER` must identify the non-owner runtime login. Unknown review versions should be cloned and reviewed afresh. Downgrade preserves original evidence rows while removing round metadata; it does not broaden evidence privileges. Upgrade after downgrade invalidates unknown historical approval and consumes bootstrap from any historical admin binding/grant. See the [bootstrap/recovery guide](../security/security-admin-bootstrap-recovery.md).

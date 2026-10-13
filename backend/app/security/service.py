@@ -182,6 +182,10 @@ def submit_dataset_review(
         raise ValueError("current engineering graph has no matching passed QA evidence")
     previous = version.status
     version.status = "review"
+    version.current_review_round = (version.current_review_round or 0) + 1
+    version.current_review_scope = "real01"
+    version.reviewed_by = None
+    version.reviewed_at = None
     version.engineering_content_hash = readiness.engineering_content_hash
     version.change_summary = comment
     _audit(
@@ -193,6 +197,7 @@ def submit_dataset_review(
         engineering_content_hash=readiness.engineering_content_hash,
         previous_state=previous,
         new_state="review",
+        details_json={"review_round": version.current_review_round, "review_scope": "real01"},
     )
     session.flush()
     return version
@@ -204,12 +209,16 @@ def decide_dataset_review(
     principal: AuthenticatedPrincipal,
     action: str,
     comment: str | None,
+    *,
+    review_round: int,
+    expected_decision_id: int | None = None,
 ) -> DatasetReview:
     """Bind the review decision to the current graph and matching QA evidence."""
 
     version = lock_dataset_version(session, version.id)
-    if version.status != "review":
-        raise ValueError("Dataset Version must be in review")
+    assert_review_context(session, version, review_round, expected_decision_id)
+    if version.current_review_scope != "real01":
+        raise ValueError("REAL-01 review requires a REAL-01 submission")
     if action not in {"approve", "reject", "return"}:
         raise ValueError("unsupported review action")
     graph_hash = engineering_graph_content_hash(session, version.id)
@@ -225,6 +234,8 @@ def decide_dataset_review(
     review = DatasetReview(
         dataset_version_id=version.id,
         engineering_content_hash=graph_hash,
+        review_round=version.current_review_round,
+        review_scope=version.current_review_scope,
         action=action,
         status=status,
         reviewer_principal_id=principal.id,
@@ -255,22 +266,55 @@ def decide_dataset_review(
         engineering_content_hash=graph_hash,
         previous_state="review",
         new_state=version.status,
+        details_json={
+            "review_round": version.current_review_round,
+            "review_scope": version.current_review_scope,
+        },
     )
     session.flush()
     return review
 
 
-def latest_approved_review(session: Session, version_id: int) -> DatasetReview | None:
-    """Return the newest immutable approval for one Dataset Version."""
+def latest_review_decision(session: Session, version: DatasetVersion) -> DatasetReview | None:
+    """Read all decisions in the current explicit round; unattributed history is inert."""
+
+    if not version.current_review_round or not version.current_review_scope:
+        return None
 
     return session.scalar(
         select(DatasetReview)
         .where(
-            DatasetReview.dataset_version_id == version_id,
-            DatasetReview.status == "approved",
+            DatasetReview.dataset_version_id == version.id,
+            DatasetReview.review_round == version.current_review_round,
+            DatasetReview.review_scope == version.current_review_scope,
         )
-        .order_by(DatasetReview.created_at.desc(), DatasetReview.id.desc())
+        .order_by(DatasetReview.id.desc())
     )
+
+
+def assert_review_context(
+    session: Session,
+    version: DatasetVersion,
+    review_round: int,
+    expected_decision_id: int | None,
+) -> None:
+    """Reject stale Reviewer commands after acquiring the shared Dataset row lock."""
+
+    if version.status != "review" or version.current_review_round != review_round:
+        raise ValueError("REVIEW_CONTEXT_STALE: Dataset review round or state changed")
+    latest = latest_review_decision(session, version)
+    if (latest.id if latest else None) != expected_decision_id:
+        raise ValueError("REVIEW_CONTEXT_STALE: latest review decision changed")
+
+
+def latest_approved_review(session: Session, version_id: int) -> DatasetReview | None:
+    """Return approval only when the current REAL-01 round's latest decision approves."""
+
+    version = session.get(DatasetVersion, version_id)
+    if version is None or version.status != "review" or version.current_review_scope != "real01":
+        return None
+    latest = latest_review_decision(session, version)
+    return latest if latest and latest.action == "approve" and latest.status == "approved" else None
 
 
 def record_freeze_audit(
@@ -291,6 +335,10 @@ def record_freeze_audit(
         engineering_content_hash=graph_hash,
         previous_state=previous_state,
         new_state="approved",
+        details_json={
+            "review_round": version.current_review_round,
+            "review_scope": version.current_review_scope,
+        },
     )
 
 

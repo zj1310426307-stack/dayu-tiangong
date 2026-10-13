@@ -135,6 +135,8 @@ def submit_review(
         "id": entity.id,
         "status": entity.status,
         "engineering_content_hash": entity.engineering_content_hash,
+        "review_round": entity.current_review_round,
+        "review_scope": entity.current_review_scope,
     }
 
 
@@ -158,7 +160,13 @@ def decide_review(
         review = commit_or_conflict(
             session,
             lambda: service.decide_dataset_review(
-                session, version, principal, payload.action, payload.comment
+                session,
+                version,
+                principal,
+                payload.action,
+                payload.comment,
+                review_round=payload.review_round,
+                expected_decision_id=payload.expected_decision_id,
             ),
         )
     except ValueError as exc:

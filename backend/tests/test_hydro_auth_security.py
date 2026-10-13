@@ -207,13 +207,14 @@ def test_t19_production_mode_rejects_dev_auth(monkeypatch) -> None:
 def test_t20_audit_uses_verified_issuer_and_subject() -> None:
     added: list[object] = []
     session = SimpleNamespace(add=added.append)
-    version = SimpleNamespace(id=42)
+    version = SimpleNamespace(id=42, current_review_round=3, current_review_scope="real01")
     principal = _principal("dataset_freezer")
     record_freeze_audit(session, version, principal, "a" * 64, "review")
     event = added[0]
     assert event.actor_issuer == principal.issuer
     assert event.actor_subject == principal.subject
     assert event.actor_display_name == "Trusted User"
+    assert event.details_json["review_round"] == 3
 
 
 def test_role_permission_matrix_is_least_privilege() -> None:

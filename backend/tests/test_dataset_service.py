@@ -165,6 +165,7 @@ def test_approve_dataset_validates_every_case_before_freezing(monkeypatch: Any) 
         "app.dataset.service.assert_dataset_version_mutable",
         lambda _session, _version_id: entity,
     )
+    monkeypatch.setattr("app.dataset.service.lock_dataset_version", lambda _session, _id: entity)
     monkeypatch.setattr(
         "app.dataset.service.run_validation",
         lambda _session, _version_id: validation,
@@ -217,6 +218,7 @@ def test_approve_dataset_allows_validation_warnings_for_uncalibrated_workflow(
         created_time=datetime(2026, 9, 9, tzinfo=UTC),
     )
     validation = SimpleNamespace(summary=SimpleNamespace(errors=0, warnings=1, is_model_ready=True))
+    monkeypatch.setattr("app.dataset.service.lock_dataset_version", lambda _session, _id: entity)
     monkeypatch.setattr(
         "app.dataset.service.assert_dataset_version_mutable",
         lambda _session, _version_id: entity,
@@ -261,6 +263,8 @@ def test_real01_freeze_requires_readiness_then_persists_full_graph_hash(
         name="Five Rivers",
         creator="web-operator",
         status="review",
+        current_review_round=1,
+        current_review_scope="real01",
         is_read_only=False,
         created_time=datetime(2026, 9, 28, tzinfo=UTC),
     )

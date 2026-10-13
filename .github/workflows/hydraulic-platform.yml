@@ -242,6 +242,12 @@ jobs:
         run: >-
           python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
           backend/tests/test_hydro_auth_postgis.py
+      - name: Run review round and immutable evidence security integration
+        env:
+          RUN_HYDRO_AUTH_FIX_POSTGIS: "1"
+        run: >-
+          python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
+          backend/tests/test_hydro_auth_fix_postgis.py
       - name: Run Production-04 PostGIS and audit integration
         env:
           RUN_HYDRAULIC_PRODUCTION_POSTGIS: "1"

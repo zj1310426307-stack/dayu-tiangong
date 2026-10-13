@@ -48,6 +48,8 @@ class DatasetReviewDecisionRequest(DatasetReviewRequest):
     """Approve, reject, or return the exact currently QA-validated graph."""
 
     action: str = Field(pattern="^(approve|reject|return)$")
+    review_round: int = Field(ge=1)
+    expected_decision_id: int | None = Field(default=None, ge=1)
 
 
 class DatasetReviewRecord(BaseModel):
@@ -56,6 +58,8 @@ class DatasetReviewRecord(BaseModel):
     id: int
     dataset_version_id: int
     engineering_content_hash: str
+    review_round: int | None = None
+    review_scope: str | None = None
     action: str
     status: str
     reviewer_principal_id: int

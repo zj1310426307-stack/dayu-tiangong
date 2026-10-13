@@ -7,3 +7,5 @@ Set `AUTH_MODE=oidc` for a real deployment and configure `OIDC_ISSUER`, `OIDC_AU
 Development authentication is intentionally two-keyed. It works only in a development build and requires both the development mode and explicit enable flag. A release/production build with development auth configured fails during application construction. `AUTH_MODE=disabled` does not create an anonymous user: protected endpoints return 401.
 
 The frontend generated client keeps an access token in memory through `setAuthAccessToken`; acquisition and refresh remain the responsibility of the deployment OIDC client. No real token or key belongs in the repository.
+
+Initial administrator bootstrap is a consumed deployment operation, not an authentication mode or recovery endpoint. Disabled principals remain disabled on normal restarts; recovery requires the [controlled owner runbook](security-admin-bootstrap-recovery.md).

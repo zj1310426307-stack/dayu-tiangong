@@ -11,6 +11,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -83,6 +84,12 @@ class DatasetReview(Base):
             "status IN ('approved','rejected','returned')", name="ck_dataset_review_status"
         ),
         Index("ix_dataset_review_current", "dataset_version_id", "status", "created_at"),
+        CheckConstraint("review_round IS NULL OR review_round > 0", name="ck_dataset_review_round"),
+        CheckConstraint(
+            "review_scope IS NULL OR review_scope IN ('real01','standard_1d')",
+            name="ck_dataset_review_scope",
+        ),
+        Index("ix_dataset_review_round", "dataset_version_id", "review_round", "id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -90,6 +97,8 @@ class DatasetReview(Base):
         ForeignKey("dataset_version.id", ondelete="RESTRICT"), nullable=False
     )
     engineering_content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    review_round: Mapped[int | None] = mapped_column(Integer)
+    review_scope: Mapped[str | None] = mapped_column(String(16))
     action: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     reviewer_principal_id: Mapped[int] = mapped_column(
@@ -136,4 +145,17 @@ class SecurityAuditEvent(Base):
     details_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class SecurityBootstrapState(Base):
+    """Persist consumed deployment bootstrap, writable only by the deployment owner."""
+
+    __tablename__ = "security_bootstrap_state"
+    name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    initialized_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    principal_id: Mapped[int | None] = mapped_column(
+        ForeignKey("identity_principal.id", ondelete="RESTRICT")
     )
