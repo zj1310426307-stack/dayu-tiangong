@@ -30,7 +30,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_imported_observation_external_result_and_audit_round_trip() -> None:
+def test_imported_observation_external_result_and_audit_round_trip(
+    engineer_auth_headers: dict[str, str],
+) -> None:
     """Prove file-derived lineage, dimensional fields, FKs, and append-only audit APIs."""
 
     label = f"PRODUCTION-04-{uuid4().hex[:10]}"
@@ -95,6 +97,7 @@ def test_imported_observation_external_result_and_audit_round_trip() -> None:
         version_id, branch_id = version.id, branch.id
 
     client = TestClient(app)
+    client.headers.update(engineer_auth_headers)
     observation_options = {
         "series_kind": "observation",
         "series_id": "P04-OBS-H",
@@ -121,9 +124,7 @@ def test_imported_observation_external_result_and_audit_round_trip() -> None:
             "water_level": "H",
             "discharge": "Q",
         },
-        "branch_mappings": [
-            {"external_branch": "MIKE-A", "dayu_branch": str(branch_id)}
-        ],
+        "branch_mappings": [{"external_branch": "MIKE-A", "dayu_branch": str(branch_id)}],
     }
     try:
         observation = client.post(
@@ -179,9 +180,7 @@ def test_imported_observation_external_result_and_audit_round_trip() -> None:
             assert stored.samples_json[1]["value"] is None
             reference = session.get(HydraulicExternalResult, external.json()["id"])
             assert reference is not None
-            assert reference.mapping_json["branch_mappings"][0]["dayu_branch"] == str(
-                branch_id
-            )
+            assert reference.mapping_json["branch_mappings"][0]["dayu_branch"] == str(branch_id)
     finally:
         with SessionLocal() as session:
             session.execute(

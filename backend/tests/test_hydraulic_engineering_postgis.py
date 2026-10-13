@@ -2,23 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
 import os
-from pathlib import Path
 from uuid import uuid4
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 from geoalchemy2.elements import WKTElement
-import jwt
 import pytest
 
 from app.database.session import SessionLocal
 from app.gis.models import BoundaryCondition, DatasetVersion, SimulationCase
 from app.hydraulic.models import HydraulicBranch, HydraulicNetwork, HydraulicNode
 from app.main import app
-from app.security.models import IdentityPrincipal, IdentityRoleBinding
 
 
 pytestmark = pytest.mark.skipif(
@@ -27,61 +21,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_structure_crud_location_capability_and_network_graph_round_trip(monkeypatch) -> None:
+def test_structure_crud_location_capability_and_network_graph_round_trip(
+    engineer_auth_headers: dict[str, str],
+) -> None:
     """Exercise the real database constraints, spatial mapping, API, and graph surface."""
 
     version_label = f"ENGINEERING-03-{uuid4().hex[:10]}"
-    issuer = f"https://engineering-03.pytest.invalid/{uuid4().hex}"
-    subject = "integration-engineer"
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    public_pem = private_key.public_key().public_bytes(
-        serialization.Encoding.PEM,
-        serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    monkeypatch.setenv("AUTH_MODE", "oidc")
-    monkeypatch.setenv("OIDC_ISSUER", issuer)
-    monkeypatch.setenv("OIDC_AUDIENCE", "dayu-api")
-    monkeypatch.setenv("OIDC_PUBLIC_KEY_FILE", "engineering-03-test-key.pem")
-    monkeypatch.setenv("OIDC_ALLOWED_ALGORITHMS", "RS256")
-    original_read_text = Path.read_text
-    monkeypatch.setattr(
-        "app.security.auth.Path.read_text",
-        lambda path, *args, **kwargs: (
-            public_pem.decode()
-            if path.name == "engineering-03-test-key.pem"
-            else original_read_text(path, *args, **kwargs)
-        ),
-    )
-    now = datetime.now(UTC)
-    access_token = jwt.encode(
-        {
-            "iss": issuer,
-            "sub": subject,
-            "aud": "dayu-api",
-            "exp": now + timedelta(minutes=5),
-            "iat": now,
-            "name": "Engineering Integration User",
-        },
-        private_key,
-        algorithm="RS256",
-    )
     with SessionLocal() as session:
-        principal = IdentityPrincipal(
-            issuer=issuer,
-            subject=subject,
-            display_name="Engineering Integration User",
-            authentication_method="oidc",
-        )
-        session.add(principal)
-        session.flush()
-        session.add(
-            IdentityRoleBinding(
-                principal_id=principal.id,
-                role="engineer",
-                active=True,
-                created_by_principal_id=principal.id,
-            )
-        )
         version = DatasetVersion(
             version=version_label,
             name="Engineering-03 disposable integration version",
@@ -163,7 +109,7 @@ def test_structure_crud_location_capability_and_network_graph_round_trip(monkeyp
         boundary_id, case_id = boundary.id, case.id
 
     client = TestClient(app)
-    client.headers["Authorization"] = f"Bearer {access_token}"
+    client.headers.update(engineer_auth_headers)
     payload = {
         "dataset_version_id": version_id,
         "network_id": network_id,
