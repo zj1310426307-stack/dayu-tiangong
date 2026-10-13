@@ -9,6 +9,10 @@
 
 ## 当前架构状态
 
+2026-10-13：HYDRO-AUTH-01-FIX-01 增加审核轮次/用途和 Reviewer 并发前置条件，REAL-01 Freeze 仅使用本轮最后有效批准。审计/审核表对普通应用角色仅允许读取与追加；管理员 Bootstrap 使用持久一次性标记。独立迁移 `20261013_0039` 保留历史证据但不自动赋予其新轮次效力。详见 [FIX-01 审查](docs/review/HYDRO-AUTH-01-FIX-01-REVIEW.md) 与 [管理员恢复规程](docs/security/security-admin-bootstrap-recovery.md)。
+
+2026-10-10：HYDRO-AUTH-01 已建立可信 `issuer + subject` Principal、OIDC/JWT 签名校验、服务端 Role Binding 与最小权限模型。Dataset Version 的导入、QA、审核、冻结、发布和退役不再信任客户端 actor/reviewer 字段；Freeze 必须同时满足当前工程图 Hash、当前 QA Hash 和审核通过 Hash 一致。Production 未配置 OIDC 时保护接口默认拒绝；Dev Auth 仅在 development build 与显式双重开关下可用。当前状态为 `FRAMEWORK_PASS_IDP_CONFIGURATION_REQUIRED`，详见 [Authentication](docs/security/authentication.md)、[Authorization](docs/security/authorization.md) 和 [保护矩阵](docs/security/auth-protection-matrix.md)。
+
 2026-10-09：HYDRO-DATA-REAL-01-CLOSE 已将真实工程 Readiness 收紧为工程语义门禁，QA 通过证据必须绑定当前 Engineering Graph Hash，Clone 不再继承外部结果/历史验收且相同工程内容 Hash 保持稳定。可访问资料仅覆盖一条河的局部中心线与断面，两闸、边界、初始条件和审核证据缺失，因此未导入/冻结，结论为 `FRAMEWORK_PASS_DATA_REQUIRED`。详见 [CLOSE 最终审查](docs/review/HYDRO-DATA-REAL-01-CLOSE-REVIEW.md) 与 [REAL-02 交接](docs/hydraulics/real-02-engineering-handoff.md)。
 
 自 2026-08-31 起，生产级 Standard 1D 正式采用“Dayu 统一水力模型 → MASCARET Adapter → 外部 MASCARET v9.1.1 → 统一结果”路线；旧自研 1D Solver 已退出生产代码、API、Worker、前端和 CI。HYDRO-DATA-01 的 Network → Branch → Chainage → Cross Section 权威数据结构保持不变。

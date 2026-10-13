@@ -22,11 +22,13 @@ from app.optimization.router import router as optimization_router
 from app.river.router import router as river_router
 from app.structure.router import router as structure_router
 from app.validation.router import router as validation_router
+from app.security.router import router as security_router
 
 
 # 固定系统路由在通配业务路由之前注册，避免未来出现路径优先级冲突。
 api_router = APIRouter()
 api_router.include_router(system.router)
+api_router.include_router(security_router)
 api_router.include_router(gis_router)
 api_router.include_router(gis_catalog_router)
 api_router.include_router(gis_governance_router)

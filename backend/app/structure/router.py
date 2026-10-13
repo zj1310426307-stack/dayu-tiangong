@@ -19,21 +19,37 @@ from app.structure.schemas import (
     PumpRecord,
     PumpUpdate,
 )
+from app.security.auth import AuthenticatedPrincipal, require_permission
 
 
 router = APIRouter(tags=["structure-database"])
 SessionDependency = Annotated[Session, Depends(get_database_session)]
+EngineerDependency = Annotated[AuthenticatedPrincipal, Depends(require_permission("dataset.edit"))]
 
 
 @router.get("/api/v1/gates", response_model=GateListResponse, summary="分页查询闸门")
-def read_gates(session: SessionDependency, dataset_version_id: int | None = Query(default=None, gt=0), river_id: int | None = Query(default=None, gt=0), search: str | None = None, limit: int = Query(default=100, ge=1, le=1000), offset: int = Query(default=0, ge=0)) -> GateListResponse:
+def read_gates(
+    session: SessionDependency,
+    dataset_version_id: int | None = Query(default=None, gt=0),
+    river_id: int | None = Query(default=None, gt=0),
+    search: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> GateListResponse:
     """返回可筛选的闸门列表。"""
 
     return service.list_gates(session, dataset_version_id, river_id, search, limit, offset)
 
 
-@router.post("/api/v1/gates", response_model=GateRecord, status_code=status.HTTP_201_CREATED, summary="新增闸门")
-def create_gate(payload: GateCreate, session: SessionDependency) -> GateRecord:
+@router.post(
+    "/api/v1/gates",
+    response_model=GateRecord,
+    status_code=status.HTTP_201_CREATED,
+    summary="新增闸门",
+)
+def create_gate(
+    payload: GateCreate, session: SessionDependency, _: EngineerDependency
+) -> GateRecord:
     """新增并提交闸门。"""
 
     return commit_or_conflict(session, lambda: service.create_gate(session, payload))
@@ -50,7 +66,12 @@ def read_gate(gate_id: int, session: SessionDependency) -> GateRecord:
 
 
 @router.put("/api/v1/gates/{gate_id}", response_model=GateRecord, summary="修改闸门")
-def update_gate(gate_id: int, payload: GateUpdate, session: SessionDependency) -> GateRecord:
+def update_gate(
+    gate_id: int,
+    payload: GateUpdate,
+    session: SessionDependency,
+    _: EngineerDependency,
+) -> GateRecord:
     """局部修改并提交闸门。"""
 
     entity = session.get(Gate, gate_id)
@@ -59,8 +80,10 @@ def update_gate(gate_id: int, payload: GateUpdate, session: SessionDependency) -
     return commit_or_conflict(session, lambda: service.update_gate(session, entity, payload))
 
 
-@router.delete("/api/v1/gates/{gate_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除闸门")
-def delete_gate(gate_id: int, session: SessionDependency) -> Response:
+@router.delete(
+    "/api/v1/gates/{gate_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除闸门"
+)
+def delete_gate(gate_id: int, session: SessionDependency, _: EngineerDependency) -> Response:
     """删除指定闸门。"""
 
     entity = session.get(Gate, gate_id)
@@ -71,14 +94,28 @@ def delete_gate(gate_id: int, session: SessionDependency) -> Response:
 
 
 @router.get("/api/v1/pumps", response_model=PumpListResponse, summary="分页查询泵站")
-def read_pumps(session: SessionDependency, dataset_version_id: int | None = Query(default=None, gt=0), river_id: int | None = Query(default=None, gt=0), search: str | None = None, limit: int = Query(default=100, ge=1, le=1000), offset: int = Query(default=0, ge=0)) -> PumpListResponse:
+def read_pumps(
+    session: SessionDependency,
+    dataset_version_id: int | None = Query(default=None, gt=0),
+    river_id: int | None = Query(default=None, gt=0),
+    search: str | None = None,
+    limit: int = Query(default=100, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
+) -> PumpListResponse:
     """返回可筛选的泵站列表。"""
 
     return service.list_pumps(session, dataset_version_id, river_id, search, limit, offset)
 
 
-@router.post("/api/v1/pumps", response_model=PumpRecord, status_code=status.HTTP_201_CREATED, summary="新增泵站")
-def create_pump(payload: PumpCreate, session: SessionDependency) -> PumpRecord:
+@router.post(
+    "/api/v1/pumps",
+    response_model=PumpRecord,
+    status_code=status.HTTP_201_CREATED,
+    summary="新增泵站",
+)
+def create_pump(
+    payload: PumpCreate, session: SessionDependency, _: EngineerDependency
+) -> PumpRecord:
     """新增并提交泵站。"""
 
     return commit_or_conflict(session, lambda: service.create_pump(session, payload))
@@ -95,7 +132,12 @@ def read_pump(pump_id: int, session: SessionDependency) -> PumpRecord:
 
 
 @router.put("/api/v1/pumps/{pump_id}", response_model=PumpRecord, summary="修改泵站")
-def update_pump(pump_id: int, payload: PumpUpdate, session: SessionDependency) -> PumpRecord:
+def update_pump(
+    pump_id: int,
+    payload: PumpUpdate,
+    session: SessionDependency,
+    _: EngineerDependency,
+) -> PumpRecord:
     """局部修改并提交泵站。"""
 
     entity = session.get(Pump, pump_id)
@@ -104,8 +146,10 @@ def update_pump(pump_id: int, payload: PumpUpdate, session: SessionDependency) -
     return commit_or_conflict(session, lambda: service.update_pump(session, entity, payload))
 
 
-@router.delete("/api/v1/pumps/{pump_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除泵站")
-def delete_pump(pump_id: int, session: SessionDependency) -> Response:
+@router.delete(
+    "/api/v1/pumps/{pump_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除泵站"
+)
+def delete_pump(pump_id: int, session: SessionDependency, _: EngineerDependency) -> Response:
     """删除指定泵站。"""
 
     entity = session.get(Pump, pump_id)

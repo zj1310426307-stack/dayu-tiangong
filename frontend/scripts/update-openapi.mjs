@@ -52,6 +52,7 @@ const openapi = await response.json();
 const schemas = openapi.components?.schemas ?? {};
 
 const requiredPaths = [
+  '/api/v1/auth/me',
   '/api/v1/gis/rivers', '/api/v1/gis/interaction-frame', '/api/v1/gis/hydraulic-cross-sections', '/api/v1/rivers', '/api/v1/cross-sections',
   '/api/v1/gates', '/api/v1/pumps', '/api/v1/import/excel',
   '/api/v1/validation/run', '/api/v1/model-data/dataset-versions',
@@ -283,6 +284,20 @@ function decodeApiError(payload: unknown): string | ApiErrorDetail | undefined {
   return isApiErrorDetail(detail) ? detail : undefined;
 }
 
+let authAccessToken: string | null = null;
+
+/** Keep bearer material in memory; the hosting OIDC client owns acquisition and refresh. */
+export function setAuthAccessToken(token: string | null): void {
+  authAccessToken = token;
+}
+
+function withAuth(options: RequestInit): RequestInit {
+  if (!authAccessToken) return options;
+  const headers = new Headers(options.headers);
+  headers.set('Authorization', \`Bearer \${authAccessToken}\`);
+  return { ...options, headers };
+}
+
 function toQuery<T extends object>(params: T): string {
   const query = new URLSearchParams();
   Object.entries(params as Record<string, string | number | boolean | undefined>).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); });
@@ -300,7 +315,7 @@ function datasetTaskListArgs(
 }
 
 async function requestJson<T>(path: string, options: RequestInit = {}, baseUrl = ''): Promise<T> {
-  const response = await fetch(\`\${baseUrl}\${path}\`, options);
+  const response = await fetch(\`\${baseUrl}\${path}\`, withAuth(options));
   if (!response.ok) {
     const payload: unknown = await response.json().catch(() => null);
     throw new ApiError(response.status, decodeApiError(payload));
@@ -310,7 +325,7 @@ async function requestJson<T>(path: string, options: RequestInit = {}, baseUrl =
 }
 
 async function requestBlob(path: string, options: RequestInit = {}, baseUrl = ''): Promise<Blob> {
-  const response = await fetch(\`\${baseUrl}\${path}\`, options);
+  const response = await fetch(\`\${baseUrl}\${path}\`, withAuth(options));
   if (!response.ok) {
     const payload: unknown = await response.json().catch(() => null);
     throw new ApiError(response.status, decodeApiError(payload));
@@ -323,6 +338,7 @@ function jsonOptions(method: 'POST' | 'PUT' | 'PATCH', body: unknown): RequestIn
 }
 
 export const getSystemInfo = (baseUrl = '') => requestJson<SystemInfoResponse>('/', {}, baseUrl);
+export const getCurrentPrincipal = (baseUrl = '') => requestJson<CurrentPrincipalRecord>('/api/v1/auth/me', {}, baseUrl);
 export const getHealth = (baseUrl = '') => requestJson<HealthResponse>('/api/v1/health', {}, baseUrl);
 export const getGISHealth = (baseUrl = '') => requestJson<GISHealthResponse>('/api/v1/gis/health', {}, baseUrl);
 export const getGISStatistics = (datasetVersionId: number, baseUrl = '') => requestJson<GISStatisticsResponse>(\`/api/v1/gis/stats\${toQuery({ dataset_version_id: datasetVersionId })}\`, {}, baseUrl);

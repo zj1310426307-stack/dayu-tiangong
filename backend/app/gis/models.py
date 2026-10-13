@@ -128,6 +128,8 @@ class DatasetVersion(Base):
         UniqueConstraint("source_batch_id", name="uq_dataset_version_source_batch_id"),
         Index("ix_dataset_version_status", "status"),
         Index("ix_dataset_version_content_hash", "content_hash"),
+        CheckConstraint("current_review_round >= 0", name="ck_dataset_current_review_round"),
+        CheckConstraint("current_review_scope IS NULL OR current_review_scope IN ('real01','standard_1d')", name="ck_dataset_current_review_scope"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -149,6 +151,10 @@ class DatasetVersion(Base):
     )
     content_hash: Mapped[str | None] = mapped_column(String(64))
     engineering_content_hash: Mapped[str | None] = mapped_column(String(64))
+    current_review_round: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    current_review_scope: Mapped[str | None] = mapped_column(String(16))
     change_summary: Mapped[str | None] = mapped_column(Text)
     reviewed_by: Mapped[str | None] = mapped_column(String(64))
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

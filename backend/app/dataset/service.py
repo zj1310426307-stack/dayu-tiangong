@@ -28,7 +28,13 @@ from app.dataset.schemas import (
     SimulationCaseRecord,
     SimulationCaseUpdate,
 )
-from app.gis.models import BoundaryCondition, DatasetVersion, ModelParameter, SimulationCase, SimulationCaseBoundary
+from app.gis.models import (
+    BoundaryCondition,
+    DatasetVersion,
+    ModelParameter,
+    SimulationCase,
+    SimulationCaseBoundary,
+)
 from app.hydraulic.models import (
     HydraulicBranch as HydraulicBranchRow,
     HydraulicCrossSection,
@@ -45,6 +51,9 @@ from app.hydraulic.rating_curve import (
 )
 from app.gis_governance.service import dataset_core_content_hash
 from app.hydraulic.snapshot import engineering_graph_content_hash
+from app.security.auth import AuthenticatedPrincipal
+from app.security.models import DatasetReview
+from app.security.service import _audit, latest_approved_review, record_freeze_audit
 from app.model_engine.hydraulic_1d_service import build_hydraulic_1d_model
 from app.validation.service import run_validation
 from model.provenance import snapshot_hash
@@ -85,7 +94,10 @@ def _case_record(session: Session, entity: SimulationCase) -> SimulationCaseReco
 def list_dataset_versions(session: Session) -> list[DatasetVersionRecord]:
     """按创建顺序返回全部数据集版本。"""
 
-    return [DatasetVersionRecord(**_dump(item)) for item in session.scalars(select(DatasetVersion).order_by(DatasetVersion.id)).all()]
+    return [
+        DatasetVersionRecord(**_dump(item))
+        for item in session.scalars(select(DatasetVersion).order_by(DatasetVersion.id)).all()
+    ]
 
 
 def create_dataset_version(session: Session, payload: DatasetVersionCreate) -> DatasetVersionRecord:
@@ -115,6 +127,7 @@ def clone_dataset_version(
         description=payload.description,
         creator=payload.creator,
         status="draft",
+        current_review_round=0,
         is_read_only=False,
         parent_version_id=locked_source.id,
     )
@@ -129,7 +142,9 @@ def clone_dataset_version(
     return DatasetVersionRecord(**_dump(clone))
 
 
-def update_dataset_version(session: Session, entity: DatasetVersion, payload: DatasetVersionUpdate) -> DatasetVersionRecord:
+def update_dataset_version(
+    session: Session, entity: DatasetVersion, payload: DatasetVersionUpdate
+) -> DatasetVersionRecord:
     """修改版本说明或由用户显式切换只读状态。
 
     已设为只读的版本仍允许执行唯一的解锁动作；其他修改必须先解锁。
@@ -146,12 +161,16 @@ def approve_dataset_version_for_calculation(
     session: Session,
     entity: DatasetVersion,
     payload: DatasetVersionApprovalRequest,
+    principal: AuthenticatedPrincipal,
 ) -> DatasetVersionRecord:
     """Validate and approve one version for traceable Standard 1D calculations."""
 
-    if entity.status in {"approved", "published"}:
-        return DatasetVersionRecord(**_dump(entity))
-    mutable = assert_dataset_version_mutable(session, entity.id)
+    mutable = lock_dataset_version(session, entity.id)
+    if mutable.status in {"approved", "published"}:
+        return DatasetVersionRecord(**_dump(mutable))
+    # This compatibility entry point certifies Standard 1D mapper evidence only.
+    # REAL-01 requires a separate Engineer submission and hash-bound Reviewer decision.
+    mutable = assert_dataset_version_mutable(session, mutable.id)
     report = run_validation(session, mutable.id)
     # Validation errors still block authority; warnings are intentionally
     # non-blocking for the explicitly uncalibrated Standard 1D workflow.
@@ -184,11 +203,41 @@ def approve_dataset_version_for_calculation(
     mutable.content_hash = dataset_core_content_hash(session, mutable.id)
     mutable.engineering_content_hash = engineering_graph_content_hash(session, mutable.id)
     mutable.change_summary = payload.reason
-    mutable.reviewed_by = payload.reviewer
+    mutable.reviewed_by = principal.display_name
     mutable.reviewed_at = now
-    mutable.approved_by = payload.reviewer
-    mutable.approved_at = now
-    mutable.status = "approved"
+    # Engineering approval creates hash-bound review evidence.  Only the
+    # separately authorized Freezer may advance the Dataset to ``approved``.
+    mutable.approved_by = None
+    mutable.approved_at = None
+    mutable.status = "review"
+    mutable.current_review_round = (mutable.current_review_round or 0) + 1
+    mutable.current_review_scope = "standard_1d"
+    session.add(
+        DatasetReview(
+            dataset_version_id=mutable.id,
+            engineering_content_hash=mutable.engineering_content_hash,
+            review_round=mutable.current_review_round,
+            review_scope="standard_1d",
+            action="approve",
+            status="approved",
+            reviewer_principal_id=principal.id,
+            reviewer_issuer=principal.issuer,
+            reviewer_subject=principal.subject,
+            reviewer_display_name=principal.display_name,
+            comment=payload.reason,
+        )
+    )
+    _audit(
+        session,
+        principal,
+        "DATASET_REVIEW_APPROVED",
+        "dataset_version",
+        str(mutable.id),
+        engineering_content_hash=mutable.engineering_content_hash,
+        previous_state="draft",
+        new_state="review",
+        details_json={"review_round": mutable.current_review_round, "review_scope": "standard_1d"},
+    )
     session.flush()
     return DatasetVersionRecord(**_dump(mutable))
 
@@ -197,6 +246,7 @@ def freeze_dataset_version_for_real01(
     session: Session,
     entity: DatasetVersion,
     payload: Real01FreezeRequest,
+    principal: AuthenticatedPrincipal,
 ) -> DatasetVersionRecord:
     """Freeze a QA-passed REAL-01 graph without creating a solver execution.
 
@@ -205,27 +255,48 @@ def freeze_dataset_version_for_real01(
     identity, including source evidence and unified hydraulic controls.
     """
 
-    mutable = assert_dataset_version_mutable(session, entity.id)
+    mutable = lock_dataset_version(session, entity.id)
+    if mutable.status != "review":
+        raise ValueError("REAL-01 数据版本不可冻结：必须先处于审核状态")
+    if not mutable.current_review_round or mutable.current_review_scope != "real01":
+        raise ValueError("REAL-01 数据版本不可冻结：必须有本轮 REAL-01 提交与批准")
     readiness = build_real01_readiness(session, mutable)
     if not readiness.can_freeze:
         blockers = [
-            item.code
-            for item in readiness.missing_data_records
-            if item.severity == "BLOCKER"
+            item.code for item in readiness.missing_data_records if item.severity == "BLOCKER"
         ]
         raise ValueError(
             "REAL-01 数据版本不可冻结：" + ", ".join(blockers or ["READY_CHECK_FAILED"])
         )
+    review = latest_approved_review(session, mutable.id)
+    _assert_freeze_review_matches(readiness.engineering_content_hash, review)
     now = datetime.now(UTC)
+    previous_state = mutable.status
     mutable.engineering_content_hash = readiness.engineering_content_hash
     mutable.change_summary = payload.reason
-    mutable.reviewed_by = payload.reviewer
+    mutable.reviewed_by = review.reviewer_display_name
     mutable.reviewed_at = now
-    mutable.approved_by = payload.reviewer
+    mutable.approved_by = principal.display_name
     mutable.approved_at = now
     mutable.status = "approved"
+    record_freeze_audit(
+        session,
+        mutable,
+        principal,
+        readiness.engineering_content_hash,
+        previous_state,
+    )
     session.flush()
     return DatasetVersionRecord(**_dump(mutable))
+
+
+def _assert_freeze_review_matches(current_graph_hash: str, review: DatasetReview | None) -> None:
+    """Fail closed unless an approval is bound to the exact current graph."""
+
+    if review is None:
+        raise ValueError("REAL-01 数据版本不可冻结：缺少工程审核通过记录")
+    if review.engineering_content_hash != current_graph_hash:
+        raise ValueError("REAL-01 数据版本不可冻结：审核哈希与当前工程图不一致")
 
 
 def list_parameters(session: Session, dataset_version_id: int | None) -> list[ModelParameterRecord]:
@@ -247,7 +318,9 @@ def create_parameter(session: Session, payload: ModelParameterCreate) -> ModelPa
     return ModelParameterRecord(**_dump(entity))
 
 
-def update_parameter(session: Session, entity: ModelParameter, payload: ModelParameterUpdate) -> ModelParameterRecord:
+def update_parameter(
+    session: Session, entity: ModelParameter, payload: ModelParameterUpdate
+) -> ModelParameterRecord:
     """修改模型参数值或说明。"""
 
     assert_dataset_version_mutable(session, entity.dataset_version_id)
@@ -256,7 +329,9 @@ def update_parameter(session: Session, entity: ModelParameter, payload: ModelPar
     return ModelParameterRecord(**_dump(entity))
 
 
-def list_boundaries(session: Session, dataset_version_id: int | None) -> list[BoundaryConditionRecord]:
+def list_boundaries(
+    session: Session, dataset_version_id: int | None
+) -> list[BoundaryConditionRecord]:
     """返回指定版本或全部边界条件。"""
 
     statement = select(BoundaryCondition).order_by(BoundaryCondition.id)
@@ -282,9 +357,7 @@ def _validate_boundary_binding(session: Session, state: dict[str, Any]) -> None:
         if hydraulic_node_id is None:
             raise ValueError(f"{boundary_type} requires hydraulic_node_id")
         if branch_id is not None or chainage_m is not None:
-            raise ValueError(
-                "端点边界只允许 hydraulic_node_id，不得设置 branch_id 或 chainage_m"
-            )
+            raise ValueError("端点边界只允许 hydraulic_node_id，不得设置 branch_id 或 chainage_m")
         node = session.scalar(
             select(HydraulicNode).where(
                 HydraulicNode.id == hydraulic_node_id,
@@ -302,9 +375,7 @@ def _validate_boundary_binding(session: Session, state: dict[str, Any]) -> None:
             ).all()
         )
         if len(matching_branches) != 1:
-            raise ValueError(
-                f"{boundary_type} 的 hydraulic_node_id 必须唯一绑定一个定向河段端点"
-            )
+            raise ValueError(f"{boundary_type} 的 hydraulic_node_id 必须唯一绑定一个定向河段端点")
         return
     if boundary_type != "lateral_inflow":
         raise ValueError(f"不支持的边界类型：{boundary_type}")
@@ -480,9 +551,7 @@ def generate_boundary_rating_curve(
     )
     intervals = _roughness_intervals(source_profile_points, zones, profile.default_manning_n)
 
-    warnings = [
-        "自动关系曲线采用 Manning 均匀流假定，不代替实测率定曲线。"
-    ]
+    warnings = ["自动关系曲线采用 Manning 均匀流假定，不代替实测率定曲线。"]
     if payload.friction_slope is None:
         distance = float(terminal.chainage) - float(upstream.chainage)
         if distance <= 0:
@@ -581,7 +650,9 @@ def create_boundary(session: Session, payload: BoundaryConditionCreate) -> Bound
     return BoundaryConditionRecord(**_dump(entity))
 
 
-def update_boundary(session: Session, entity: BoundaryCondition, payload: BoundaryConditionUpdate) -> BoundaryConditionRecord:
+def update_boundary(
+    session: Session, entity: BoundaryCondition, payload: BoundaryConditionUpdate
+) -> BoundaryConditionRecord:
     """局部修改边界条件。"""
 
     assert_dataset_version_mutable(session, entity.dataset_version_id)
@@ -656,9 +727,9 @@ def _replace_case_boundary_links(
 ) -> None:
     """原子替换计算方案的边界组，旧主边界字段保留兼容。"""
 
-    session.query(SimulationCaseBoundary).filter(
-        SimulationCaseBoundary.case_id == case.id
-    ).delete(synchronize_session=False)
+    session.query(SimulationCaseBoundary).filter(SimulationCaseBoundary.case_id == case.id).delete(
+        synchronize_session=False
+    )
     for boundary in boundaries:
         session.add(
             SimulationCaseBoundary(
@@ -685,7 +756,9 @@ def create_case(session: Session, payload: SimulationCaseCreate) -> SimulationCa
     return _case_record(session, entity)
 
 
-def update_case(session: Session, entity: SimulationCase, payload: SimulationCaseUpdate) -> SimulationCaseRecord:
+def update_case(
+    session: Session, entity: SimulationCase, payload: SimulationCaseUpdate
+) -> SimulationCaseRecord:
     """修改计算方案并保持数据版本与边界条件一致。"""
 
     assert_dataset_version_mutable(session, entity.dataset_version_id)
@@ -713,9 +786,12 @@ def delete_entity(session: Session, entity: Any) -> None:
 
     if isinstance(entity, DatasetVersion):
         assert_dataset_version_mutable(session, entity.id)
-        if session.scalar(
-            select(DatasetVersion.id).where(DatasetVersion.parent_version_id == entity.id)
-        ) is not None:
+        if (
+            session.scalar(
+                select(DatasetVersion.id).where(DatasetVersion.parent_version_id == entity.id)
+            )
+            is not None
+        ):
             raise ValueError(
                 "DAYU_DATASET_VERSION_DELETE_FORBIDDEN: 已被派生版本引用的数据版本不可删除"
             )

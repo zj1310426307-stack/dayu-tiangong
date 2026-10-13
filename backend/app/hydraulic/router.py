@@ -48,10 +48,12 @@ from app.hydraulic.schemas import (
     HydraulicNetworkGraphRecord,
     SolverCapabilityRecord,
 )
+from app.security.auth import AuthenticatedPrincipal, require_permission
 
 
 router = APIRouter(prefix="/api/v1/hydraulic", tags=["hydraulic-data"])
 SessionDependency = Annotated[Session, Depends(get_database_session)]
+EngineerDependency = Annotated[AuthenticatedPrincipal, Depends(require_permission("dataset.edit"))]
 FileUpload = Annotated[UploadFile, File()]
 VersionForm = Annotated[int, Form(gt=0)]
 TEMPLATE_ROOT = Path(__file__).resolve().parents[3] / "outputs" / "HYDRO-DATA-01-20260818"
@@ -152,7 +154,9 @@ def read_structures(
     summary="创建统一水工建筑物",
 )
 def create_structure(
-    payload: HydraulicStructureCreate, session: SessionDependency
+    payload: HydraulicStructureCreate,
+    session: SessionDependency,
+    _: EngineerDependency,
 ) -> HydraulicStructureRecord:
     """Create a validated structure independently from solver compatibility."""
 
@@ -182,6 +186,7 @@ def update_structure(
     structure_id: int,
     payload: HydraulicStructureUpdate,
     session: SessionDependency,
+    _: EngineerDependency,
 ) -> HydraulicStructureRecord:
     """Update a structure and re-run shared branch-location validation."""
 
@@ -199,7 +204,9 @@ def update_structure(
     response_class=Response,
     summary="删除统一水工建筑物",
 )
-def delete_structure(structure_id: int, session: SessionDependency) -> Response:
+def delete_structure(
+    structure_id: int, session: SessionDependency, _: EngineerDependency
+) -> Response:
     """Delete the unified row while leaving any linked legacy asset untouched."""
 
     if engineering.get_structure(session, structure_id) is None:
@@ -218,6 +225,7 @@ def upsert_structure_scenario(
     case_id: int,
     payload: HydraulicStructureScenarioUpsert,
     session: SessionDependency,
+    _: EngineerDependency,
 ) -> HydraulicStructureScenarioRecord:
     """Persist scenario-specific operation without duplicating network geometry."""
 
@@ -255,6 +263,7 @@ def update_cross_section_markers(
     section_id: int,
     payload: HydraulicMarkerUpdate,
     session: SessionDependency,
+    _: EngineerDependency,
 ) -> HydraulicSectionDetail:
     """Set or clear manual M1/M2/M3 markers for the active profile."""
 
@@ -275,6 +284,7 @@ def detect_cross_section_markers(
     section_id: int,
     payload: HydraulicMarkerDetectionRequest,
     session: SessionDependency,
+    _: EngineerDependency,
 ) -> HydraulicSectionDetail:
     """Run FULL_EXTENT or MIKE11-compatible deterministic marker detection."""
 
@@ -295,6 +305,7 @@ def update_cross_section_marker_workflow(
     profile_id: int,
     payload: HydraulicMarkerWorkflowUpdate,
     session: SessionDependency,
+    _: EngineerDependency,
 ) -> HydraulicMarkerWorkflowRecord:
     """Persist Active Extent/Vertical Extension and rebuild processed geometry."""
 
@@ -314,13 +325,12 @@ def update_cross_section_marker_workflow(
 def batch_detect_cross_section_markers(
     payload: HydraulicBatchMarkerDetectionRequest,
     session: SessionDependency,
+    _: EngineerDependency,
 ) -> HydraulicBatchMarkerDetectionRecord:
     """Detect at most 1000 active profiles and preserve locked markers by default."""
 
     try:
-        return commit_or_conflict(
-            session, lambda: service.batch_detect_markers(session, payload)
-        )
+        return commit_or_conflict(session, lambda: service.batch_detect_markers(session, payload))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -331,7 +341,7 @@ def batch_detect_cross_section_markers(
     summary="按河段中心线派生横断面空间几何",
 )
 def derive_cross_section_spatial_geometry(
-    section_id: int, session: SessionDependency
+    section_id: int, session: SessionDependency, _: EngineerDependency
 ) -> HydraulicSectionDetail:
     """Regenerate disposable branch-derived geometry without changing raw profile data."""
 
@@ -349,7 +359,7 @@ def derive_cross_section_spatial_geometry(
     summary="批量派生数据版本横断面空间几何",
 )
 def derive_dataset_spatial_geometry(
-    dataset_version_id: int, session: SessionDependency
+    dataset_version_id: int, session: SessionDependency, _: EngineerDependency
 ) -> dict[str, int]:
     """Regenerate derived geometry for every section in one mutable dataset version."""
 
@@ -369,7 +379,7 @@ def derive_dataset_spatial_geometry(
     summary="删除横断面可重建的派生空间几何",
 )
 def clear_cross_section_spatial_geometry(
-    section_id: int, session: SessionDependency
+    section_id: int, session: SessionDependency, _: EngineerDependency
 ) -> HydraulicSectionDetail:
     """Clear disposable derived XY while preserving raw and surveyed geometry."""
 
@@ -404,6 +414,7 @@ async def preview_import(
     dataset_version_id: VersionForm,
     file: FileUpload,
     session: SessionDependency,
+    _: EngineerDependency,
     source_crs: Annotated[str, Form()],
     engineering_crs: Annotated[str, Form()],
     coordinate_mode: Annotated[str, Form()],
@@ -453,7 +464,9 @@ async def preview_import(
     summary="确认提交水动力导入",
 )
 def commit_import(
-    payload: HydraulicImportCommitRequest, session: SessionDependency
+    payload: HydraulicImportCommitRequest,
+    session: SessionDependency,
+    _: EngineerDependency,
 ) -> HydraulicImportJobRecord:
     """Commit a previously validated preview exactly once."""
 
@@ -469,7 +482,10 @@ def commit_import(
     summary="按米制容差构建正式河网拓扑",
 )
 def build_network_topology(
-    network_id: int, payload: HydraulicTopologyBuildRequest, session: SessionDependency
+    network_id: int,
+    payload: HydraulicTopologyBuildRequest,
+    session: SessionDependency,
+    _: EngineerDependency,
 ) -> HydraulicTopologyReport:
     """Build nodes and reaches from endpoints and exact branch intersections."""
 
@@ -486,7 +502,9 @@ def build_network_topology(
     response_model=HydraulicBranchActionRecord,
     summary="反转河段流向",
 )
-def reverse_branch(branch_id: int, session: SessionDependency) -> HydraulicBranchActionRecord:
+def reverse_branch(
+    branch_id: int, session: SessionDependency, _: EngineerDependency
+) -> HydraulicBranchActionRecord:
     """Reverse geometry, chainage, sections, and existing reaches atomically."""
 
     return commit_or_conflict(session, lambda: topology.reverse_branch(session, branch_id))
@@ -498,7 +516,7 @@ def reverse_branch(branch_id: int, session: SessionDependency) -> HydraulicBranc
     summary="按工程长度重算桩号",
 )
 def recalculate_branch_chainage(
-    branch_id: int, session: SessionDependency
+    branch_id: int, session: SessionDependency, _: EngineerDependency
 ) -> HydraulicBranchActionRecord:
     """Scale branch, section, vertex, and reach chainage to the projected length."""
 
@@ -511,7 +529,10 @@ def recalculate_branch_chainage(
     summary="按断面轴线计算河段桩号",
 )
 def locate_cross_section(
-    section_id: int, payload: HydraulicLocateRequest, session: SessionDependency
+    section_id: int,
+    payload: HydraulicLocateRequest,
+    session: SessionDependency,
+    _: EngineerDependency,
 ) -> HydraulicSectionDetail:
     """Compute or explicitly override section chainage with an audit trail."""
 
@@ -526,7 +547,10 @@ def locate_cross_section(
     summary="生成断面水力查算表",
 )
 def process_cross_section_profile(
-    profile_id: int, payload: HydraulicProcessRequest, session: SessionDependency
+    profile_id: int,
+    payload: HydraulicProcessRequest,
+    session: SessionDependency,
+    _: EngineerDependency,
 ) -> HydraulicProcessingRecord:
     """Build or reuse a profile-hash keyed hydraulic table."""
 
@@ -541,7 +565,9 @@ def process_cross_section_profile(
     summary="批量生成断面水力查算表",
 )
 def process_cross_section_profiles(
-    payload: HydraulicBatchProcessRequest, session: SessionDependency
+    payload: HydraulicBatchProcessRequest,
+    session: SessionDependency,
+    _: EngineerDependency,
 ) -> list[HydraulicProcessingRecord]:
     """Process a bounded profile list in one transaction."""
 
@@ -557,7 +583,9 @@ def process_cross_section_profiles(
     summary="运行水动力数据校核",
 )
 def run_validation(
-    payload: HydraulicValidationRequest, session: SessionDependency
+    payload: HydraulicValidationRequest,
+    session: SessionDependency,
+    _: EngineerDependency,
 ) -> HydraulicValidationRunRecord:
     """Run and persist the dataset-version hydraulic quality gate."""
 

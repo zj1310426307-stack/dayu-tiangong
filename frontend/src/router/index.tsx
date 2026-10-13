@@ -21,6 +21,7 @@ import { createBrowserRouter, Navigate, useRouteError } from 'react-router-dom';
 import { MainLayout } from '../layout/MainLayout';
 import type { NavigationItem } from '../types/navigation';
 import { DatasetVersionProvider } from '../context/DatasetVersionContext';
+import { AuthProvider } from '../context/AuthContext';
 
 // 地图页面按路由动态加载，避免非地图功能提前下载 OpenLayers 地图代码。
 const HomePage = lazy(() =>
@@ -214,7 +215,7 @@ export const navigationItems: NavigationItem[] = [
 export const appRouter = createBrowserRouter([
   {
     path: '/',
-    element: <DatasetVersionProvider><MainLayout /></DatasetVersionProvider>,
+    element: <AuthProvider><DatasetVersionProvider><MainLayout /></DatasetVersionProvider></AuthProvider>,
     errorElement: <RouteErrorPage />,
     children: [
       {

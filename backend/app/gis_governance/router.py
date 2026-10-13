@@ -25,10 +25,22 @@ from app.gis_governance.schemas import (
     ValidationIssueRecord,
     ValidationRunRecord,
 )
+from app.security.auth import AuthenticatedPrincipal, require_permission
 
 
 router = APIRouter(prefix="/api/v1/gis-governance", tags=["gis-governance"])
 SessionDependency = Annotated[Session, Depends(get_database_session)]
+EngineerDependency = Annotated[AuthenticatedPrincipal, Depends(require_permission("dataset.edit"))]
+SubmitterDependency = Annotated[
+    AuthenticatedPrincipal, Depends(require_permission("dataset.submit_review"))
+]
+ReviewerDependency = Annotated[
+    AuthenticatedPrincipal, Depends(require_permission("dataset.approve"))
+]
+PublisherDependency = Annotated[
+    AuthenticatedPrincipal, Depends(require_permission("dataset.publish"))
+]
+RetirerDependency = Annotated[AuthenticatedPrincipal, Depends(require_permission("dataset.retire"))]
 T = TypeVar("T")
 
 
@@ -64,10 +76,15 @@ def _read(action: Callable[[], T]) -> T:
 
 
 @router.post("/batches", response_model=BatchRecord, status_code=201)
-def create_batch(payload: BatchCreate, session: SessionDependency) -> BatchRecord:
+def create_batch(
+    payload: BatchCreate,
+    session: SessionDependency,
+    principal: EngineerDependency,
+) -> BatchRecord:
     """Register source provenance before any authoritative promotion."""
 
-    return _commit(session, lambda: service.create_batch(session, payload))
+    trusted = payload.model_copy(update={"operator": principal.display_name})
+    return _commit(session, lambda: service.create_batch(session, trusted))
 
 
 @router.get("/batches", response_model=list[BatchRecord])
@@ -86,7 +103,10 @@ def read_batch(batch_id: int, session: SessionDependency) -> BatchRecord:
 
 @router.post("/batches/{batch_id}/stage", response_model=BatchRecord)
 def stage_batch(
-    batch_id: int, payload: BatchStageRequest, session: SessionDependency
+    batch_id: int,
+    payload: BatchStageRequest,
+    session: SessionDependency,
+    principal: EngineerDependency,
 ) -> BatchRecord:
     """Declare QGIS/raw edits ready for platform validation."""
 
@@ -96,14 +116,16 @@ def stage_batch(
             session,
             batch_id,
             payload.note,
-            payload.actor,
+            principal.display_name,
             payload.standardization_completed,
         ),
     )
 
 
 @router.post("/batches/{batch_id}/validate", response_model=ValidationRunRecord)
-def validate_batch(batch_id: int, session: SessionDependency) -> ValidationRunRecord:
+def validate_batch(
+    batch_id: int, session: SessionDependency, _: EngineerDependency
+) -> ValidationRunRecord:
     """Persist the current authoritative validation generation."""
 
     return _commit(session, lambda: service.run_batch_validation(session, batch_id))
@@ -125,22 +147,30 @@ def read_issues(batch_id: int, session: SessionDependency) -> list[ValidationIss
 
 @router.post("/batches/{batch_id}/submit-review", response_model=BatchRecord)
 def submit_review(
-    batch_id: int, payload: ReviewSubmitRequest, session: SessionDependency
+    batch_id: int,
+    payload: ReviewSubmitRequest,
+    session: SessionDependency,
+    principal: SubmitterDependency,
 ) -> BatchRecord:
     """Bind the current validated content to a human review request."""
 
     return _commit(
-        session, lambda: service.submit_review(session, batch_id, payload.actor)
+        session,
+        lambda: service.submit_review(session, batch_id, principal.display_name),
     )
 
 
 @router.post("/batches/{batch_id}/review", response_model=ReviewRecord)
 def review_batch(
-    batch_id: int, payload: ReviewDecisionRequest, session: SessionDependency
+    batch_id: int,
+    payload: ReviewDecisionRequest,
+    session: SessionDependency,
+    principal: ReviewerDependency,
 ) -> ReviewRecord:
     """Append an approval, rejection, or request-for-changes decision."""
 
-    return _commit(session, lambda: service.review_batch(session, batch_id, payload))
+    trusted = payload.model_copy(update={"reviewer": principal.display_name})
+    return _commit(session, lambda: service.review_batch(session, batch_id, trusted))
 
 
 @router.get("/batches/{batch_id}/diff", response_model=BatchDiff)
@@ -152,11 +182,15 @@ def read_diff(batch_id: int, session: SessionDependency) -> BatchDiff:
 
 @router.post("/batches/{batch_id}/promote", response_model=PromotedVersionRecord)
 def promote_batch(
-    batch_id: int, payload: PromoteRequest, session: SessionDependency
+    batch_id: int,
+    payload: PromoteRequest,
+    session: SessionDependency,
+    principal: ReviewerDependency,
 ) -> PromotedVersionRecord:
     """Atomically create one authoritative version from an approved batch."""
 
-    return _commit(session, lambda: service.promote_batch(session, batch_id, payload))
+    trusted = payload.model_copy(update={"creator": principal.display_name})
+    return _commit(session, lambda: service.promote_batch(session, batch_id, trusted))
 
 
 @router.get("/publications", response_model=list[PublicationRecord])
@@ -168,17 +202,25 @@ def read_publications(session: SessionDependency) -> list[PublicationRecord]:
 
 @router.post("/versions/{version_id}/publish", response_model=PublicationRecord)
 def publish_version(
-    version_id: int, payload: PublishRequest, session: SessionDependency
+    version_id: int,
+    payload: PublishRequest,
+    session: SessionDependency,
+    principal: PublisherDependency,
 ) -> PublicationRecord:
     """Activate publish views and persist a service manifest."""
 
-    return _commit(session, lambda: service.publish_version(session, version_id, payload))
+    trusted = payload.model_copy(update={"published_by": principal.display_name})
+    return _commit(session, lambda: service.publish_version(session, version_id, trusted))
 
 
 @router.post("/versions/{version_id}/retire", response_model=PromotedVersionRecord)
 def retire_version(
-    version_id: int, payload: RetireRequest, session: SessionDependency
+    version_id: int,
+    payload: RetireRequest,
+    session: SessionDependency,
+    principal: RetirerDependency,
 ) -> PromotedVersionRecord:
     """Retire a publication while preserving the immutable historical version."""
 
-    return _commit(session, lambda: service.retire_version(session, version_id, payload))
+    trusted = payload.model_copy(update={"retired_by": principal.display_name})
+    return _commit(session, lambda: service.retire_version(session, version_id, trusted))

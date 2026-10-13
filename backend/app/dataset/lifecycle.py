@@ -38,7 +38,5 @@ def assert_dataset_version_mutable(session: Session, version_id: int) -> Dataset
             "不能原地修改；请基于当前版本创建新的草稿版本。"
         )
     if version.is_read_only:
-        raise ValueError(
-            f"数据版本 {version_id} 已由用户设为只读；请先解除只读后再修改。"
-        )
+        raise ValueError(f"数据版本 {version_id} 已由用户设为只读；请先解除只读后再修改。")
     return version

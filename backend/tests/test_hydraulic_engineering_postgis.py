@@ -21,7 +21,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_structure_crud_location_capability_and_network_graph_round_trip() -> None:
+def test_structure_crud_location_capability_and_network_graph_round_trip(
+    engineer_auth_headers: dict[str, str],
+) -> None:
     """Exercise the real database constraints, spatial mapping, API, and graph surface."""
 
     version_label = f"ENGINEERING-03-{uuid4().hex[:10]}"
@@ -107,6 +109,7 @@ def test_structure_crud_location_capability_and_network_graph_round_trip() -> No
         boundary_id, case_id = boundary.id, case.id
 
     client = TestClient(app)
+    client.headers.update(engineer_auth_headers)
     payload = {
         "dataset_version_id": version_id,
         "network_id": network_id,
@@ -127,7 +130,9 @@ def test_structure_crud_location_capability_and_network_graph_round_trip() -> No
         "metadata": {"test": "engineering-03"},
     }
     try:
-        automatic_location_payload = {key: value for key, value in payload.items() if key not in {"x", "y"}}
+        automatic_location_payload = {
+            key: value for key, value in payload.items() if key not in {"x", "y"}
+        }
         created = client.post("/api/v1/hydraulic/structures", json=automatic_location_payload)
         assert created.status_code == 201, created.text
         structure = created.json()
@@ -153,9 +158,7 @@ def test_structure_crud_location_capability_and_network_graph_round_trip() -> No
         )
         assert updated.status_code == 200
         assert updated.json()["width_m"] == 13.0
-        assert updated.json()["location_geometry"]["coordinates"] == pytest.approx(
-            [120.0025, 30.0]
-        )
+        assert updated.json()["location_geometry"]["coordinates"] == pytest.approx([120.0025, 30.0])
 
         scenario = client.put(
             f"/api/v1/hydraulic/structures/{structure_id}/scenarios/{case_id}",

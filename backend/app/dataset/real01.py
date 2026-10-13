@@ -201,9 +201,7 @@ def _gate_ready(gate: HydraulicStructure, branches: dict[int, HydraulicBranch]) 
     gate_count = mike11.get("number_of_gates", hydraulic.get("number_of_gates"))
     maximum_opening = mike11.get("maximum_value_m", operation.get("maximum_opening_m"))
     initial_opening = mike11.get("initial_value_m", operation.get("initial_opening_m"))
-    opening_speed = mike11.get(
-        "maximum_speed_m_per_s", operation.get("opening_rate_limit_m_per_s")
-    )
+    opening_speed = mike11.get("maximum_speed_m_per_s", operation.get("opening_rate_limit_m_per_s"))
     coefficient = mike11.get(
         "underflow_discharge_coefficient",
         hydraulic.get("correction_coefficient", hydraulic.get("discharge_coefficient")),
@@ -245,7 +243,13 @@ def _time_series_ready(values: dict[str, Any], value_keys: tuple[str, ...]) -> b
     series = values.get("series")
     if isinstance(series, list) and len(series) >= 2:
         pairs = [
-            (item.get("time_seconds"), next((item.get(key) for key in value_keys if item.get(key) is not None), item.get("value")))
+            (
+                item.get("time_seconds"),
+                next(
+                    (item.get(key) for key in value_keys if item.get(key) is not None),
+                    item.get("value"),
+                ),
+            )
             for item in series
             if isinstance(item, dict)
         ]
@@ -255,7 +259,11 @@ def _time_series_ready(values: dict[str, Any], value_keys: tuple[str, ...]) -> b
             (values.get(key) for key in value_keys if isinstance(values.get(key), list)),
             None,
         )
-        if not isinstance(times, list) or not isinstance(ordinates, list) or len(times) != len(ordinates):
+        if (
+            not isinstance(times, list)
+            or not isinstance(ordinates, list)
+            or len(times) != len(ordinates)
+        ):
             return False
         pairs = list(zip(times, ordinates))
     if len(pairs) < 2:
@@ -334,7 +342,9 @@ def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01R
     )
     sections = list(
         session.scalars(
-            select(HydraulicCrossSection).where(HydraulicCrossSection.dataset_version_id == version_id)
+            select(HydraulicCrossSection).where(
+                HydraulicCrossSection.dataset_version_id == version_id
+            )
         ).all()
     )
     profiles = list(
@@ -395,9 +405,7 @@ def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01R
         ).all()
     )
     graph_hash = engineering_graph_content_hash(session, version_id)
-    current_qa_runs = [
-        item for item in validation_runs if _qa_matches_graph(item, graph_hash)
-    ]
+    current_qa_runs = [item for item in validation_runs if _qa_matches_graph(item, graph_hash)]
 
     counts = {
         "networks": len(networks),
@@ -428,12 +436,7 @@ def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01R
         if issue is not None:
             missing.append(issue)
 
-    project_ok = bool(
-        version.version
-        and version.name
-        and version.creator
-        and version.description
-    )
+    project_ok = bool(version.version and version.name and version.creator and version.description)
     add(
         "PROJECT",
         "AVAILABLE" if project_ok else "PARTIAL",
@@ -457,11 +460,14 @@ def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01R
         "REAL01_SOURCE_EVIDENCE_REQUIRED",
     )
 
-    crs_ok = bool(networks) and all(
-        _coordinate_contract_ready(network) for network in networks
-    ) and bool(profiles) and all(
-        _known_datum(profile.vertical_datum) and profile.vertical_unit == "m"
-        for profile in profiles
+    crs_ok = (
+        bool(networks)
+        and all(_coordinate_contract_ready(network) for network in networks)
+        and bool(profiles)
+        and all(
+            _known_datum(profile.vertical_datum) and profile.vertical_unit == "m"
+            for profile in profiles
+        )
     )
     add(
         "CRS_VERTICAL_DATUM",
@@ -506,9 +512,7 @@ def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01R
         and section.hydraulic_ready
         and section.spatial_geometry_source != "UNAVAILABLE"
         and section.review_status == "REVIEWED"
-        and _profile_points_ready(
-            points_by_profile[profiles_by_section[section.id][0].id]
-        )
+        and _profile_points_ready(points_by_profile[profiles_by_section[section.id][0].id])
         for section in sections
     )
     add(
@@ -552,8 +556,10 @@ def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01R
 
     upstream = [item for item in boundaries if item.boundary_type == "upstream_discharge"]
     downstream = [item for item in boundaries if item.boundary_type == "downstream_water_level"]
-    boundary_ok = bool(upstream) and bool(downstream) and all(
-        _boundary_ready(item) for item in (*upstream, *downstream)
+    boundary_ok = (
+        bool(upstream)
+        and bool(downstream)
+        and all(_boundary_ready(item) for item in (*upstream, *downstream))
     )
     add(
         "BOUNDARY",
@@ -567,9 +573,7 @@ def build_real01_readiness(session: Session, version: DatasetVersion) -> Real01R
     scenario_ok = bool(cases) and all(
         isinstance(item.hydraulic_1d_configuration, dict)
         and isinstance(item.hydraulic_1d_configuration.get("initial_condition"), dict)
-        and _has_source_reference(
-            item.hydraulic_1d_configuration.get("initial_condition")
-        )
+        and _has_source_reference(item.hydraulic_1d_configuration.get("initial_condition"))
         and _has_source_reference(item.hydraulic_1d_configuration)
         for item in cases
     )

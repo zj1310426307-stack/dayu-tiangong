@@ -755,8 +755,47 @@ export interface CrossSectionUpdate {
   "geometry"?: Record<string, unknown> | null;
 }
 
+export interface CurrentPrincipalRecord {
+  "authenticated"?: boolean;
+  "id": number;
+  "issuer": string;
+  "subject": string;
+  "display_name": string;
+  "email"?: string | null;
+  "authentication_method": string;
+  "roles": Array<string>;
+  "permissions": Array<string>;
+}
+
+export interface DatasetReviewDecisionRequest {
+  "comment"?: string | null;
+  "action": string;
+  "review_round": number;
+  "expected_decision_id"?: number | null;
+}
+
+export interface DatasetReviewRecord {
+  "id": number;
+  "dataset_version_id": number;
+  "engineering_content_hash": string;
+  "review_round"?: number | null;
+  "review_scope"?: string | null;
+  "action": string;
+  "status": string;
+  "reviewer_principal_id": number;
+  "reviewer_issuer": string;
+  "reviewer_subject": string;
+  "reviewer_display_name": string;
+  "comment"?: string | null;
+  "created_at": string;
+}
+
+export interface DatasetReviewRequest {
+  "comment"?: string | null;
+}
+
 export interface DatasetVersionApprovalRequest {
-  "reviewer": string;
+  "reviewer"?: string | null;
   "reason": string;
 }
 
@@ -787,6 +826,8 @@ export interface DatasetVersionRecord {
   "source_batch_id"?: number | null;
   "content_hash"?: string | null;
   "engineering_content_hash"?: string | null;
+  "current_review_round"?: number;
+  "current_review_scope"?: "real01" | "standard_1d" | null;
   "change_summary"?: string | null;
   "reviewed_by"?: string | null;
   "reviewed_at"?: string | null;
@@ -2773,7 +2814,7 @@ export interface Real01DomainStatus {
 }
 
 export interface Real01FreezeRequest {
-  "reviewer": string;
+  "reviewer"?: string | null;
   "reason": string;
 }
 
@@ -2969,6 +3010,18 @@ export interface RiverUpdate {
   "geometry"?: Record<string, unknown> | null;
 }
 
+export interface RoleBindingRecord {
+  "id": number;
+  "principal_id": number;
+  "role": string;
+  "active": boolean;
+  "created_at": string;
+}
+
+export interface RoleBindingRequest {
+  "role": string;
+}
+
 export interface RoughnessOverride {
   "group_id": string;
   "cross_section_ids": Array<number>;
@@ -2993,6 +3046,23 @@ export interface ScenarioResultSection {
   "final_discharge_m3s": number;
   "final_velocity_ms": number;
   "flow_area_m2": number;
+}
+
+export interface SecurityAuditRecord {
+  "id": number;
+  "action": string;
+  "actor_principal_id": number;
+  "actor_issuer": string;
+  "actor_subject": string;
+  "actor_display_name": string;
+  "resource_type": string;
+  "resource_id": string;
+  "engineering_content_hash"?: string | null;
+  "previous_state"?: string | null;
+  "new_state"?: string | null;
+  "request_id"?: string | null;
+  "details_json": Record<string, unknown>;
+  "created_at": string;
 }
 
 export interface SimulationCaseCreate {
@@ -3485,6 +3555,20 @@ function decodeApiError(payload: unknown): string | ApiErrorDetail | undefined {
   return isApiErrorDetail(detail) ? detail : undefined;
 }
 
+let authAccessToken: string | null = null;
+
+/** Keep bearer material in memory; the hosting OIDC client owns acquisition and refresh. */
+export function setAuthAccessToken(token: string | null): void {
+  authAccessToken = token;
+}
+
+function withAuth(options: RequestInit): RequestInit {
+  if (!authAccessToken) return options;
+  const headers = new Headers(options.headers);
+  headers.set('Authorization', `Bearer ${authAccessToken}`);
+  return { ...options, headers };
+}
+
 function toQuery<T extends object>(params: T): string {
   const query = new URLSearchParams();
   Object.entries(params as Record<string, string | number | boolean | undefined>).forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); });
@@ -3502,7 +3586,7 @@ function datasetTaskListArgs(
 }
 
 async function requestJson<T>(path: string, options: RequestInit = {}, baseUrl = ''): Promise<T> {
-  const response = await fetch(`${baseUrl}${path}`, options);
+  const response = await fetch(`${baseUrl}${path}`, withAuth(options));
   if (!response.ok) {
     const payload: unknown = await response.json().catch(() => null);
     throw new ApiError(response.status, decodeApiError(payload));
@@ -3512,7 +3596,7 @@ async function requestJson<T>(path: string, options: RequestInit = {}, baseUrl =
 }
 
 async function requestBlob(path: string, options: RequestInit = {}, baseUrl = ''): Promise<Blob> {
-  const response = await fetch(`${baseUrl}${path}`, options);
+  const response = await fetch(`${baseUrl}${path}`, withAuth(options));
   if (!response.ok) {
     const payload: unknown = await response.json().catch(() => null);
     throw new ApiError(response.status, decodeApiError(payload));
@@ -3525,6 +3609,7 @@ function jsonOptions(method: 'POST' | 'PUT' | 'PATCH', body: unknown): RequestIn
 }
 
 export const getSystemInfo = (baseUrl = '') => requestJson<SystemInfoResponse>('/', {}, baseUrl);
+export const getCurrentPrincipal = (baseUrl = '') => requestJson<CurrentPrincipalRecord>('/api/v1/auth/me', {}, baseUrl);
 export const getHealth = (baseUrl = '') => requestJson<HealthResponse>('/api/v1/health', {}, baseUrl);
 export const getGISHealth = (baseUrl = '') => requestJson<GISHealthResponse>('/api/v1/gis/health', {}, baseUrl);
 export const getGISStatistics = (datasetVersionId: number, baseUrl = '') => requestJson<GISStatisticsResponse>(`/api/v1/gis/stats${toQuery({ dataset_version_id: datasetVersionId })}`, {}, baseUrl);

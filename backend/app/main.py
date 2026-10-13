@@ -5,12 +5,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.utils.logging import configure_logging
+from app.security.config import validate_auth_configuration
 
 
 def create_app() -> FastAPI:
     """创建可测试、可重复装配的 FastAPI 应用实例。"""
 
     configure_logging()
+    validate_auth_configuration()
     application = FastAPI(
         title="大禹·天工 API",
         version="7.0.0",

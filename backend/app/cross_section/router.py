@@ -15,10 +15,12 @@ from app.cross_section.schemas import (
 )
 from app.database.session import get_database_session
 from app.gis.models import CrossSection
+from app.security.auth import AuthenticatedPrincipal, require_permission
 
 
 router = APIRouter(prefix="/api/v1/cross-sections", tags=["cross-section-database"])
 SessionDependency = Annotated[Session, Depends(get_database_session)]
+EngineerDependency = Annotated[AuthenticatedPrincipal, Depends(require_permission("dataset.edit"))]
 
 
 @router.get("", response_model=CrossSectionListResponse, summary="分页查询横断面")
@@ -32,22 +34,20 @@ def read_cross_sections(
 ) -> CrossSectionListResponse:
     """返回支持版本、河道和关键词筛选的断面列表。"""
 
-    return service.list_cross_sections(
-        session, dataset_version_id, river_id, search, limit, offset
-    )
+    return service.list_cross_sections(session, dataset_version_id, river_id, search, limit, offset)
 
 
 @router.post(
     "", response_model=CrossSectionRecord, status_code=status.HTTP_201_CREATED, summary="新增横断面"
 )
 def create_cross_section(
-    payload: CrossSectionCreate, session: SessionDependency
+    payload: CrossSectionCreate,
+    session: SessionDependency,
+    _: EngineerDependency,
 ) -> CrossSectionRecord:
     """新增并提交横断面。"""
 
-    return commit_or_conflict(
-        session, lambda: service.create_cross_section(session, payload)
-    )
+    return commit_or_conflict(session, lambda: service.create_cross_section(session, payload))
 
 
 @router.get("/{section_id}", response_model=CrossSectionRecord, summary="读取横断面详情")
@@ -62,7 +62,10 @@ def read_cross_section(section_id: int, session: SessionDependency) -> CrossSect
 
 @router.put("/{section_id}", response_model=CrossSectionRecord, summary="修改横断面")
 def update_cross_section(
-    section_id: int, payload: CrossSectionUpdate, session: SessionDependency
+    section_id: int,
+    payload: CrossSectionUpdate,
+    session: SessionDependency,
+    _: EngineerDependency,
 ) -> CrossSectionRecord:
     """局部修改并提交横断面。"""
 
@@ -75,7 +78,9 @@ def update_cross_section(
 
 
 @router.delete("/{section_id}", status_code=status.HTTP_204_NO_CONTENT, summary="删除横断面")
-def delete_cross_section(section_id: int, session: SessionDependency) -> Response:
+def delete_cross_section(
+    section_id: int, session: SessionDependency, _: EngineerDependency
+) -> Response:
     """删除指定横断面。"""
 
     section = session.get(CrossSection, section_id)
