@@ -37,6 +37,11 @@ jobs:
           python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
           tests/hydraulic_1d tests/benchmark/hydraulic_1d
           tests/test_phase4_control.py tests/test_dispatch_static_replay.py
+      - name: Run trusted identity and Dataset authorization suite
+        run: >-
+          python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
+          backend/tests/test_hydro_auth_security.py backend/tests/test_dataset_service.py
+          backend/tests/test_real01_admission.py
 
   postgis-migration:
     name: PostGIS migration
@@ -231,6 +236,12 @@ jobs:
         run: >-
           python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
           backend/tests/test_hydraulic_engineering_postgis.py
+      - name: Run trusted principal PostGIS integration
+        env:
+          RUN_HYDRO_AUTH_POSTGIS: "1"
+        run: >-
+          python -m pytest -c backend/pyproject.toml -p no:cacheprovider -q
+          backend/tests/test_hydro_auth_postgis.py
       - name: Run Production-04 PostGIS and audit integration
         env:
           RUN_HYDRAULIC_PRODUCTION_POSTGIS: "1"
